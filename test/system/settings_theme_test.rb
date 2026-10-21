@@ -8,8 +8,8 @@ require "application_system_test_case"
 # renders, never an inline script).
 #
 # NO SHARE LIBRARY FIXTURE: the settings page reads no `nodes` and calls the port not at all (the
-# same reasoning settings_reference_test.rb and shelves_test.rb give for their own request tests),
-# so there is nothing here for use_fresh_share_library! to seed.
+# same reasoning settings_reference_test.rb and settings_shelves_test.rb give for their own request
+# tests), so there is nothing here for use_fresh_share_library! to seed.
 class SettingsThemeTest < ApplicationSystemTestCase
   setup do
     @user = sign_in_as("settings-theme@example.com")

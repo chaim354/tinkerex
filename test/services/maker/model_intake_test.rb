@@ -10,7 +10,6 @@ module Maker
       dir("d-enc", "Enclosure", "d-shelf")
       file("f-body", "body.stl", "d-enc")
       file("f-manual", "manual.pdf", "d-enc")
-      @user.maker_shelves.create!(path: "3D Models")
     end
 
     def dir(node_id, name, parent)
@@ -249,7 +248,7 @@ module Maker
     # minutes, forever. attach_all now plucks the pairs that exist and inserts only the missing
     # ones, Maker::ProjectIntake#attach's shape.
     #
-    # THE FIRST SWEEP IS THE POSITIVE CONTROL. It writes (the models, the seeded shelves), so a
+    # THE FIRST SWEEP IS THE POSITIVE CONTROL. It writes (the models, their attachments), so a
     # helper that cannot see a write at all -- a wrong event name, a pattern that matches nothing --
     # goes red here instead of passing the assertion that matters (§14e).
     test "a sweep over an unchanged library writes nothing" do
@@ -276,12 +275,16 @@ module Maker
     end
 
     # TWO SHELVES MATCHING ONE FOLDER IS NOT AN AMBIGUITY. Shelves are a SET, not an ordered list,
-    # so a folder named by both a literal and a wildcard resolves identically either way.
+    # so a folder named by both a literal and a wildcard resolves identically either way. A
+    # top-level `Models/` is the built-in case: both `*` and `Models` name it.
     test "a folder matched by two shelves is catalogued once" do
-      @user.maker_shelves.create!(path: "*")
+      dir("d-models", "Models", nil)
+      dir("d-vase", "Vase", "d-models")
+      file("f-vase", "vase.stl", "d-vase")
+
       Maker::ModelIntake.for_user(user: @user)
 
-      assert_equal 1, @user.maker_models.where(auto_node_id: "d-enc").count
+      assert_equal 1, @user.maker_models.where(auto_node_id: "d-vase").count
     end
 
     # THE OTHER HALF OF "LOOK, DO NOT TAKE". The assertion above proves no AUTO row is created for a

@@ -229,7 +229,8 @@
       yielded at all. A tab left holding none of its keys drops out with its bar link, because
       _panel_groups renders only the panes something rendered into. %>
   <%= render layout: "projects/panel_groups",
-             locals: { groups: @panel_layout.groups(@panel_layout.visible - Array(@absent_panels)), tail: nil } do |key| %>
+             locals: { groups: @panel_layout.groups(@panel_layout.visible - Array(@absent_panels)),
+                       layout: @panel_layout, tail: nil } do |key| %>
     <%= render "projects/panel_slot", key: key, extra: panel_locals.fetch(key, {}) %>
   <% end %>
 <% end %>

@@ -1,5 +1,17 @@
 import { Controller } from "@hotwired/stimulus"
 
+// THE PREVIEW IS SQUARE AND 512px, the size the server's thumbnails are rendered at.
+const PREVIEW_SIZE = 512
+
+// A data: URL to a Blob WITHOUT fetch(): the page's CSP `connect-src` does not list `data:`, so
+// `fetch(dataUrl)` is refused; decoding by hand needs no policy at all.
+function dataUrlToBlob(dataUrl) {
+  const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1))
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type: "image/png" })
+}
+
 // Interactive 3D viewer for every format Online3DViewer's importers read — meshes (STL, 3MF, OBJ,
 // glTF/GLB, PLY, OFF, DAE, WRL, 3DS, FBX, AMF), Rhino (3DM) and, through OpenCascade compiled to
 // WebAssembly, the CAD formats (STEP, IGES, BREP, FCStd). The bytes are parsed CLIENT-SIDE — no
@@ -37,9 +49,12 @@ export default class extends Controller {
     // WHAT THE IMPORTER CANNOT KNOW, HANDED OVER BY THE SERVER (Maker::ThreeMfManifest): one
     // "#RRGGBB"-or-null per imported mesh from the slicer's own metadata, and the millimetre factor
     // for a 3MF's declared `unit`. Empty and 1 for every other format, which is a no-op on both.
-    colors: Array, unitFactor: { type: Number, default: 1 }
+    colors: Array, unitFactor: { type: Number, default: 1 },
+    // Files::PreviewsController's door for THIS file, where "Use this view as preview" posts.
+    // Empty on a visitor's page, which offers no such button.
+    previewUrl: String
   }
-  static targets = ["canvas", "dims", "fallback", "source"]
+  static targets = ["canvas", "dims", "fallback", "source", "status", "poster"]
 
   // ONE STALENESS TOKEN FOR THE LIFE OF THIS CONTROLLER, only ever incremented. It is set in
   // `initialize` and never in `connect`, because Stimulus hands a re-attached element the SAME
@@ -85,6 +100,9 @@ export default class extends Controller {
       // old one's palette, which the count check would usually but not always catch.
       this.colorsValue = JSON.parse(opt.dataset.colors || "[]")
       this.unitFactorValue = Number(opt.dataset.unitFactor || 1)
+      // The preview door belongs to the FILE for the colours' reason: a switch that left it
+      // behind would save this model's picture as the previous file's thumbnail.
+      this.previewUrlValue = opt.dataset.previewUrl || ""
     }
     const gen = ++this.generation // invalidate any in-flight load (rapid switches / keyboard nav)
 
@@ -181,6 +199,7 @@ export default class extends Controller {
   // here.
   rest() {
     this.release()
+    this.say("")
     this.element.classList.remove("model-viewer--ready")
     this.element.removeAttribute("data-modelviewer-state")
   }
@@ -341,6 +360,54 @@ export default class extends Controller {
     viewer.SetUpVector(this.OV.Direction.Y, false)
     const sphere = viewer.GetBoundingSphere(() => true)
     if (sphere) viewer.FitSphereToWindow(sphere, false)
+  }
+
+  // "Use this view as preview" (2026-10-20): the engine draws the current camera into a square PNG
+  // (o3dv's Viewer#GetImageAsDataUrl renders, reads the canvas and restores its size in one call,
+  // so no preserveDrawingBuffer is needed) and Files::PreviewsController stores it as the file's
+  // thumbnail. The poster behind the viewer takes the new picture at once; a page reload shows the
+  // "Back to automatic preview" button the server renders for a viewer preview.
+  //
+  // ONLY A `ready` VIEWER MAY BE PHOTOGRAPHED. A source switch sets the new file's URL first and
+  // then waits for the running import (load()), so while the state reads `loading` the stage still
+  // shows the PREVIOUS model and the door already names the next one: a save then would file one
+  // file's picture as another's thumbnail.
+  //
+  // THE POSTER IS A TARGET, NOT "THE FALLBACK'S FIRST IMAGE". The file page's poster is this file's
+  // thumbnail; the model page's is the MODEL's cover (a photo, or another file of the model), which
+  // this file's picture must not replace. Only the file page marks one.
+  async usePreview(event) {
+    const button = event?.currentTarget
+    const three = this.viewer?.GetViewer()
+    if (!three || !this.previewUrlValue || this.element.dataset.modelviewerState !== "ready") return
+    if (button) button.disabled = true
+    this.say("Saving preview…")
+    try {
+      const dataUrl = three.GetImageAsDataUrl(PREVIEW_SIZE, PREVIEW_SIZE, false)
+      const body = new FormData()
+      body.append("image", dataUrlToBlob(dataUrl), "preview.png")
+      const response = await fetch(this.previewUrlValue, {
+        method: "POST",
+        body,
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+          "X-CSRF-Token": document.querySelector("meta[name='csrf-token']")?.content || ""
+        }
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      if (this.hasPosterTarget) this.posterTarget.src = dataUrl
+      this.say("Saved as the preview.")
+    } catch (error) {
+      console.warn("[modelviewer] could not save the preview:", error)
+      this.say("Couldn't save the preview.")
+    } finally {
+      if (button) button.disabled = false
+    }
+  }
+
+  say(text) {
+    if (this.hasStatusTarget) this.statusTarget.textContent = text
   }
 
   fullscreen() {

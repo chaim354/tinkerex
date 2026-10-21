@@ -6,7 +6,9 @@
 
   THE NO-TABS BRANCH IS TODAY'S MARKUP, UNCHANGED (decision 9): one `.project-panels` grid with
   every key, Publish included, and the caller's tail (the public page's repository cards) inside
-  it. Every existing project takes this branch.
+  it. Every existing project takes this branch. The one addition is a SHELF GROUP's heading
+  (2026-10-20, ProjectsHelper#panels_with_group_heads), drawn only before panels whose folder's
+  shelf is in a group -- a user with no groups gets exactly the markup above.
 
   WITH TABS: the top group's grid (omitted when empty), then `div.tabs` with a bar and one pane per
   tab, then Publish in its own grid -- with the tail before it -- so both are on view whichever tab
@@ -22,39 +24,44 @@
   WITHOUT JAVASCRIPT nothing is hidden: the bar's links are anchors to the panes and every pane
   shows its heading -- the page reads as sections. tabs_controller.js hides the rest (decision 8).
 
-  Locals: groups (Maker::ProjectKind::Groups); tail (HTML or nil).
+  SHELF-GROUP HEADINGS ARE PER GRID (2026-10-20): the top group and each pane are each one call to
+  ProjectsHelper#panels_with_group_heads (the foot holds only the tail and Publish, never in a
+  group), so a run of a group's panels gets one heading in each grid it lands in.
+
+  Locals: groups (Maker::ProjectKind::Groups); layout (the Maker::ProjectKind::Layout the groups
+  came from -- the maker's @panel_layout or the visitor's pub.layout); tail (HTML or nil).
 %>
 <% if groups.tabs.empty? %>
   <div class="project-panels" data-controller="masonry">
-    <% groups.top.each do |key| %><%= yield key %><% end %>
+    <%= panels_with_group_heads(groups.top, layout) { |key| yield key } %>
     <%= yield "publish" %>
     <%= tail %>
   </div>
 <% else %>
   <% panes = groups.tabs.filter_map do |tab|
-       bodies = tab.keys.filter_map { |key| body = yield(key); body if body.present? }
-       [ tab, bodies ] if bodies.any?
+       body = panels_with_group_heads(tab.keys, layout) { |key| yield key }
+       [ tab, body ] if body.present?
      end %>
   <%# THE HEAD IS KEYED ON WHAT RENDERED, LIKE THE FOOT (found in review): a visitor's top group may
       hold only keys with no public face (Tasks, Sheets), and a grid with nothing in it is a blank
       band above the bar. %>
-  <% head = capture do %><% groups.top.each do |key| %><%= yield key %><% end %><% end %>
+  <% head = panels_with_group_heads(groups.top, layout) { |key| yield key } %>
   <% if head.present? %>
     <div class="project-panels" data-controller="masonry"><%= head %></div>
   <% end %>
   <% if panes.any? %>
     <div class="tabs" data-controller="tabs">
       <nav class="tab-bar" role="tablist" aria-label="Page sections">
-        <% panes.each_with_index do |(tab, _bodies), i| %>
+        <% panes.each_with_index do |(tab, _body), i| %>
           <a class="tab-link" role="tab" id="tablink-<%= tab.slug %>" href="#tab-<%= tab.slug %>"
              aria-controls="tab-<%= tab.slug %>" aria-selected="<%= i.zero? %>" tabindex="<%= i.zero? ? 0 : -1 %>"
              data-tabs-target="tab" data-action="click->tabs#select keydown->tabs#key"><%= tab.name %></a>
         <% end %>
       </nav>
-      <% panes.each do |tab, bodies| %>
+      <% panes.each do |tab, body| %>
         <section class="tab-pane" id="tab-<%= tab.slug %>" role="tabpanel" aria-labelledby="tablink-<%= tab.slug %>" data-tabs-target="pane">
           <h2 class="tab-heading"><%= tab.name %></h2>
-          <div class="project-panels" data-controller="masonry"><%= safe_join(bodies) %></div>
+          <div class="project-panels" data-controller="masonry"><%= body %></div>
         </section>
       <% end %>
     </div>

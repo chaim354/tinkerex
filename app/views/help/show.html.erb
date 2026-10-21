@@ -7,7 +7,7 @@
   docs/superpowers/specs/2026-10-13-f-onboarding-design.md). Every sentence is a claim about the
   app, so each was checked against the code or the invariants file that owns it before it was
   written here: docs/invariants/project-intake.md for Projects/ and filing,
-  docs/invariants/model-intake.md for shelves, docs/invariants/addons.md for tools,
+  docs/invariants/model-intake.md for 3D models, docs/invariants/addons.md for tools,
   docs/INSTALL.md for accounts, mail and the library folder (K, 2026-10-20: Tinkerex::LibraryRoot
   and /settings/library). Change the behaviour, change the sentence.
 
@@ -76,7 +76,7 @@
       anywhere else into one where it stands.</p>
     <p>Files dropped loose at the top of a project's folder are filed into type folders —
       <code>models/</code>, <code>docs/</code>, <code>images/</code> and so on — by the next
-      sweep, following the rules in <%= link_to "Filing", settings_filing_rules_path %>. A README
+      sweep, following the rules in <%= link_to "Shelves", settings_shelves_path %>. A README
       stays at the top, and nothing inside a git repository is moved.</p>
     <p><em>Archive</em> puts a project away and leaves its folder where it is; the app will not make
       that folder into a project again. <em>Unarchive</em> brings it back.</p>
@@ -89,15 +89,13 @@
   </section>
 
   <section aria-labelledby="models">
-    <h2 id="models">3D models and shelves</h2>
-    <p>The <%= link_to "3D models", files_models_path %> view gathers your 3D files into models,
-      by shelves. A shelf is a folder that is not itself a model: a 3D file loose on a shelf is a
-      model of its own, and a folder on a shelf is one model holding what is inside it. The first
-      shelves are the top of the library, every folder at the top, <code>Models/</code> and each
-      project's <code>models/</code> folder; change them in
-      <%= link_to "Shelves", settings_shelves_path %>. A shelf is a path, so renaming its folder on
-      disk means updating the shelf too. A project's own folder is never a model, and removing a
-      model from the catalog leaves its files where they are.</p>
+    <h2 id="models">3D models</h2>
+    <p>The <%= link_to "3D models", files_models_path %> view gathers your 3D files into models. A
+      3D file loose at the top of the library, in a top-level folder, in <code>Models/</code> or in
+      a project's <code>models/</code> folder is a model of its own, and a folder inside a
+      top-level folder or a <code>models/</code> folder is one model holding what is inside it. A
+      project's own folder is never a model, and
+      removing a model from the catalog leaves its files where they are.</p>
   </section>
 
   <section aria-labelledby="tools">

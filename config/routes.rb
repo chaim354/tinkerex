@@ -195,6 +195,12 @@ root to: "home#index"
   post "files/:node_id/links", to: "files/links#create", as: :file_links
   resources :file_links, only: %i[destroy], controller: "files/links"
 
+  # --- A file's preview chosen in the 3D viewer (2026-10-20; keyed by node_id, session auth) ---
+  # The node_id shape of the notes and links routes above. POST takes the viewer's PNG; DELETE
+  # hands the thumbnail back to the server renderer (Files::PreviewsController).
+  post   "files/:node_id/preview", to: "files/previews#create",  as: :file_preview
+  delete "files/:node_id/preview", to: "files/previews#destroy"
+
   # Sidebar places (structural redesign spec §4.1). `:id` IS THE FOLDER'S node_id, not the row's,
   # so the Unpin button names the folder it unpins and a stale row id can never unpin the wrong one.
   resources :pins, only: %i[create destroy]
@@ -374,7 +380,8 @@ root to: "home#index"
   #
   # /models/shelves WAS THE PAGE FROM 2026-09-10 TO SLICE 5 — a maker's bookmarks and anything that
   # linked it keep working. Declared before `resources :models`, or it matches models#show id=shelves.
-  # The page itself went back to `settings/shelves` (the `settings` namespace below says why).
+  # It lands on `settings/shelves`, which since 2026-10-20 is the Shelves page for project folders
+  # (the model catalog's shelves it once served are Maker::ModelIntake::SHELVES, fixed in code).
   # THE REVERSE REDIRECT IS GONE AND MUST STAY GONE: the 2026-09-10 move left
   # `settings/shelves → /models/shelves` here, and anywhere above the namespace it matches before
   # the page does — /settings/shelves 301s to /models/shelves, which 301s back, forever.
@@ -424,17 +431,16 @@ root to: "home#index"
   resource :settings, only: :show, controller: "settings"
   namespace :settings do
     resources :tags, only: %i[index destroy]
-    # WHICH FOLDERS COUNT AS MODELS (structural redesign slice 5). Back under Settings, reversing the
-    # 2026-09-10 move to /models/shelves: Models is now a Library view (/files/models), not a section,
-    # so the section shelves serve is Settings — a rule, not navigation. The old path redirects
-    # (declared above `resources :models`, where its static segment must precede the parent).
-    resources :shelves, only: %i[index create destroy]
-    # Stage 3, S3-1: the per-user extension map the intake sweep files by (Maker::FilingRules).
-    # `path: "filing"` keeps the URL as /settings/filing while the helpers stay
-    # settings_filing_rule(s)_path; `create` is the per-folder add form, `destroy` the chip's Remove
-    # (stage 4, S4-2: one card per folder). `update` stays routed with no control on the page since
-    # S4-2 dropped the per-row folder edit -- a future move control lands on it; its tests still run.
-    resources :filing_rules, only: %i[index create update destroy], path: "filing"
+    # THE SHELVES (2026-10-20): the folders the intake sweep files into inside each project, one
+    # card each with its extensions, its default view and its group. This page WAS Filing
+    # (/settings/filing, which now redirects here); the model catalog's old shelves page that held
+    # this path became Maker::ModelIntake::SHELVES, fixed in code. /models/shelves still lands here.
+    resources :shelves, only: %i[index create update destroy]
+    resources :shelf_groups, only: %i[create update destroy], path: "shelf-groups"
+    get "filing", to: redirect("/settings/shelves")
+    # The extension chips' own doors (stage 3, S3-1; stage 4, S4-2) under their old path. No index:
+    # the page is Shelves. `update` stays routed with no control on the page (its tests drive it).
+    resources :filing_rules, only: %i[create update destroy], path: "filing"
     # STAGE 3, S3-4: the handle is claimed on the Account page (users/registrations/edit) through
     # its own form, because Devise's update demands the current password and a handle is not a
     # credential.

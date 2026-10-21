@@ -377,6 +377,12 @@
   a finished design's content never changes — so the .lbrn2 thinning fix deployed and four
   already-measured files kept serving mangled curves until they were destroyed by hand, on the one
   backend of three that had them. **Change a payload → bump the renderer's `PAYLOAD_REVISION`.**
+  - **A THUMBNAIL THE MAKER CHOSE IN THE 3D VIEWER IS STALE ON THE FIRST AXIS ONLY (2026-10-20).**
+    A `source: "viewer"` row was built by no renderer, so a revision bump has nothing to improve:
+    `Enqueue.needs_job?` enqueues nothing for it, `Enqueue.revision_current?` (behind both
+    `current_preview` shapes) calls it current at any revision, and `GeneratePreviewJob`'s
+    compare-and-set never writes over it. A CONTENT change still repoints it and resets `source` to
+    `renderer` — the chosen angle is a picture of geometry that no longer exists.
   - **Revisions are PER KIND** (`Lbrn2.payload_revision(kind)`): one renderer emits both a
     thumbnail and a geometry payload, and bumping geometry must not rebuild ~1400 thumbnails as a
     side effect of an unrelated fix.

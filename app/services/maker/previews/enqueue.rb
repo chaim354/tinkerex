@@ -110,6 +110,9 @@ module Maker
         return preview unless needs_job?(preview, version_id:, revision:, retry_failed:)
 
         content_moved = preview.version_id != version_id
+        # A viewer preview of content that has moved on is a picture of geometry that no longer
+        # exists, so the row goes back to the renderer with the content.
+        preview.source = "renderer" if content_moved
         rebuilt       = preview.renderer_revision != revision
         stalled       = stalled?(preview)
         preview.version_id = version_id
@@ -161,7 +164,10 @@ module Maker
       # each used to keep and the stalled arm each lost with it:
       #
       #   no row, or one never saved                       -> true  (there is nothing to show)
-      #   CONTENT or RENDERER moved since it was built     -> true  (whatever its status says)
+      #   a `viewer` row, asked with NO content token      -> false (nothing says it is stale)
+      #   CONTENT moved since it was built                 -> true  (whatever its status says)
+      #   a `viewer` row at the current content            -> false (the maker's choice stands)
+      #   RENDERER moved since it was built                -> true  (whatever its status says)
       #   `failed` at current coordinates                  -> `retry_failed`
       #   in flight (`IN_FLIGHT`) for over STALLED_AFTER   -> true  (its job is not coming)
       #   anything else                                    -> false
@@ -170,7 +176,9 @@ module Maker
       # asks "was this made from the file's CURRENT CONTENT?", `renderer_revision` "was it made by
       # the CURRENT CODE?". Only the first was checked until a thinning fix shipped for the .lbrn2
       # Measure view and every already-measured file kept serving the old algorithm's output,
-      # because its content had not changed and nothing else was being compared.
+      # because its content had not changed and nothing else was being compared. A `viewer` row
+      # (`Maker::Preview::SOURCES`) answers only the first: no renderer built it, so a renderer
+      # upgrade has nothing to improve on a picture the maker chose.
       #
       # `retry_failed:` IS REQUIRED HERE, NOT DEFAULTED, because the two answers are both right for
       # someone and both silent when wrong: an eager seam must retry (`call`'s default), and a door a
@@ -183,7 +191,16 @@ module Maker
       # happens to start with the same two coordinates.
       def needs_job?(preview, version_id:, revision:, retry_failed:)
         return true if preview.nil? || preview.new_record?
-        return true if preview.version_id != version_id || preview.renderer_revision != revision
+        # A CALLER THAT NAMES NO CONTENT CANNOT CALL A VIEWER ROW STALE (2026-10-20, found in
+        # review). The v1 previews API takes a POST with no `version_id` -- tinkerex-client sends
+        # none when it has none -- and nil reads as a content change on the next line, which handed
+        # the picture the maker chose back to the renderer, repointed at nil, for good. A caller
+        # that DOES name a different token is a content claim and still repoints.
+        return false if preview.viewer? && version_id.blank?
+        return true if preview.version_id != version_id
+        # THE MAKER'S CHOICE OUTRANKS A RENDERER UPGRADE (2026-10-20): same content, so no job.
+        return false if preview.viewer?
+        return true if preview.renderer_revision != revision
         return retry_failed if preview.failed?
 
         stalled?(preview)
@@ -255,11 +272,15 @@ module Maker
       # old). §14h states the rule outright — "Same mechanism, opposite right answers; do not unify
       # them." What is shared is only WHICH ROW IS CURRENT; what each door does with the answer is
       # each door's own business, asked of the row's own predicates.
+      #
+      # THE REVISION HALF IS ASKED IN RUBY (`revision_current?`), NOT IN THE `find_by`, because a
+      # `viewer` row the maker chose is current at ANY revision; the key is still (user, node, kind),
+      # so the lookup returns one row at most either way.
       def current_preview(user:, node_id:, name:, version_id:, kind:)
         return nil if name.blank? || version_id.blank?
 
-        user.maker_previews.find_by(node_id:, kind:, version_id:,
-                                    renderer_revision: revision_for_name(name, kind))
+        row = user.maker_previews.find_by(node_id:, kind:, version_id:)
+        row if row && revision_current?(row, name)
       end
 
       # The same rule against a row already in memory. `kind` comes off the row itself, which is
@@ -280,11 +301,18 @@ module Maker
       # reachable from either of today's callers (`ThumbnailMap` scopes its query to the nodes the
       # port answered for; `Node` validates `name` for presence), WHICH IS PRECISELY WHY it can be
       # deleted without a test going red. Leave it.
+      #
+      # The revision half is `revision_current?`, shared with `current_preview` above, so a `viewer`
+      # row is current at any revision in both shapes or in neither.
       def current_preview?(preview, name:, version_id:)
         return false if name.blank? || version_id.blank?
 
-        preview.version_id == version_id &&
-          preview.renderer_revision == revision_for_name(name, preview.kind)
+        preview.version_id == version_id && revision_current?(preview, name)
+      end
+
+      # A viewer row is current at ANY renderer revision; a rendered one only at this build's.
+      def revision_current?(preview, name)
+        preview.viewer? || preview.renderer_revision == revision_for_name(name, preview.kind)
       end
     end
   end

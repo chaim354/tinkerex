@@ -149,7 +149,8 @@
                colors: (@viewer_manifest&.colors || []),
                unit_factor: (@viewer_manifest&.unit_factor || 1.0),
                thumbnail: @thumbnail, thumbnail_url: preview_src(@thumbnail),
-               download_url: blob_file_path(@node.node_id, download: 1) %>
+               download_url: blob_file_path(@node.node_id, download: 1),
+               preview_url: file_preview_path(@node.node_id), viewer_preview: @thumbnail&.viewer? %>
   <% elsif @kind == :measure %>
     <%# .lbrn/.lbrn2, .mage, .dxf, .svg — a picture at rest, with a button that swaps in a
         measurable outline view built from the geometry payload. The four save URLs are the

@@ -550,7 +550,7 @@ module Maker
     end
 
     # STAGE 3, S3-1: THE SWEEP OBEYS THE USER'S OWN FILING RULES, NOT JUST ROLE_FOLDERS' DEFAULT.
-    # Edited after the seed, the way a real visit to /settings/filing would leave it -- #place
+    # Edited after the seed, the way a real visit to the Shelves page would leave it -- #place
     # reads Maker::FilingRules.for(@user) once per sweep (see ProjectIntake#filing_rules), so an
     # edit made before this sweep runs is exactly what it is meant to see.
     test "a user's own filing rule overrides the seeded default" do

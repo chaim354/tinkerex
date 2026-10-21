@@ -7,6 +7,16 @@ module Maker
 
       setup { @user = User.create!(email: "enq@example.com") }
 
+      # A `ready` thumbnail of part.stl with a picture attached, at this build's revision unless told
+      # otherwise — the shape a row has once a render (or the maker's viewer capture) has landed.
+      def ready_thumbnail!(source: "renderer", version_id: "v1",
+                           renderer_revision: Enqueue.revision_for_name("part.stl", "thumbnail"))
+        row = @user.maker_previews.create!(node_id: "n1", version_id:, kind: "thumbnail", status: "ready",
+                                           source:, renderer_revision:)
+        row.asset.attach(io: StringIO.new("\x89PNG chosen".b), filename: "t.png", content_type: "image/png")
+        row
+      end
+
       test "creates a pending thumbnail preview and enqueues the job" do
         assert_enqueued_with(job: Maker::GeneratePreviewJob) do
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
@@ -329,6 +339,47 @@ module Maker
         assert_no_enqueued_jobs do
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
         end
+      end
+
+      # A VIEWER PREVIEW IS CURRENT WHILE ITS CONTENT IS (2026-10-20): a renderer upgrade must not
+      # repaint the angle the maker chose.
+      test "a viewer preview survives a renderer revision bump" do
+        row = ready_thumbnail!(source: "viewer", renderer_revision: 0) # 0: older than any real revision
+        assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
+          Maker::Previews::Enqueue.call(user: @user, node_id: row.node_id, name: "part.stl",
+                                        version_id: row.version_id)
+        end
+        row.reload
+        assert_equal [ "viewer", "ready" ], [ row.source, row.status ]
+      end
+
+      test "a viewer preview of old content goes back to the renderer" do
+        row = ready_thumbnail!(source: "viewer")
+        assert_enqueued_jobs 1, only: Maker::GeneratePreviewJob do
+          Maker::Previews::Enqueue.call(user: @user, node_id: row.node_id, name: "part.stl",
+                                        version_id: "new-content")
+        end
+        row.reload
+        assert_equal [ "renderer", "pending", "new-content" ], [ row.source, row.status, row.version_id ]
+      end
+
+      test "a viewer preview is current whatever its renderer revision" do
+        row = ready_thumbnail!(source: "viewer", renderer_revision: 0)
+        assert_equal row, Maker::Previews::Enqueue.current_preview(user: @user, node_id: row.node_id,
+                                                                    name: "part.stl", version_id: row.version_id,
+                                                                    kind: "thumbnail")
+        assert Maker::Previews::Enqueue.current_preview?(row, name: "part.stl", version_id: row.version_id)
+      end
+
+      # A VERSION-LESS ASK IS NOT A CONTENT CHANGE (found in review): the v1 previews API forwards a
+      # POST that names no `version_id` as nil, and nil != "v1" used to repoint the maker's picture.
+      test "a request that names no content leaves a viewer preview alone" do
+        row = ready_thumbnail!(source: "viewer")
+        assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
+          Maker::Previews::Enqueue.call(user: @user, node_id: row.node_id, name: "part.stl", version_id: nil)
+        end
+        row.reload
+        assert_equal [ "viewer", "ready", "v1" ], [ row.source, row.status, row.version_id ]
       end
     end
   end

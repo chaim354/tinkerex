@@ -302,7 +302,7 @@ module Web
 
     # --- the model that was already there -------------------------------------
 
-    # STORY 1.3's measured friction: the seeded `*` shelf makes every top-level folder a shelf, so
+    # STORY 1.3's measured friction: the built-in `*` shelf makes every top-level folder a shelf, so
     # `designs/tray` had already become a MODEL. Maker::ModelIntake stops accreting the moment a
     # project claims the folder (model_intake.rb:87-95), but the ROW SURVIVES — its own comment says
     # clearing it is Prune's job — so without this the folder is a project AND a model, forever.

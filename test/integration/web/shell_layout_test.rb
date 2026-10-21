@@ -80,9 +80,10 @@ module Web
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
       get project_path(project)
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
-      # settings/shelves (slice 5) and settings/tags are nested controllers whose family is the
-      # rail FOOT's Settings, not a place: Settings lights and no `.rail-link` does. Shelves lit
-      # 3D models from 2026-09-10 until it moved back under Settings.
+      # settings/shelves and settings/tags are nested controllers whose family is the rail FOOT's
+      # Settings, not a place: Settings lights and no `.rail-link` does. The model catalog's old
+      # shelves page lit 3D models from 2026-09-10 until it moved back under Settings (slice 5); the
+      # path is the project-folder Shelves page since 2026-10-20.
       [ settings_shelves_path, settings_tags_path ].each do |path|
         get path
         assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current='page']", count: 1

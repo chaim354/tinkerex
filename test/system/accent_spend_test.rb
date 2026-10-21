@@ -109,6 +109,10 @@ class AccentSpendTest < ApplicationSystemTestCase
       # the next reader has to re-derive that these were looked at.
       "/inventory/suppliers" => [ "Add supplier" ],
       "/inventory/locations" => [ "Add location" ],
+      # THE SHELVES PAGE (2026-10-20; it was Filing, and before that the model catalog's shelves
+      # held this path) spends it once, on Add shelf at its foot. Each card's Add (an extension)
+      # and Save (its view and group), and the page's Add group and each group's Rename, are quiet:
+      # with a dozen cards a per-card accent would be a dozen.
       "/settings/shelves" => [ "Add shelf" ],
       # K (2026-10-20): the library folder page, with a catalog to keep (the model folder above), spends
       # it on Switch; Start over is quiet behind its confirmation. Off share there is nothing to choose.

@@ -292,7 +292,7 @@ module Library
     # not settled is a wrong answer — the same reason the two methods below give.
     #
     # Before the PROJECT INTAKE so a discovered project's loose files are filed in the SAME pass, not
-    # the next. This used to change the answer as well: left at `Projects/new-thing/`, the seeded `*`
+    # the next. This used to change the answer as well: left at `Projects/new-thing/`, the built-in `*`
     # shelf makes `Projects` the nearest shelf above them, so a catalog that reached the folder
     # before it was adopted made the whole `new-thing` FOLDER one model, permanently. Ordering never
     # closed that and could not: this call is CAPPED (Maker::ProjectDiscovery::MAX_PROJECTS), so a
@@ -380,13 +380,13 @@ module Library
     # After the PROJECT INTAKE because that step MOVES files, and the model a file belongs to is
     # decided by the nearest SHELF above it — so a move can change the answer rather than merely the
     # location. Measured 2026-10-19 on a project adopted at a TOP-LEVEL folder with filing on: its
-    # root is itself a shelf (the seeded `*`), so a loose `lid.stl` there is its own one-file model.
+    # root is itself a shelf (the built-in `*`), so a loose `lid.stl` there is its own one-file model.
     # Catalogue first and that row makes the intake refuse to move the file (`:model_bundle`, a file
     # a model holds stays put), so it sits at the root for good; in this order it is filed into
     # `models/` and joins that folder's model. UNDER `Projects/` THE SAME SWAP NOW COSTS ONLY A SCAN:
     # a file loose at a project's root keys to the project's folder, which is claimed — by its
     # project, or by discovery's position before the project exists (F-S07-1) — so the catalog
-    # leaves it alone until the intake has moved it under the seeded `Projects/*/models` shelf.
+    # leaves it alone until the intake has moved it under the built-in `Projects/*/models` shelf.
     # Pinned by scan_job_test.rb's IntakeOrderTest ("cataloguing runs after the project intake…"),
     # which is RED on the swap with [] — the `Projects/` half; the top-level half has no test yet.
     #

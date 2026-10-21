@@ -220,6 +220,22 @@ module Maker
       assert_not rendered, "the job rendered for coordinates the row no longer names"
     end
 
+    # NEVER OVER A PICTURE THE MAKER CHOSE (2026-10-20). A render queued before they clicked "Use
+    # this view as preview" runs after the click: the row is `viewer` now, and the job stands down
+    # rather than attaching its own render over their angle. A 3MF, because its embedded thumbnail
+    # renders on any box — so a job that did NOT stand down would really replace the asset here.
+    test "a render queued before the maker chose a view does not land on top of it" do
+      row = threemf_row!("chosen.3mf", status: "ready")
+      row.update!(source: "viewer")
+      chosen = row.asset.blob.id
+
+      Maker::GeneratePreviewJob.perform_now(row.id)
+
+      row.reload
+      assert_equal [ "viewer", "ready" ], [ row.source, row.status ]
+      assert_equal chosen, row.asset.blob.id, "the render replaced the picture the maker chose"
+    end
+
     test "renders SVG to a PNG when resvg is present; unsupported when absent" do
       stage_version(node_id: "n1.svg", version_id: "v1", bytes: @svg)
       preview = @user.maker_previews.create!(node_id: "n1.svg", version_id: "v1", kind: "thumbnail")

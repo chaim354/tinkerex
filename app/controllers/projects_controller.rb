@@ -141,8 +141,9 @@ class ProjectsController < ApplicationController
 
     # THE PAGE'S PANEL LIST (stage 4, S4-7; story 6.5): this project's kind's preset with its own
     # overrides on top, over a vocabulary that now includes this folder's own depth-one subfolders
-    # (Maker::ProjectKind's header). Zero queries — two columns off the row `set_project` already
-    # loaded, plus `panel_folders`, which is one `map` over the tree above.
+    # (Maker::ProjectKind's header). Two columns off the row `set_project` already loaded, plus
+    # `panel_folders` — the tree above plus ONE shelves query (2026-10-20, Maker::Shelves.by_name),
+    # memoised on the listing and constant in the number of folders.
     # CONTENT BLOCKS (2026-09-09; spec §2). ONE query, and ONE read: the layout's `blocks:` pairs
     # and the index the partials render from come from the same array, so a block created between
     # two reads can never reach the loop as a key with no kind — which `render "projects/#{key}"`

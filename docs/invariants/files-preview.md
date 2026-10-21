@@ -21,7 +21,8 @@ ever created. No test spanned the two layers; each table looked right alone.
 `Maker::ProjectFolders.folder_for(user, name)` no longer answers straight out of `ROLE_BY_EXT` +
 `ROLE_FOLDERS` — it reads `Maker::FilingRules.for(user)`, a per-user table seeded ONCE from those
 two (`ROLE_BY_EXT`'s extension → role → `ROLE_FOLDERS`'s role → folder) on a user's first read, then
-edited at `/settings/filing`. That does not loosen this file's own rule: an extension still needs a
+edited on the Shelves page (`/settings/shelves`; Filing until 2026-10-20). That does not loosen
+this file's own rule: an extension still needs a
 `ROLE_BY_EXT` entry to be SEEDED with any folder at all (an extension nobody has wired stays
 answerable only as `"other"`, the fallback every per-user row lookup shares), so "add an extension
 in `ROLE_BY_EXT` only" is still where a new extension's file-type identity is decided — it is only
@@ -527,7 +528,7 @@ it out of `cad/` on the user's NAS) and `.svg` stays `vector`. **The widening's 
 existing users ONCE, by a data migration, never by a re-seed on read**
 (`db/migrate/20260906140000_rederive_model_roles_and_seed_filing_rules.rb`, the shape
 `SeedPcbFilingRules` set): `Maker::FilingRules.seed!` stays guarded by `exists?` because
-`/settings/filing` promises a removed rule files into `other`, so the migration tops up only users
+the Shelves page promises a removed rule files into `other`, so the migration tops up only users
 who already hold rules (a user with none is seeded in full on their first read). It also re-derived
 `other` attachment roles on the thirteen extensions, ghost nodes skipped, and its `down` takes only
 those extensions on both doors — the folder column is free-form, and a hand-made rule filing

@@ -201,7 +201,7 @@ module Maker
     # per-user filing rules #place's own memoized lookup reads a moment later (#folder_for below),
     # so what this predicts and what the sweep does cannot disagree as long as the user's rules
     # have not changed in between. Not a second copy of the vocabulary (§14d: add an extension in
-    # ROLE_BY_EXT only; stage 3 S3-1: edit a folder at /settings/filing, not here).
+    # ROLE_BY_EXT only; stage 3 S3-1: edit a folder on the Shelves page, not here).
     #
     # IT CANNOT ANSWER THE BOARD-ZIP QUESTION, AND THAT IS A PROPERTY OF WHEN IT RUNS. #place asks
     # `Maker::GerberArchive.for` about a node that EXISTS; this method is asked about a file a save

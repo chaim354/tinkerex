@@ -177,7 +177,8 @@ module Maker
             "ceiling (raise PREVIEW_MAX_BYTES to render larger files)"
     end
 
-    # Write ONLY if the row still points at the content this run rendered; true when it did.
+    # Write ONLY if the row still points at the content this run rendered, and the maker has not
+    # chosen its picture in the viewer since (`Maker::Preview#viewer?`); true when it did.
     #
     # EVERY write goes through here — the start and every terminal one, not just the successful
     # one — and that is the part most likely to be trimmed later: a stale `unsupported` or
@@ -190,6 +191,9 @@ module Maker
     # enqueued a job for the new content, so the newer render is already coming.
     def commit_if_current(preview, target)
       preview.reload
+      # NEVER OVER A PICTURE THE MAKER CHOSE (2026-10-20): a render queued before they clicked
+      # "Use this view as preview" finds the row turned `viewer` and stands down.
+      return false if preview.viewer?
       return false if [ preview.version_id, preview.renderer_revision ] != target
 
       yield

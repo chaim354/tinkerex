@@ -177,8 +177,14 @@
   .model-viewer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
   .model-viewer-source { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); max-width: 60%; }
   .mv-launch { display: inline-flex; gap: 8px; }
-  .mv-actions { display: none; gap: 8px; }
+  /* WRAPS, because the 3D viewer's bar outgrew one line on a phone: "Use this view as preview"
+     (2026-10-20) took the open viewer's buttons to 435px against a 375px viewport, and nowrap
+     pushed the whole page sideways (design-system.md rule 11; o3dv_test.rb measures it). */
+  .mv-actions { display: none; gap: 8px; flex-wrap: wrap; }
   .model-viewer-dims { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  /* "Use this view as preview"'s answer. Outside .mv-actions and never hidden by --ready: a status
+     line must be readable while the viewer is open, which is when the button is pressed. */
+  .mv-status { font-size: 12px; }
   .model-viewer-fallback { text-align: center; padding: 24px; }
   /* --ready MEANS "THE VIEWER IS OPEN", NOT "THE MODEL RENDERED" — reveal the canvas + bar, hide
      the poster. The controller adds it when the user launches (the stage must have a size before
@@ -212,9 +218,8 @@
   .gerber-viewer .model-viewer-stage svg { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
   .gerber-viewer .model-viewer-stage svg.is-panning { cursor: grabbing; }
   /* A board's bar carries Top/Bottom and one toggle per layer beside Fit, Fullscreen and ✕ Image —
-     a dozen buttons on a six-layer board — so it wraps where the 3D viewer's three-button bar never
-     needs to. `.btn small` is the component (design-system.md rule 3); these only lay the groups out. */
-  .gerber-viewer .mv-actions { flex-wrap: wrap; }
+     a dozen buttons on a six-layer board — and wraps them as every .mv-actions does (above).
+     `.btn small` is the component (design-system.md rule 3); these only lay the groups out. */
   .gerber-sides, .gerber-tools { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 
   /* --- Measure view (measure_controller.js) — .lbrn/.lbrn2, .mage, .dxf, .svg --- */

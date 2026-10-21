@@ -218,7 +218,8 @@ module Maker
     # stale read waiting for the first caller that writes `panels` and reads the layout back in the
     # same request — which is exactly what Projects::PanelsController does.
     # `folders:` IS THE PROJECT'S CURRENT DEPTH-ONE FOLDERS — Maker::ProjectFolderListing
-    # #panel_folders, `[[node_id, repo?], …]` — and it DEFAULTS TO `[]` so a caller holding no
+    # #panel_folders, `[[node_id, repo?, shelf], …]` (the shelf, 2026-10-20, carries the folder's
+    # default view and group; nil for none) — and it DEFAULTS TO `[]` so a caller holding no
     # listing keeps the fixed-key layout it has always had. A caller that HAS one passes it: the
     # layout's totality is against the folders that exist NOW (Maker::ProjectKind's header), so a
     # page that renders folder panels and a chooser that lists them must both say which folders

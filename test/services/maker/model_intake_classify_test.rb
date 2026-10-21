@@ -51,8 +51,6 @@ module Maker
       file("f-kitpart", "part.stl", "d-kitstl")
       dir("d-kitphotos", "photos", "d-kit")
       file("f-kitshot", "shot.jpg", "d-kitphotos")
-
-      @user.maker_shelves.create!(path: "3D Models")
     end
 
     def dir(node_id, name, parent)
@@ -63,7 +61,10 @@ module Maker
       @user.nodes.create!(node_id:, name:, kind: "file", parent_node_id: parent, mtime: 1, size: 1)
     end
 
-    def classify = Maker::ModelIntake.classify(@user)
+    # THE FIXTURE'S OWN SHELF, passed in rather than built in: the built-in shelves make the root
+    # and every top-level folder a shelf, which would hide the cases below that need a file with
+    # no shelf above it. The built-ins themselves are pinned at the end of the class.
+    def classify(patterns = [ "3D Models" ]) = Maker::ModelIntake.classify(@user, patterns:)
 
     test "a loose model file directly under a shelf is its own model" do
       assert_includes classify.model_keys, "f-benchy"
@@ -98,8 +99,7 @@ module Maker
     # THE NESTED CASE: marking the inner folder a shelf makes its children models instead, and the
     # outer model stops at it. Nearest ancestor wins.
     test "a shelf inside a model folder takes over its children" do
-      @user.maker_shelves.create!(path: "3D Models/Enclosure")
-      plan = classify
+      plan = classify([ "3D Models", "3D Models/Enclosure" ])
       assert_not_includes plan.model_keys, "d-enc"
       assert_includes plan.model_keys, "f-body"
       assert_includes plan.model_keys, "d-parts"
@@ -111,13 +111,13 @@ module Maker
       dir("d-lamp", "desk-lamp", "d-projects")
       dir("d-lampmodels", "models", "d-lamp")
       file("f-shade", "shade.stl", "d-lampmodels")
-      @user.maker_shelves.create!(path: "Projects/*/models")
 
-      assert_includes classify.model_keys, "f-shade"
+      assert_includes classify([ "3D Models", "Projects/*/models" ]).model_keys, "f-shade"
     end
 
-    # DELETING THE ROOT SHELF IS A LEGITIMATE CHOICE, not a gap -- loose root files are simply not
-    # catalogued. The fixture has no root shelf, so this is already the state under test.
+    # A FILE WITH NO SHELF ABOVE IT IS SKIPPED, not a gap. The built-in shelves include the root, so
+    # no live file reaches this today; the fixture's patterns have no root shelf, so this is
+    # already the state under test, and the rule stays total over any pattern set.
     test "a file with no shelf ancestor is not catalogued" do
       file("f-orphan", "orphan.stl", nil)
       plan = classify
@@ -179,6 +179,30 @@ module Maker
     test "a tombstoned file is invisible" do
       @user.nodes.find_by!(node_id: "f-body").update!(deleted: true)
       assert_equal %w[f-clip f-manual], classify.files_for("d-enc").sort
+    end
+
+    # THE BUILT-IN SHELVES (2026-10-20). Until then these four were per-user rows edited at
+    # /settings/shelves; every live user held exactly these four when the page was retired.
+    test "the built-in shelves are the four that shipped" do
+      assert_equal [ "", "*", "Models", "Projects/*/models" ], Maker::ModelIntake::SHELVES
+    end
+
+    test "with no patterns given, the built-in shelves decide" do
+      file("f-rootfile", "loose.stl", nil)
+      plan = Maker::ModelIntake.classify(@user)
+      assert_includes plan.model_keys, "f-rootfile", "the library root is a built-in shelf"
+      assert_includes plan.model_keys, "f-benchy", "every top-level folder is a built-in shelf"
+    end
+
+    # The matcher moved here from Maker::Shelf.matches? with its rules unchanged.
+    test "a wildcard segment matches exactly one segment" do
+      m = ->(p, x) { Maker::ModelIntake.shelf_matches?(p, x) }
+      assert m.call("", "")
+      assert_not m.call("*", "")
+      assert m.call("*", "Models")
+      assert_not m.call("*", "a/b")
+      assert m.call("Projects/*/models", "Projects/lamp/models")
+      assert_not m.call("Projects/*/models", "Projects/lamp/x/models")
     end
   end
 end

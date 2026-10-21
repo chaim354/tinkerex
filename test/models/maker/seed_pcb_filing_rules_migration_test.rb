@@ -5,7 +5,7 @@ module Maker
   # THE DATA MIGRATION THAT GIVES EXISTING USERS THE `pcb` FILING RULES, and the reason it is a
   # migration rather than a change to `Maker::FilingRules.seed!`.
   #
-  # `seed!`'s `exists?` GUARD MUST NOT BE WEAKENED INTO A TOP-UP. /settings/filing promises that a
+  # `seed!`'s `exists?` GUARD MUST NOT BE WEAKENED INTO A TOP-UP. The Shelves page promises that a
   # removed rule "will file into other until you add a new one", so a per-extension fill-in on every
   # read would resurrect a rule the user deliberately deleted — and `seed!`'s own header already
   # rejects that design at length. A migration runs ONCE, which is what makes the top-up safe.
@@ -71,7 +71,7 @@ module Maker
                    @user.maker_filing_rules.count
     end
 
-    # THE USER WHO ALREADY ADDED `.drl` BY HAND at /settings/filing before this ran: their folder
+    # THE USER WHO ALREADY ADDED `.drl` BY HAND on the Filing page before this ran: their folder
     # survives and no duplicate row appears. ON CONFLICT DO NOTHING is not an upsert, and this is
     # what says the difference matters.
     #

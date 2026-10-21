@@ -136,7 +136,7 @@
 - **DISCOVERY RUNS STRICTLY BEFORE THE FILING SWEEP, AND SINCE F-S07-1 (2026-10-19) THE ORDER
   CHANGES THE TIMING, NOT THE ANSWER**: a discovered project's loose files are filed in the SAME
   pass rather than the next. It used to change the answer — those files have no shelf nearer than
-  `Projects` itself (the seeded `*`), so a model catalog that reached the folder before discovery
+  `Projects` itself (the built-in `*`), so a model catalog that reached the folder before discovery
   made the WHOLE FOLDER one model, permanently — and **no ordering could close that**: discovery
   is CAPPED (`MAX_PROJECTS`) even inside `Library::ScanJob`'s own sequence, and on `chunk_remote`
   discovery and the catalog are independent schedules. `Maker::ModelIntake.claimed_folders` closes
@@ -250,12 +250,14 @@
   DIRECTLY ANY MORE.**
   `Maker::ProjectFolders.folder_for(user, name)` reads `Maker::FilingRules.for(user)`: one row per
   extension, seeded once from `ROLE_FOLDERS` over `Maker::FileAttachment::ROLE_BY_EXT` on a user's
-  first read and edited from then on at `/settings/filing`. Since stage 4, S4-2 (`cnc_design` was
+  first read and edited from then on as the chips of the Shelves page (`/settings/shelves`, which
+  was Filing until 2026-10-20; each shelf is a `Maker::Shelf` row joined to its rules by folder
+  name and made on read by `Maker::Shelves.ensure!`). Since stage 4, S4-2 (`cnc_design` was
   the thirteenth role) the seed ALSO writes one row per `Maker::FilingRules::BEYOND_ROLE_BY_EXT`
   entry — today `kicad_sch`/`kicad_pcb` → `pcb`, a literal folder because there is no role to look one
   up by — so the count a test asserts is `ROLE_BY_EXT.size + BEYOND_ROLE_BY_EXT.size`, never the first
   alone. `seed!`'s `exists?` guard stays a whole-batch guard: an existing user's new keys arrive by
-  MIGRATION, once (`20260907120100`), because `/settings/filing` promises a removed rule files into
+  MIGRATION, once (`20260907120100`), because the Shelves page promises a removed rule files into
   `other` and a per-read top-up would resurrect it. Keep `BEYOND_ROLE_BY_EXT` small — every entry
   claims a real format the Files page cannot filter by. `default_folder_for(name)` stays the
   OLD pure function of the static, role-keyed vocabulary — kept for the seed itself (which cannot
@@ -325,7 +327,7 @@
   folder is re-sorted into it. `other/` is the sweep's own answer for "no rule for this", so such a
   file is the app's earlier "don't know", not the maker's filing — catan's three `.mage` files went
   into `other/` on 2026-09-06, the day before `.mage` got `cnc/`, and stayed there. What triggers it
-  is a rule APPEARING (a vocabulary widening's migration, or an Add at `/settings/filing`), so the
+  is a rule APPEARING (a vocabulary widening's migration, or an Add on the Shelves page), so the
   periodic sweep catches it; no nudge does, because no file arrival signals a rule change. Three
   things not to undo: **`Maker::ProjectIntake.resortable?` decides by NAME alone** and is the ONE
   predicate both `#call`'s selection and `.inbox_count` (both caps' count) use, so a cap counts

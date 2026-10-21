@@ -176,15 +176,27 @@ module Maker
     # Files at the folder's OWN root — the sweep's inbox.
     def loose = @loose
 
-    # THE PANEL LAYOUT'S VOCABULARY OF FOLDERS: `[[node_id, repo?], …]` for the DEPTH-ONE
-    # subfolders, in `tree`'s order (by name — the disk order the page renders). Depth one is the
-    # whole rule (2026-09-08, folder panels; spec decision 3): a nested folder renders inside its
-    # parent's panel, so a key for one must never reach the layout, and this reader is where that
-    # is decided — `tree` and not `flatten_dirs(tree)`.
+    # THE PANEL LAYOUT'S VOCABULARY OF FOLDERS: `[[node_id, repo?, shelf], …]` for the DEPTH-ONE
+    # subfolders. Depth one is the whole rule (2026-09-08, folder panels; spec decision 3): a
+    # nested folder renders inside its parent's panel, so a key for one must never reach the
+    # layout, and this reader is where that is decided — `tree` and not `flatten_dirs(tree)`.
     #
-    # In memory over the tree the listing already built: no query, which is what lets
-    # ProjectsController#show and Projects::PanelsController both ask without a budget of their own.
-    def panel_folders = tree.map { |d| [ d.node_id, d.repo? ] }
+    # `shelf` IS THE FOLDER'S Maker::Shelves::Entry BY NAME, or nil (2026-10-20): its default view
+    # and its group. ORDER: ungrouped folders first in `tree`'s order (by name — the disk order),
+    # then each group's folders together, by group position, so a group's panels are adjacent in
+    # the DEFAULT arrangement and one heading can stand over them. A maker's saved order still
+    # wins (ProjectKind.stored_order).
+    #
+    # ONE QUERY, memoised on the listing (Maker::Shelves.by_name), constant in the folder count —
+    # so ProjectsController#show, Projects::LayoutScoped and Maker::PublicProject each pay it once
+    # per request, whatever the number of panels.
+    def panel_folders
+      tree.each_with_index
+          .sort_by { |d, i| e = shelf_entries[d.name]; [ e&.group ? 1 : 0, e&.group_position || 0, e&.group.to_s, i ] }
+          .map { |d, _i| [ d.node_id, d.repo?, shelf_entries[d.name] ] }
+    end
+
+    def shelf_entries = @shelf_entries ||= Maker::Shelves.by_name(@user)
 
     # Every backup-flagged Row anywhere in the folder (root or any depth of subfolder), pulled out
     # of `tree`/`loose` so the panel can fold them into one closed section instead of scattering

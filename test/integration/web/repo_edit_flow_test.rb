@@ -10,8 +10,8 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
 
   # `sign_in_as` DOES NOT EXIST IN test_helper.rb. The only method by that name is a Capybara
   # helper in test/system/support/web_helpers.rb, which takes an EMAIL and drives the real form.
-  # Every web integration test here defines its own; shelves_test.rb records a previous plan
-  # having assumed otherwise, so do not assume it again.
+  # Every web integration test here defines its own; a previous plan assumed otherwise (the old
+  # shelves_test.rb recorded it before it was retired), so do not assume it again.
   PASSWORD = "password123".freeze
 
   setup do

@@ -412,6 +412,13 @@ module Web
       # keeps (it is neither a dot-dir, the `.git` marker, nor a Library::BuildOutput name).
       # Verified by a rendered assertion when this landed, not by reading the slug.
       @user.maker_notes.create!(node_id: "n-stl", body: "<div>Cut on the lamp jig.</div>")
+
+      # THE SHELVES PAGE'S TWO GROUP BRANCHES (2026-10-20): a group holding one shelf renders its
+      # cards under its heading, and an empty one renders the "No shelves in this group yet" line.
+      # The page makes every other shelf itself on the visit (Maker::Shelves.ensure!), ungrouped.
+      fabrication = @user.maker_shelf_groups.create!(name: "Fabrication", position: 0)
+      @user.maker_shelf_groups.create!(name: "Paperwork", position: 1)
+      @user.maker_shelves.create!(name: "laser", shelf_group: fabrication)
     end
 
     teardown do
@@ -522,9 +529,9 @@ module Web
         "model detail" => model_path(@model),
         "model new" => new_model_path,
         "model edit" => edit_model_path(@model),
-        # Which folders count as models -- a Settings page again since slice 5. Needs no fixture of
-        # its own: it seeds its three shelves on first visit, and renders the shared folder chooser
-        # either way.
+        # The Shelves page (2026-10-20; it was Filing). It makes its own shelves on the visit, and
+        # setup's two groups -- one holding `laser`, one empty -- reach both arms of a group section
+        # and the card partial inside and outside one.
         "shelves" => settings_shelves_path,
         # Stage 2, S2-3.
         "inventory index" => inventory_items_path,
@@ -545,8 +552,6 @@ module Web
         # the settings hub itself needs no fixture, it only counts what setup already created.
         "settings" => settings_path,
         "settings/tags" => settings_tags_path,
-        # Stage 3, S3-1. Needs no fixture: #index seeds its own rows on first visit.
-        "settings/filing" => settings_filing_rules_path,
         # K (2026-10-20): the library folder page. One template for its states; the fixture confirms
         # the library, so the chosen state renders here (and the no-folder state on s3/chunk_remote).
         "settings/library" => settings_library_path,

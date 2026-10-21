@@ -27,8 +27,9 @@
   <input type="search" name="q" value="<%= @filters[:q] %>" placeholder="Search models…" aria-label="Search models">
   <span class="chips">
     <%# THE LABELS COME FROM Maker::Model::PRINT_STATUS_LABELS, NOT FROM LITERALS HERE. They were
-        literals until 2026-09-10, and the badge on the card below rendered its own spelling of the
-        same state — "Wanted" in this row against "Want To Print" 200px away. %>
+        literals until 2026-09-10, and the badge then on the card below rendered its own spelling of
+        the same state — "Wanted" in this row against "Want To Print" 200px away. The card has no
+        badge since 2026-10-20; the model page's badge reads the same hash. %>
     <% [["", "All"], *Maker::Model::PRINT_STATUS_LABELS.to_a].each do |val, label| %>
       <%= link_to label, files_models_path(status: val.presence, q: @filters[:q], tag: @filters[:tag], sort: @filters[:sort]),
                   class: "filter chip#{' active' if @status.to_s == val}" %>
@@ -49,9 +50,6 @@
     <% end %>
   </select>
 </form>
-
-<%# Shelves are a Settings rule since slice 5, not navigation; this is the one pointer left to them. %>
-<p class="muted models-shelves-hint">Which folders count as models: <%= link_to "Settings → Shelves", settings_shelves_path %>.</p>
 
 <%# SORTED INTO PROJECTS (2026-10-20, Maker::ModelProjects): one group per project whose folder holds
     a model, by project name, then "Not in a project" last. When no model is in any project there is

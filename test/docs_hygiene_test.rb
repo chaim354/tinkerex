@@ -85,7 +85,9 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # in-Puma job supervisor forks (a per-process memo shipped in the branch and left every worker on
   # the old folder). That is the line a future editor would "optimise" back, so it earns its two
   # lines here rather than living only in app/models/setting.rb.
-  MAX_LINES = 1_355
+  # LOWERED 1,355 -> 1,354 ON 2026-10-20 (shelves): the model catalog lost its Settings page, and
+  # §14k's stub its two paths with it.
+  MAX_LINES = 1_354
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size

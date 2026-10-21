@@ -216,7 +216,8 @@
     <%= render "public/projects/repo_card", card: card %>
   <% end %>
 <% end %>
-<%= render layout: "projects/panel_groups", locals: { groups: pub.layout.groups(pub.visible_panels), tail: cards.presence } do |key| %>
+<%= render layout: "projects/panel_groups",
+           locals: { groups: pub.layout.groups(pub.visible_panels), layout: pub.layout, tail: cards.presence } do |key| %>
   <% body = capture do %>
     <% if key == "wiring" %>
       <% if pub.connections.any? %>

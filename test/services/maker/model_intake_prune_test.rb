@@ -20,7 +20,6 @@ module Maker
       file("f-dxf", "drawing.dxf", "d-widget")
       dir("d-docs", "docs", "d-widget")
       file("f-notes", "notes.pdf", "d-docs")
-      @user.maker_shelves.create!(path: "3D Models")
 
       # THE STATE THE OLD RULE LEFT: every file in the subtree, every role.
       Maker::ModelIntake.for_user(user: @user)
@@ -90,7 +89,7 @@ module Maker
     # not get to overrule it. It is ALSO the row a sweep-attached file leaves when it MOVES
     # somewhere no model claims, and that one is kept too: the two rows are identical, so this test
     # pins both (model-intake.md lists the moved one under "Not covered"). `Manuals` is a shelf (the
-    # seeded `*`), and a PDF loose on it is no model's: nothing model-role keys there. THE FIXTURE
+    # built-in `*`), and a PDF loose on it is no model's: nothing model-role keys there. THE FIXTURE
     # USED TO BE `loose.stl`, which the rule places in its own one-file model -- the shape a move
     # INTO A MODEL leaves (the next test) -- so it pinned the F-S07-2 defect as if it were the
     # guard.

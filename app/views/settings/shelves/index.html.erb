@@ -1,4 +1,4 @@
-<% content_for :title, "Shelves - Tinkerex" %>
+<% content_for :title, "Shelves — Tinkerex" %>
 
 <div class="page-head">
   <h1>Shelves</h1>
@@ -6,33 +6,62 @@
 </div>
 
 <p class="muted">
-  A shelf is a folder that is not itself a model. Loose 3D files on a shelf each become their own
-  model; each subfolder of a shelf becomes one model, with everything inside it.
+  A shelf is a folder inside each project, <code>Projects/&lt;your project&gt;/&lt;shelf&gt;/</code>.
+  A file left loose in a project folder is filed onto the shelf its extension names here, and an
+  extension with no shelf goes to <code>other</code>. A file already in <code>other</code> moves out
+  on the next sweep once its extension gets a shelf. A shelf's view is how its panel opens on a
+  project page, and a group puts its shelves' panels together under one heading.
 </p>
 
-<ul class="shelf-list">
-  <% @shelves.each do |shelf| %>
-    <li>
-      <span class="shelf-path"><%= shelf[:label] %></span>
-      <span class="shelf-status muted">
-        <% if shelf[:wildcard] %>
-          <%= pluralize(shelf[:hits], "folder") %> matched
-        <% elsif shelf[:hits].zero? %>
-          no folder at this path
-        <% else %>
-          in your library
-        <% end %>
-      </span>
-      <%= button_to "Remove", settings_shelf_path(shelf[:record]), method: :delete, class: "linkbtn danger small" %>
-    </li>
-  <% end %>
-</ul>
-
-<%= form_with url: settings_shelves_path, method: :post, class: "shelf-add" do %>
-  <%= render "shared/folder_field",
-             name: "node_id",
-             children_url: library_children_path,
-             create_url: library_folders_path,
-             root_label: "/ (library root)" %>
-  <button type="submit" class="btn primary">Add shelf</button>
+<% if @ungrouped.any? %>
+  <div class="filing-cards">
+    <%= render partial: "shelf_card", collection: @ungrouped, as: :shelf,
+               locals: { by_folder: @by_folder, groups: @groups } %>
+  </div>
 <% end %>
+
+<% @groups.each do |group| %>
+  <section class="shelf-group" aria-labelledby="shelf-group-<%= group.id %>">
+    <div class="shelf-group-bar">
+      <h2 class="group-head" id="shelf-group-<%= group.id %>"><%= group.name %></h2>
+      <%= form_with model: group, url: settings_shelf_group_path(group), scope: :shelf_group,
+                    method: :patch, class: "shelf-group-rename" do |f| %>
+        <%= f.text_field :name, id: nil, required: true, maxlength: Maker::ShelfGroup::NAME_MAX,
+                         "aria-label": "Rename #{group.name}" %>
+        <%= f.submit "Rename", class: "btn ghost small" %>
+      <% end %>
+      <%= button_to "Delete group", settings_shelf_group_path(group), method: :delete,
+                    class: "linkbtn danger small",
+                    form: { data: { turbo_confirm: "Delete the #{group.name} group? " \
+                                                    "Its shelves stay, ungrouped." } } %>
+    </div>
+    <% members = @by_group[group.id] || [] %>
+    <% if members.any? %>
+      <div class="filing-cards">
+        <%= render partial: "shelf_card", collection: members, as: :shelf,
+                   locals: { by_folder: @by_folder, groups: @groups } %>
+      </div>
+    <% else %>
+      <p class="empty">No shelves in this group yet. Choose it in a shelf's Group menu.</p>
+    <% end %>
+  </section>
+<% end %>
+
+<div class="shelf-forms">
+  <%= form_with url: settings_shelves_path, scope: :shelf, class: "settings-add shelf-new" do |f| %>
+    <label>
+      <span>New shelf</span>
+      <%= f.text_field :name, required: true, placeholder: "renders", id: nil %>
+    </label>
+    <%= f.submit "Add shelf", class: "btn primary" %>
+  <% end %>
+  <%= form_with url: settings_shelf_groups_path, scope: :shelf_group,
+                class: "settings-add shelf-group-new" do |f| %>
+    <label>
+      <span>New group</span>
+      <%= f.text_field :name, required: true, placeholder: "Fabrication",
+                       maxlength: Maker::ShelfGroup::NAME_MAX, id: nil %>
+    </label>
+    <%= f.submit "Add group", class: "btn ghost" %>
+  <% end %>
+</div>

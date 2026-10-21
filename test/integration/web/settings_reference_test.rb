@@ -1,15 +1,15 @@
 require "test_helper"
 
 module Web
-  # Task B (S2-3): the two settings reference lists, Suppliers and Locations, in the shape of
-  # Shelves (test/integration/web/shelves_test.rb) -- a flat list, one row per record, an inline
-  # add form, a Remove button, all session-authed (§14d). Both controllers hand every stock-item
-  # reference to `dependent: :nullify` on the model (Maker::Supplier, Maker::Location), so removing
-  # a reference row never locks or destroys what pointed at it -- see those models' own comments.
+  # Task B (S2-3): the two settings reference lists, Suppliers and Locations, in the shape the old
+  # model-shelves page had -- a flat list, one row per record, an inline add form, a Remove button,
+  # all session-authed (§14d). Both controllers hand every stock-item reference to
+  # `dependent: :nullify` on the model (Maker::Supplier, Maker::Location), so removing a reference
+  # row never locks or destroys what pointed at it -- see those models' own comments.
   #
-  # NO BACKEND IS PINNED HERE, for the same reason shelves_test.rb gives: neither controller reads
-  # `nodes` or calls the port at all, so there is nothing for FileLayer.current to answer and
-  # nothing for the ambient LIBRARY_BACKEND to change.
+  # NO BACKEND IS PINNED HERE, for the same reason settings_shelves_test.rb gives: neither
+  # controller reads `nodes` or calls the port at all, so there is nothing for FileLayer.current to
+  # answer and nothing for the ambient LIBRARY_BACKEND to change.
   class SettingsReferenceTest < ActionDispatch::IntegrationTest
     PASSWORD = "password123".freeze
 
@@ -153,8 +153,8 @@ module Web
     end
 
     # A FOREIGN parent_id FAILS Maker::Location#parent_belongs_to_user, AND THE MODEL'S OWN MESSAGE
-    # IS WHAT REACHES THE USER -- not a guessed one (the same argument Settings::ShelvesController#create's
-    # comment makes for its own two-validation refusal).
+    # IS WHAT REACHES THE USER -- not a guessed one (the same argument Settings::ShelvesController#create
+    # makes by redirecting with `shelf.errors.full_messages`).
     test "a foreign parent_id is refused with the model's error, not a 500" do
       theirs = other_user!.maker_locations.create!(name: "Not yours")
 
