@@ -20,6 +20,13 @@ module Maker
       assert_not @user.maker_previews.build(node_id: "n", status: "bogus").valid?
     end
 
+    # WHO MADE THE PICTURE (2026-10-20): the renderer, or the maker's own view in the 3D viewer.
+    test "source defaults to renderer and must be renderer or viewer" do
+      assert_equal "renderer", @user.maker_previews.build(node_id: "n").source
+      assert @user.maker_previews.build(node_id: "n", source: "viewer").valid?
+      assert_not @user.maker_previews.build(node_id: "n", source: "other").valid?
+    end
+
     test "unsupported is a valid status" do
       assert @user.maker_previews.build(node_id: "n", status: "unsupported").valid?
     end

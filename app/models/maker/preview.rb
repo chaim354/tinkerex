@@ -32,10 +32,17 @@ module Maker
     # the same window. `rebuilding` is in it: a rebuild whose job was lost would otherwise show an
     # older build for good.
     IN_FLIGHT = %w[pending processing rebuilding].freeze
+    # WHO MADE THE PICTURE (2026-10-20). `renderer` is the server-side render every row starts
+    # as; `viewer` is a PNG the maker took in the 3D viewer ("Use this view as preview",
+    # Files::PreviewsController). Maker::Previews::Enqueue treats a viewer row whose content token
+    # still matches as current whatever the renderer revision, and GeneratePreviewJob never writes
+    # over one; a content change repoints the row and hands it back to the renderer.
+    SOURCES = %w[renderer viewer].freeze
 
     validates :node_id, presence: true
     validates :kind,    inclusion: { in: KINDS }
     validates :status,  inclusion: { in: STATUSES }
+    validates :source,  inclusion: { in: SOURCES }
     # ONE ROW PER (user, node, kind) — see 20260730001500_one_preview_per_node_and_kind.rb. The
     # scope used to include version_id, which is what made every save mint a row and strand its
     # predecessor. `version_id` is now a MUTABLE column recording which content the attached asset
@@ -69,6 +76,10 @@ module Maker
 
     # A real render or fetch error — the one terminal state an eager seam retries.
     def failed? = status == "failed"
+
+    # The maker chose this picture in the 3D viewer (`SOURCES`): no renderer may replace it while
+    # the content it shows is still the file's.
+    def viewer? = source == "viewer"
 
     # This row's artifact is data a surface measures from (`MEASURED_KINDS`), not a picture.
     def measured? = MEASURED_KINDS.include?(kind)

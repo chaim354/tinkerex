@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_20_180100) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_20_190000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -310,6 +310,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_20_180100) do
     t.json "metadata"
     t.string "node_id", null: false
     t.integer "renderer_revision", default: 1, null: false
+    t.string "source", default: "renderer", null: false
     t.string "status", default: "pending", null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
