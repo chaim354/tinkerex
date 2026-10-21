@@ -56,6 +56,18 @@ module Maker
     # say "Attached 3 files from Widget."
     Result = Data.define(:attachments, :relocation, :created, :model)
 
+    # WHICH MODEL OWNS EACH OF `node_ids`, as { node_id => model_id } — #model_owning's rule (the
+    # OLDEST Maker::Model row naming the node) for a whole list in ONE query, for the project page's
+    # Models panel (Maker::ProjectModels), which asks it of every attached file at once. The two are
+    # the same ORDER BY id read two ways; attach_model_test.rb pins that they agree.
+    def self.owners_by_node(user, node_ids)
+      return {} if node_ids.empty?
+
+      user.maker_file_attachments.where(attachable_type: "Maker::Model", node_id: node_ids)
+          .order(:id).pluck(:node_id, :attachable_id)
+          .each_with_object({}) { |(node_id, model_id), owners| owners[node_id] ||= model_id }
+    end
+
     def initialize(user:, project:)
       @user = user
       @project = project
@@ -133,6 +145,16 @@ module Maker
       # (#relocate wants the reason, which is why #refusal_for is public and separate.)
       Result.new(attachments: [ att ], relocation: (move(node) if refusal.nil?),
                  created: att.previously_new_record?, model: nil)
+    end
+
+    # ATTACH A MODEL BY NAME RATHER THAN THROUGH ONE OF ITS FILES (2026-10-21; docs/superpowers/specs/
+    # 2026-10-20-attach-model-to-project-design.md) — the model page's "Attach to project" and the
+    # project page's Add-model picker. It is #call's bundle write, not a second one, so the file
+    # page's door and the model's own door cannot attach a model two different ways. A model with no
+    # live file answers `:empty_model` instead of an attach of nothing; the caller words it.
+    def attach_model(model)
+      result = attach_bundle(model)
+      result.attachments.empty? ? result.with(relocation: :empty_model) : result
     end
 
     # Finish a move the attach could not do — the collision prompt's "Move it in as …" button.
