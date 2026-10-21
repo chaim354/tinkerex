@@ -212,7 +212,9 @@ module Maker
 
       folders = Maker::ProjectFolderListing.new(@user, @project).panel_folders
 
-      assert_equal [ [ firmware.node_id, true ], [ models.node_id, false ] ], folders,
+      # THE THIRD ELEMENT IS THE FOLDER'S SHELF (2026-10-20), nil here: this user has no shelf rows,
+      # and the project page's read never mints one (Maker::Shelves.by_name).
+      assert_equal [ [ firmware.node_id, true, nil ], [ models.node_id, false, nil ] ], folders,
                    "depth one, in disk order, with the working tree flagged"
 
       layout = Maker::ProjectKind.layout_for(kind: "other", overrides: { "order" => [ key(nested.node_id) ] },
@@ -310,6 +312,63 @@ module Maker
       assert_equal "tiles", chosen.view_for(key(FIRMWARE)), "the maker's answer beats the repository default"
       assert_equal "browser", chosen.view_for(key(MODELS))
       assert_equal "list", chosen.view_for("attachments")
+    end
+
+    # --- shelves (2026-10-20) --------------------------------------------------------------------
+    #
+    # A FOLDER'S VIEW IS, IN ORDER: the maker's choice on this project, the default of the shelf
+    # whose name is the folder's, the automatic default. `folders:` carries the shelf as a third
+    # element (Maker::ProjectFolderListing#panel_folders), nil for a folder no shelf names.
+
+    def shelf(view: nil, group: nil, pos: nil) = Maker::Shelves::Entry.new(view:, group:, group_position: pos)
+
+    test "a shelf's default view opens its folder's panel" do
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: {},
+                                             folders: [ [ "n1", false, shelf(view: "list") ] ])
+      assert_equal "list", layout.view_for("folder:n1")
+    end
+
+    test "a view chosen on the project outranks the shelf's" do
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: { "views" => { "folder:n1" => "browser" } },
+                                             folders: [ [ "n1", false, shelf(view: "list") ] ])
+      assert_equal "browser", layout.view_for("folder:n1")
+    end
+
+    test "an automatic shelf keeps the automatic default, browser for a working tree" do
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: {},
+                                             folders: [ [ "n1", true, shelf ], [ "n2", false, nil ] ])
+      assert_equal "browser", layout.view_for("folder:n1")
+      assert_equal "tiles", layout.view_for("folder:n2")
+    end
+
+    test "a shelf view outside the vocabulary is dropped, not rendered" do
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: {},
+                                             folders: [ [ "n1", false, shelf(view: "grid") ] ])
+      assert_equal "tiles", layout.view_for("folder:n1")
+    end
+
+    test "a folder's shelf group is on the layout" do
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: {},
+                                             folders: [ [ "n1", false, shelf(group: "Fabrication", pos: 0) ] ])
+      assert_equal "Fabrication", layout.shelf_group_for("folder:n1")
+      assert_nil layout.shelf_group_for("attachments")
+    end
+
+    # THE DEFAULT ARRANGEMENT PUTS A GROUP'S FOLDERS TOGETHER, so one heading can stand over them:
+    # ungrouped folders first in disk order, then each group's folders. Disk order here is
+    # cnc, docs, laser — so the plain `tree.map` this replaced reads `cnc, docs, laser`, and the
+    # grouped order must differ from it for the assertion to carry weight.
+    test "panel_folders puts ungrouped folders first, then each group's folders together" do
+      names = %w[cnc docs laser].to_h { |name| [ dir(name).node_id, name ] }
+      group = @user.maker_shelf_groups.create!(name: "Fabrication", position: 0)
+      @user.maker_shelves.create!(name: "laser", shelf_group: group)
+      @user.maker_shelves.create!(name: "cnc", shelf_group: group)
+      @user.maker_shelves.create!(name: "docs")
+
+      folders = Maker::ProjectFolderListing.new(@user, @project).panel_folders
+
+      assert_equal %w[docs cnc laser], folders.map { |id, _repo, _shelf| names.fetch(id) }
+      assert_equal [ nil, "Fabrication", "Fabrication" ], folders.map { |_id, _repo, s| s&.group }
     end
 
     test "folder? and folder_id name the same key the vocabulary was built from" do

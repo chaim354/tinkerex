@@ -97,8 +97,9 @@ module Maker
     # question this object answers about the arrangement — which panels render, which folders are
     # hidden, which view a folder opens in, whether a side document exists — comes off this one
     # value, so the page, the manifest, the feed and the CSV cannot disagree about an arrangement
-    # the maker saved once. `listing.panel_folders` is in memory over the tree the constructor
-    # already built (no query), which is what makes asking here free.
+    # the maker saved once. `listing.panel_folders` is the tree the constructor already built plus
+    # ONE query for the OWNER's shelves (2026-10-20: a shelf's default view and group shape the
+    # visitor's page too), memoised on the listing, so asking here costs one constant query.
     #
     # AND IT KNOWS THE BLOCKS (2026-09-09, content blocks): a block is a panel of the layout, so its
     # key has to be in the vocabulary here or the maker's own order would be filtered down to the

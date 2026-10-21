@@ -82,6 +82,10 @@
      ::Layout#width_for) rather than this sheet naming three panel classes. `.panel` stays in the
      rule for the public page's repo cards, which render outside a slot. */
   .project-panels > .panel, .project-panels > .panel-slot { min-width: 0; }
+  /* A SHELF GROUP'S HEADING (2026-10-20, ProjectsHelper#panels_with_group_heads) spans the grid
+     above its panels, on one column and two. It is `.group-head`, the component, qualified by its
+     place in the grid; masonry_controller.js spans it like any other child. */
+  .project-panels > .shelf-group-head { grid-column: 1 / -1; margin: 8px 0 0; }
   @media (min-width: 900px) {
     .project-panels { grid-template-columns: 1fr 1fr; }
     .project-panels > .panel-slot.panel--full { grid-column: 1 / -1; }
