@@ -25,14 +25,14 @@ module Maker
     # page cannot filter by. Two today.
     BEYOND_ROLE_BY_EXT = { "kicad_sch" => "pcb", "kicad_pcb" => "pcb" }.freeze
 
-    # IDEMPOTENT, GUARDED BY `exists?` RATHER THAN A STAMP COLUMN. A stamp is the only way to tell
-    # "never seeded" apart from "seeded, then every row deleted" — `exists?` reads false in both —
-    # so this guard does NOT protect a fully-emptied user from being reseeded on their next read.
-    # That is an accepted gap, not an oversight: an emptied filing map recovers to the same
-    # thirteen-role default a brand-new user gets, and the shelves it names come back with it
-    # (Maker::Shelves.ensure! derives them from these rows). It is reachable through the Shelves
-    # page by removing every shelf but `other`, and the outcome is the reasonable, low-stakes one:
-    # a folder for every extension existing again is not a loss worth a column to prevent.
+    # IDEMPOTENT, AND "NEVER SEEDED" IS NO RULES AND NO SHELVES (2026-10-20). Rules alone cannot
+    # tell "never seeded" from "seeded, then every row removed" -- `exists?` reads false in both --
+    # and the Shelves page REACHES the second: remove every shelf but `other` and its rules go with
+    # them. Guarded on rules alone, the next read reseeded all of them, and Maker::Shelves.ensure!
+    # then brought back every shelf the maker had just removed, under a flash that said their
+    # extensions now file into `other` (found in review). A user who has opened the Shelves page
+    # holds at least `other`, which cannot be removed, so a shelf row is the stamp. A user emptied
+    # by the console with no shelf rows still reseeds, which is the honest reading of that state.
     #
     # WHAT `exists?` DOES PROTECT, MUTATION-CHECKED RATHER THAN ASSUMED: a user who holds ANY row
     # at all, seeded or not. Dropping this guard lets `seed!` attempt all
@@ -44,7 +44,7 @@ module Maker
     # page by a direct POST or the console — from silently getting every MISSING extension topped
     # up from the seed instead of staying at exactly the rows they kept.
     def self.seed!(user)
-      return if user.maker_filing_rules.exists?
+      return if user.maker_filing_rules.exists? || user.maker_shelves.exists?
 
       now = Time.current
       rows = Maker::FileAttachment::ROLE_BY_EXT.map do |ext, role|

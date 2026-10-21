@@ -15,7 +15,7 @@ class SettingsController < ApplicationController
       else
         capabilities.presignable? ? "storage bucket" : "sync server"
       end
-    @shelf_count = current_user.maker_shelves.count
+    @shelf_count = Maker::Shelves.count_for(current_user)
     @supplier_count = current_user.maker_suppliers.count
     @location_count = current_user.maker_locations.count
     @tag_count = current_user.maker_tags.count

@@ -36,8 +36,9 @@ module Web
     # SEVEN SINCE 2026-10-20: the Library folder row leads, on every backend (K;
     # settings_library_test.rb covers its fact per backend), and the Filing row went into Shelves.
     test "the hub lists seven rows with facts and links" do
-      @user.maker_shelves.create!(name: "renders")
-      @user.maker_shelves.create!(name: "prints")
+      # Three rows, `other` among them: the hub counts what the Shelves page will show
+      # (Maker::Shelves.count_for), and that page always shows `other`.
+      %w[renders prints other].each { |name| @user.maker_shelves.create!(name:) }
       @user.maker_suppliers.create!(name: "Acme Bolts")
       @user.maker_suppliers.create!(name: "Bolts Co")
       @user.maker_suppliers.create!(name: "Zerex Supply")
@@ -56,13 +57,26 @@ module Web
       assert_select "a.settings-name[href=?]", locations_path
       assert_select "a.settings-name[href=?]", settings_tags_path
       assert_select "a.settings-name[href=?]", edit_user_registration_path
-      assert_select ".settings-fact", text: "2 shelves"
+      assert_select ".settings-fact", text: "3 shelves"
       assert_select ".settings-fact", text: "3 suppliers"
       assert_select ".settings-fact", text: "2 locations"
       assert_select ".settings-fact", text: "4 tags"
       assert_select ".settings-fact", text: @user.email
       # cookies[:theme] is unset -- ShellHelper#ui_theme's default, "light".
       assert_select ".settings-fact", text: /light/
+    end
+
+    # THE HUB COUNTS WHAT THE SHELVES PAGE WILL SHOW, not the rows that page has made so far (found
+    # in review): every existing user had filing rules and no shelf rows the day Shelves shipped,
+    # and a plain row count read "0 shelves" until they opened the page.
+    test "the shelves fact counts before the Shelves page has ever been opened" do
+      Maker::FilingRules.seed!(@user)
+      assert_not @user.maker_shelves.exists?
+
+      get settings_path
+
+      assert_select ".settings-fact", text: "#{Maker::ProjectFolders::ROLE_FOLDERS.values.uniq.size} shelves"
+      assert_not @user.maker_shelves.exists?, "the hub must not make the rows itself"
     end
 
     test "the theme row is a three-way choice" do

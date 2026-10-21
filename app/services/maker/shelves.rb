@@ -1,5 +1,5 @@
 module Maker
-  # ONE USER'S SHELVES (2026-10-20). Two reads, and only the settings page's may write.
+  # ONE USER'S SHELVES (2026-10-20). Three reads, and only the settings page's may write.
   module Shelves
     # Where an extension with no rule files (Maker::ProjectFolders.folder_for). No seeded rule
     # names it -- no extension carries the `other` role -- so it is added here by name.
@@ -31,6 +31,18 @@ module Maker
       end
       # ON CONFLICT DO NOTHING: two first visits at once both land the same names.
       Maker::Shelf.insert_all(rows)
+    end
+
+    # THE SETTINGS HUB'S COUNT, WITHOUT WRITING: how many cards the Shelves page will show. The rows
+    # are made on that page's first visit (#ensure!), so a count of rows alone read "0 shelves" for
+    # every existing user until they opened it (found in review). It is #ensure!'s own arithmetic
+    # over the same two columns, read rather than written; two plucks, constant in the row count.
+    def count_for(user)
+      names = user.maker_shelves.pluck(:name) | user.maker_filing_rules.distinct.pluck(:folder)
+      # Nothing at all: the first visit seeds the default set, which is one shelf per seed folder.
+      return Maker::ProjectFolders::ROLE_FOLDERS.values.uniq.size if names.empty?
+
+      (names | [ FALLBACK ]).size
     end
 
     # THE PROJECT PAGE'S READ: folder name => Entry, ONE query, and NO write -- a GET of a project

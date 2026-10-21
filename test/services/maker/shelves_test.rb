@@ -45,5 +45,31 @@ module Maker
       assert_equal Maker::Shelves::Entry.new(view: "list", group: "Fabrication", group_position: 2), map["laser"]
       assert_equal Maker::Shelves::Entry.new(view: nil, group: nil, group_position: nil), map["docs"]
     end
+
+    # REMOVING EVERY SHELF BUT `other` IS A CHOICE THAT HOLDS (found in review): with no rules
+    # left, Maker::FilingRules.seed! used to read the user as never seeded and bring every
+    # default back on the next read.
+    test "a user left with only other is not reseeded" do
+      Maker::Shelves.ensure!(@user)
+      @user.maker_shelves.where.not(name: "other").find_each do |shelf|
+        @user.maker_filing_rules.where(folder: shelf.name).delete_all
+        shelf.destroy!
+      end
+      Maker::Shelves.ensure!(@user)
+      assert_equal [ "other" ], @user.maker_shelves.pluck(:name)
+      assert_equal({}, Maker::FilingRules.for(@user))
+    end
+
+    test "count_for counts what the page will show, without writing" do
+      assert_no_difference -> { @user.maker_shelves.count } do
+        assert_equal Maker::ProjectFolders::ROLE_FOLDERS.values.uniq.size, Maker::Shelves.count_for(@user)
+      end
+      Maker::FilingRules.seed!(@user)
+      @user.maker_filing_rules.find_by!(ext: "stl").update!(folder: "prints")
+      expected = (@user.maker_filing_rules.distinct.pluck(:folder) | [ "other" ]).size
+      assert_equal expected, Maker::Shelves.count_for(@user)
+      Maker::Shelves.ensure!(@user)
+      assert_equal @user.maker_shelves.count, Maker::Shelves.count_for(@user)
+    end
   end
 end
