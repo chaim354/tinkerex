@@ -222,12 +222,12 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
   Full argument, including why the fix is deliberately NOT thread-local caching either: §14a.
 - **Bytes never flow through Rails** — control plane only (§15; the share backend is the one departure, §14a).
 - **Registration creates a new account only** (no `find_or_create_by` takeover), and **it is CLOSED
-  by default in production: the first account is the owner, confirmed without mail, and
+  by default in production: the first account is the owner AND ADMIN, confirmed without mail, and
   `REGISTRATION=open` is REFUSED at boot on `share`/`s3`**, where every account indexes ONE library
-  (`lib/tinkerex/registration.rb`; pinned by `deploy_hygiene_test` and `registration_mode_test`).
-  A device joins via **`POST /v1/devices/login`** (email + password → a 256-bit device token) or
-  `POST /v1/devices` from an authenticated device. Pairing codes are gone (`18c623a`). Web auth is
-  Rails 8 built-in with an OmniAuth seam; real OAuth/OIDC email verification is the later upgrade.
+  (`lib/tinkerex/registration.rb`). Admins add accounts at Settings → Users; the demo never manages
+  (`User#can_manage_accounts?`). A device joins via **`POST /v1/devices/login`** (email + password →
+  a 256-bit device token) or `POST /v1/devices` from an authenticated device. Pairing codes are gone
+  (`18c623a`). Web auth is Rails 8 built-in with an OmniAuth seam; OIDC email verification is later.
 - **Device tokens are 256-bit, SHA256-digested at rest.** A device token is the **only** credential
   the whole v1 API accepts, including all fourteen `v1/maker/*` controllers — which is why
   `devices` is deliberately ungated (§14a) and why `Device` is owned here, not by the sync server.

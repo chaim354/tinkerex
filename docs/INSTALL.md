@@ -57,9 +57,10 @@ problem. The app refuses to boot on a misconfiguration rather than starting and 
 ### First run: the first account is the owner
 
 With no account yet, the sign-up page works and says so: *"This is the server's first account. It
-becomes the owner and needs no email confirmation."* Create it; you are signed in. **After that,
-sign-ups are closed** — the page answers "Sign-ups are closed" and the link disappears — and more
-accounts are added from the console (section 4). No mail server is involved in any of this.
+becomes the owner and needs no email confirmation."* Create it; you are signed in, as the server's
+admin. **After that, sign-ups are closed** — the page answers "Sign-ups are closed" and the link
+disappears — and an admin adds more accounts under Settings → Users (section 4). No mail server is
+involved in any of this.
 
 **Then the app asks once which folder is the library.** The next screen names the mounted folder — *the folder your docker-compose.yml is in*, or the path you
 typed in `LIBRARY_HOST_PATH` — and says what will happen to it: it is indexed every 15 minutes,
@@ -233,23 +234,42 @@ account indexes the *same* folder, so an open sign-up would hand any visitor you
 sign-ups belong to the sync server, an advanced backend where each account has its own library —
 section 9.)
 
-**Adding an account without mail.** Two console tasks create or reset an account, confirmed on the
-spot. The password is read from `TINKEREX_PASSWORD`, never from the command line, so that it stays
-out of your shell history and out of `ps`; the `read -rs` below prompts for it without echo:
+**Adding an account.** The first account is the server's admin, and an admin manages accounts under
+**Settings → Users**, with no mail involved:
+
+- **Add an account**: an email, a password you choose and pass on to the person (at least 10
+  characters, shown as you type it), and whether it is an admin too. It is confirmed on the spot.
+  Every account on a folder or bucket library sees the same files, and can change and delete them.
+- **On an account's own page**: set a new password (this also confirms the account and unlocks it
+  after too many wrong passwords, and signs it out of every browser; a desktop app already signed in
+  keeps syncing), make it an admin or stop it being one, or delete it, by typing its address. Deleting
+  removes its projects, notes, tags and its copy of the catalog; every file in the library stays.
+
+Your own account is changed on the Account page, behind your current password, and the only admin
+cannot delete their account while other accounts exist. An install from before admins existed made
+its oldest account the admin when it updated (passing over the demo account, if there is one).
+
+**From the console.** Three tasks do the same with no browser: create an account (confirmed; the
+first one on a server is the admin), reset a password and confirm the account, and make an account
+an admin, which is the way back for a server with no admin left — one whose accounts all came from
+single sign-on, say. A password is read from `TINKEREX_PASSWORD`, never from the command line, so
+that it stays out of your shell history and out of `ps`; the `read -rs` below prompts for it without
+echo:
 
 ```sh
 read -rs TINKEREX_PASSWORD && export TINKEREX_PASSWORD
 docker compose exec -e TINKEREX_PASSWORD web bin/docker-entrypoint bin/rails 'tinkerex:owner[someone@example.net]'
 docker compose exec -e TINKEREX_PASSWORD web bin/docker-entrypoint bin/rails 'tinkerex:password[someone@example.net]'
 unset TINKEREX_PASSWORD
+docker compose exec web bin/docker-entrypoint bin/rails 'tinkerex:admin[someone@example.net]'
 ```
 
 `bin/docker-entrypoint` in front of the command runs it as the same user the server runs as
 (`PUID`). A bare `docker compose exec` runs as root, and a task that creates files would leave them
 owned by root.
 
-The first refuses an address that already exists and a password under 10 characters; the second
-resets the password and confirms the account if it was not.
+`tinkerex:owner` refuses an address that already exists and a password under 10 characters;
+`tinkerex:admin` refuses an unknown address and the demo account.
 
 **Single sign-on** through an OpenID Connect provider is its own door: `OMNIAUTH_ENABLED` plus the
 four `OIDC_*` values in the table. A provider login creates a confirmed account whatever
