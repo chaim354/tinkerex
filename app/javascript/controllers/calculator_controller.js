@@ -220,7 +220,13 @@ export default class extends Controller {
 
   // WHAT IS SAVED IS WHAT IS ON SCREEN: the four hidden fields are filled here, at submit, from the
   // current answer — never from whatever the form held when it rendered.
+  // An expression edited since the last Enter is calculated now, so the answer saved is the one
+  // for the text in the box — never the stale one still greyed out under it.
   prepareSave(event) {
+    if (this.answer?.expression !== this.inputTarget.value.trim()) {
+      const answer = this.calculate()
+      if (answer) this.remember(answer)
+    }
     if (!this.answer || !this.hasSaveExpressionTarget) {
       event.preventDefault()
       this.saveHintTarget.hidden = false

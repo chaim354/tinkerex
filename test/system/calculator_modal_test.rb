@@ -18,6 +18,8 @@ require "application_system_test_case"
 #   * #prepareSave no longer copying the expression — RED: the save was refused (blank expression)
 #     and "Saved … to Desk Lamp" never appeared.
 #   * `writeStorage(HISTORY_KEY, …)` deleted from #remember — RED: Recent was empty after the reload.
+#   * #prepareSave's recalculation of an edited expression deleted — RED: the stale 914.4 was
+#     saved under the old expression while the box read "2 ft to mm".
 #   * the frame's `turbo:frame-missing->calculator#saveMissing` action deleted — RED: the ended
 #     session's frame said "Content missing" and nothing else.
 #   * #closed's focus hand-back deleted — GREEN, because Chrome's <dialog> restores focus to the
@@ -167,6 +169,23 @@ class CalculatorModalTest < ApplicationSystemTestCase
     saved = @project.calculations.sole
     assert_equal [ "in", 32 ], [ saved.unit, saved.inch_fraction ]
     assert_in_delta 3.5 - 5 / 25.4, saved.result, 1e-9
+  end
+
+  test "an expression edited after Enter is calculated by Save, so the saved answer matches the box" do
+    visit project_path(@project, add: "calculations")
+    within("section.calculations-panel") { click_on "Open calculator" }
+    calculate("3 ft to mm")
+    assert_selector ".calculator-result", text: "914.4 mm"
+    find("#calculator-input").set("2 ft to mm") # no Enter: the 914.4 still on screen is stale
+    find("details.calculator-save > summary").click
+    within("turbo-frame#calculator-save") do
+      fill_in "calculation[label]", with: "Short arm"
+      click_on "Save"
+      assert_selector ".calculator-saved", text: "Saved “Short arm” to Desk Lamp."
+    end
+    assert_selector ".calculator-result", text: "609.6 mm"
+    saved = @project.calculations.sole
+    assert_equal [ "2 ft to mm", 609.6 ], [ saved.expression, saved.result ]
   end
 
   test "saving before calculating says to calculate first and saves nothing" do
