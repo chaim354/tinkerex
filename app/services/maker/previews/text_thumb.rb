@@ -1,7 +1,9 @@
 module Maker
   module Previews
     # Text file (every extension in Maker::FileAttachment::TEXT_EXTENSIONS) → a "document" PNG grid
-    # thumbnail: the file's first lines drawn as monospace text on a white page. Built as an SVG and
+    # thumbnail: the file's first lines drawn as monospace text in the palette's ink on a white page
+    # (`Maker::Previews::Palette` — the browser multiplies the page onto the themed card, so the
+    # page is exactly `PAPER`, and `INK` is the only other colour it draws). Built as an SVG and
     # rasterized through the SAME resvg step the SVG/DXF/LightBurn thumbnails use (SvgRasterizer) —
     # so NO new binary, and the grid gets a uniform PNG like every other cell. The deployed
     # image already ships DejaVu fonts + fontconfig, so resvg can draw the glyphs.
@@ -25,6 +27,19 @@ module Maker
       MAX_LINES = 16
       MAX_COLS  = 46 # ~fits a 512px page at the font size below; longer lines clip at the edge
 
+      # WHICH BUILD OF THIS RENDERER PRODUCED A STORED THUMBNAIL (§14h). Text is the bulk of most
+      # libraries (~3,300 rows on the live share box), and a finished file's content never changes,
+      # so a picture change with no bump here is served from the old render forever.
+      #
+      #   1 -> (undeclared — `Enqueue::BASE_REVISION`) white page, cool `#1c2230` ink.
+      #   2 -> the palette's ink on paper (2026-10-21): `Palette::PAPER` and `Palette::INK`; was a
+      #        cool #1c2230.
+      THUMBNAIL_REVISION = 2
+
+      # One kind (`thumbnail`); the signature matches the measurable renderers' so
+      # `Enqueue.revision_for` has one way to ask.
+      def payload_revision(_kind) = THUMBNAIL_REVISION
+
       def available? = Maker::Previews::SvgRasterizer.available?
 
       # size×size PNG of the file's first lines. Returns { bytes:, content_type:, width:, height: }.
@@ -42,8 +57,8 @@ module Maker
         end.join
         <<~SVG
           <svg xmlns="http://www.w3.org/2000/svg" width="#{size}" height="#{size}" viewBox="0 0 #{size} #{size}">
-          <rect width="#{size}" height="#{size}" fill="#ffffff"/>
-          <g font-family="DejaVu Sans Mono, monospace" font-size="#{fs}" fill="#1c2230" xml:space="preserve">#{rows}</g>
+          <rect width="#{size}" height="#{size}" fill="#{Palette::PAPER}"/>
+          <g font-family="DejaVu Sans Mono, monospace" font-size="#{fs}" fill="#{Palette::INK}" xml:space="preserve">#{rows}</g>
           </svg>
         SVG
       end

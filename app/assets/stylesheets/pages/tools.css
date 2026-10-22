@@ -225,8 +225,10 @@
   }
   .generator-field input[type="checkbox"] { width: auto; align-self: flex-start; }
   .generator-save { margin-top: 4px; align-self: flex-start; }
-  .generator-preview { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; background: var(--thumb-stage); }
-  .generator-preview img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; }
+  /* A generator's live drawing is ink on paper too (design-system.md rule 5): the panel is the
+     card, and the drawing is multiplied onto it. */
+  .generator-preview { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; background: var(--thumb-stage); isolation: isolate; }
+  .generator-preview img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; mix-blend-mode: multiply; }
   .generator-saved-list { margin-top: 28px; }
   .generator-saved { margin: 4px 0; }
 

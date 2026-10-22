@@ -34,7 +34,11 @@ module Maker
       # The embedded-thumbnail branch is unaffected by the camera and gets re-extracted for nothing.
       # Accepted: one number cannot describe two branches, and re-extracting a PNG already in the zip
       # is cheap next to leaving every CAD-exported 3MF sideways.
-      THUMBNAIL_REVISION = 2
+      #
+      #   2 -> Z-up, with `Stl` 2.
+      #   3 -> ink on paper (2026-10-21), with `Stl` 3: the mesh fallback's picture is now the palette's
+      #        material on white, was a dark #202228 square with a cool grey material.
+      THUMBNAIL_REVISION = 3
 
       def payload_revision(_kind) = THUMBNAIL_REVISION
 

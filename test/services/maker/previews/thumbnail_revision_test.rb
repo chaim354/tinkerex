@@ -36,22 +36,22 @@ module Maker
       # quietly falling out of the Registry resolves to no renderer and answers `BASE_REVISION`,
       # which looks like a perfectly ordinary 1.
       #
-      # A VALUE OF 1 IS NOT NECESSARILY A DECLARATION. `TextThumb`, `Mesh`, `ImageThumb` and `Pdf`
-      # declare no `THUMBNAIL_REVISION` at all and reach 1 through `Enqueue::BASE_REVISION`. Pinning
+      # A VALUE OF 1 IS NOT NECESSARILY A DECLARATION. `ImageThumb` and `Pdf` declare no
+      # `THUMBNAIL_REVISION` at all and reach 1 through `Enqueue::BASE_REVISION`. Pinning
       # them anyway is the point: the day one of them starts declaring — or the day a rename makes
       # an extension resolve to nothing — this table is what notices, and the two cases are
       # indistinguishable from the outside, which is exactly why the pin is on the RESOLVED value
       # rather than on the constant.
       THUMBNAIL_REVISIONS = {
-        "a.asm"   => 1, # TextThumb  — 62 extensions route here
+        "a.asm"   => 2, # TextThumb  — 62 extensions route here; 2 = the palette ink (2026-10-21)
         "a.bmp"   => 1, # ImageThumb — 6
-        "a.iges"  => 1, # Mesh       — 5 (obj/step/stp/iges/igs)
+        "a.iges"  => 2, # Mesh       — 14 (obj/step/stp/iges/igs/brep/gltf/…); 2 = ink on paper
         "a.pdf"   => 1, # Pdf
         "a.svg"   => 1, # Svg
         "a.mage"  => 1, # Mage       — its own renderer for thumbnails, unlike its geometry leg
-        "a.stl"   => 2, # Stl
+        "a.stl"   => 3, # Stl        — 3 = ink on paper (2026-10-21)
         "a.dxf"   => 3, # Dxf
-        "a.3mf"   => 2, # ThreeMf
+        "a.3mf"   => 3, # ThreeMf    — in lockstep with Stl (its mesh fallback)
         "a.lbrn"  => 4, # Lbrn2
         "a.lbrn2" => 4, # Lbrn2 again — see the delegation note above
         "a.gtl"   => 1, # Gerber     — every pcb extension but gbrjob (23 of them)
@@ -90,8 +90,8 @@ module Maker
       # second because it derives BOTH sides from `RENDERERS`, so an unregistered renderer leaves
       # the pinned set and the registered set together, the vacuous-shrink shape §14e names.
       #
-      # It bites for any renderer pinned at 1 — today `TextThumb`, `ImageThumb`, `Mesh`, `Pdf`,
-      # `Svg`, `Mage`, `Gerber` and `GerberZip`, which is most of the table.
+      # It bites for any renderer pinned at 1 — today `ImageThumb`, `Pdf`, `Svg`, `Mage`, `Gerber`
+      # and `GerberZip`, which is most of the table.
       test "every filename pinned above still resolves to a renderer" do
         THUMBNAIL_REVISIONS.each_key do |filename|
           assert_not_nil Registry.for_filename(filename),

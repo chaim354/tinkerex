@@ -77,8 +77,9 @@ export default class extends Controller {
     const language = languages.languageFor(this.extValue, cm)
     const extensions = [
       cm.basicSetup,
-      // The dark editor theme, or nothing under the light one — lib/codemirror_theme.js reads
-      // html[data-theme]. Above the read-only facets so the pair below still reads as a unit.
+      // The token-coloured syntax highlighting, the same in every theme (lib/codemirror_theme.js);
+      // a theme switch repaints it through CSS. Above the read-only facets so the pair below still
+      // reads as a unit.
       ...theme.themeExtensions(cm),
       // BOTH, and neither is redundant. readOnly refuses document changes; editable removes the
       // caret and IME. A contenteditable that merely looks disabled still takes focus and still

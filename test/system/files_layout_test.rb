@@ -19,13 +19,15 @@ require "zlib"
 #     outranks specificity.
 #   - THE 3D AND MEASURE FALLBACK POSTER IS CENTRED. `.preview-image` is `display: block` (and shared
 #     with the addon bundles, so it is never restyled bare), which `text-align: center` on the
-#     fallback does not move; the poster sat against the container's left padding.
+#     fallback does not move; the poster sat against the container's left padding. Since
+#     2026-10-21 the poster sits in a `.render-card` (components.css), whose flex centring does it;
+#     the `margin-inline: auto` rule that did it before went with the change.
 #
 # MUTATION-CHECKED (§15; outputs in the PR): deleting `table.files tbody tr { border-bottom }` and
 # its cell reset from components.css reddens both divider tests; moving the badge icon's rule into
-# components.css reddens the 12px assertion at 16; deleting the `margin-inline: auto` rule from
-# pages/preview.css reddens the poster test on the 3D page and, with only its `.measure-fallback`
-# half deleted, on the Measure page.
+# components.css reddens the 12px assertion at 16; deleting `justify-content: center` from
+# `.render-card` reddens the poster test on the 3D page and on the Measure page (2026-10-21; it
+# was the `margin-inline: auto` rule in pages/preview.css until then).
 class FilesLayoutTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
