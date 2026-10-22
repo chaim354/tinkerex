@@ -26,9 +26,11 @@ module Projects
     RECENT_LIMIT = 40
 
     # GET /projects/:project_id/attachments/new?q= — the picker: search by name + recent files.
+    # `ESCAPE '\'` is SearchController's idiom: SQLite has no default LIKE escape character, so
+    # without it sanitize_sql_like's backslash is matched literally and "100%" finds nothing.
     def new
       scope = current_user.nodes.present.where(kind: "file")
-      scope = scope.where("name LIKE ?", "%#{ActiveRecord::Base.sanitize_sql_like(params[:q])}%") if params[:q].present?
+      scope = scope.where("name LIKE ? ESCAPE '\\'", "%#{ActiveRecord::Base.sanitize_sql_like(params[:q])}%") if params[:q].present?
       @results = scope.order(updated_at: :desc).limit(RECENT_LIMIT).to_a
     end
 

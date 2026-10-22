@@ -1039,16 +1039,16 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   an empty `'nonce-'` (`session.id` is nil before a session exists, so anonymous pages made
   Chrome **discard the whole `script-src` directive**), and `frame-ancestors 'none'` contradicting
   the app's own same-origin PDF iframes. Ship a policy **report-only** first, and keep
-  `frame-ancestors` consistent with `X-Frame-Options` (`SAMEORIGIN` → `'self'`).
-- **`assert_select "[attr=?]", /regex/` DOES NOT REGEX-MATCH — it builds an EQUALITY selector and
-  can never pass.** rails-dom-testing's `SubstitutionContext#matcher_for` interpolates a Regexp
-  straight into the selector (`"\"#{value}\""`), so `[title=?]` with `/Needs a newer…/` compiles to
-  `[title="(?-mix:Needs a newer…)"]` and matches an attribute whose literal text is that. Regex
-  matching on an **ATTRIBUTE** needs the gem's own `:match('attr', ?)` pseudo-class; `[attr*=?]`
-  with a plain String is the simpler alternative. (`text: /…/` is a different code path and does
-  match — this is about attributes only.) Verified against rails-dom-testing **2.3.0**: `[title=?]`
-  finds 0 elements where `:match('title', ?)` finds 1. It fails as a test that **can never go
-  green** rather than as a false green — the better direction, but only once you know why.
+  `frame-ancestors` consistent with `X-Frame-Options` (`SAMEORIGIN` → `'self'`). **Importmap too:**
+  `pin_all_from` stores a DIRECTORY, expanded only at render, so `importmap.packages` lists **0**
+  `controllers/*` pins where the page renders 40 (importmap-rails 2.2.3): assert on the render.
+- **`assert_select`'S ARGUMENTS AFTER THE SELECTOR ARE NOT WHAT THEY LOOK LIKE** (rails-dom-testing
+  2.3.0, both probed). **A Regexp in `[attr=?]` never regex-matches:** `matcher_for` quotes it as a
+  literal, so it finds 0 where `:match('attr', ?)` (or `[attr*=?]` with a String) finds 1 — a test
+  that can never go green (`text: /…/` does match). **A trailing String is the TEXT comparator, not
+  a message:** one value goes to each `?` and the NEXT is the equality test, so
+  `assert_select "a[href=?]", path, "links the file"` demands that text and fails on correct markup.
+  Put `nil` or a hash before a message, as `content_security_policy_test.rb`'s `{ count: 1 }` does.
 - **Query cost is a property nothing asserts unless you assert it.** `projects#show` went from
   flat to +1 query per build-log entry when rich text arrived and the eager load was not extended
   — invisible to a green suite, while `models#show` carried the correct pattern the whole time.
