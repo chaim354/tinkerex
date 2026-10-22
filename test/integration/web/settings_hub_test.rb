@@ -33,9 +33,10 @@ module Web
 
     # ============================================================ The hub
 
-    # SEVEN SINCE 2026-10-20: the Library folder row leads, on every backend (K;
-    # settings_library_test.rb covers its fact per backend), and the Filing row went into Shelves.
-    test "the hub lists seven rows with facts and links" do
+    # EIGHT SINCE 2026-10-22: the Library folder row leads, on every backend (K;
+    # settings_library_test.rb covers its fact per backend), the Filing row went into Shelves, and
+    # Devices follows Account (pentest H1b; its count is pinned in settings_devices_test.rb).
+    test "the hub lists eight rows with facts and links" do
       # Three rows, `other` among them: the hub counts what the Shelves page will show
       # (Maker::Shelves.count_for), and that page always shows `other`.
       %w[renders prints other].each { |name| @user.maker_shelves.create!(name:) }
@@ -49,14 +50,15 @@ module Web
       get settings_path
 
       assert_response :success
-      assert_select "ul.settings-list.settings-hub li", count: 7
+      assert_select "ul.settings-list.settings-hub li", count: 8
       names = css_select("ul.settings-list.settings-hub li .settings-name").map { |el| el.text.strip }
-      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Tags", "Account", "Theme" ], names
+      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Tags", "Account", "Devices", "Theme" ], names
       assert_select "a.settings-name[href=?]", settings_shelves_path
       assert_select "a.settings-name[href=?]", suppliers_path
       assert_select "a.settings-name[href=?]", locations_path
       assert_select "a.settings-name[href=?]", settings_tags_path
       assert_select "a.settings-name[href=?]", edit_user_registration_path
+      assert_select "a.settings-name[href=?]", settings_devices_path
       assert_select ".settings-fact", text: "3 shelves"
       assert_select ".settings-fact", text: "3 suppliers"
       assert_select ".settings-fact", text: "2 locations"
@@ -66,13 +68,13 @@ module Web
       assert_select ".settings-fact", text: /light/
     end
 
-    # Users (2026-10-21) is admins-only, so the seven rows above are a plain account's hub.
+    # Users (2026-10-21) is admins-only, so the eight rows above are a plain account's hub.
     test "an admin's hub gains the Users row, before Account" do
       @user.update!(admin: true)
       get settings_path
 
       names = css_select("ul.settings-list.settings-hub li .settings-name").map { |el| el.text.strip }
-      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Tags", "Users", "Account", "Theme" ], names
+      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Tags", "Users", "Account", "Devices", "Theme" ], names
       assert_select "a.settings-name[href=?]", settings_users_path
     end
 

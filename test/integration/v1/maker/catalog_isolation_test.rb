@@ -47,6 +47,7 @@ module V1
       # ---- file_attachments --------------------------------------------------
       test "B cannot delete A's file attachment by id" do
         item = @a_user.maker_items.create!(title: "A widget")
+        @a_user.nodes.create!(node_id: "node-1", name: "a.stl", kind: "file")
         att  = item.file_attachments.create!(user: @a_user, node_id: "node-1")
         delete "/v1/maker/file_attachments/#{att.id}", headers: auth(@b)
         assert_response :not_found

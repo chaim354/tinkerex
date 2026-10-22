@@ -228,9 +228,9 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
   (`User#can_manage_accounts?`). A device joins via **`POST /v1/devices/login`** (email + password →
   a 256-bit device token) or `POST /v1/devices` from an authenticated device. Pairing codes are gone
   (`18c623a`). Web auth is Rails 8 built-in with an OmniAuth seam; OIDC email verification is later.
-- **Device tokens are 256-bit, SHA256-digested at rest.** A device token is the **only** credential
-  the whole v1 API accepts, including all fourteen `v1/maker/*` controllers — which is why
-  `devices` is deliberately ungated (§14a) and why `Device` is owned here, not by the sync server.
+- **Device tokens are 256-bit, SHA256-digested, expire after `DEVICE_IDLE_DAYS` (90) unused, and die
+  on ANY password change** (one `User` callback on the column, so every door). The **only** v1 credential,
+  so `devices` is ungated (§14a) and owned here. **No failed sign-in locks an account** (`Tinkerex::SignInThrottle`).
 - **A DEVICE ENROLS THROUGH THE MAKER APP AND IS HANDED A SYNC-SERVER SIBLING TOKEN** minted with the
   user's own bootstrap token (`FileLayer::ChunkRemote::SyncGrant`, D1, 2026-10-13) inside the login
   answer; its URL is **`SYNC_PUBLIC_URL`, the devices' door — never `CHUNK_REMOTE_URL`, the app's own
@@ -1168,11 +1168,11 @@ Four rules survive on **this** side of the boundary:
   `devices` table; the two are separate populations joined only by the per-user
   `users.sync_device_token` (§8).
 - **DEVICE AUTH IS DUPLICATED ACROSS THE TWO REPOS BY STRUCTURAL NECESSITY.** Neither side can
-  require the other in the case that matters. There was a parity test comparing the two method
-  bodies while they shared a process; it went with the extraction, and **nothing checks that
-  agreement now.** If you change device-token verification here, change it there in the same
-  breath — that obligation has no guard behind it. Since Phase 6 (2026-10-14) "there" is one place
-  again: `crates/tinkerex-sync/src/auth.rs`'s `authenticate` (`Sync::V1::Authentication` is gone).
+  require the other, and **nothing checks that they agree** (the parity test went with the
+  extraction). Change device-token verification here and change `crates/tinkerex-sync/src/auth.rs`'s
+  `authenticate` in the same breath — EXCEPT the one deliberate split (2026-10-22, pentest H1b):
+  only this side idle-expires and revokes a token. The sync side has neither yet, so a device's SYNC
+  token outlives its maker token until that repo's follow-up lands (`Device#sync_device_id` waits).
 
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 

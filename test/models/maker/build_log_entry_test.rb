@@ -43,6 +43,7 @@ module Maker
 
     test "an entry can own file attachments" do
       entry = @project.build_log_entries.create!(user: @user, body: "x")
+      @user.nodes.create!(node_id: "node-9", name: "photo.jpg", kind: "file")
       att = entry.file_attachments.create!(user: @user, node_id: "node-9")
       assert_equal entry, att.attachable
     end

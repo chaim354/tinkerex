@@ -65,7 +65,7 @@ class RederiveCodeRolesMigrationTest < ActiveSupport::TestCase
   end
 
   test "a row whose node is gone is skipped, not crashed on" do
-    orphan = @project.file_attachments.create!(user: @user, node_id: "ghost", role: "other")
+    orphan = ghost_attachment!(@project, user: @user, node_id: "ghost", role: "other")
     assert_nothing_raised { run_migration }
     assert_equal "other", orphan.reload.role
   end

@@ -62,7 +62,7 @@ module Maker
       scan = attach("scan.glb", "other")
       kept = attach("scan.ply", "instructions")
       text = attach("notes.txt", "other")
-      ghost = @project.file_attachments.create!(user: @user, node_id: "ghost", role: "other")
+      ghost = ghost_attachment!(@project, user: @user, node_id: "ghost", role: "other")
 
       run_up
 

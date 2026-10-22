@@ -75,6 +75,7 @@ module Maker
       file("n-project-only", "loose.stl")
       # Rows OLDER than the owner's that must not win: another user's model naming the same
       # node_id, and this project's own row on it.
+      stranger.nodes.create!(node_id: "n-shared", name: "theirs.stl", kind: "file") # ids are unique per user, not globally
       theirs.file_attachments.create!(user: stranger, node_id: "n-shared", role: "other")
       @project.file_attachments.create!(user: @user, node_id: "n-shared", role: "model")
       member(owner, "n-shared")

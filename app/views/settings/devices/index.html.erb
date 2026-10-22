@@ -1,0 +1,41 @@
+<% content_for :title, "Devices — Tinkerex" %>
+
+<%# YOUR DESKTOP DEVICES (Settings::DevicesController). No accent on this page: there is no one
+    action it exists for, and signing out is a danger link on each row (design-system.md rule 13). %>
+<div class="page-head">
+  <h1>Devices</h1>
+  <%= link_to "Settings", settings_path, class: "btn ghost small" %>
+</div>
+
+<p class="muted">
+  The desktop apps signed in to your account. Signing one out ends its access to this server, and it
+  needs your password to sign in again. Changing your password signs out all of them.
+  <% if @idle_limit %>
+    A device unused for <%= pluralize(@idle_limit.in_days.round, "day") %> is signed out on its own.
+  <% end %>
+</p>
+<% if capabilities.syncable? %>
+  <p class="muted">
+    File sync is separate. Each device also holds its own key on the sync server, and signing the
+    device out here does not end that key yet, so its files keep syncing.
+  </p>
+<% end %>
+
+<ul class="settings-list">
+  <% @devices.each do |device| %>
+    <% expired = device.expired?(@idle_limit) %>
+    <li>
+      <span class="settings-name"><%= device.name %></span>
+      <% if expired %><span class="badge">Expired</span><% end %>
+      <span class="settings-fact">added <%= device.created_at.to_date.to_fs(:long) %></span>
+      <span class="settings-fact"><%= device.last_seen_at ? "used #{time_ago_in_words(device.last_seen_at)} ago" : "never used" %></span>
+      <%= button_to expired ? "Remove" : "Sign out", settings_device_path(device), method: :delete,
+                    class: "linkbtn danger small settings-remove",
+                    form: { data: { turbo_confirm: expired ? "Remove #{device.name} from this list?" :
+                                                             "Sign out #{device.name}? It will need your password to sign in again." } } %>
+    </li>
+  <% end %>
+  <% if @devices.empty? %>
+    <li class="empty inline">No desktop app is signed in to this account.</li>
+  <% end %>
+</ul>

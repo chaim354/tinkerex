@@ -37,6 +37,10 @@
     <span class="settings-fact"><%= current_user.email %></span>
   </li>
   <li>
+    <%= link_to "Devices", settings_devices_path, class: "settings-name" %>
+    <span class="settings-fact"><%= pluralize(@device_count, "desktop app") %></span>
+  </li>
+  <li>
     <span class="settings-name">Theme</span>
     <%= render "theme" %>
   </li>

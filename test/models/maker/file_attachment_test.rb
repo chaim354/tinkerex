@@ -5,6 +5,36 @@ module Maker
     setup do
       @user = User.create!(email: "att@example.com")
       @item = @user.maker_items.create!(title: "Lamp")
+      %w[node-123 n n1].each { |id| @user.nodes.create!(node_id: id, name: "#{id}.stl", kind: "file") }
+    end
+
+    # PENTEST I2c (tinkerex#467): the node must be this user's (Maker::FileAttachment's own comment).
+    # Mutation-checked: without `node_belongs_to_user` the two refusals below save.
+    test "an attachment must name a node in its own user's library" do
+      other = User.create!(email: "att-other@example.com")
+      other.nodes.create!(node_id: "theirs", name: "theirs.stl", kind: "file")
+
+      foreign = @item.file_attachments.build(user: @user, node_id: "theirs")
+      assert_not foreign.valid?, "another tenant's node id is refused"
+      assert_includes foreign.errors[:node_id], "must be a file in your own library"
+
+      missing = @item.file_attachments.build(user: @user, node_id: "no-such-node")
+      assert_not missing.valid?, "an id that names nothing is refused"
+
+      @user.nodes.find_by!(node_id: "n1").update!(deleted: true)
+      assert @item.file_attachments.build(user: @user, node_id: "n1").valid?,
+             "a tombstoned node is still this user's file: one undo brings it back"
+    end
+
+    # §14d's DANGLING-ID LOCK. A node row can go before the reaper takes the attachment
+    # (Library::Reset, the grace window), and the check must not then refuse unrelated edits.
+    # Mutation-checked: with the validation run on every save, the label edit below is refused.
+    test "an attachment whose node has gone can still be edited" do
+      att = @item.file_attachments.create!(user: @user, node_id: "node-123", role: "model")
+      @user.nodes.where(node_id: "node-123").delete_all
+
+      assert att.update(label: "the old bracket"), att.errors.full_messages.to_sentence
+      assert_not att.update(node_id: "no-such-node"), "moving it onto a missing node is still refused"
     end
 
     test "attaches a file to an item by node_id" do

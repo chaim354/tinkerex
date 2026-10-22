@@ -22,6 +22,8 @@ module Web
       ENV.delete("DEMO_ACCOUNT_EMAIL")
       @admin = User.create!(email: "admin@example.com", password: PASSWORD, confirmed_at: Time.current, admin: true)
       @member = User.create!(email: "member@example.com", password: PASSWORD, confirmed_at: Time.current)
+      # A desktop device each, so the revoke_device request below names a real row on either side.
+      [ @admin, @member ].each { |u| Device.register!(user: u, name: "#{u.email} laptop") }
     end
 
     teardown { @prior_demo ? ENV["DEMO_ACCOUNT_EMAIL"] = @prior_demo : ENV.delete("DEMO_ACCOUNT_EMAIL") }
@@ -38,6 +40,7 @@ module Web
         -> { get edit_settings_user_path(target) },
         -> { patch reset_password_settings_user_path(target), params: { user: { password: NEW_PASSWORD } } },
         -> { patch set_admin_settings_user_path(target), params: { admin: "1" } },
+        -> { delete revoke_device_settings_user_path(target, device_id: target.devices.first.id) },
         -> { delete settings_user_path(target), params: { confirm_email: target.email } }
       ]
     end
@@ -56,6 +59,7 @@ module Web
       end
       assert @admin.reload.valid_password?(PASSWORD)
       assert_not @member.reload.admin?
+      assert_equal 1, @admin.devices.count, "no device was signed out"
     end
 
     # Its row says admin, and that is exactly the state this proves cannot reach the page.
@@ -71,6 +75,7 @@ module Web
       assert User.exists?(@member.id)
       assert @member.reload.valid_password?(PASSWORD)
       assert_not @member.admin?
+      assert_equal 1, @member.devices.count, "no device was signed out"
     end
 
     test "the Settings hub shows the Users row to an admin only" do
@@ -210,6 +215,7 @@ module Web
       @admin.reload
       assert @admin.valid_password?(PASSWORD)
       assert @admin.admin?
+      assert_equal 1, @admin.devices.count, "your own devices are signed out on Settings → Devices"
     end
 
     test "a reset sets the new password, ends the old one, confirms and unlocks" do

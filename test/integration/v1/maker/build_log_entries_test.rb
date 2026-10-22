@@ -56,6 +56,8 @@ module V1
       end
 
       test "attach a design file to a project by node_id" do
+        # The node must be in this user's own library (pentest I2c, Maker::FileAttachment).
+        User.find_by!(email: "bl@example.com").nodes.create!(node_id: "node-step", name: "enclosure.step", kind: "file")
         post "/v1/maker/projects/#{@project_id}/file_attachments",
              params: { file_attachment: { node_id: "node-step", role: "model", label: "enclosure.step" } },
              as: :json, headers: auth(@token)

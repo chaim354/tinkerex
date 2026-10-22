@@ -219,7 +219,17 @@ Devise.setup do |config|
   # Defines which strategy will be used to lock an account.
   # :failed_attempts = Locks an account after a number of failed attempts to sign in.
   # :none            = No lock strategy. You should handle locking by yourself.
-  config.lock_strategy = :failed_attempts
+  #
+  # :none, AND IT MUST STAY :none (pentest M4b, tinkerex#466). A failed-attempts lock counts per
+  # ACCOUNT from every source, so it is a switch any stranger who knows an address can flip: ten
+  # wrong passwords locked the owner out of the web AND the desktop app for an hour, from one IP,
+  # repeatable hourly. Tinkerex::SignInThrottle bounds guessing instead, per source and per
+  # account-per-source, and neither counter can stop the owner signing in from anywhere else. The
+  # module stays in User's `devise` list so a lock set before this change still lapses after
+  # unlock_in, and the admin reset and the demo click still clear one. Guards:
+  # test/integration/web/auth_throttle_test.rb and test/integration/v1/device_login_test.rb, each
+  # failing the password from one source and then signing in from another.
+  config.lock_strategy = :none
 
   # Defines which key will be used when locking and unlocking an account
   # config.unlock_keys = [:email]
@@ -229,16 +239,15 @@ Devise.setup do |config|
   # :time  = Re-enables login after a certain amount of time (see :unlock_in below)
   # :both  = Enables both strategies
   # :none  = No unlock strategy. You should handle unlocking by yourself.
-  # :time only (NOT :email). The lock itself is the brute-force mitigation; it applies to
-  # BOTH web sign-in and the API device-login endpoint (POST /v1/devices/login). An emailed
-  # unlock link is meaningless for the API flow (no human is reading mail at that instant),
-  # and sending it from the lock callback invokes the Devise mailer, whose scope lookup is
-  # fragile outside a routed web request. Time-unlock (config.unlock_in) re-enables sign-in
-  # after the window with no email dependency, keeping the lockout robust everywhere.
+  # :time only (NOT :email). With lock_strategy :none (above) nothing locks an account any more;
+  # this lapses a lock set before 2026-10-22, and keeps `devise_for` drawing no unlock routes
+  # (auth_pages_test.rb). An emailed unlock link was never the answer either: it is meaningless for
+  # the API flow (no human is reading mail at that instant), and a self-hosted box usually has no
+  # mail, so it would not remove the lockout DoS, only make it cost the attacker one click per hour.
   config.unlock_strategy = :time
 
   # Number of authentication tries before locking an account if lock_strategy
-  # is failed attempts.
+  # is failed attempts. Inert under :none; Tinkerex::SignInThrottle holds the numbers that count.
   config.maximum_attempts = 10
 
   # Time interval to unlock the account if :time is enabled as unlock_strategy.
@@ -246,7 +255,7 @@ Devise.setup do |config|
 
   # Warn on the last attempt before the account is locked. Disabled: the warning is delivered
   # by email, and (like the unlock email above) sending it from the auth path invokes the
-  # Devise mailer outside a routed web request. The lockout still triggers normally.
+  # Devise mailer outside a routed web request. Inert under lock_strategy :none.
   config.last_attempt_warning = false
 
   # ==> Configuration for :recoverable

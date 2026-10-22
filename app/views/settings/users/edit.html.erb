@@ -1,8 +1,8 @@
 <% content_for :title, "#{@user.email} — Users — Tinkerex" %>
 
 <%# ONE ACCOUNT, FOR AN ADMIN (Settings::UsersController): reset its password, make or unmake it an
-    admin, delete it. Never the signed-in account, which set_user sends to the Account page. "Set
-    password" is the accent (design-system.md rule 13); Delete is the danger button, behind a typed
+    admin, sign out its desktop devices, delete it. Never the signed-in account, which set_user
+    sends to the Account page. "Set password" is the accent (design-system.md rule 13); Delete is the danger button, behind a typed
     address rather than a click-through confirm, because it cannot be undone. %>
 <div class="page-head">
   <h1><%= @user.email %></h1>
@@ -20,8 +20,9 @@
   <% if @user.errors.any? %>
     <div class="form-errors" role="alert"><%= @user.errors.full_messages.to_sentence %>.</div>
   <% end %>
-  <p class="muted">Signs <%= @user.email %> out of every browser and unlocks the account. A desktop app
-    already signed in keeps syncing.</p>
+  <p class="muted">Signs <%= @user.email %> out of every browser and every desktop app.
+    <% if capabilities.syncable? %>File sync from a desktop app runs on its own key on the sync server
+    and carries on.<% end %></p>
   <%# scope: :user, for the reason the add form on the Users page gives: the field must be
       user[password]. `value: nil` because that scope also makes the field read @user, which on this
       page IS the account -- so a refused reset would otherwise refill the rejected password. %>
@@ -47,6 +48,31 @@
     <p class="muted">An admin can add, change and delete accounts on the Users page.</p>
     <%= button_to "Make admin", set_admin_settings_user_path(@user), method: :patch,
                   params: { admin: "1" }, class: "btn" %>
+  <% end %>
+</section>
+
+<%# THE ACCOUNT'S DESKTOP DEVICES (pentest H1b): the same rows as its own Settings → Devices, and a
+    Sign out per row that posts to revoke_device. Read off @user here rather than set by the action,
+    because three actions render this template and each would have to remember to set it. %>
+<section class="user-manage">
+  <h2>Devices</h2>
+  <% devices = @user.devices.to_a.sort_by(&:last_active_at).reverse %>
+  <% idle_limit = Device.idle_limit %>
+  <% if devices.empty? %>
+    <p class="muted">No desktop app is signed in to <%= @user.email %>.</p>
+  <% else %>
+    <ul class="settings-list">
+      <% devices.each do |device| %>
+        <li>
+          <span class="settings-name"><%= device.name %></span>
+          <% if device.expired?(idle_limit) %><span class="badge">Expired</span><% end %>
+          <span class="settings-fact"><%= device.last_seen_at ? "used #{time_ago_in_words(device.last_seen_at)} ago" : "never used" %></span>
+          <%= button_to "Sign out", revoke_device_settings_user_path(@user, device_id: device.id), method: :delete,
+                        class: "linkbtn danger small settings-remove",
+                        form: { data: { turbo_confirm: "Sign #{device.name} out of #{@user.email}?" } } %>
+        </li>
+      <% end %>
+    </ul>
   <% end %>
 </section>
 

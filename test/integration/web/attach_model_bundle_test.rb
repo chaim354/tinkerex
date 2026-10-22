@@ -204,6 +204,7 @@ module Web
       other = User.create!(email: "amb-other-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       loose = create_node!(@user, node_id: "f-shared", name: "bracket.stl", kind: "file")
+      create_node!(other, node_id: "f-shared", name: "bracket.stl", kind: "file") # ids are unique per user, not globally
       other.maker_models.create!(title: "Theirs")
            .file_attachments.create!(user: other, node_id: loose.node_id, role: "model")
 

@@ -540,11 +540,20 @@ module Maker
         doc.xpath("//*[starts-with(name(), 'CutSetting')]")
       end
 
+      # THE ONLY `#` SPELLINGS A COLOUR MAY HAVE, AND THEY PASS THROUGH UNCHANGED (pentest L3,
+      # tinkerex#468). The value lands in `stroke="…"` by string interpolation (#polygon and its two
+      # siblings), in the geometry payload and in the laser-settings panel, so a `#`-prefixed string
+      # used to be trusted whole and `#000"/><script>…` closed the attribute. Unchanged rather than
+      # canonicalised to lowercase `#rrggbb`: a valid colour then renders exactly the bytes it always
+      # did, which is why no PAYLOAD_REVISION or THUMBNAIL_REVISION moves for this. LightBurn itself
+      # writes the packed integer below; no real export in the corpus writes a `#` form at all.
+      HEX_COLOR = /\A#(?:\h{3}|\h{6})\z/
+
       def normalize_color(raw)
         return DEFAULT_STROKE if raw.nil? || raw.to_s.strip.empty?
 
         s = raw.to_s.strip
-        return s if s.start_with?("#")
+        return s.match?(HEX_COLOR) ? s : DEFAULT_STROKE if s.start_with?("#")
 
         n = Integer(s, exception: false)
         return DEFAULT_STROKE if n.nil?

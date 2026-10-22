@@ -257,6 +257,9 @@ module SchemaMap
     "remote_manifest_chunks.version_id" =>
       "the same sync-server version id, naming the version a mirrored manifest belongs to: there " \
       "is no `versions` row here to point at",
+    "devices.sync_device_id" =>
+      "a device id from the SYNC SERVER's own `devices` table (chunk_remote only; pentest H1b), the " \
+      "sibling a revoke must one day name there: the local `devices` row it sits on is not it",
     "maker_previews.version_id" =>
       "FileLayer::FileInfo#content_token under the name it kept from before that port: a version " \
       "id on chunk_remote, a CONTENT HASH on share/s3 — two value spaces, and neither keys a row " \

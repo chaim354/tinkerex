@@ -145,7 +145,7 @@ module Web
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       # Attachment row whose node_id has no live Node (deleted / never present).
-      project.file_attachments.create!(user:, node_id: "gone", role: "model", label: "ghost.stl")
+      ghost_attachment!(project, user:, node_id: "gone", role: "model", label: "ghost.stl")
 
       get project_path(project)
       assert_response :success
@@ -163,7 +163,7 @@ module Web
       # attach_node's node sits at the library root — the Linked case now — and still renders as
       # an ordinary tile with a grid-name, which is all this test needs.
       attach_node(user, project, name: "bracket.stl", node_id: "n-live", role: "model")
-      project.file_attachments.create!(user:, node_id: "gone", role: "model", label: "ghost.stl")
+      ghost_attachment!(project, user:, node_id: "gone", role: "model", label: "ghost.stl")
 
       get project_path(project)
       assert_select ".attachments-missing", text: /1 attached file no longer in your library/
@@ -177,7 +177,7 @@ module Web
     test "a project whose every file is gone explains itself instead of reading as empty" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      project.file_attachments.create!(user:, node_id: "gone", role: "model", label: "ghost.stl")
+      ghost_attachment!(project, user:, node_id: "gone", role: "model", label: "ghost.stl")
 
       get project_path(project)
       assert_select ".attachments-missing", text: /1 attached file no longer in your library/

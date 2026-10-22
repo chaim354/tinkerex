@@ -124,7 +124,9 @@ class AccentSpendTest < ApplicationSystemTestCase
       # Users (2026-10-21): the list spends it on Add account; one account's page on Set password, with
       # Make admin quiet and Delete the danger button behind a typed address.
       "/settings/users" => [ "Add account" ],
-      "/settings/users/:id/edit" => [ "Set password" ]
+      "/settings/users/:id/edit" => [ "Set password" ],
+      # Devices (pentest H1b, 2026-10-22): no one action; each row's Sign out is a danger link.
+      "/settings/devices" => []
     }
     paths = {
       "/" => root_path, "/files" => files_path, "/files/models" => files_models_path,
@@ -134,7 +136,8 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/tools" => tools_path, "/search" => search_path,
       "/inventory/suppliers" => suppliers_path, "/inventory/locations" => locations_path,
       "/settings/shelves" => settings_shelves_path, "/settings/library" => settings_library_path,
-      "/settings/users" => settings_users_path, "/settings/users/:id/edit" => edit_settings_user_path(@other_account)
+      "/settings/users" => settings_users_path, "/settings/users/:id/edit" => edit_settings_user_path(@other_account),
+      "/settings/devices" => settings_devices_path
     }
 
     actual = paths.transform_values do |path|

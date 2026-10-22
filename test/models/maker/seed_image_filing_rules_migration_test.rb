@@ -74,7 +74,7 @@ module Maker
     end
 
     test "a ghost attachment whose node is gone is skipped rather than raising" do
-      ghost = @project.file_attachments.create!(user: @user, node_id: "ghost", role: "other")
+      ghost = ghost_attachment!(@project, user: @user, node_id: "ghost", role: "other")
       real = attach("IMG_0002.heic", "other")
 
       run_up
