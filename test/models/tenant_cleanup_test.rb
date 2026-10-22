@@ -124,6 +124,11 @@ class TenantCleanupTest < ActiveSupport::TestCase
       u.maker_boms.first.lines.create!(user: u, part_name: "M3 bolt", quantity: 4)
     },
 
+    "maker_calculations" => ->(u) {
+      u.maker_projects.first.calculations.create!(user: u, label: "Shelf depth", expression: "3 ft to mm",
+                                                  result: 914.4, unit: "mm")
+    },
+
     "maker_connections" => ->(u) {
       u.maker_projects.first.connections.create!(user: u, from_label: "Driver", to_label: "Motor")
     },
@@ -157,7 +162,7 @@ class TenantCleanupTest < ActiveSupport::TestCase
     maker_addon_states
     maker_print_runs maker_taggings maker_file_attachments maker_collection_items maker_repo_edits
     maker_build_log_entries maker_sheets maker_boms maker_inventory_items
-    maker_inventory_transactions maker_bom_lines maker_connections maker_project_blocks
+    maker_inventory_transactions maker_bom_lines maker_connections maker_calculations maker_project_blocks
     maker_releases maker_release_files maker_pins
   ].freeze
 

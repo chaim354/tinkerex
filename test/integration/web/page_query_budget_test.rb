@@ -254,6 +254,10 @@ module Web
           # STAGE 3, S3-3: the wiring panel grows too -- one connection per iteration, the same
           # constant-in-N argument as tasks and build-log entries two lines up.
           project.connections.create!(user: @user, from_label: "from-#{id}", to_label: "to-#{id}")
+          # 2026-10-21: A SAVED CALCULATION PER ITERATION, so the Calculations panel's rows grow with N
+          # (and stay off the visitor's page, whose budget shares this seed).
+          project.calculations.create!(user: @user, label: "calc #{id}", expression: "1in + 1mm",
+                                       result: 1.03937, unit: "in", inch_fraction: 16)
           # STAGE 3, S3-5: A RELEASE PER ITERATION, EACH WITH A FILE, and BOTH halves grow for a
           # reason. The panel has no cap, so the number of releases is what a missing
           # `includes(:rich_text_notes)` costs one query each of; the number of FILES is what a
@@ -302,16 +306,18 @@ module Web
     # inequality rather than a literal for the same reason every other budget here avoids one: the
     # counts differ per LIBRARY_BACKEND (§14e), and what is asserted is that the skip HAPPENS.
     #
-    # THREE PANELS AND NO MORE. @tasks and @sheets are counted by the page's stats line and
+    # FOUR PANELS AND NO MORE (calculations joined 2026-10-21). @tasks and @sheets are counted by
+    # the page's stats line and
     # @entries is read by Maker::ProjectPhotos, so skipping any of those three would change a
     # surface other than its own panel — ProjectsController#show says so at each site.
-    test "hiding bom, wiring and releases skips their controller loads" do
+    test "hiding bom, wiring, releases and calculations skips their controller loads" do
       project = @user.maker_projects.create!(name: "Skippable", status: "active")
       project_folder_rows!(@user, project)
       bom = project.boms.create!(user: @user)
       3.times do |i|
         bom.lines.create!(user: @user, part_name: "part #{i}", quantity: 1, unit: "each")
         project.connections.create!(user: @user, from_label: "a#{i}", to_label: "b#{i}")
+        project.calculations.create!(user: @user, label: "c#{i}", expression: "#{i}mm", result: i, unit: "mm")
         release = project.releases.create!(user: @user, version: "v#{i}", published_at: Time.current)
         node!("rel-#{i}", "rel-#{i}.stl")
         release.files.create!(user: @user, node_id: "rel-#{i}", name: "rel-#{i}.stl",
@@ -321,14 +327,14 @@ module Web
       get project_path(project)
       shown = count_queries { get project_path(project) }
 
-      project.update!(panels: { "hidden" => %w[bom wiring releases] })
+      project.update!(panels: { "hidden" => %w[bom wiring releases calculations] })
       get project_path(project)
       hidden = count_queries { get project_path(project) }
 
       assert_operator hidden, :<, shown,
                       "a hidden panel still paid for its loads: #{hidden} queries hidden against " \
                       "#{shown} shown. ProjectsController#show gates @bom/@bom_lines/@items/" \
-                      "@suppliers, @releases/@release_repos and @connections on @panel_layout."
+                      "@suppliers, @releases/@release_repos, @connections and @calculations on @panel_layout."
 
       # ONE PANEL AT A TIME, BECAUSE THE ASSERTION ABOVE IS AN AGGREGATE AND AN AGGREGATE CANNOT
       # SEE ONE GATE GO. Measured rather than reasoned: with `bom_shown = true` restored in
@@ -337,7 +343,7 @@ module Web
       # guard stayed GREEN over a gate that had stopped working. Each key below is compared against
       # the same `shown`, so each of the three gates carries weight on its own; a strict inequality
       # for the same reason as above, never a literal (§14e).
-      %w[bom wiring releases].each do |key|
+      %w[bom wiring releases calculations].each do |key|
         project.update!(panels: { "hidden" => [ key ] })
         get project_path(project)
         alone = count_queries { get project_path(project) }
@@ -623,6 +629,10 @@ module Web
                                                     logged_at: Time.current)
           entry.file_attachments.create!(user: @user, node_id: "#{id}-shot", role: "image", position: 0)
           project.connections.create!(user: @user, from_label: "from-#{id}", to_label: "to-#{id}")
+          # 2026-10-21: A SAVED CALCULATION PER ITERATION, so the Calculations panel's rows grow with N
+          # (and stay off the visitor's page, whose budget shares this seed).
+          project.calculations.create!(user: @user, label: "calc #{id}", expression: "1in + 1mm",
+                                       result: 1.03937, unit: "in", inch_fraction: 16)
           # THE LINKED CASE, which is also what grows `attached_ids` -- the two plucks `permits?`
           # answers the attachment arm from, and neither may become a query per attachment.
           node!(id, "#{id}.stl")
