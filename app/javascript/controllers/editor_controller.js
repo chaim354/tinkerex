@@ -78,7 +78,7 @@ export default class extends Controller {
     // NO EditorState.readOnly AND NO EditorView.editable HERE — codeview sets both, and this
     // controller exists precisely because unsetting them on that one is not a flag flip: a page
     // that is sometimes editable needs a different mount, not a mutated one.
-    // The dark editor theme, or nothing under the light one (lib/codemirror_theme.js).
+    // The token-coloured syntax highlighting, the same in every theme (lib/codemirror_theme.js).
     const extensions = [cm.basicSetup, ...theme.themeExtensions(cm)]
     if (language) extensions.push(language)
 

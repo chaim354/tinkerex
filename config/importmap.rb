@@ -82,7 +82,8 @@ pin "lib/svg_pan_zoom", to: "lib/svg_pan_zoom.js"
 # every one of them dynamic-imports, so this never ships on a page with no text file.
 pin "lib/codemirror_languages", to: "lib/codemirror_languages.js", preload: false
 
-# Which CodeMirror theme the page wants, read from html[data-theme]. A HOST pin for the same
+# The code viewers' token-coloured syntax highlighting (the same in every theme; the colours are
+# CSS custom properties, so a theme switch repaints an open editor). A HOST pin for the same
 # reason as the languages table directly above — it takes the CodeMirror namespace as an argument
 # rather than importing the bundle, so it is only meaningful to a controller that already holds
 # it, and it is DYNAMIC-imported from all three so neither it nor the bundle ships on a page with
