@@ -1,0 +1,30 @@
+<%# THE PAGE'S <head>, ONE COPY FOR TWO LAYOUTS (2026-10-21): layouts/application renders it, and so
+    does this app's own layouts/turbo_rails/frame, which turbo-rails uses for every frame request.
+    THE SECOND ONE IS NOT DECORATION. Before Turbo records a frame navigation PROMOTED to a page visit
+    (data-turbo-action="advance", the model page's pane) it compares the response's tracked head
+    elements with the page's; turbo-rails' own frame layout carries only the CSRF tags, so the
+    comparison failed, Turbo never moved its lastRenderedLocation off the first URL, and every later
+    snapshot was filed under the wrong address (Back showed the wrong pane; model_page_test.rb).
+    `content_for(:head)`, not `yield :head`: this is a partial, and a partial yields to its own block. %>
+<title><%= content_for(:title) || "Tinkerex" %></title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="application-name" content="Tinkerex">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="color-scheme" content="<%= color_scheme_meta %>">
+<meta name="theme-color" content="<%= theme_color_hex %>">
+<%= csrf_meta_tags %>
+<%= csp_meta_tag %>
+
+<%= content_for(:head) %>
+
+<link rel="icon" href="/favicon.ico" sizes="32x32">
+<link rel="icon" href="/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon.png">
+
+<%= stylesheet_link_tag "application", "components", "shell",
+                        "pages/files", "pages/projects", "pages/models", "pages/tools", "pages/preview", "pages/home", "pages/inventory", "pages/settings", "pages/search", "pages/public", "pages/landing",
+                        "data-turbo-track": "reload" %>
+<%= stylesheet_link_tag "lexxy", "data-turbo-track": "reload" %>
+<%= stylesheet_link_tag "vendor-overrides", "data-turbo-track": "reload" %>
+<%= javascript_importmap_tags "application", importmap: (@importmap || Rails.application.importmap) %>

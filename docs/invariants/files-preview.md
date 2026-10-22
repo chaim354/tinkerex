@@ -450,8 +450,9 @@ broken, not one per page.
 
 **THE EIGHT VIEWER PARTIALS ARE SHARED BY A SESSION-AUTHED PAGE AND A SESSIONLESS ONE, SO EVERY URL
 AND EVERY USER-SCOPED OBJECT ARRIVES AS A STRICT LOCAL** (`app/views/files/viewers/_image _pdf
-_kicanvas _gerber _code _model3d _measure _static`, rendered by `files/show.html.erb` and by
-`public/files/view.html.erb`; the branch that picks one is `FilePreview#preview_kind`, a CONCERN
+_kicanvas _gerber _code _model3d _measure _static`, rendered by the maker's chain
+`files/_viewer.html.erb` — which `files/show.html.erb` renders, fed by `FileViewer#viewer_state_for`
+— and by `public/files/view.html.erb`; the branch that picks one is `FilePreview#preview_kind`, a CONCERN
 rather than a shared superclass because the two controllers deliberately have none — §14d). **No
 route helper and no `current_user`/`capabilities` call is permitted inside one.** A partial must not
 be able to tell which page it is on; that is the whole reason one copy can serve both, and it is
@@ -558,9 +559,9 @@ grey. `Maker::ThreeMfManifest` reads both — **one bounded port read, judged on
 column first and cached in `Rails.cache` by content token with the bytes' nil cached and a port
 failure never, `Maker::GerberArchive`'s shape exactly** — and `FilesController#show` /
 `ModelsController#show` hand it over as data attributes (per `<option>` on the model page: the
-manifest is a fact about one FILE and the switcher swaps files). Since slice 5 the model page
-renders only for a model with no folder strip to land on; the Library's model strip carries no
-viewer, so in a model folder the manifest reaches the viewer through the file page.
+manifest is a fact about one FILE and the switcher swaps files). Every model renders its own page
+(2026-10-21); a file opened in its pane goes through `files/_viewer`, the file page's own chain, so
+the manifest reaches the viewer the same way on both.
 
 **The colours are applied BY THE ENGINE'S MESH INDEX, and three rules keep that safe.** The match is
 `userData.originalMeshInstance.id.meshIndex`, never a name — a Bambu `<object>` carries no `name`
@@ -614,6 +615,16 @@ addon-shared `.model-viewer-stage > div` and was left out of F-S22-1. A test tha
 by one helper, `WebHelpers#back_through_turbo_cache`. It proves the page came out of Turbo's cache
 before anything is asserted about it, because a Back that re-fetched the page would pass every
 "rests at the poster" assertion against a page that was never open.
+
+**BOTH CODE VIEWERS REST TOO (2026-10-21).** `codeview_controller.js` and `editor_controller.js` each
+remove their fallback `<pre>` in `mount` once CodeMirror is up, so a snapshot Turbo restores has no
+`fallback` target: connect threw "Missing target element" and the code area stayed blank after Back
+(measured: no `.cm-content`), and the editor's Save bar — appended outside CodeMirror — survived as a
+button wired to nothing. Each `#rest` clears what is left and puts a fresh fallback back before the
+load. Found through Back across the model page's pane (`model_page_test.rb`); both were reachable by
+Back to a text file's own page before that. `code_viewer_test.rb` drives both through
+`back_through_turbo_cache`, and the editor's case saves afterwards, so a remounted editor that is not
+the live one, or a second Save bar, goes red.
 
 **ON S3 A VIEWER'S FETCH LEAVES THE ORIGIN, AND BOTH HALVES OF LETTING IT ARE STATED ONCE.** The
 blob route answers a presigned redirect to the bucket, so the 3D viewer, KiCanvas, the Gerber viewer
@@ -778,16 +789,27 @@ selected file: a Turbo Frame body rendered **without the layout**, built from `f
   `files/inspector_gone` with 404. **Never fold `FetchError` into that rescue**: an unmounted share is
   "couldn't reach", not "gone" (§14a), so if an adapter's `stat` ever starts raising it, it gets its
   own frame with a 503. No adapter's `stat` raises it today (it is a database read of the node).
-- **The tiles stay links.** Selection (`selection_controller.js`) intercepts only a plain click; every
-  tile keeps `href=file_path`, which the file menu's Open, a modifier click, Enter and no-JavaScript
-  all rely on. **The model strip above a model folder's files (`files/_model_strip`, slice 5) is not
-  a selection item**: nothing in it goes through `with_selection`, because a model is not a file in
-  the listing, so it never opens this frame (`model_strip_test.rb` asserts no `data-selection-target`
-  inside it). **Recent and the project hub have no inspector (slice 6), so their file tiles are
-  never selection items either**: neither page mounts a `selection` controller, so nothing there goes
-  through `with_selection`. **Their tiles and list rows link `file_path` and open the file.** They
-  linked the file's folder in the Library with `?selected=` until 2026-10-20, when the owner asked
-  for a click to just open the file; do not route them back through the Library.
+- **The tiles stay links.** A click opens the file and a double-click opens it in a new tab
+  (`fileopen_controller.js`, 2026-10-21); the panel opens from the file menu's Details
+  (`filemenu:details` → `selection_controller.js#details`) or a `?selected=` page. Every tile keeps
+  `href=file_path`, which a single click, the file menu's Open, a modifier click, Enter and
+  no-JavaScript all rely on. **The model strip above a model folder's files (`files/_model_strip`,
+  slice 5) is not a selection item**: nothing in it goes through `with_selection`, because a model is
+  not a file in the listing, so it never opens this frame (`model_strip_test.rb` asserts no
+  `data-selection-target` inside it). **Recent and the project hub have no inspector (slice 6), so
+  their file tiles are never selection items either**: neither page mounts a `selection` controller,
+  so nothing there goes through `with_selection`. **Their tiles and list rows link `file_path` and
+  open the file on a click, and in a new tab on a double-click.** They linked the file's folder in
+  the Library with `?selected=` until 2026-10-20, when the owner asked for a click to just open the
+  file; do not route them back through the Library. Their file menu's Details is the one door there:
+  nothing on those pages cancels `filemenu:details`, so the entry follows `file_menu_data`'s
+  `details_url`, the file's own folder with `?selected=` (a root file's carries no folder).
+  **Every link to a file page on a signed-in page opts in through `FilesHelper#file_open_data`** —
+  tiles, list names, photos, the hero, an image block, BOM part names, search results, the
+  connections panel, the repo browser (`lib/file_chooser.js`) — **except rendered Markdown and a
+  `.btn` action**, and that is the whole exclusion list. `template_hygiene_test.rb`'s fileopen sweep
+  goes red on any other file-page link in `pages` that lacks it; never widen its two exclusions. It
+  reads server HTML, so the repo browser's JS-built rows are pinned in `repo_browser_test.rb`.
 
 **`PHOTO_EXTS` is a DISPLAY subset of the image role, not a second vocabulary.** `jpg jpeg heic heif`
 — what a camera writes — get `.thumb.photo` (cropped to fill, on `--photo-stage`); PNG, GIF, WebP,

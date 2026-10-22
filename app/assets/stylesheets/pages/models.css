@@ -10,9 +10,18 @@
   .models-toolbar input[type="search"] { flex: 0 1 260px; min-width: 160px; }
   .models-toolbar .chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 
-  /* Detail page: main column (image → instructions) + side column (meta → files → print log). */
-  .model-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); gap: 28px; align-items: start; }
-  @media (max-width: 800px) { .model-layout { grid-template-columns: 1fr; } }
+  /* THE MODEL PAGE, PRINTABLES-STYLE (2026-10-21): the model's files on the left, the pane on the
+     right. One column below 900px, the list first (modelstage_controller.js scrolls the pane into
+     view on a phone). Selection is ink (design-system rule 13): the shown entry is --fg on --raised. */
+  .model-layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 899px) { .model-layout { grid-template-columns: 1fr; } }
+  .model-index-details { display: block; padding: 4px 8px; margin-bottom: 14px; border-radius: 4px; font-weight: 600; }
+  .model-index a[aria-current="true"] { background: var(--raised); color: var(--fg); }
+  .model-stage { display: block; min-width: 0; }
+  .model-stage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .model-stage-name { font-size: 15px; margin: 0; overflow-wrap: anywhere; }
+  .model-stage-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+  .model-stage .preview-pdf { width: 100%; height: 75vh; }
 
   .model-hero { margin-bottom: 14px; }
   .model-hero-img { display: block; width: 100%; max-height: 60vh; object-fit: contain;
@@ -28,9 +37,8 @@
   .image-gallery .gallery-thumb, .image-gallery .gallery-thumb .thumb { width: 84px; height: 66px; display: inline-flex; align-items: center; justify-content: center; }
   .image-gallery img { width: 84px; height: 66px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
 
-  .model-instructions, .model-notes { margin-top: 20px; }
-  .model-instructions h2, .model-notes h2, .model-files h2 { font-size: 15px; margin: 0 0 10px; }
-  .model-main .preview-pdf { width: 100%; height: 640px; border: 1px solid var(--line); border-radius: var(--radius-panel); }
+  .model-notes { margin-top: 20px; }
+  .model-notes h2, .model-files h2 { font-size: 15px; margin: 0 0 10px; }
 
   /* Files as a scrollable folder tree. */
   .model-files { margin-bottom: 22px; }

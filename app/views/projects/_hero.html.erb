@@ -12,12 +12,12 @@
     <%# `inline_image?`, NOT the role (tinkerex#285): a .heic cover is an image by role and a broken
         picture as raw bytes; the thumbnail branch below is what shows it. %>
     <% if Maker::FileAttachment.inline_image?(@cover_node.name) %>
-      <%= link_to file_path(@cover_node.node_id) do %>
+      <%= link_to file_path(@cover_node.node_id), data: file_open_data do %>
         <%= image_tag blob_file_path(@cover_node.node_id), class: "project-hero-img", alt: @cover_node.name %>
       <% end %>
     <% else %>
       <%= link_to file_path(@cover_node.node_id), class: "file-cell project-hero-thumb",
-                  data: thumb_cell_data(@cover_node.node_id, ext) do %>
+                  data: file_open_data(thumb_cell_data(@cover_node.node_id, ext)) do %>
         <%= render "files/thumb", thumb: @page_thumbs.thumb(@cover_node.node_id), ext_label: ext,
                    url: preview_src(@page_thumbs.thumb(@cover_node.node_id)) %>
       <% end %>

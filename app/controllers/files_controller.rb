@@ -37,6 +37,12 @@ class FilesController < ApplicationController
   # app/controllers/concerns/file_preview.rb; the three extension constants below are re-exposed,
   # not redefined.
   include FilePreview
+  # WHAT THE VIEWER IS HANDED ON A MAKER'S PAGE — `#viewer_state_for`: the stat, `viewer_for`'s
+  # three facts, the current thumbnail and the 3MF manifest, one value for files/_viewer
+  # (2026-10-21). Maker-only, so it is a second concern rather than more of FilePreview, which a
+  # visitor's page includes too; ModelsController's pane asks it as well. `#current_thumbnail`
+  # lives there now, and #inspector below still calls it.
+  include FileViewer
 
   # ?move_conflict=<id> — the prompt an attach leaves behind when the auto-move into the project
   # folder hit a name collision. Rendered here and on the project page; an attach can come from
@@ -264,9 +270,9 @@ class FilesController < ApplicationController
       # could not hide.
       @folder_project = @folder && current_user.maker_projects.find_by(folder_node_id: @folder.node_id)
       # THE FOLDER'S 3D MODEL, IF IT IS ONE (structural redesign §5.4, slice 5): the model strip above
-      # the files. Maker::ModelFolder is the one definition (the redirect from /models/:id reads it
-      # too). A project's claim wins, so a claimed folder never asks. Constant in N, beside
-      # @folder_project's lookup and for the same reason.
+      # the files. Maker::ModelFolder is the strip's one definition. A project's claim wins, so a
+      # claimed folder never asks. Constant in N, beside @folder_project's lookup and for the same
+      # reason.
       @folder_model = (@folder && @folder_project.nil?) ? Maker::ModelFolder.model_in(current_user, @folder.node_id) : nil
       load_model_strip(@folder_model) if @folder_model
       # `.outside_repo_metadata` here for the same reason it is on the flat scope above, and on
@@ -471,8 +477,8 @@ class FilesController < ApplicationController
     # `kind` IS NAMED ONCE. It used to be written twice — once to look up the revision, once in
     # the `find_by` — with nothing coupling them, so mis-spelling either half made this lookup
     # silently never match (a re-enqueue on every poll, forever) or match on the wrong kind's
-    # revision. `#current_thumbnail` carried the identical three lines 330 lines below, differing
-    # only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more. Both doors
+    # revision. `#current_thumbnail` (FileViewer, since 2026-10-21) carried the identical three
+    # lines, differing only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more. Both doors
     # now decide whether to enqueue the same way — `Enqueue.needs_job?(…, retry_failed: false)`,
     # which reads `status` only to spot a lost job and to leave a failed one alone — and what
     # differs is what each SAYS once it has: this action answers "pending" whenever it enqueued, and
@@ -534,13 +540,13 @@ class FilesController < ApplicationController
   # with is the port's whole job.
   def show
     @node = current_user.nodes.present.find_by!(node_id: params[:id])
-    @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
-    # WHICH VIEWER, AND THE BOARD IF THIS IS ONE: FilePreview#viewer_for, the ONE answer a visitor's
-    # page asks too (F-S10-2) — the zip read, the layer list and the stackup choice live there, and
-    # `@kind` is final from this line, before `@editable` reads it. Only the URL is this page's, and
-    # the lambda never answers nil here: every live node of current_user has a private byte route.
-    @kind, @gerber_layers, @gerber_single =
-      viewer_for(user: current_user, node: @node, url: ->(n) { named_blob_file_path(n.node_id, filename: n.name) })
+    # ONE ANSWER FOR THE VIEWER, ASKED BY THE MODEL PAGE'S PANE TOO (FileViewer, 2026-10-21): the stat,
+    # FilePreview#viewer_for's kind and board, the current thumbnail and the 3MF manifest. `@kind` is
+    # final from this line, before `@editable` reads it.
+    @viewer = viewer_state_for(@node)
+    @info = @viewer.info
+    @kind = @viewer.kind
+    @thumbnail = @viewer.thumbnail
     # ONE WALK, READ BY THE SURFACES THAT STILL NEED IT. It USED to read "editing appears exactly
     # where committing could"; since 2026-09-10 editing is WIDER than committing, so this answers
     # the commit box and the pending count below, and Maker::TextSave decides the pending git edit
@@ -561,16 +567,6 @@ class FilesController < ApplicationController
     # that holds the repository.
     @committable_here = @repo_root.present? && FileLayer.current.capabilities.local_worktree?
     @pending_count = @repo_root && Maker::RepoEdit.pending_for(current_user, @repo_root.node_id).count
-    token = @info&.content_token
-    @thumbnail = token && current_thumbnail(@node, token)
-    # WHAT THE 3D VIEWER'S IMPORTER CANNOT KNOW — the slicer's per-object filament colours and the
-    # model's declared unit, which three.js's 3MFLoader ignores. nil for everything that is not a
-    # 3MF (`for` refuses by NAME before it looks at anything else), so this is safe to call for any
-    # file and costs a non-3MF nothing. On a 3MF it is the second read this action can make, beside
-    # the zip one `viewer_for` makes: ONE port read, bounded on the catalog's size column and cached
-    # by content token, so it is one query per view of one file and nothing after the first. A read
-    # with no decision in it, so it stays a line on each page rather than joining `viewer_for`.
-    @viewer_manifest = Maker::ThreeMfManifest.for(user: current_user, node: @node)
     @attached_projects, @projects = attach_choices_for(@node)
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
     @new_note = current_user.maker_notes.new(node_id: @node.node_id)
@@ -1212,34 +1208,6 @@ class FilesController < ApplicationController
       partners[l.public_send(theirs)] && [ l, partners[l.public_send(theirs)] ] if
         l.kind == kind && l.public_send(mine) == @node.node_id
     }
-  end
-
-  # The thumbnail for THIS content AND this build of its renderer, enqueueing when there is none.
-  #
-  # #show USED TO ONLY READ, and that is why a bumped revision never reached the detail page: the
-  # only thing enqueueing thumbnails is the index's backfill, so a file whose page you opened
-  # directly kept rendering an older build's metadata until you happened to visit the list. The
-  # Laser Settings panel is drawn from that metadata, which is how a deploy that added layer
-  # colours left them invisible on 172 of 174 files.
-  #
-  # A CURRENT ROW IS ASKED `Enqueue.needs_job?` BEFORE IT IS RETURNED: one whose job was lost (in
-  # flight past STALLED_AFTER) is healed here, and a `failed` one never is (`retry_failed: false`) —
-  # the file page and the inspector are opened again and again (files-preview.md).
-  #
-  # Enqueue returns the repointed row — `pending` after a content change, so the view shows
-  # "Generating preview…" rather than an older artifact labelled as current; `rebuilding` after a
-  # renderer bump, which keeps its picture of this same content up — or nil when nothing can render
-  # this name.
-  def current_thumbnail(node, token)
-    row = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
-                                                   name: node.name, version_id: token,
-                                                   kind: "thumbnail")
-    revision = row && Maker::Previews::Enqueue.revision_for_name(node.name, row.kind)
-    return row if row && !Maker::Previews::Enqueue.needs_job?(row, version_id: token, revision:,
-                                                              retry_failed: false)
-
-    Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
-                                  name: node.name, version_id: token, kind: "thumbnail")
   end
 
   # Chunk mode's catalog is the sync engine's changelog; a manual scan is meaningless there. Reads

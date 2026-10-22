@@ -67,7 +67,7 @@ landed it (§11).
    projects. **The Library's 3D models view (`files/models`, slice 5) lights the 3D models place,
    not Library**, although its first segment is `files`: `sidebar_current`'s files arm checks
    `controller_path == "files/models"` before the pin walk. The phone tab bar has no place of its
-   own for it, so it lights Library for `[:models]`, on the view and on the model pages that survive
+   own for it, so it lights Library for `[:models]`, on the view and on the model pages
    (`models/*`, which `SECTIONS` still maps to 3D models); `models_redirects_test.rb` pins both
    lights on the view. `SECTIONS`' `models` entry no longer names `shelves`, so `settings/shelves`
    lights Settings. The sidebar and the phone tab bar both read `sidebar_current`;
@@ -101,6 +101,17 @@ landed it (§11).
     through the `col-*` classes `files/_list.html.erb` carries; anything that must keep its width
     (code, diffs, the Measure stage, the spreadsheet) scrolls inside its own `overflow-x: auto`
     container; long names get `overflow-wrap: anywhere`.
+
+**THE PAGE'S `<head>` IS ONE PARTIAL, `layouts/_head`, AND `layouts/turbo_rails/frame` IS THIS APP'S
+OWN, NOT AN ACCIDENTAL SHADOW OF THE GEM'S (2026-10-21).** turbo-rails applies `turbo_rails/frame` to
+every frame request, and the gem's copy carries only the CSRF tags. Turbo records a frame navigation
+promoted to a page visit (`data-turbo-action="advance"`, the model page's pane) only when the
+response's `data-turbo-track` head elements match the page's, so with the gem's layout the URL
+advanced while Turbo's `lastRenderedLocation` stayed behind, and every later snapshot was filed under
+the wrong address (Back showed the wrong pane). Deleting the override as redundant brings that back;
+`model_stage_test.rb` compares the two heads and `model_page_test.rb` walks Back through them. A
+stylesheet or script tag goes in `_head`, never in either layout, or the two heads diverge again.
+`css_hygiene_test.rb` reads the link order from `_head`.
 
 ## Contracts a restyle may not break
 

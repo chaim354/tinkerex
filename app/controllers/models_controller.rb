@@ -4,14 +4,18 @@
 # endpoints, so §15/§10 are untouched here.
 #
 # SINCE SLICE 5 THE LIST IS A LIBRARY VIEW (Files::ModelsController, /files/models) and `#index` only
-# 301s there; `#show` sends a model whose folder shows its strip to that folder. What stays here is
-# the page every other model keeps, the import, edit and destroy.
+# 301s there. SINCE 2026-10-21 `#show` RENDERS EVERY MODEL'S OWN PAGE — its files on the left, a pane
+# on the right — and no longer sends a folder model to its folder; the Library's strip stays above
+# that folder's files and its title links here. What else stays here is the import, edit and destroy.
 class ModelsController < ApplicationController
   before_action :set_model, only: %i[show edit update destroy]
 
   # The page's ONE live-node index — `#show` renders attachments by role, a cover hero and a 3D
   # switcher off the same rows, and every one of them must skip a tombstone.
   include PageNodes
+  # The pane's viewer: the file page's own chain (files/_viewer), fed by the same one method, so the
+  # two pages cannot disagree about which viewer a file gets.
+  include FileViewer
 
   # /models IS THE LIBRARY'S 3D MODELS VIEW NOW (slice 5): Files::ModelsController#index, which this
   # action's body moved to verbatim with SORTS. Permanent, keeping the filters a bookmark or a "See
@@ -22,17 +26,11 @@ class ModelsController < ApplicationController
                 status: :moved_permanently
   end
 
+  # EVERY MODEL HAS ITS OWN PAGE (2026-10-21): its files on the left, a pane on the right
+  # (models/_stage), Printables-style. Until then a model whose folder showed the Library's strip was
+  # sent there with a 302 (Maker::ModelFolder's second answer, deleted with it); the owner asked for a
+  # model with several files to open a page of its own instead.
   def show
-    # A MODEL WITH A STRIP TO LAND ON GOES THERE (slice 5): its folder, where the Library's model strip
-    # carries what this page did. Everything else stays — a one-file model, an import whose folder was
-    # never made or is in the trash, a folder a project now claims. 302, never 301: the answer changes
-    # when the folder is trashed or restored. Maker::ModelFolder is the one definition. AFTER
-    # `set_model`, which resolves through current_user, so another user's model is a 404 before this
-    # line can name their folder in a Location header (models_redirects_test.rb).
-    if (folder_id = Maker::ModelFolder.landing_folder_id(current_user, @model))
-      return redirect_to(files_path(folder: folder_id))
-    end
-
     # A FILE DELETED FROM THE LIBRARY LEAVES THIS MODEL TOO, on exactly the terms ProjectsController
     # #show has always used — `Library::Reconciler` tombstones rather than destroys, so the
     # attachment row outlives the file and every surface below has to skip it. It did not: this
@@ -47,45 +45,21 @@ class ModelsController < ApplicationController
     # NOT SILENT, same sentence and same reason as the project panel's: a user who deleted a file by
     # accident and watched this page change otherwise has no thread to pull.
     @missing_attachment_count = missing.size
-    @by_role = @attachments.group_by(&:role)
-    @cover_att = @attachments.find { |a| a.node_id == @model.cover_node_id }
-    # COVER ONLY, DELIBERATELY NOT THE UNION. This page paints exactly ONE thumbnail — the hero;
-    # `_file_tree` is plain link_to's — so merging the way projects#show does would save no query
-    # (there is no second call here) while spending ThumbnailMap::BACKFILL_LIMIT on up to 100 rows
-    # and 100 jobs per view for images nothing renders. Pinned as a budget in page_nodes_test.rb.
-    # PLUS THE GALLERY'S NON-INLINE IMAGES (tinkerex#285): a .heic photo renders as a thumbnail cell
-    # there, not as bytes, and the cell reads this map. Bounded by the model's own photos.
-    gallery = Array(@by_role["image"]).filter_map do |a|
-      a.node_id unless Maker::FileAttachment.inline_image?(@page_nodes[a.node_id]&.name.to_s)
+    @stage = stage_for(params[:file])
+    # THE DETAILS DATA IS DETAILS' ALONE: the hero's covers, the 3D switcher's manifests, the print log
+    # and its composer choices render only in that pane, so a page opening on a file (every model
+    # with instructions, by default) pays none of it.
+    if @stage == :details
+      load_details
+    else
+      @viewer = viewer_state_for(@stage)
     end
-    @covers = Maker::Previews::ThumbnailMap.for(current_user, ([ @model.cover_node_id ] + gallery).compact.uniq)
-    # The model's browser-viewable 3D files, in position order, for the hero's "View in 3D"
-    # switcher. Default selection = the cover file if it's viewable, else the first one.
-    #
-    # FILTERED BY EXTENSION, NOT BY ROLE, and the two are genuinely different questions: `.fcstd`
-    # is `cad_source` and IS viewable, `.f3d`/`.sldprt` are `cad_source` and are not, and `.svg` is
-    # `vector` and is deliberately left out (§14d — Maker::FileAttachment::VIEWABLE_3D_EXTS says
-    # why for each). This read the SAME literal `%w[stl 3mf obj]` that FilesController carried
-    # until 2026-09-06; one constant now, so the file page and this page cannot drift about which
-    # of a model's files open in the viewer.
-    # THE MANIFEST IS PER FILE, WHICH IS WHY IT IS BUILT HERE AND NOT ON THE ELEMENT: the switcher
-    # swaps one model for another, so the slicer colours and the unit factor have to travel on each
-    # `<option>` (§14d — modelviewer_controller.js reads them beside `url`/`format`). `for` refuses
-    # by name first, so the non-3MF entries cost nothing; a 3MF costs ONE bounded port read (one
-    # query on share; on chunk_remote a chunk download through the sync server) the first time this
-    # model is viewed and nothing after, cached by content token. THAT COST IS PER 3MF ATTACHMENT,
-    # AND page_query_budget_test.rb DOES NOT SEE IT: its growing fixture is all `.stl`, which `for`
-    # refuses by name, so the constancy it asserts is over files that never reach a read. A model
-    # holding N 3MFs pays N reads on a cold cache — the same per-file shape the page's thumbnails
-    # already have, stated here rather than hidden behind a guard that cannot fail for it.
-    @viewable_3d = @attachments.filter_map do |a|
-      node = @page_nodes[a.node_id]
-      ext = File.extname(node.name).downcase.delete(".")
-      next unless Maker::FileAttachment::VIEWABLE_3D_EXTS.include?(ext)
-      { node_id: a.node_id, name: node.name, format: ext,
-        manifest: Maker::ThreeMfManifest.for(user: current_user, node:) }
-    end
-    @viewable_3d_default = @viewable_3d.find { |f| f[:node_id] == @model.cover_node_id } || @viewable_3d.first
+    # A FRAME REQUEST IS THE PANE ALONE: the list sits outside the frame (its scroll survives a click),
+    # so a switch needs one pane's setup and nothing else, not the tree walk. models/pane renders in
+    # this app's turbo_rails/frame layout, whose real <head> is what lets Turbo record the promoted
+    # visit (layouts/_head says why; a bare partial here broke Back).
+    return render(:pane) if turbo_frame_request_id == "model_stage"
+
     # The model's files as a folder TREE (preserves the imported zip's structure) for the detail
     # page, instead of a flat role-grouped list.
     #
@@ -101,8 +75,6 @@ class ModelsController < ApplicationController
     # folder produced, so none of them could see a model that has no folder at all.
     @file_tree  = file_tree_for_model
     @file_count = count_files(@file_tree)
-    @print_runs = @model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
-    @printers, @materials = Maker::PrintRun.composer_choices(current_user)
   end
 
   # GET /models/new — the import form (the importer Stimulus controller drives it).
@@ -190,6 +162,69 @@ class ModelsController < ApplicationController
 
   def model_params
     params.require(:model).permit(:title, :source_url, :designer, :license, :notes, :print_status, :tag_list)
+  end
+
+  # WHICH PANE THE PAGE OPENS ON: `?file=details`, `?file=<one of this model's LIVE attachments>`,
+  # or — for anything else, a foreign node, a tombstone, a folder, garbage, a non-string — the
+  # default, never an error: the first live instructions attachment by position, else Details. The
+  # tree on the left lists a subset of the live attachments (file_tree_for_model), and the gallery
+  # can name an image outside the folder, so the attachments are the set to validate against.
+  def stage_for(requested)
+    return :details if requested == "details"
+
+    live = @attachments.index_by(&:node_id)
+    return @page_nodes[requested] if requested.is_a?(String) && live.key?(requested)
+
+    first = @attachments.find { |a| a.role == "instructions" }
+    first ? @page_nodes[first.node_id] : :details
+  end
+
+  # What the Details pane and the hero read: by-role groups, the cover, the covers map, the 3D
+  # switcher's files, the print log. Everything that was #show's body below the attachments.
+  def load_details
+    @by_role = @attachments.group_by(&:role)
+    @cover_att = @attachments.find { |a| a.node_id == @model.cover_node_id }
+    # COVER ONLY, DELIBERATELY NOT THE UNION. This page paints exactly ONE thumbnail — the hero;
+    # `_file_tree` is plain link_to's — so merging the way projects#show does would save no query
+    # (there is no second call here) while spending ThumbnailMap::BACKFILL_LIMIT on up to 100 rows
+    # and 100 jobs per view for images nothing renders. Pinned as a budget in page_nodes_test.rb.
+    # PLUS THE GALLERY'S NON-INLINE IMAGES (tinkerex#285): a .heic photo renders as a thumbnail cell
+    # there, not as bytes, and the cell reads this map. Bounded by the model's own photos.
+    # (The pane, when it shows a file instead of Details, asks FileViewer#current_thumbnail for that
+    # ONE file, the file page's own door — never this map, so this argument is unchanged by it.)
+    gallery = Array(@by_role["image"]).filter_map do |a|
+      a.node_id unless Maker::FileAttachment.inline_image?(@page_nodes[a.node_id]&.name.to_s)
+    end
+    @covers = Maker::Previews::ThumbnailMap.for(current_user, ([ @model.cover_node_id ] + gallery).compact.uniq)
+    # The model's browser-viewable 3D files, in position order, for the hero's "View in 3D"
+    # switcher. Default selection = the cover file if it's viewable, else the first one.
+    #
+    # FILTERED BY EXTENSION, NOT BY ROLE, and the two are genuinely different questions: `.fcstd`
+    # is `cad_source` and IS viewable, `.f3d`/`.sldprt` are `cad_source` and are not, and `.svg` is
+    # `vector` and is deliberately left out (§14d — Maker::FileAttachment::VIEWABLE_3D_EXTS says
+    # why for each). This read the SAME literal `%w[stl 3mf obj]` that FilesController carried
+    # until 2026-09-06; one constant now, so the file page and this page cannot drift about which
+    # of a model's files open in the viewer.
+    # THE MANIFEST IS PER FILE, WHICH IS WHY IT IS BUILT HERE AND NOT ON THE ELEMENT: the switcher
+    # swaps one model for another, so the slicer colours and the unit factor have to travel on each
+    # `<option>` (§14d — modelviewer_controller.js reads them beside `url`/`format`). `for` refuses
+    # by name first, so the non-3MF entries cost nothing; a 3MF costs ONE bounded port read (one
+    # query on share; on chunk_remote a chunk download through the sync server) the first time this
+    # model is viewed and nothing after, cached by content token. THAT COST IS PER 3MF ATTACHMENT,
+    # AND page_query_budget_test.rb DOES NOT SEE IT: its growing fixture is all `.stl`, which `for`
+    # refuses by name, so the constancy it asserts is over files that never reach a read. A model
+    # holding N 3MFs pays N reads on a cold cache — the same per-file shape the page's thumbnails
+    # already have, stated here rather than hidden behind a guard that cannot fail for it.
+    @viewable_3d = @attachments.filter_map do |a|
+      node = @page_nodes[a.node_id]
+      ext = File.extname(node.name).downcase.delete(".")
+      next unless Maker::FileAttachment::VIEWABLE_3D_EXTS.include?(ext)
+      { node_id: a.node_id, name: node.name, format: ext,
+        manifest: Maker::ThreeMfManifest.for(user: current_user, node:) }
+    end
+    @viewable_3d_default = @viewable_3d.find { |f| f[:node_id] == @model.cover_node_id } || @viewable_3d.first
+    @print_runs = @model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
+    @printers, @materials = Maker::PrintRun.composer_choices(current_user)
   end
 
   # { "" => <Models/slug node>, "sub/dir" => <node>, ... }. Always includes the model root.

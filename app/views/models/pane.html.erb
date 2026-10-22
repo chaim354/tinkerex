@@ -1,0 +1,6 @@
+<%# THE PANE ALONE: ModelsController#show's answer when Turbo asks for the `model_stage` frame. It
+    renders in layouts/turbo_rails/frame (this app's copy, which carries the page's real <head>), and
+    it sets the page's own title because Turbo copies the response's <title> into the page when it
+    records the promoted visit. %>
+<% content_for :title, "#{@model.title} — Tinkerex" %>
+<%= render "models/stage", model: @model, stage: @stage, viewer: @viewer %>

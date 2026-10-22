@@ -107,6 +107,9 @@ class RepoBrowserTest < ApplicationSystemTestCase
       # `click` + `assert_current_path` pair and still break middle-click, ⌘-click and the keyboard.
       link = find(".filechooser-row.is-file[href='#{file_path(@led.node_id)}']")
       assert_equal "a", link.tag_name
+      # AND IT OPTS INTO fileopen (2026-10-21) like every server-rendered file link. Asserted here
+      # because template_hygiene_test.rb's sweep reads server HTML and never sees a JS-built row.
+      assert_equal "click->fileopen#click", link["data-action"]
       link.click
     end
     assert_current_path file_path(@led.node_id)

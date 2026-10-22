@@ -1,16 +1,19 @@
 import { Controller } from "@hotwired/stimulus"
 
-// Right-click a row → a small menu (Add note / Open / Download / Edit in <Addon> / Delete). "Add
-// note" opens a popover with a textarea that POSTs to the file's notes endpoint (JSON), then reloads
-// so the server-rendered badge is correct. Progressive enhancement: with no JS, right-click is the
-// browser's own menu, notes stay fully usable from the file detail page, and the list's own
-// row-actions cell still carries a Delete button.
+// Right-click a row → a small menu (Add note / Open / Details / Download / Edit in <Addon> / Delete).
+// "Add note" opens a popover with a textarea that POSTs to the file's notes endpoint (JSON), then
+// reloads so the server-rendered badge is correct. "Details" opens the Library's side panel for the
+// file — in place on the Library, by navigating there anywhere else (see the entry below).
+// Progressive enhancement: with no JS, right-click is the browser's own menu, notes stay fully
+// usable from the file detail page, and the list's own row-actions cell still carries a Delete
+// button.
 //
 // EVERY ENTRY IS BUILT FROM A `data-` ATTRIBUTE ON THE CELL, never from a URL assembled here. The
-// cell carries `data-note-url`, `data-download-url`, `data-delete-url` and `data-addon-open-url`,
-// all written by the server's own route helpers (files_helper.rb#file_menu_data and
-// #folder_menu_data) — so this controller cannot get a path shape wrong, and a surface that does not
-// want an entry simply omits the attribute rather than needing a flag.
+// cell carries `data-note-url`, `data-download-url`, `data-delete-url`, `data-details-url` and
+// `data-addon-open-url`, all written by the server's own route helpers
+// (files_helper.rb#file_menu_data and #folder_menu_data) — so this controller cannot get a path
+// shape wrong, and a surface that does not want an entry simply omits the attribute rather than
+// needing a flag.
 //
 // WHICH MEANS EVERY ENTRY IS INDEPENDENTLY OPTIONAL, and since 2026-09-10 that is load-bearing
 // rather than incidental: a FOLDER's cell carries the delete url alone.
@@ -65,6 +68,24 @@ export default class extends Controller {
       open.href = href
       open.textContent = "Open"
       this.menu.appendChild(open)
+    }
+
+    // DETAILS — the Library's side panel for this file (2026-10-21). The CELL is asked first, through
+    // a cancelable `filemenu:details` event: on the Library the tile is a selection item and
+    // selection_controller.js#details opens the panel in place and cancels it. Anywhere else nothing
+    // cancels it and the entry is an ordinary link to `data-details-url` — the Library with this file
+    // selected, a URL the server built (file_menu_data) like every other entry here. The document's
+    // own click listener closes the menu afterwards, as it does for Open.
+    const detailsUrl = cell.dataset.detailsUrl
+    if (detailsUrl) {
+      const details = document.createElement("a")
+      details.href = detailsUrl
+      details.textContent = "Details"
+      details.addEventListener("click", (e) => {
+        const asked = this.dispatch("details", { target: cell, cancelable: true })
+        if (asked.defaultPrevented) e.preventDefault()
+      })
+      this.menu.appendChild(details)
     }
 
     // The URL already carries ?download=1, so FilesController#blob answers

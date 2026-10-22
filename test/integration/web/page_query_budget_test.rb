@@ -858,6 +858,27 @@ module Web
                               "models#show")
     end
 
+    # THE PANE (2026-10-21): one file's viewer, whatever the model holds. The first attachment is the
+    # one shown at both sizes, so the measurement is the page around one viewer, not the viewer.
+    test "models#show with a file in the pane does not grow with attachments or print runs" do
+      model = @user.maker_models.create!(title: "Paned", slug: "paned")
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          node!(id, "#{id}.stl")
+          model.file_attachments.create!(user: @user, node_id: id, role: "model")
+          model.print_runs.create!(user: @user, printed_on: Date.current, outcome: "success")
+        end
+      end
+      assert_constant_queries(model_path(model, file: "ps0"),
+                              -> { add.call("ps", SMALL) },
+                              -> { add.call("pl", LARGE - SMALL) },
+                              "models#show (file pane)")
+      # THE PANE WAS MEASURED, NOT DETAILS: a regression in ModelsController#stage_for would quietly
+      # turn this into a second measurement of the Details page above.
+      assert_select "turbo-frame#model_stage .model-stage-name", text: "ps0.stl"
+    end
+
     # A REAL FOLDER, NOT THE ROOT. This test has always been named for the folder view and has
     # always measured the root, where `@folder` is nil — so the folder branch's own reads (the
     # breadcrumb walk, and since S4-6 the project-claim lookup) were never under measurement at

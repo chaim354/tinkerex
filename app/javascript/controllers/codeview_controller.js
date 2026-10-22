@@ -25,6 +25,7 @@ export default class extends Controller {
   async connect() {
     this.disconnected = false
     this.abort = new AbortController()
+    this.rest()
 
     let head
     try {
@@ -54,6 +55,22 @@ export default class extends Controller {
     if (this.disconnected) return
 
     this.mount(cm, languages, theme, head.text)
+  }
+
+  // CONNECT RESTS THE ELEMENT, as the 3D, board and Measure viewers' do (files-preview.md). A page Turbo
+  // restores from its cache has no fallback, because mount() removed the <pre> — so connect found no
+  // target, threw "Missing target element", and the code area stayed blank (measured: no
+  // `.cm-content` after Back). Reachable by Back to any source file's page (code_viewer_test.rb) and
+  // through the model page's pane (model_page_test.rb). Anything left of the last editor goes, a fresh
+  // fallback takes its place, and the load below runs as on a first visit.
+  rest() {
+    if (this.hasFallbackTarget) return
+    this.element.querySelectorAll(".cm-editor").forEach((el) => el.remove())
+    const pre = document.createElement("pre")
+    pre.className = "preview-text"
+    pre.dataset.codeviewTarget = "fallback"
+    pre.textContent = "Loading…"
+    this.element.prepend(pre)
   }
 
   mount(cm, languages, theme, text) {
