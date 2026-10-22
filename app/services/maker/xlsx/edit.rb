@@ -77,14 +77,16 @@ module Maker
       def write_value(sheet, cell, raw, name)
         clear_value(cell)
         kind = @wb.format_kind(cell["s"])
-        if raw.start_with?("=") && raw.length > 1
-          formula = raw[1..]
-          check_formula!(formula, "#{sheet.name}!#{name}", raw)
-          add(cell, "f", formula)
-        elsif raw.start_with?("'")
+        # A Text-formatted cell takes what is typed as text, `=` included — Excel's rule, and the
+        # reason a maker formats a part-number column as Text in the first place.
+        if raw.start_with?("'")
           inline_string(cell, raw[1..])
         elsif kind == :text
           inline_string(cell, raw)
+        elsif raw.start_with?("=") && raw.length > 1
+          formula = raw[1..]
+          check_formula!(formula, "#{sheet.name}!#{name}", raw)
+          add(cell, "f", formula)
         elsif raw.match?(/\A(true|false)\z/i)
           cell["t"] = "b"
           add(cell, "v", raw.casecmp?("true") ? "1" : "0")
@@ -118,11 +120,14 @@ module Maker
         nil
       end
 
+      # nil for a number a double cannot hold (`1e400`): `<v>` is an xsd:double, and "Infinity"
+      # there is a file Excel repairs, so the caller keeps what was typed as text instead.
       def canonical(n)
         d = n.is_a?(BigDecimal) ? n : BigDecimal(n.to_s)
         return d.to_i.to_s if d.frac.zero? && d.abs < 1e15
 
-        d.to_f.to_s
+        f = d.to_f
+        f.finite? && !(f.zero? && !d.zero?) ? f.to_s : nil
       end
 
       def date_serial(text)
@@ -278,13 +283,14 @@ module Maker
           raise Refused, "There is no room below the last row of #{sheet.name} to insert more rows."
         end
 
+        # Every row from here down moves by `count`: the old row `at` on an insert, the first row
+        # after the deleted block on a delete.
+        from = count.positive? ? at : at - count
         doc.xpath("//m:sheetData/m:row", NS).each do |r|
           n = r["r"].to_i
-          moved = if count.positive? then n >= at ? n + count : n
-                  else n > at - count - 1 ? n + count : n
-                  end
-          next if moved == n
+          next if n < from
 
+          moved = n + count
           r["r"] = moved.to_s
           r.xpath("m:c", NS).each { |c| c["r"] = "#{c["r"][/\A[A-Za-z]+/]}#{moved}" }
         end

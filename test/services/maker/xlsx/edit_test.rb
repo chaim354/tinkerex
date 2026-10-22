@@ -131,6 +131,18 @@ class Maker::Xlsx::EditTest < ActiveSupport::TestCase
     assert_equal %(<c r="B3" s="5" t="inlineStr"><is><t>007</t></is></c>), x(cell(doc, "B3"))
   end
 
+  test "an equals sign typed into a Text-formatted cell is text, not a formula" do
+    rows = parts_rows_xml.sub(%(<c r="B3"><v>20</v></c>), %(<c r="B3" s="5"/>))
+    doc = sheet_doc(edit([ set(2, 1, "=B2") ], xlsx_bytes(parts_sheet: parts_sheet_xml(rows:))))
+    assert_equal %(<c r="B3" s="5" t="inlineStr"><is><t>=B2</t></is></c>), x(cell(doc, "B3"))
+  end
+
+  test "a number too large for a double is kept as the text that was typed" do
+    doc = sheet_doc(edit([ set(1, 1, "1e400"), set(2, 1, "1e-400") ]))
+    assert_equal %(<c r="B2" t="inlineStr"><is><t>1e400</t></is></c>), x(cell(doc, "B2"))
+    assert_equal %(<c r="B3" t="inlineStr"><is><t>1e-400</t></is></c>), x(cell(doc, "B3"))
+  end
+
   test "clearing a cell keeps a styled cell and removes a plain one" do
     doc = sheet_doc(edit([ set(1, 4, ""), set(1, 1, "") ]))
     assert_equal %(<c r="E2" s="3"/>), x(cell(doc, "E2"))

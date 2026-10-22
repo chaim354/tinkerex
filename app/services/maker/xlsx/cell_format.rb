@@ -85,10 +85,11 @@ module Maker
         return nil if f.negative? || f >= 2_958_466 # 9999-12-31
         return nil if !date1904 && f.floor == 60
 
-        base = if date1904 then Time.utc(1904, 1, 1)
-               elsif f < 60 then Time.utc(1899, 12, 31)
-               else Time.utc(1899, 12, 30)
-               end
+        base =
+          if date1904 then Time.utc(1904, 1, 1)
+          elsif f < 60 then Time.utc(1899, 12, 31)
+          else Time.utc(1899, 12, 30)
+          end
         base + (f * 86_400).round
       end
 
