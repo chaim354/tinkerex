@@ -18,15 +18,16 @@
 // a comma-separated list (docs/INSTALL.md section 3).
 
 // The values YAML 1.1 reads as booleans or null, which a plain scalar must never be (Psych and the
-// Go parser compose uses disagree about some of them, so all are quoted).
-const BOOL_OR_NULL = /^(?:y|Y|yes|Yes|YES|n|N|no|No|NO|true|True|TRUE|false|False|FALSE|on|On|ON|off|Off|OFF|null|Null|NULL|~)$/
+// Go parser compose uses disagree about some of them, so all are quoted). CASE-INSENSITIVE, because
+// Psych is: it reads `oN` as true and `nuLL` as nil, where the spec lists three spellings of each.
+const BOOL_OR_NULL = /^(?:y|yes|n|no|true|false|on|off|null|~)$/i
 // A plain scalar starts with a letter, `_` or `/` and holds nothing YAML could read as syntax: no
 // space (so no `: ` and no ` #`), no quote, backslash, `$`, `#`, `=`, comma or bracket. Two narrow
 // dot-first shapes are allowed, a path (`.:/library`, `./x`) and a bare name (`.env`), because no
 // YAML number starts that way; `.inf` and `.nan` are refused below. A duration (`30s`) is the one
 // digit-first shape; every other could be a number (`8080:80` is a base-60 integer in YAML 1.1).
 const PLAIN = /^(?:[A-Za-z_/][A-Za-z0-9_./@+:-]*|\.[:/][A-Za-z0-9_./@+:-]*|\.[A-Za-z][A-Za-z0-9_]*|\d+(?:ms|s|m|h))$/
-const FLOAT_WORD = /^\.(?:inf|Inf|INF|nan|NaN|NAN)$/
+const FLOAT_WORD = /^\.(?:inf|nan)$/i
 const KEY = /^[A-Za-z_][A-Za-z0-9_.-]*$/
 // `${NAME}` and `${NAME:-default}` are the two spellings docker-compose.yml uses; `$$` is a literal
 // dollar. Any other `$` is a spelling this module does not resolve, and it throws rather than guess.
@@ -35,6 +36,19 @@ const INTERPOLATION = /\$\$|\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}|\$/g
 const TAG = /^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$/
 const SMB_VERSIONS = ["3.0", "2.1"]
 const AUTHENTICATIONS = ["plain", "login", "cram_md5"]
+// Compose reads a volume source as a FOLDER only when it starts like a path; `Workshop` alone is a
+// named volume, and compose refuses the file ("refers to undefined volume").
+const HOST_PATH_START = /^(?:[/.~]|[A-Za-z]:[\\/]|\\\\)/
+// DOCKER SPLITS THE SMB OPTIONS ON EVERY COMMA BEFORE THE KERNEL SEES `,,`, and lifts out any piece
+// that is one of its mount flags (moby/sys/mount parseOptions). So a password `abc,ro` -- written
+// `abc,,ro` -- mounts the share read-only and reaches the kernel as `abc,,` plus the next option:
+// a different password. These are the words that table holds, refused as a piece of the password.
+const MOUNT_FLAGS = new Set([
+  "defaults", "ro", "rw", "suid", "nosuid", "dev", "nodev", "exec", "noexec", "sync", "async", "dirsync",
+  "remount", "mand", "nomand", "atime", "noatime", "diratime", "nodiratime", "bind", "rbind", "relatime",
+  "norelatime", "strictatime", "nostrictatime", "private", "rprivate", "shared", "rshared", "slave",
+  "rslave", "unbindable", "runbindable"
+])
 
 function isMap(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -85,13 +99,26 @@ function hostPathColonOk(path) {
   return !path.replace(/^[A-Za-z]:(?=[\\/])/, "").includes(":")
 }
 
+// A string YAML can hold: no lone surrogate (encodeURIComponent throws on one in every browser,
+// where String#isWellFormed needs Safari 16.4 or Firefox 119), and neither U+FFFE nor U+FFFF, which
+// YAML counts as unprintable: Psych and compose's own parser both refuse the file (measured).
+function writable(text) {
+  if (/[￾￿]/.test(text)) return false
+  try {
+    encodeURIComponent(text)
+    return true
+  } catch (_error) {
+    return false
+  }
+}
+
 // THE FORM'S RULES, as messages keyed by input name. An empty object means the file can be built.
 export function validate(c) {
   const errors = {}
   const need = (field, ok, message) => { if (!ok && !errors[field]) errors[field] = message }
 
   for (const [field, value] of Object.entries(c)) {
-    need(field, typeof value !== "string" || value.isWellFormed(), "This holds a character that cannot be written to a file. Retype it.")
+    need(field, typeof value !== "string" || writable(value), "This holds a character that cannot be written to a file. Retype it.")
   }
   need("port", isPort(c.port), "A port is a whole number from 1 to 65535.")
   need("puid", c.puid === "" || isId(c.puid), "A user id is a whole number, such as 1000 (id -u prints yours).")
@@ -107,9 +134,13 @@ export function validate(c) {
     if (!c.shareGuest) {
       need("shareUser", c.shareUser !== "", "The user name the share accepts, or tick Guest.")
       need("shareUser", !c.shareUser.includes(","), "A comma would end the user name in the mount options.")
+      const flag = c.sharePassword.split(",").slice(1).find((piece) => MOUNT_FLAGS.has(piece))
+      need("sharePassword", !flag, `Docker reads ",${flag}" in a password as a mount option of its own, so the share would get a different password. Choose one without it.`)
     }
     need("shareVersion", SMB_VERSIONS.includes(c.shareVersion), "Choose 3.0 or 2.1.")
   } else {
+    need("folderPath", c.folderPath === "" || HOST_PATH_START.test(c.folderPath),
+      "Start a folder beside this file with ./ (./Workshop). Docker reads a bare name as a volume of its own, not a folder.")
     need("folderPath", hostPathColonOk(c.folderPath), "A colon can only follow a Windows drive letter (C:\\). Docker reads any other colon as the end of the path.")
   }
 

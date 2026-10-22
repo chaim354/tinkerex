@@ -206,7 +206,9 @@ class ComposeGeneratorSystemTest < ApplicationSystemTestCase
     end
 
     # Scalars YAML would read as something else if written plain.
-    plain_looking = %w[on off yes no true false null ~ 1e3 0777 0x1F 12:30 .inf .nan - ? & * ! % @ ` | > 8080:80 a: #x]
+    # Psych matches the boolean and null words without regard to case, so the mixed spellings too.
+    plain_looking = %w[on off yes no true false null ~ oN yEs tRUE nO fALSE nuLL .iNf .nAn Y n
+                       1e3 0777 0x1F 12:30 .inf .nan - ? & * ! % @ ` | > 8080:80 a: #x]
     mail_cases = plain_looking.map do |word|
       { smtpAddress: "smtp.example.net", appHost: "maker.example.net", smtpUser: "u@example.net",
         smtpPassword: "#{word} \"q\" $x \\", smtpDomain: word, mailFrom: "\"Tinkerex\" <#{word}@x>" }
@@ -278,12 +280,14 @@ class ComposeGeneratorSystemTest < ApplicationSystemTestCase
 
   test "an invalid value names itself, and there is no file to download or copy until it is fixed" do
     open_page
-    {
-      "compose-port" => [ "0", "A port is a whole number from 1 to 65535.", "Port" ],
-      "compose-puid" => [ "abc", "A user id is a whole number", "PUID" ],
-      "compose-tag" => [ "bad tag", "A tag is letters, digits, dots, dashes and underscores", "Image tag" ],
-      "compose-folder-path" => [ "/mnt/a:b", "A colon can only follow a Windows drive letter", "Folder" ]
-    }.each do |id, (value, message, label)|
+    [
+      [ "compose-port", "0", "A port is a whole number from 1 to 65535.", "Port" ],
+      [ "compose-puid", "abc", "A user id is a whole number", "PUID" ],
+      [ "compose-tag", "bad tag", "A tag is letters, digits, dots, dashes and underscores", "Image tag" ],
+      [ "compose-folder-path", "/mnt/a:b", "A colon can only follow a Windows drive letter", "Folder" ],
+      # A bare name is a named volume to compose, which refuses the file ("undefined volume").
+      [ "compose-folder-path", "Workshop", "Start a folder beside this file with ./", "Folder" ]
+    ].each do |id, value, message, label|
       original = find_field(id).value
       fill_in id, with: value
       assert_selector "##{id}-error", text: message
@@ -304,6 +308,23 @@ class ComposeGeneratorSystemTest < ApplicationSystemTestCase
     assert_selector "#compose-share-user-error", text: "or tick Guest"
     fill_in "compose-share-server", with: "//nas"
     assert_selector "#compose-share-server-error", text: "no slashes"
+    # Docker lifts `ro` out of the option list before the kernel reads `,,` (moby's parseOptions).
+    fill_in "compose-share-password", with: "abc,ro"
+    assert_selector "#compose-share-password-error", text: "Docker reads \",ro\" in a password as a mount option"
+    fill_in "compose-share-password", with: "abc,road"
+    assert_no_selector "#compose-share-password-error", visible: true
+
+    # What no input should hold: a lone surrogate, and the two characters YAML counts as unprintable.
+    refused = build({ folderPath: "/a￿b" }, { smtpAddress: "s", appHost: "h", smtpPassword: "x￾y" }, { folderPath: "/ab" })
+    assert_match(/cannot be written/, refused[0].dig("errors", "folderPath"))
+    assert_match(/cannot be written/, refused[1].dig("errors", "smtpPassword"))
+    assert_empty refused[2]["errors"]
+    lone = page.evaluate_async_script(<<~JS)
+      const done = arguments[arguments.length - 1];
+      import("lib/compose_file").then((m) => done(m.validate({ ...#{DEFAULTS.to_json}, sharePassword: "a\\ud800b", library: "share",
+        shareServer: "nas", shareName: "s", shareUser: "u" }).sharePassword || null));
+    JS
+    assert_match(/cannot be written/, lone.to_s)
 
     choose "A folder on this machine"
     find("summary", text: "Mail and HTTPS (optional)").click

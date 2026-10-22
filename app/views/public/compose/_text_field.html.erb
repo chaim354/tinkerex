@@ -1,14 +1,15 @@
-<%# locals: (name:, label:, value: "", placeholder: nil, hint: nil, type: "text", inputmode: nil) %>
+<%# locals: (name:, label:, value: "", placeholder: nil, hint: nil, type: "text", inputmode: nil, described_by: nil) %>
 <%# ONE INPUT OF THE COMPOSE GENERATOR, with its hint and the slot compose_controller.js writes its
-    message into. `name` is what the controller reads by; the page has no <form>, so it is never
-    submitted. `aria-describedby` names the hint and the message, so a screen reader hears why a
-    value is refused, not only that it is. %>
+    message into. `name` is what the controller reads by; the page has no form element, so it is
+    never submitted. `aria-describedby` names the hint, any hint the input shares with a neighbour
+    (`described_by`, an id) and the message, so a screen reader hears why a value is refused, not
+    only that it is. %>
 <% id = "compose-#{name.to_s.underscore.dasherize}" %>
 <div class="field">
   <label for="<%= id %>"><%= label %></label>
   <%= tag.input id:, name:, type:, value:, placeholder:, inputmode:,
                 autocomplete: (type == "password" ? "new-password" : "off"), spellcheck: false,
-                "aria-describedby": [ ("#{id}-hint" if hint), "#{id}-error" ].compact.join(" ") %>
+                "aria-describedby": [ ("#{id}-hint" if hint), described_by, "#{id}-error" ].compact.join(" ") %>
   <% if hint %><p class="compose-hint" id="<%= id %>-hint"><%= hint %></p><% end %>
   <p class="compose-error" id="<%= id %>-error" data-compose-error="<%= name %>" hidden></p>
 </div>

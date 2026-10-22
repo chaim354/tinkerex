@@ -14,16 +14,18 @@ module Tinkerex
   #   leading   comment lines that precede a key or sequence item, by "/"-joined path
   #   trailing  comment lines that close a block: indented past the key after them, or at the end
   #   flow      the paths the file writes as `[a, b]`
-  #   tools     the services the app's environment names by URL, those env keys, the volumes only
+  #   tools     the services the app reaches through a Tools key -- a sidecar's
+  #             `<SERVICE>_SIDECAR_URL` or ADDON_SOURCE_URL -- those env keys, and the volumes only
   #             they mount: what the Tools switch removes
   #   share     the network-share switch: which web volume is the library bind, the volume's name,
   #             the prose that explains it and the commented example parsed back into YAML
   #
   # WHAT THE GENERATOR KNOWS BY HAND is only this: the app service is `web`, the library is the bind
-  # whose target is `/library`, and the commented block that closes `volumes:` is the share example.
-  # A file whose shape stops matching any of it RAISES, naming the line, rather than guessing -- and
-  # test/lib/compose_template_test.rb reads the real file, so that raise is a red build, never a
-  # visitor's wrong file.
+  # whose target is `/library`, the commented block that closes `volumes:` is the share example, and
+  # a Tool is reached through a Tools key. A file whose shape stops matching any of it RAISES, naming
+  # the line, rather than guessing -- a service reached any other way, an end-of-line comment, a
+  # comment under a scalar -- and test/lib/compose_template_test.rb reads the real file, so that
+  # raise is a red build, never a visitor's wrong file.
   #
   # THE TOOLS ARE READ OFF THE FILE, NEVER Tinkerex::Sidecars: /sidecar/ is dockerignored, so
   # `Sidecars#names` is [] in the image. The test cross-checks the two in a checkout.
@@ -35,6 +37,8 @@ module Tinkerex
     LIBRARY_TARGET = "/library".freeze
     # `bin/rails generate sidecar` inserts at these; they instruct a repo tool, not an installer.
     MARKERS = Tinkerex::Sidecars::MARKERS.values.filter_map { |file, text| text if file == :compose }.freeze
+    # The addon bundle server's key (Maker::Addons::Source); a sidecar's is Services.env_key_for.
+    ADDON_SOURCE_KEY = "ADDON_SOURCE_URL".freeze
 
     KEY = /\A(?<indent> *)(?<key>[A-Za-z0-9_.-]+):(?=\s|\z)/
     ITEM = /\A(?<indent> *)- (?<rest>.*)\z/
@@ -101,6 +105,9 @@ module Tinkerex
           pending = []
         elsif (m = COMMENT.match(line))
           pending << [ i, m[:indent].size, line.strip ]
+        elsif end_of_line_comment?(line)
+          raise Error, "docker-compose.yml line #{i + 1}: an end-of-line comment, which the generated file would " \
+                       "lose; put it on its own line above"
         elsif (m = ITEM.match(line))
           indent = m[:indent].size
           comments = settle(pending, indent, stack)
@@ -152,9 +159,19 @@ module Tinkerex
 
       owner = stack.reverse.find { |ind, _| ind < at }
       raise Error, "docker-compose.yml line #{pending.first[0] + 1}: a closing comment with no block to close" unless owner
+      # Only a mapping or a list has children to print a closing comment among; one indented under
+      # a plain value would be filed and never written.
+      unless tree.dig(*owner[1]).is_a?(Hash) || tree.dig(*owner[1]).is_a?(Array)
+        raise Error, "docker-compose.yml line #{pending.first[0] + 1}: a comment indented under a value rather than a block"
+      end
 
       (@trailing[key_for(owner[1])] ||= []).concat(lines) unless lines.empty?
       []
+    end
+
+    # A ` #` outside quotes. Quoted scalars are blanked first, so the `#` in a quoted value is not one.
+    def end_of_line_comment?(line)
+      line.gsub(/"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'/, '""').match?(/\s#/)
     end
 
     def lead!(path, comments)
@@ -169,15 +186,20 @@ module Tinkerex
       env = app["environment"] || {}
       raise Error, "the #{APP} service's environment must be a mapping" unless env.is_a?(Hash)
 
+      # A Tools key NAMES its service (BOXES_SIDECAR_URL -> boxes), so a DATABASE_URL pointing at a
+      # `db` service is not one, and `db` is refused below rather than dropped with the Tools.
       reached = env.filter_map do |key, value|
         host = url_host(value)
-        [ key, host ] if host && host != APP && services.key?(host)
+        next unless host && host != APP && services.key?(host)
+
+        [ key, host ] if key == ADDON_SOURCE_KEY || key == Maker::Addons::Services.env_key_for(host)
       end
       tools = reached.map(&:last).uniq
       unknown = services.keys - [ APP ] - tools
       if unknown.any?
-        raise Error, "docker-compose.yml runs #{unknown.join(', ')}, which the app does not reach by URL, so the " \
-                     "generator cannot tell whether switching the Tools gallery off should remove it"
+        raise Error, "docker-compose.yml runs #{unknown.join(', ')}, which the app does not reach through a Tools key " \
+                     "(<SERVICE>_SIDECAR_URL or #{ADDON_SOURCE_KEY}), so the generator cannot tell whether " \
+                     "switching the Tools gallery off should remove it"
       end
 
       { services: tools, env: reached.map(&:first), volumes: named_volumes(tools) - named_volumes(services.keys - tools) }

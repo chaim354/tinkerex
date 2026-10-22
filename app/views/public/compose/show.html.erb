@@ -37,14 +37,14 @@
         <div data-compose-target="folder">
           <%= render "public/compose/text_field", name: "folderPath", label: "Folder",
                      placeholder: "Empty: the folder you put the file in",
-                     hint: "An absolute path (/mnt/user/files, C:\\Users\\you\\Workshop) or one relative to the file. Uploads land in it and deletions move to a .trash/ inside it, so not Downloads." %>
+                     hint: "An absolute path (/mnt/user/files, C:\\Users\\you\\Workshop) or one beside the file (./Workshop). Uploads land in it and deletions move to a .trash/ inside it, so not Downloads." %>
         </div>
 
         <div data-compose-target="share" hidden>
           <%= render "public/compose/text_field", name: "shareServer", label: "Server", placeholder: "192.168.1.50",
                      hint: "The computer that shares the folder, by name or IP address. A .local name often does not resolve inside Docker; use the IP." %>
           <%= render "public/compose/text_field", name: "shareName", label: "Share name", placeholder: "Files" %>
-          <label class="field-inline compose-check"><input type="checkbox" name="shareGuest"> A guest share, with no user name or password</label>
+          <label class="field-inline compose-check"><input type="checkbox" name="shareGuest" aria-describedby="compose-share-hint"> A guest share, with no user name or password</label>
           <div data-compose-target="credentials">
             <%= render "public/compose/text_field", name: "shareUser", label: "User name", placeholder: "you" %>
             <%= render "public/compose/text_field", name: "sharePassword", label: "Password", type: "password",
@@ -58,35 +58,35 @@
             </select>
             <p class="compose-error" id="compose-share-version-error" data-compose-error="shareVersion" hidden></p>
           </div>
-          <p class="compose-hint">Docker connects to the share itself as the app starts, so it must be reachable then; nothing is mounted on this machine first.</p>
+          <p class="compose-hint" id="compose-share-hint">Docker connects to the share itself as the app starts, so it must be reachable then; nothing is mounted on this machine first.</p>
         </div>
       </fieldset>
 
       <fieldset class="panel compose-group">
         <legend>Who the app runs as</legend>
         <div class="compose-pair">
-          <%= render "public/compose/text_field", name: "puid", label: "PUID", placeholder: "the folder's owner", inputmode: "numeric" %>
-          <%= render "public/compose/text_field", name: "pgid", label: "PGID", placeholder: "the folder's group", inputmode: "numeric" %>
+          <%= render "public/compose/text_field", name: "puid", label: "PUID", placeholder: "the folder's owner", inputmode: "numeric", described_by: "compose-ids-hint" %>
+          <%= render "public/compose/text_field", name: "pgid", label: "PGID", placeholder: "the folder's group", inputmode: "numeric", described_by: "compose-ids-hint" %>
         </div>
-        <p class="compose-hint">Linux only. Empty, the app runs as the owner of your folder (99 and 100 on an Unraid share), and Docker Desktop on a Mac or Windows needs nothing. Set them when the folder is owned by root: <code>id -u</code> and <code>id -g</code> print yours. A network share's files belong to this user too.</p>
+        <p class="compose-hint" id="compose-ids-hint">Linux only. Empty, the app runs as the owner of your folder (99 and 100 on an Unraid share), and Docker Desktop on a Mac or Windows needs nothing. Set them when the folder is owned by root: <code>id -u</code> and <code>id -g</code> print yours. A network share's files belong to this user too.</p>
       </fieldset>
 
       <fieldset class="panel compose-group">
         <legend>The app</legend>
         <div class="compose-pair">
-          <%= render "public/compose/text_field", name: "port", label: "Port", value: "8080", inputmode: "numeric" %>
-          <%= render "public/compose/text_field", name: "tag", label: "Image tag", value: "latest" %>
+          <%= render "public/compose/text_field", name: "port", label: "Port", value: "8080", inputmode: "numeric", described_by: "compose-app-hint" %>
+          <%= render "public/compose/text_field", name: "tag", label: "Image tag", value: "latest", described_by: "compose-app-hint" %>
         </div>
-        <p class="compose-hint">The port on this machine the app answers on, and the app image's tag: <code>latest</code> is the newest release.</p>
-        <label class="field-inline compose-check"><input type="checkbox" name="tools" checked> The Tools gallery</label>
-        <p class="compose-hint">A box generator and an OpenSCAD editor that save into your library: three more containers, published for amd64 only, which an Apple-silicon Mac runs under emulation. Without them the app runs on its own.</p>
+        <p class="compose-hint" id="compose-app-hint">The port on this machine the app answers on, and the app image's tag: <code>latest</code> is the newest release.</p>
+        <label class="field-inline compose-check"><input type="checkbox" name="tools" checked aria-describedby="compose-tools-hint"> The Tools gallery</label>
+        <p class="compose-hint" id="compose-tools-hint">A box generator and an OpenSCAD editor that save into your library: three more containers, published for amd64 only, which an Apple-silicon Mac runs under emulation. Without them the app runs on its own.</p>
       </fieldset>
 
       <details class="panel compose-group">
         <summary>Mail and HTTPS (optional)</summary>
         <p class="compose-hint">Without mail, the first account you create is the owner and an admin adds others under Settings, Users. Mail sends only account confirmation and password reset.</p>
-        <label class="field-inline compose-check"><input type="checkbox" name="forceSsl"> Reached over HTTPS through a reverse proxy</label>
-        <p class="compose-hint">Without TLS in front of the app this locks you out.</p>
+        <label class="field-inline compose-check"><input type="checkbox" name="forceSsl" aria-describedby="compose-https-hint"> Reached over HTTPS through a reverse proxy</label>
+        <p class="compose-hint" id="compose-https-hint">Without TLS in front of the app this locks you out.</p>
         <%= render "public/compose/text_field", name: "smtpAddress", label: "SMTP server", placeholder: "smtp.example.net" %>
         <%= render "public/compose/text_field", name: "appHost", label: "This server's address", placeholder: "maker.example.net",
                    hint: "The name or address people reach this server at, with no https://. Links in mail point here." %>
@@ -119,7 +119,9 @@
           <button type="button" class="btn" data-compose-target="copy" data-action="copy#copy">Copy</button>
         </div>
       </div>
-      <p class="compose-status" data-compose-target="status" role="status" hidden></p>
+      <%# ALWAYS IN THE TREE, never `hidden`: a live region that appears in the same step its text is
+          set is not announced, so it stays and empties instead (pages/public.css collapses it). %>
+      <p class="compose-status" data-compose-target="status" role="status"></p>
       <pre class="compose-preview" data-compose-target="preview" data-copy-target="source" tabindex="0" aria-label="The docker-compose.yml"></pre>
       <p class="compose-next muted">Save it in the folder it names, run <code>docker compose up -d</code> there and open the address in its first lines. The first account you create is the owner. <a href="<%= guide %>">The install guide</a> explains every setting.</p>
     </section>

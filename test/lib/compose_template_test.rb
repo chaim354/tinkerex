@@ -88,6 +88,12 @@ class ComposeTemplateTest < ActiveSupport::TestCase
     refusals = {
       "a detached comment block" => base.sub("services:\n", "services:\n\n  # floating\n\n"),
       "a service the app does not reach" => base.sub("volumes:\n  tinkerex_storage", "  db:\n    image: postgres\n\nvolumes:\n  tinkerex_storage"),
+      # Reached by URL, but not through a Tools key: switching the Tools off must not drop a database.
+      "a service reached by a key that is not a Tools key" =>
+        base.sub("volumes:\n  tinkerex_storage", "  db:\n    image: postgres\n\nvolumes:\n  tinkerex_storage")
+            .sub("      ADDON_SOURCE_URL: http://addons\n", "      ADDON_SOURCE_URL: http://addons\n      DATABASE_URL: postgres://db:5432/x\n"),
+      "an end-of-line comment" => base.sub("RAILS_MAX_THREADS: ${RAILS_MAX_THREADS:-16}\n", "RAILS_MAX_THREADS: ${RAILS_MAX_THREADS:-16}  # what the author runs\n"),
+      "a comment under a plain value" => base.sub("      - tinkerex_storage:/rails/storage\n", "      - tinkerex_storage:/rails/storage\n        # the database\n"),
       "no network-share example" => base.sub(/  # library:\n(  #.*\n)+\z/, ""),
       "two library binds" => base.sub("      - ${LIBRARY_HOST_PATH:-.}:/library\n", "      - ${LIBRARY_HOST_PATH:-.}:/library\n      - ./x:/library\n")
     }

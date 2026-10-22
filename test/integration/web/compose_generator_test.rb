@@ -71,7 +71,7 @@ module Web
     # controller reads by name must exist, or its message would never show.
     test "every validated input has its message slot" do
       get public_compose_path
-      %w[folderPath shareServer shareName shareUser shareVersion puid pgid port tag smtpAddress appHost smtpPort smtpAuthentication].each do |name|
+      %w[folderPath shareServer shareName shareUser sharePassword shareVersion puid pgid port tag smtpAddress appHost smtpPort smtpAuthentication].each do |name|
         assert_select "[name=#{name}]", 1
         assert_select "[data-compose-error=#{name}][hidden]", 1
       end

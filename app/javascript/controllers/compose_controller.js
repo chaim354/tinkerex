@@ -83,8 +83,8 @@ export default class extends Controller {
     this.yaml = yaml
     this.previewTarget.textContent = yaml
     this.previewTarget.hidden = !yaml
+    // Emptied, never hidden: a live region unhidden in the same step its text is set goes unannounced.
     this.statusTarget.textContent = status
-    this.statusTarget.hidden = !status
     this.downloadTarget.disabled = !yaml
     this.copyTarget.disabled = !yaml
     this.element.setAttribute("data-copy-text-value", yaml)
