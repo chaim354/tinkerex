@@ -29,6 +29,9 @@ require "yaml"
 #   6. compose_controller.js `update` calling fetch("/up?" + port): the no-network test goes red.
 #   7. pages/public.css's phone rule `.compose-layout` back to `1fr` without minmax: the 375px test
 #      goes red (the YAML's longest line widens the page).
+#   8. BOOL_OR_NULL without its `i` flag: the matrix goes red on `oN`, which Psych reads as true.
+#   9. The mount-flag refusal, the bare-folder refusal and the U+FFFE/U+FFFF refusal, each answering
+#      true: the validation test goes red at its own assertion.
 class ComposeGeneratorSystemTest < ApplicationSystemTestCase
   REPO_FILE = Rails.root.join("docker-compose.yml")
   # The form's own defaults, as lib/compose_file.js receives them from compose_controller.js.

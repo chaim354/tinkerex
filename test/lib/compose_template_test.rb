@@ -10,7 +10,8 @@ require "yaml"
 # MUTATION-CHECKED (§15), each run red and restored: not recording the generator markers (the
 # comment count goes red), owning a closing comment by the open sequence item (`ind <= at`: the
 # share derivation raises, finding no example), and accepting a service the app does not reach (the
-# refusal test goes red).
+# refusal test goes red). So do the three later refusals, each on its own fixture: any URL counting
+# as a Tools key, an end-of-line comment accepted, a comment under a plain value accepted.
 class ComposeTemplateTest < ActiveSupport::TestCase
   SOURCE = Rails.root.join("docker-compose.yml")
 
