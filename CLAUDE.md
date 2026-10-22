@@ -1292,12 +1292,12 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   `runs-on: [self-hosted, linux|macos|windows]`. GitHub bills *only* hosted runners
   (`ubuntu/macos/windows-latest`; macOS 10×, Windows 2×); self-hosted are **free**. So
   **never add `*-latest`** to a workflow.
-- **RUNNERS ARE REGISTERED PER REPOSITORY. THIS REPO'S ARE FOUR LINUX CONTAINERS ON THE UNRAID
+- **RUNNERS ARE REGISTERED PER REPOSITORY. THIS REPO'S ARE THREE LINUX CONTAINERS ON THE UNRAID
   BOX** — `ci/runner/Dockerfile` + `ops/ci-runner-stack.yml`, on Docker host **192.168.1.146**
-  (not .7 = NPM, not .95 = the Kamal VM). Measured 2026-08-31 via
-  `gh api repos/:owner/:repo/actions/runners`: `tinkerex-unraid-1..4` online, labels
-  `[self-hosted, Linux, X64, maker-unraid]`. CI was a developer's own MacBook, one job at a time,
-  until then, and the siblings still are. **Re-measure rather than trusting this** — hence the date.
+  (not .7 = NPM, not .95 = the Kamal VM). Measured 2026-10-22 via
+  `gh api repos/:owner/:repo/actions/runners`: `tinkerex-unraid-1..3` online, labels
+  `[self-hosted, Linux, X64, maker-unraid]`. **Their limits must SUM under the box** (`x-host-budget`;
+  four 8 GB runners froze it, 2026-10-22). **Re-measure rather than trusting this** — hence the date.
   Needs an **admin-scoped** token; `administration` is not grantable to a workflow `GITHUB_TOKEN`,
   so it **403s from inside Actions**.
 - **`ci.yml`'s jobs target `linux`, and it is the ONLY workflow here** since the cross-repo suites

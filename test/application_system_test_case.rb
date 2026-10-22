@@ -25,7 +25,7 @@ class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
   # local `bin/ci` and a CI job shared one box; reproduced deliberately by running two browser
   # suites at once: **152 and 166 errors** across the pair, against 0 when either runs alone. CI now
   # runs on dedicated Unraid containers (ops/ci-runner-stack.yml), which removes that particular
-  # collision — but four runners share one 36-core host, and the worker budget beside this is what
+  # collision — but the runners share one 36-core host, and the worker budget beside this is what
   # keeps them from each planning for an empty box. The 2 s default still has no headroom for a
   # five-step async chain, which is the reason that survives the move.
   #

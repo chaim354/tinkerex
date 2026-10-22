@@ -4,7 +4,7 @@ We run CI on our own hardware instead of GitHub-hosted runners — GitHub bills 
 (CLAUDE.md §15) — while GitHub Actions stays the orchestrator: every workflow YAML is unchanged
 except `runs-on:`.
 
-**Since 2026-08-31 that hardware is four Linux CONTAINERS on the Unraid Docker host, not the
+**Since 2026-08-31 that hardware is Linux CONTAINERS (three since 2026-10-22) on the Unraid Docker host, not the
 developer's MacBook.** "The live runners" below is the section to read first. The bare-metal Linux
 and Windows boxes and their `setup-*` scripts are still documented here and neither is registered;
 the jobs that genuinely need real hardware — the live Windows CfAPI smoke, the two-device
@@ -25,13 +25,13 @@ Workflows target the **family** label — `runs-on: [self-hosted, linux]` — ne
 only a box label as an offender: nothing static can then tell which preflight output gates it, so it
 ships ungated and queues for 24 h with nothing red anywhere.
 
-The four containers take their labels from `LABELS:` in `ops/ci-runner-stack.yml`, not from a
+The containers take their labels from `LABELS:` in `ops/ci-runner-stack.yml`, not from a
 `setup-*` script. GitHub echoes the family back capitalised (`Linux`) in the API listing; the value
 the stack sets is lowercase.
 
-## The live runners: four containers on Unraid (since 2026-08-31)
+## The live runners: three containers on Unraid (since 2026-08-31; four until 2026-10-22)
 
-CI runs on **four container runners on the Unraid Docker host, `192.168.1.146`** ("Tower", the
+CI runs on **three container runners on the Unraid Docker host, `192.168.1.146`** ("Tower", the
 Unraid box itself). **Three addresses are in play and confusing them costs an afternoon:**
 `192.168.1.7` is Nginx Proxy Manager, where the `*.home` wildcard resolves — including
 `portainer.home`; `192.168.1.95` is the Kamal VM the app deploys to. **This README named .95 as the
@@ -60,7 +60,7 @@ intended runner home until 2026-08-31; that was wrong.**
   is a first-boot failure that reads as a broken image.
 - **`RUN_AS_ROOT=false` is baked into the image and `USER runner` must NOT be added back.** The
   entrypoint has to START as root so it can chown `/actions-runner`, the work dir and the toolcache
-  before it `gosu runner`s. With a `USER` line, all four containers registered and then immediately
+  before it `gosu runner`s. With a `USER` line, all the containers registered and then immediately
   deregistered in a restart loop — and the error names the user, so it reads as a credential problem
   when it is not. `ci/runner/Dockerfile` carries the log.
 
@@ -79,8 +79,8 @@ ssh root@192.168.1.146 'cd /tmp/tinkerex-ci && \
 # 3. Bump `image:` in ops/ci-runner-stack.yml and push THAT FILE, verbatim, as the stack's content —
 #    the Portainer editor, or the API (`PUT /api/stacks/8?endpointId=3` with the file content and
 #    an empty Env, which the Portainer MCP's StackUpdate does). The stack carries no variables, so
-#    the update is the file and nothing else. Verify: `docker ps` on the box shows the new tag on all
-#    four, `gh api repos/chaim354/tinkerex/actions/runners` lists them online.
+#    the update is the file and nothing else. Verify: `docker ps` on the box shows the new tag on every
+#    runner, `gh api repos/chaim354/tinkerex/actions/runners` lists them online.
 
 # 4. ONLY THEN reclaim the build cache. Not tidiness — see below — but ORDER MATTERS: on 2026-09-07
 #    `docker builder prune -af` run BEFORE the stack switched removed the freshly built, not-yet-used
@@ -110,10 +110,16 @@ completely differently:
    `gh api repos/chaim354/tinkerex/actions/runners` lists none of them. Fine-grained PATs cannot be
    renewed in place, so mint a new one with the same scoping, write it into
    `/mnt/user/appdata/tinkerex-ci/runner.token` on the box (root, 0400), and
-   `docker restart tinkerex-runner-1 tinkerex-runner-2 tinkerex-runner-3 tinkerex-runner-4` — the
+   `docker restart tinkerex-runner-1 tinkerex-runner-2 tinkerex-runner-3` — the
    wrapper entrypoint re-reads the file on every start. No stack redeploy is needed.
 2. **The box or the stack is down.** The containers are not running at all. Check Portainer, or
    `ssh root@192.168.1.146 'docker ps'`.
+3. **The containers restart forever with `Cannot configure the runner because it is already
+   configured`.** A container that was KILLED (a power-cut, a frozen host) never ran its
+   deregistration trap, so its own filesystem still holds the old registration and every restart
+   refuses to register again (2026-10-22, after the box froze). Restarting does not help; recreate
+   the containers by redeploying the stack (step 3 above), then delete the offline registrations
+   left on GitHub with the `gh api -X DELETE` under "Removing a runner".
 
 **`docker logs tinkerex-runner-1` distinguishes them in one command** — a rejected credential says so
 explicitly, and a healthy runner's last line is `Listening for Jobs` (observed on runner-1,
@@ -172,7 +178,7 @@ gh api -X POST repos/chaim354/tinkerex/actions/runners/registration-token --jq .
 ```
 
 (The containers use a long-lived PAT instead, for exactly this reason: a single-use token is the
-wrong shape for four containers that must re-register themselves across a host reboot. The trade is
+wrong shape for containers that must re-register themselves across a host reboot. The trade is
 the expiry failure mode documented above.)
 
 ### 2. Run the matching script on the box, passing the token
@@ -319,7 +325,7 @@ cd ~/actions-runner-tinkerex && sudo ./svc.sh stop && sudo ./svc.sh start
 
 If the runner runs inside a **container**, give the container the device + capability instead:
 `--device /dev/fuse --cap-add SYS_ADMIN` (and `--security-opt apparmor:unconfined` on some hosts).
-**The four live containers carry neither** — `ops/ci-runner-stack.yml` grants `SYS_PTRACE` only, for
+**The live containers carry neither** — `ops/ci-runner-stack.yml` grants `SYS_PTRACE` only, for
 Chrome's crash handling — because these mount jobs run in `tinkerex-client`, not here. Adding
 `/dev/fuse` + `SYS_ADMIN` to that stack is a real decision about what branch code can do on the
 Unraid box, not a formality.
