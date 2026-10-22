@@ -59,6 +59,11 @@ pin "lib/compose_file", to: "lib/compose_file.js"
 # precisely so neither repo can break the other (the module header argues that in full).
 pin "lib/print_sheet", to: "lib/print_sheet.js"
 
+# The calculator's engine — tokenizer, parser, evaluator, formatter; pure, no DOM — imported by
+# calculator_controller.js. A HOST pin like the ones above; a bundle must NOT import it, since the
+# calculator is a core feature and its language is this app's to change.
+pin "lib/calc", to: "lib/calc.js"
+
 # One geometry-payload shape -> one SVG element, and the `el`/`unionBox` doors that used to live in
 # lib/print_sheet. Imported by print_sheet, by measure_controller and by lib/export_svg, so all
 # three draw the same element for the same shape. HOST pins like the ones above; a bundle must NOT

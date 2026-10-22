@@ -186,6 +186,8 @@ module Web
         { key: "wiring", hidden: false, width: "full" },
         { key: "releases", hidden: false, width: "half" },
         { key: "sheets", hidden: false, width: "half" },
+        # The Calculations panel (2026-10-21) is a slot the editor holds too.
+        { key: "calculations", hidden: false, width: "half" },
         { key: "publish", hidden: false, width: "half" } ] }
       patch project_panels_path(@project), params: { layout: draft.to_json }
       assert_redirected_to project_path(@project)
@@ -195,7 +197,7 @@ module Web
       assert_match(/\Atab:[0-9a-f]{12}\z/, minted)
       assert_equal "Notes", panels["titles"][minted]
       assert_equal [ "attachments", "photos", minted, "build_log", tk(TAB_B), "bom", "tasks", "models",
-                     "schematics", "wiring", "releases", "sheets", "publish" ], panels["order"]
+                     "schematics", "wiring", "releases", "sheets", "calculations", "publish" ], panels["order"]
       refute_includes panels["order"], tk(TAB_A), "a tab absent from the posted draft is removed"
       refute panels["titles"].key?(tk(TAB_A))
       refute panels["widths"].key?(minted)

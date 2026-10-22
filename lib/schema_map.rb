@@ -87,7 +87,8 @@ module SchemaMap
     { "label" => "Models & projects", "group" => "maker",
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
                      maker_sheets maker_shelves maker_shelf_groups maker_filing_rules
-                     maker_connections maker_project_blocks maker_releases maker_release_files] },
+                     maker_connections maker_project_blocks maker_releases maker_release_files
+                     maker_calculations] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
@@ -181,6 +182,9 @@ module SchemaMap
     [ "maker_build_log_entries.project_id",           "maker_projects.id",        "app", "logs" ],
     [ "maker_sheets.project_id",                      "maker_projects.id",        "app", "sheet of" ],
     [ "maker_connections.project_id",                 "maker_projects.id",        "app", "wired in" ],
+    # A SAVED CALCULATION NAMES ITS PROJECT (2026-10-21) and nothing else: the row is meaningless
+    # without it, so Maker::Project's `dependent: :destroy` takes it (structural_orphan_test.rb).
+    [ "maker_calculations.project_id",                "maker_projects.id",        "app", "worked out for" ],
     # A CONTENT BLOCK NAMES ITS PROJECT AND, IF IT IS AN IMAGE, ONE NODE (2026-09-09, content
     # blocks). The project pointer is structural — the row is meaningless without it, and
     # Maker::Project's `dependent: :destroy` is what test/models/structural_orphan_test.rb checks.

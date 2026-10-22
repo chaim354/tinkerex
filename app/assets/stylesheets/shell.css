@@ -2,6 +2,10 @@
    container, the toast stack, the auth card, and the three widths. */
 @layer shell {
   body.app-shell { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); min-height: 100vh; }
+  /* The calculator's Stimulus host (layouts/_calculator.html.erb) is a child of body.app-shell's grid,
+     and a box there would take a grid cell of its own; its only content is a <dialog>, which is
+     display:none closed and in the top layer open, so the host draws no box at all. */
+  .calculator-host { display: contents; }
   /* The collapse cookie sets the rail's TRACK and nothing else; the icon rail below follows the width. */
   body.app-shell.rail--collapsed { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
 

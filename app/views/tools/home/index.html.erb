@@ -2,6 +2,47 @@
 
 <div class="page-head"><h1>Tools</h1></div>
 
+<%#
+  BUILT IN, ABOVE THE ADD-ONS (2026-10-21; plan 2026-10-21-calculator-modal.md). The calculator is a
+  core feature — a modal that opens over any page (layouts/_calculator.html.erb) — so its card is
+  written here and is not an addon card in disguise: it is `.tool-card`, never `.addon-card`, so
+  every `.addon-card` on this page is still one a manifest made — which is what
+  test/controllers/tools/home_controller_test.rb counts. Its own grid and heading keep the two
+  kinds apart; the inner head/icon/title/description classes are shared for their look.
+
+  The card OPENS the modal (`data-calculator-open`) and offers the sidebar pin. At phone width,
+  where the tab bar keeps its four destinations and there is no rail, this card IS the way to the
+  calculator (the Tools tab). `id="calculator"` is where the pinned rail link's href lands when its
+  click is not the controller's to handle (a modified click).
+%>
+<section class="tools-section" aria-labelledby="tools-built-in">
+  <h2 class="tools-section-head" id="tools-built-in">Built in</h2>
+  <div class="tools-grid">
+    <div class="tool-card calculator-card" id="calculator">
+      <span class="addon-card-head">
+        <span class="addon-icon"><%= rail_icon(:calculator) %></span>
+        <span class="addon-title">Calculator</span>
+      </span>
+      <span class="addon-desc muted">Lengths in mm, cm, m, inches and feet, inch fractions, and
+        conversions. Save a result to a project.</span>
+      <span class="calculator-card-actions">
+        <button type="button" class="btn small calculator-card-open" data-calculator-open aria-haspopup="dialog">Open calculator</button>
+        <%# A button_to per state, so the label says what the click DOES. Plain `.btn`: the accent
+            is not spent on this page (design-system.md rule 13). %>
+        <% if current_user.calculator_pinned? %>
+          <%= button_to "Unpin from sidebar", tools_calculator_pin_path, method: :delete,
+                        class: "btn small calculator-pin", form_class: "calculator-pin-form" %>
+        <% else %>
+          <%= button_to "Pin to sidebar", tools_calculator_pin_path, method: :post,
+                        class: "btn small calculator-pin", form_class: "calculator-pin-form" %>
+        <% end %>
+      </span>
+    </div>
+  </div>
+</section>
+
+<h2 class="tools-section-head" id="tools-add-ons">Add-ons</h2>
+
 <%# WHY A TOOL NEVER APPEARED, for the author editing a bundle — development and test only
     (Tools::HomeController#index decides). Production makers never see it; the log keeps the clue. %>
 <% if @addon_problems.any? %>
@@ -30,7 +71,7 @@
     line, where help_page_test.rb asserts they still are: moved, not deleted. %>
 <% if @addons.empty? %>
   <div class="empty">
-    <p>Tools are add-ons — small apps that run inside Tinkerex and save their output straight into
+    <p>Add-ons are small apps that run inside Tinkerex and save their output straight into
       your library. The box generator and the OpenSCAD editor are two.</p>
     <% if @addon_source_configured %>
       <p class="muted">No tools came back from this server just now. The person running it can

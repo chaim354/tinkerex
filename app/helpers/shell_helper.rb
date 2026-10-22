@@ -56,7 +56,11 @@ module ShellHelper
     help: "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2z M6.4 5.9a1.6 1.6 0 1 1 2.73 1.13c-.4.4-1.13.72-1.13 1.27v.35 M8 11.35v.01",
     # A page with a folded corner and two lines: a file's note-count badge (slice 7), which drew
     # the last emoji in the interface (test/no_emoji_test.rb). The count and its title stay.
-    note: "M3 2h7l3 3v9H3z M5 7h6 M5 10h6"
+    note: "M3 2h7l3 3v9H3z M5 7h6 M5 10h6",
+    # A calculator: the body, its display, and two rows of keys drawn as dots (.01 segments, the help
+    # icon's trick for a dot that draws in every engine). The rail's pinned Calculator link and the
+    # Tools card (2026-10-21).
+    calculator: "M4 1.5h8v13H4z M6 4h4v2.5H6z M6.25 9.5v.01 M8 9.5v.01 M9.75 9.5v.01 M6.25 12v.01 M8 12v.01 M9.75 12v.01"
   }.freeze
 
   # An unknown or absent cookie is the default, LIGHT ("Paper") since the 2026-10-08 redesign: the

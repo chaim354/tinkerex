@@ -433,6 +433,14 @@ root to: "home#index"
   end
 
 
+  # --- Saved calculations (2026-10-21; plan 2026-10-21-calculator-modal.md). `new` is the calculator
+  # modal's Save-to-project form, fetched into a lazy frame only when the maker opens it, so the
+  # layout that renders the modal on every page reads no project list; `create` answers that frame.
+  # `update` (the label) and `destroy` are the project page's Calculations panel. Top level rather
+  # than nested under a project because the form CHOOSES the project — the URL cannot name it first.
+  resources :calculations, only: %i[new create update destroy]
+
+
   # --- Tags and search (stage 2, S2-5). One results page for everything, driven from the top bar;
   # a page per tag. A tag name is whatever Maker::Tag normalized (stripped, downcased) and may hold
   # a dot, so the segment constraint is "anything but a slash". ---
@@ -487,6 +495,13 @@ root to: "home#index"
   # The New ▾ menu's tool entries, for its lazy frame. ABOVE `tools/:key`, or "new_menu" would be
   # read as an addon key.
   get "tools/new_menu", to: "tools/home#new_menu", as: :tools_new_menu
+
+  # THE CALCULATOR'S SIDEBAR PIN (2026-10-21; plan 2026-10-21-calculator-modal.md). The calculator
+  # is a CORE feature that opens as a modal on every signed-in page, not an addon, so it has no
+  # `tools/:key` page; this is the one write its Tools card makes. Three segments, so `tools/:key`
+  # (two) cannot shadow it, and above that block anyway, as its comment asks of every /tools route.
+  post "tools/calculator/pin", to: "tools/calculator_pins#create", as: :tools_calculator_pin
+  delete "tools/calculator/pin", to: "tools/calculator_pins#destroy"
 
   # The params behind ANY addon state, as a download. ONE route for every addon: `Maker::AddonState`
   # is addon-agnostic (`data` IS each addon's own shape), so there is nothing per-addon to branch on.
