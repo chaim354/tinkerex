@@ -86,4 +86,42 @@
   @media (max-width: 479px) {
     .public-files .col-thumb { display: none; }
   }
+
+  /* THE COMPOSE GENERATOR (/install/compose, 2026-10-21). The form beside its file on a wide screen,
+     the file under the form on a narrow one. The YAML scrolls inside its own box, never the page
+     (design-system.md rule 11), and it sticks beside the form while the form scrolls. The groups are
+     `.panel`s and the inputs `.field`s from components.css; what follows is this page's own layout.
+     Tokens only, so both themes follow. */
+  .compose-layout { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: var(--space-5); align-items: start; }
+  /* Every block in a group ends with 12px of its own margin, so a 4px bottom padding makes 16 below
+     whichever block is last -- the panel's 16 on the other sides -- however the folder, share and
+     guest switches change which one that is. A closed <details> has only its summary. */
+  .compose-group { min-width: 0; margin: 0 0 var(--space-4); padding-bottom: var(--space-1); }
+  .compose-group .field { margin-bottom: var(--space-3); }
+  details.compose-group:not([open]) { padding-bottom: var(--space-4); }
+  /* A legend sits ON a fieldset's border unless it floats; floated, it is the panel's heading. */
+  .compose-group > legend { float: left; width: 100%; padding: 0; margin: 0 0 var(--space-3); font-size: 15px; font-weight: 600; }
+  .compose-group > legend + * { clear: both; }
+  .compose-group > summary { cursor: pointer; font-size: 15px; font-weight: 600; }
+  .compose-group[open] > summary { margin-bottom: var(--space-3); }
+  .compose-choice { display: flex; flex-wrap: wrap; gap: 0 var(--space-4); margin: 0 0 var(--space-3); }
+  .compose-choice .field-inline { margin-top: 0; }
+  .compose-check { margin: 0 0 var(--space-1); }
+  .compose-hint { max-width: 480px; margin: var(--space-1) 0 var(--space-3); font-size: 12px; color: var(--fg-muted); overflow-wrap: anywhere; }
+  .field > .compose-hint { margin-bottom: 0; }
+  .compose-hint code { font-size: 11px; line-height: 16px; }
+  .compose-error { max-width: 480px; margin: var(--space-1) 0 0; font-size: 12px; color: var(--danger); }
+  .compose-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 var(--space-3); max-width: 480px; }
+  .compose-output { position: sticky; top: var(--space-4); display: flex; flex-direction: column; max-height: calc(100vh - 2 * var(--space-4)); }
+  .compose-output .panel-head h2 { font-size: 15px; }
+  .compose-status { margin: 0 0 var(--space-3); font-size: 13px; }
+  .compose-status:empty { margin: 0; }
+  .compose-preview { flex: 1 1 auto; min-height: 0; margin: 0; padding: var(--space-3); overflow: auto; white-space: pre;
+    font-size: 12px; line-height: 18px; background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-panel); }
+  .compose-next { margin: var(--space-3) 0 0; font-size: 13px; }
+  @media (max-width: 999px) {
+    .compose-layout { grid-template-columns: minmax(0, 1fr); }
+    .compose-output { position: static; max-height: none; }
+    .compose-preview { max-height: 70vh; }
+  }
 }

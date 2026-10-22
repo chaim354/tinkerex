@@ -1,0 +1,129 @@
+<%# THE COMPOSE GENERATOR (/install/compose, 2026-10-21; plan
+    docs/superpowers/plans/2026-10-21-compose-generator.md). A visitor describes their server and the
+    browser writes their docker-compose.yml: compose_controller.js reads the inputs and
+    lib/compose_file.js builds the file from Tinkerex::ComposeTemplate, the repo's own compose file
+    as this image carries it.
+
+    THERE IS NO FORM ELEMENT, AND THAT IS THE PRIVACY RULE, NOT AN OVERSIGHT. A form submits on Enter
+    (into a query string, for a GET), so a page holding SMB and SMTP passwords must not have one: the
+    values reach the script and the preview and go nowhere else. compose_generator_test.rb asserts
+    the page renders no form.
+
+    Every field is one the compose file or docs/INSTALL.md sections 3 and 4 name, defaulting to the
+    value the repo's file runs with. Download is the page's one accent (design-system.md rule 13). %>
+<% content_for :title, "Make a docker-compose.yml · Tinkerex" %>
+<% content_for :container_class, "public-main" %>
+<% content_for :public_intro, "A docker-compose.yml for your own server, written in this browser tab." %>
+<% guide = Tinkerex::Landing::INSTALL_URL %>
+
+<%= tag.div class: "compose",
+            data: { controller: "compose copy", compose_template_value: @template.to_h, compose_guide_value: guide, action: "input->compose#update change->compose#update" } do %>
+  <header class="page-head">
+    <div>
+      <h1>Make a docker-compose.yml</h1>
+      <p class="page-subtitle">Describe your server and download the file. It is written in this browser tab: nothing you type here is sent anywhere, passwords included.</p>
+    </div>
+  </header>
+
+  <div class="compose-layout">
+    <div class="compose-form">
+      <fieldset class="panel compose-group">
+        <legend>Your files</legend>
+        <div class="compose-choice">
+          <label class="field-inline"><input type="radio" name="library" value="folder" checked> A folder on this machine</label>
+          <label class="field-inline"><input type="radio" name="library" value="share"> A network share (SMB)</label>
+        </div>
+
+        <div data-compose-target="folder">
+          <%= render "public/compose/text_field", name: "folderPath", label: "Folder",
+                     placeholder: "Empty: the folder you put the file in",
+                     hint: "An absolute path (/mnt/user/files, C:\\Users\\you\\Workshop) or one beside the file (./Workshop). Uploads land in it and deletions move to a .trash/ inside it, so not Downloads." %>
+        </div>
+
+        <div data-compose-target="share" hidden>
+          <%= render "public/compose/text_field", name: "shareServer", label: "Server", placeholder: "192.168.1.50",
+                     hint: "The computer that shares the folder, by name or IP address. A .local name often does not resolve inside Docker; use the IP." %>
+          <%= render "public/compose/text_field", name: "shareName", label: "Share name", placeholder: "Files" %>
+          <label class="field-inline compose-check"><input type="checkbox" name="shareGuest" aria-describedby="compose-share-hint"> A guest share, with no user name or password</label>
+          <div data-compose-target="credentials">
+            <%= render "public/compose/text_field", name: "shareUser", label: "User name", placeholder: "you" %>
+            <%= render "public/compose/text_field", name: "sharePassword", label: "Password", type: "password",
+                       hint: "Written into the file in plain text, so keep the file to yourself." %>
+          </div>
+          <div class="field">
+            <label for="compose-share-version">SMB version</label>
+            <select id="compose-share-version" name="shareVersion" aria-describedby="compose-share-version-error">
+              <option value="3.0" selected>3.0: a Mac, Windows 10 or later, a current NAS</option>
+              <option value="2.1">2.1: an older NAS</option>
+            </select>
+            <p class="compose-error" id="compose-share-version-error" data-compose-error="shareVersion" hidden></p>
+          </div>
+          <p class="compose-hint" id="compose-share-hint">Docker connects to the share itself as the app starts, so it must be reachable then; nothing is mounted on this machine first.</p>
+        </div>
+      </fieldset>
+
+      <fieldset class="panel compose-group">
+        <legend>Who the app runs as</legend>
+        <div class="compose-pair">
+          <%= render "public/compose/text_field", name: "puid", label: "PUID", placeholder: "the folder's owner", inputmode: "numeric", described_by: "compose-ids-hint" %>
+          <%= render "public/compose/text_field", name: "pgid", label: "PGID", placeholder: "the folder's group", inputmode: "numeric", described_by: "compose-ids-hint" %>
+        </div>
+        <p class="compose-hint" id="compose-ids-hint">Linux only. Empty, the app runs as the owner of your folder (99 and 100 on an Unraid share), and Docker Desktop on a Mac or Windows needs nothing. Set them when the folder is owned by root: <code>id -u</code> and <code>id -g</code> print yours. A network share's files belong to this user too.</p>
+      </fieldset>
+
+      <fieldset class="panel compose-group">
+        <legend>The app</legend>
+        <div class="compose-pair">
+          <%= render "public/compose/text_field", name: "port", label: "Port", value: "8080", inputmode: "numeric", described_by: "compose-app-hint" %>
+          <%= render "public/compose/text_field", name: "tag", label: "Image tag", value: "latest", described_by: "compose-app-hint" %>
+        </div>
+        <p class="compose-hint" id="compose-app-hint">The port on this machine the app answers on, and the app image's tag: <code>latest</code> is the newest release.</p>
+        <label class="field-inline compose-check"><input type="checkbox" name="tools" checked aria-describedby="compose-tools-hint"> The Tools gallery</label>
+        <p class="compose-hint" id="compose-tools-hint">A box generator and an OpenSCAD editor that save into your library: three more containers, published for amd64 only, which an Apple-silicon Mac runs under emulation. Without them the app runs on its own.</p>
+      </fieldset>
+
+      <details class="panel compose-group">
+        <summary>Mail and HTTPS (optional)</summary>
+        <p class="compose-hint">Without mail, the first account you create is the owner and an admin adds others under Settings, Users. Mail sends only account confirmation and password reset.</p>
+        <label class="field-inline compose-check"><input type="checkbox" name="forceSsl" aria-describedby="compose-https-hint"> Reached over HTTPS through a reverse proxy</label>
+        <p class="compose-hint" id="compose-https-hint">Without TLS in front of the app this locks you out.</p>
+        <%= render "public/compose/text_field", name: "smtpAddress", label: "SMTP server", placeholder: "smtp.example.net" %>
+        <%= render "public/compose/text_field", name: "appHost", label: "This server's address", placeholder: "maker.example.net",
+                   hint: "The name or address people reach this server at, with no https://. Links in mail point here." %>
+        <div class="compose-pair">
+          <%= render "public/compose/text_field", name: "smtpPort", label: "SMTP port", value: "587", inputmode: "numeric" %>
+          <div class="field">
+            <label for="compose-smtp-authentication">Authentication</label>
+            <select id="compose-smtp-authentication" name="smtpAuthentication" aria-describedby="compose-smtp-authentication-error">
+              <option value="plain" selected>plain</option>
+              <option value="login">login</option>
+              <option value="cram_md5">cram_md5</option>
+            </select>
+            <p class="compose-error" id="compose-smtp-authentication-error" data-compose-error="smtpAuthentication" hidden></p>
+          </div>
+        </div>
+        <%= render "public/compose/text_field", name: "smtpUser", label: "SMTP user name",
+                   hint: "Leave it empty for a relay that needs no sign-in." %>
+        <%= render "public/compose/text_field", name: "smtpPassword", label: "SMTP password", type: "password" %>
+        <label class="field-inline compose-check"><input type="checkbox" name="smtpStarttls" checked> STARTTLS</label>
+        <%= render "public/compose/text_field", name: "smtpDomain", label: "HELO name", placeholder: "this server's address" %>
+        <%= render "public/compose/text_field", name: "mailFrom", label: "Sender", placeholder: "no-reply@maker.example.net" %>
+      </details>
+    </div>
+
+    <section class="panel compose-output" aria-labelledby="compose-file-title">
+      <div class="panel-head">
+        <h2 id="compose-file-title" class="mono">docker-compose.yml</h2>
+        <div class="panel-actions">
+          <button type="button" class="btn primary" data-compose-target="download" data-action="compose#download">Download</button>
+          <button type="button" class="btn" data-compose-target="copy" data-action="copy#copy">Copy</button>
+        </div>
+      </div>
+      <%# ALWAYS IN THE TREE, never `hidden`: a live region that appears in the same step its text is
+          set is not announced, so it stays and empties instead (pages/public.css collapses it). %>
+      <p class="compose-status" data-compose-target="status" role="status"></p>
+      <pre class="compose-preview" data-compose-target="preview" data-copy-target="source" tabindex="0" aria-label="The docker-compose.yml"></pre>
+      <p class="compose-next muted">Save it in the folder it names, run <code>docker compose up -d</code> there and open the address in its first lines. The first account you create is the owner. <a href="<%= guide %>">The install guide</a> explains every setting.</p>
+    </section>
+  </div>
+<% end %>
