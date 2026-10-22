@@ -40,6 +40,11 @@ an arm64 Linux box. The author runs this on a Mac and on Linux; the Windows path
 Put [`docker-compose.yml`](../docker-compose.yml) (download it from this repository) in the folder
 that holds your files — or in an empty folder — and in that folder:
 
+> **Or make one with your settings filled in** at <https://tinkerex.com/install/compose>: your
+> folder or network share, port, user and mail, written into the file for you. The page builds the
+> file in your browser and sends nothing you type anywhere, passwords included. Any Tinkerex server
+> has the same page at `/install/compose`.
+
 ```sh
 docker compose up -d
 docker compose logs -f web      # until Puma reports it is listening; Ctrl-C leaves it running

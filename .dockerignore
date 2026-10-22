@@ -52,6 +52,9 @@
 /Dockerfile*
 /docker-compose*.yml
 /unraid/
+# ...EXCEPT the base compose file: the compose generator at /install/compose builds a visitor's file
+# from it at render time (Tinkerex::ComposeTemplate; deploy_hygiene_test.rb). The overlays stay out.
+!/docker-compose.yml
 
 # Rust sync-client workspace — NOT part of the Rails server image. ~15 GB of build
 # artifacts (client/*/target) + source that the server never builds or ships (it

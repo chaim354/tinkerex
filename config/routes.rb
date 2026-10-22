@@ -339,6 +339,9 @@ root to: "home#index"
   # `*filename` glob carries the real name and `.kicad_sch` must not be parsed as a format. ---
   scope module: :public, as: :public do
     get "explore",                                to: "explore#index",  as: :explore
+    # THE COMPOSE GENERATOR (2026-10-21): a visitor's docker-compose.yml, built in the browser from the
+    # repo's own file. GET only, and nothing it shows is posted anywhere -- the page has no form.
+    get "install/compose",                        to: "compose#show",   as: :compose
     get "u/:handle",                              to: "users#show",     as: :user,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
     get "u/:handle/:slug",                        to: "projects#show",  as: :project, constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
     # STAGE 4, S4-5: THE VISITOR'S FILE PAGE AND ITS GEOMETRY POLL. BOTH MUST BE DECLARED ABOVE THE

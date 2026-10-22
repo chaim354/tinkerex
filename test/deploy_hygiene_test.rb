@@ -13,31 +13,50 @@ class DeployHygieneTest < ActiveSupport::TestCase
                     "add `/sidecar/` to .dockerignore — `COPY . .` ships the GPL sidecars otherwise"
   end
 
-# EVERY DEMO SEED FILE REACHES THE IMAGE. Tinkerex::DemoReset writes db/seeds/demo from inside the
-# container, so a seed file the build context drops is one the reset silently never writes: the
-# macOS " 2" duplicate sweep in .dockerignore dropped the catan project's real `laser/game box
-# 2.lbrn2` from the first image that shipped it (2026-10-16, tinkerex#384). This applies the file the
-# way the builder does: rules in order, a `!` rule re-including, the last match winning, and a rule
-# that matches a parent directory excluding everything beneath it. OS clutter is left out because
-# the reset skips it anyway (Library::OsClutter).
-test "every demo seed file survives .dockerignore" do
-  rules = ROOT.join(".dockerignore").read.lines.map(&:strip).reject { |l| l.empty? || l.start_with?("#") }.map do |line|
-    negate = line.start_with?("!")
-    [ negate, line.delete_prefix("!").delete_prefix("/").delete_suffix("/") ]
+  # EVERY DEMO SEED FILE REACHES THE IMAGE. Tinkerex::DemoReset writes db/seeds/demo from inside the
+  # container, so a seed file the build context drops is one the reset silently never writes: the
+  # macOS " 2" duplicate sweep in .dockerignore dropped the catan project's real `laser/game box
+  # 2.lbrn2` from the first image that shipped it (2026-10-16, tinkerex#384). This applies the file the
+  # way the builder does: rules in order, a `!` rule re-including, the last match winning, and a rule
+  # that matches a parent directory excluding everything beneath it. OS clutter is left out because
+  # the reset skips it anyway (Library::OsClutter).
+  def dockerignore_rules
+    @dockerignore_rules ||= ROOT.join(".dockerignore").read.lines.map(&:strip).reject { |l| l.empty? || l.start_with?("#") }.map do |line|
+      negate = line.start_with?("!")
+      [ negate, line.delete_prefix("!").delete_prefix("/").delete_suffix("/") ]
+    end
   end
-  files = Dir.glob("db/seeds/demo/**/*", File::FNM_DOTMATCH, base: ROOT)
-             .select { |rel| ROOT.join(rel).file? }
-             .reject { |rel| Library::OsClutter.clutter_segment?(File.basename(rel)) }
-  assert_operator files.size, :>, 50, "found too few seed files; did db/seeds/demo move?"
 
-  flags = File::FNM_PATHNAME | File::FNM_DOTMATCH
-  dropped = files.select do |rel|
+  # Whether the image build drops `rel`, a path relative to the repository root.
+  def dockerignored?(rel)
+    flags = File::FNM_PATHNAME | File::FNM_DOTMATCH
     parts = rel.split("/")
     prefixes = parts.each_index.map { |i| parts[0..i].join("/") }
-    rules.reduce(false) { |out, (negate, pat)| prefixes.any? { |pre| File.fnmatch?(pat, pre, flags) } ? !negate : out }
+    dockerignore_rules.reduce(false) { |out, (negate, pat)| prefixes.any? { |pre| File.fnmatch?(pat, pre, flags) } ? !negate : out }
   end
-  assert_empty dropped, ".dockerignore drops these demo seed files from the image: #{dropped.inspect}"
-end
+
+  test "every demo seed file survives .dockerignore" do
+    files = Dir.glob("db/seeds/demo/**/*", File::FNM_DOTMATCH, base: ROOT)
+               .select { |rel| ROOT.join(rel).file? }
+               .reject { |rel| Library::OsClutter.clutter_segment?(File.basename(rel)) }
+    assert_operator files.size, :>, 50, "found too few seed files; did db/seeds/demo move?"
+
+    dropped = files.select { |rel| dockerignored?(rel) }
+    assert_empty dropped, ".dockerignore drops these demo seed files from the image: #{dropped.inspect}"
+  end
+
+  # THE COMPOSE GENERATOR READS docker-compose.yml AT RENDER TIME (Tinkerex::ComposeTemplate,
+  # 2026-10-21), so the image must carry it -- and every test runs from a checkout, where the file is
+  # always there, so nothing else would notice the image losing it: /install/compose would answer 500
+  # on every deployment behind a green suite. Only the base file is re-included; the build and sync
+  # overlays describe a clone's setup and stay out. Mutation-checked: deleting the `!` line goes red.
+  test "the image carries docker-compose.yml for the compose generator, and only that compose file" do
+    refute dockerignored?("docker-compose.yml"), "add `!/docker-compose.yml` to .dockerignore after `/docker-compose*.yml`"
+    assert_equal Tinkerex::ComposeTemplate::SOURCE, ROOT.join("docker-compose.yml")
+    %w[docker-compose.build.yml docker-compose.chunk_remote.yml].each do |overlay|
+      assert dockerignored?(overlay), "#{overlay} reached the image; only the base compose file is the generator's"
+    end
+  end
 
   # The four Unraid destinations and the backend name each one's hostnames are built from. "remote"
   # (Arc D Task 2, LIBRARY_BACKEND=chunk_remote) joined chunk/share/s3 here the same way s3 once
