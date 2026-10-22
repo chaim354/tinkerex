@@ -47,7 +47,10 @@ module Maker
     # ADDED IN THE SAME CHANGE AS THE ROLE ITSELF (stage 4, S4-2) — this list is a DENYLIST, so a
     # new role joins models BY DEFAULT and the omission would have been silent: `Projects/catan/`
     # holding one `.stl` and twenty `.mage` files would have catalogued all twenty into that model.
-    EXCLUDED_ROLES = %w[cnc_design code document gcode laser vector].freeze
+    #
+    # `spreadsheet` (an `.xlsx`, 2026-10-21) sits beside `document` for `document`'s reason: a parts
+    # list or a cut list in a model folder is about the model, not part of it. Added with the role.
+    EXCLUDED_ROLES = %w[cnc_design code document gcode laser spreadsheet vector].freeze
 
     # THE SHELVES ARE BUILT IN (2026-10-20). A shelf is a folder that is not itself a model: a
     # model-role file directly on one is its own model, and each of its subfolders is one model.

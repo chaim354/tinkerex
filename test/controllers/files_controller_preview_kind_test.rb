@@ -156,6 +156,15 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
     assert_equal :other, kind("firmware")
   end
 
+  # THE WORKBOOK VIEWER (2026-10-21). Whatever the case of the name, and only for the format the
+  # editor reads: a macro workbook, the pre-2007 binary and OpenDocument are other formats.
+  test "an xlsx previews as :spreadsheet and its sibling formats do not" do
+    assert_equal :spreadsheet, kind("bom.xlsx")
+    assert_equal :spreadsheet, kind("BOM.XLSX")
+    %w[macros.xlsm old.xls calc.ods].each { |name| assert_equal :other, kind(name), name }
+    assert_equal :text, kind("bom.csv"), "a CSV keeps its text page"
+  end
+
   # STORY 2.3: `.ai` said "No inline preview for this file type." because nothing claimed it. It
   # takes the `:thumbnail` branch now — the last branch before `:other`, reached because
   # Registry.for("ai") finally answers. NOT `:pdf`: that branch embeds the bytes for the browser's
