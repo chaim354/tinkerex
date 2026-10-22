@@ -19,9 +19,9 @@ module Files
   # catalog answers from the last scan, and the store arm is what catches a desktop edit made since.
   #
   # BYTES THROUGH RAILS, AS EVERY SERVER-SIDE REWRITE HAS THEM (§15's stated departures): the editor
-  # cannot change a zip it has not read, so the read is a port read (a `send_file`-free stream on
-  # share, a GET on s3, a chunk download on chunk_remote) bounded by Package::MAX_BYTES on the
-  # catalog's own size before any byte moves.
+  # cannot change a zip it has not read, so the read is a port read (a file read on share, a GET on
+  # s3, a chunk download on chunk_remote) bounded by Package::MAX_BYTES on the catalog's own size
+  # before any byte moves.
   class SpreadsheetsController < ApplicationController
     # A save is a list of small operations; 5,000 of them at a typical value size is well under a
     # megabyte. The cap stops a body that is something else from being parsed at all.

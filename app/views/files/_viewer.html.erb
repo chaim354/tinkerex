@@ -39,7 +39,9 @@
       can, the model page's pane shows the workbook read-only. %>
   <%= render "files/viewers/spreadsheet", data_url: file_spreadsheet_path(viewer.node.node_id),
              save_url: (file_spreadsheet_path(viewer.node.node_id) if save),
-             download_url: blob_file_path(viewer.node.node_id, download: 1) %>
+             download_url: blob_file_path(viewer.node.node_id, download: 1),
+             scripts: [ asset_path("jsuites.js"), asset_path("jspreadsheet.js") ],
+             styles: [ asset_path("jsuites.css"), asset_path("jspreadsheet.css") ] %>
 <% elsif viewer.kind == :model3d %>
   <%= render "files/viewers/model3d", name: viewer.node.name,
              named_url: named_blob_file_path(viewer.node.node_id, filename: viewer.node.name),

@@ -140,6 +140,18 @@ no-history note (the shared partial above) and the thumbnail re-enqueue `Maker::
 carried. What that width costs is worth knowing before it is widened again: `codeview`, the
 read-only viewer, is now reachable only for an over-cap file and for a visitor's public page, so a
 change that raises `EDITABLE_MAX_BYTES` also retires the read-only mount from the signed-in app.
+
+**A FOURTH DOOR, AND NOT A TEXT ONE: THE WORKBOOK (2026-10-21).** `PATCH /files/:id/spreadsheet`
+(`Files::SpreadsheetsController#update`) rewrites an `.xlsx` on **every backend, repository or not**
+— the owner asked for "view and do basic edits", and `EDITABLE_WITHOUT_HISTORY` is the TEXT door's
+answer to "is losing the previous contents acceptable", not this one's. The trade is named the same
+way, `shared/_no_history_note` above the grid, keyed on `versioned?`. Everything in the list above
+still holds because the save IS `Maker::TextSave` with the rebuilt bytes: the port (never a
+`File.write`), `replace: true`, the two-armed stale check, a pending `Maker::RepoEdit` inside a
+working tree and nothing outside one. Do not give this door its own write — a fourth copy is the
+drift §14d's named-service rule exists to stop. What is the workbook's own (the operations, what a
+typed value becomes, which row operations a sheet can take) is `docs/invariants/files-preview.md`,
+"The workbook viewer".
 ## Ask `local_worktree?`, never `is_a?(FileLayer::Share)`
 
 `local_worktree?` and `is_a?(FileLayer::Share)` give the SAME answer on all three backends today —
