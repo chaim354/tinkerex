@@ -15,10 +15,14 @@ export { EditorView, keymap, lineNumbers, highlightActiveLine } from "@codemirro
 export { EditorState, Compartment } from "@codemirror/state"
 export { unifiedMergeView, getChunks, rejectChunk } from "@codemirror/merge"
 export { basicSetup } from "codemirror"
-// The dark editor theme. Which one a page uses is app/javascript/lib/codemirror_theme.js's
-// decision, read from html[data-theme]; this export is only how it reaches the controllers.
-export { oneDark } from "@codemirror/theme-one-dark"
-export { StreamLanguage } from "@codemirror/language"
+// THE SYNTAX COLOURS ARE THIS APP'S, NOT A BUNDLED THEME'S. app/javascript/lib/codemirror_theme.js
+// builds ONE HighlightStyle out of these three whose colours are CSS custom properties
+// (var(--code-keyword) ...), so the design system's tokens paint the code in both themes and a theme
+// switch repaints an open editor. NO NEW PACKAGE: @codemirror/language and @lezer/highlight were
+// already in the tree (every language below depends on both), so naming them adds exports, not code
+// paths. oneDark (@codemirror/theme-one-dark) left with this change (2026-10-21).
+export { StreamLanguage, HighlightStyle, syntaxHighlighting } from "@codemirror/language"
+export { tags } from "@lezer/highlight"
 export { cpp } from "@codemirror/lang-cpp"
 export { python } from "@codemirror/lang-python"
 export { javascript } from "@codemirror/lang-javascript"

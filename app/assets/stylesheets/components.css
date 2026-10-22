@@ -300,11 +300,17 @@
 
   /* --- Tiles and thumbnails (the markup is files/_thumb.html.erb; thumbs_controller swaps its
      children, so every state below keeps its class) --- */
+  /* INK ON PAPER (design-system.md rule 5). Every render keeps a pure-white ground, and MULTIPLY
+     makes that white the card while ink stays ink, so our renders, LightBurn's own embedded
+     thumbnails and a PDF's page 1 all land on one ground in both themes without a stored pixel
+     being edited. `isolation` keeps the blend inside the tile: without it the image multiplies
+     with whatever is behind the tile, not with the card. A photo opts out below. */
   .thumb {
     position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden;
     border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--thumb-stage); color: var(--thumb-ink);
+    isolation: isolate;
   }
-  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; mix-blend-mode: multiply; }
   .thumb-icon { font: 500 11px/1 var(--font-mono); letter-spacing: .06em; color: var(--thumb-ink); }
   .thumb-spinner {
     width: 14px; height: 14px; border: 2px solid transparent; border-top-color: var(--thumb-ink); border-right-color: var(--thumb-ink);
@@ -322,16 +328,27 @@
   .folder-thumb, .generic-thumb { background: var(--raised); color: var(--fg-muted); }
   .folder-thumb .folder-glyph { width: 40%; height: 40%; }
   .generic-thumb { font: 500 12px/1 var(--font-mono); letter-spacing: .08em; }
-  /* A user's PHOTO on a tile: the neutral matte and a crop, never letterboxed in white. */
+  /* A user's PHOTO on a tile: the neutral matte and a crop, never letterboxed on the card. NOT
+     multiplied: a photo is not ink on paper, and Graphite's matte is near-black, so a multiplied
+     photo would be a black square. */
   .thumb.photo { background: var(--photo-stage); }
-  .thumb.photo img { object-fit: cover; }
+  .thumb.photo img { object-fit: cover; mix-blend-mode: normal; }
+  /* THE SAME CARD AT A VIEWER'S SIZE: a file page's poster, the public hero's render. The `.thumb`
+     rule above, for an image that is not a tile. Spans its column and centres the picture, so a
+     poster occupies the footprint its viewer opens into. */
+  .render-card {
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--thumb-stage);
+    isolation: isolate;
+  }
+  .render-card img { display: block; max-width: 100%; height: auto; mix-blend-mode: multiply; }
   /* A FAILED RENDER KEEPS ITS TYPE ICON AND GAINS A MARK, so "no preview for this type" and "the
      render failed" stop looking identical (F onboarding). thumbs_controller.js adds the class, with
      the icon's title, when the poll answers `failed`; an unsupported file gets neither. A STATE OF
      THE COMPONENT, so it lives here and not in a page sheet: the poll runs on Recent, Projects, the
      project page and the model pages as well as the Library. The mark is a glyph, not colour alone
      (design-system.md rule 13), painted in the stage's own pair, `--thumb-ink` and `--thumb-stage`,
-     which do not flip (rule 5), so it reads the same in both themes. The second `content` hides the
+     which flip together (rule 5), so it keeps its contrast on the card in both themes. The second `content` hides the
      glyph from a screen reader where the alt syntax is understood; the title carries the words. */
   .thumb.thumb-failed::after {
     content: "!"; content: "!" / "";

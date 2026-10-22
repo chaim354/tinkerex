@@ -1,4 +1,29 @@
 import { Controller } from "@hotwired/stimulus"
+import { darkThemeActive } from "lib/ui_theme"
+
+// KICANVAS' OWN TWO THEMES, ONE PER APP THEME (2026-10-21). It ships "kicad" (KiCad's own colours:
+// a schematic on light paper, which is Paper's ground almost exactly) and "witchhazel", a dark one.
+// Left alone it read its global preference, which defaults to witchhazel, so every schematic was a
+// dark purple panel on the light page. Nothing in the app's stylesheet reaches inside its shadow
+// DOM, so this is the one viewer whose theme JavaScript picks.
+//
+// THE PREFERENCE IS WRITTEN, NOT THE EMBED'S `theme` ATTRIBUTE. The embed declares a `theme`
+// property, but this vendored build does not hand it to the viewer it renders (measured: the
+// attribute set, `kc-schematic-app` rendered without one, Witch Hazel painted). What the viewer does
+// read is the global preference, `kc:prefs:theme` in localStorage as `{"val": name}`, which the
+// module loads ONCE, at import. So the value is written before the import below, and the cost of
+// "once" is stated rather than hidden: a theme switch, or a Turbo visit after one (Turbo keeps the
+// imported module), shows the schematic in the theme its page loaded with until the next full load.
+// Every other viewer repaints live (design-system.md rule 5).
+const KICANVAS_THEME = { light: "kicad", dark: "witchhazel" }
+const PREFERENCE_KEY = "kc:prefs:theme"
+function choosePreference() {
+  try {
+    window.localStorage.setItem(PREFERENCE_KEY, JSON.stringify({ val: KICANVAS_THEME[darkThemeActive() ? "dark" : "light"] }))
+  } catch {
+    // Storage refused (a private window, blocked site data): KiCanvas keeps its default theme.
+  }
+}
 
 // KiCad schematics and boards, rendered in the browser (stage 3, S3-2). The KiCanvas module is
 // ONE vendored build (bin/build-kicanvas, importmap pin "kicanvas") and it is imported LAZILY here,
@@ -16,6 +41,7 @@ export default class extends Controller {
 
   async connect() {
     try {
+      choosePreference()
       await import("kicanvas")
       const embed = document.createElement("kicanvas-embed")
       embed.setAttribute("src", this.urlValue)
