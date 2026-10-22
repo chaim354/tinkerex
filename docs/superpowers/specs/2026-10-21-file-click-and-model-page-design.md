@@ -44,13 +44,16 @@ Every file tile and file row that links to a file page:
 - the project hub: `projects/_file_tile`, the name link in `projects/_file_rows`, `_photos`,
   `_schematics`, `_hero`, and an image block in `_block_panel`;
 - search results (`shared/_result_group`, the file arms);
-- the file page's photo tiles (`files/_connections`, the `photo-cell` links);
+- the file page's connections panel (`files/_connections`, every link), a BOM's part names
+  (`projects/_bom_lines`), and the repo browser's file links (`lib/file_chooser.js`, browse mode);
 - the model page's gallery and file list (Part 2, where a single click shows the file in the pane
   instead of navigating).
 
-**Not changed:** links inside written text — Markdown and README links, BOM part names
-(`projects/_bom_lines`), the connections panel's sentences — stay ordinary links; a double-click on
-text selects a word, and it should keep doing so. Folders still navigate on click. Model cards in
+**Not changed:** links inside rendered Markdown — a README, a text block — stay ordinary links, and
+so do `.btn` actions (the side panel's Open, the model pane's "Open file page"). Everything else
+that links a file page is a file row and takes the click rule. *(Amended while planning: this first
+read "links inside written text", which also excluded BOM part names and the connections panel; they
+are rows, not prose, and the owner's words were "any file anywhere".)* Folders still navigate on click. Model cards in
 the 3D models view open the model page (Part 2) and are links to a model, not a file. **The public
 pages are out of scope**: they are sessionless, visitor-facing, carry no file menu, and §14d keeps
 them apart.
@@ -148,7 +151,8 @@ stops appending `click->selection#click dblclick->selection#open`.
   `editable:` and a banner flag; the pane passes neither.
 - **Which files are listed** is today's rule: the model folder's subtree filtered to the model's
   live attachments, or the attachments alone when the model has no folder
-  (`ModelsController#file_tree_for_model`). The `file` param is validated against that same set.
+  (`ModelsController#file_tree_for_model`). The `file` param is validated against the model's live
+  attachments — the tree is a subset of them, and the gallery can name an image outside the folder.
 - **`Maker::ModelFolder.landing_folder_id` is deleted** with its tests; `model_in` stays (the
   strip's one answer). The module's header comment loses its second question.
 
