@@ -246,6 +246,9 @@ module Web
       # answers `:other`; pick another extension if a later slice claims this one.
       file!("n-pdf", "manual.pdf", parent_node_id: folder.node_id)
       file!("n-other", "telemetry.bin", parent_node_id: folder.node_id)
+      # 2026-10-21: the workbook viewer, files/viewers/_spreadsheet. The page renders only the shell
+      # (the grid fetches its data), so a row with a content token is all it needs.
+      file!("n-xlsx", "bom.xlsx", parent_node_id: folder.node_id)
       entry = @project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
                                                  logged_at: Time.current)
       entry.file_attachments.create!(user: @user, node_id: photo, role: "image", position: 0)
@@ -507,6 +510,7 @@ module Web
         "file detail (pdf)" => file_path("n-pdf"),
         "file detail (gerber)" => file_path("n-pcb-0"),
         "file detail (other)" => file_path("n-other"),
+        "file detail (spreadsheet)" => file_path("n-xlsx"),
         # Structural redesign slice 3: the Library's inspector frame, a fragment swept like a page
         # so a comment leak in it would show. `n-stl` is attached to @project and renderable, so
         # the frame reaches the attach chips and the thumbnail cell. Its 404 sibling,

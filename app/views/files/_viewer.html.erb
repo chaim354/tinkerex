@@ -1,5 +1,7 @@
 <%# locals: (viewer:, editable:, save:) %>
-<%# EIGHT BRANCHES, EIGHT PARTIALS UNDER files/viewers/ (stage 4, S4-5). Each takes every URL as
+<%# EIGHT BRANCHES, EIGHT PARTIALS UNDER files/viewers/ (stage 4, S4-5), AND A NINTH THE MAKER'S PAGES
+    ALONE RENDER: the workbook grid (_spreadsheet, 2026-10-21), whose data comes from a session-authed
+    door, so a visitor's page shows an .xlsx as the download fallback instead. Each takes every URL as
     a STRICT local, so the same eight render on a visitor's public file page pointed at public
     routes — a viewer that built its own URLs would be one condition with two answers across two
     pages, the shape §14a forbids. The chain itself is the MAKER's, because the branch ORDER is the
@@ -31,6 +33,15 @@
   <%= render "files/viewers/code", blob_url: blob_file_path(viewer.node.node_id),
              ext: File.extname(viewer.node.name).downcase.delete("."), editable: editable,
              save_url: file_path(viewer.node.node_id), base_token: viewer.info.content_token %>
+<% elsif viewer.kind == :spreadsheet %>
+  <%# An .xlsx (2026-10-21): the grid fetches the workbook and saves edits through its own door,
+      Files::SpreadsheetsController. `save:` decides whether the grid can save at all — the file page
+      can, the model page's pane shows the workbook read-only. %>
+  <%= render "files/viewers/spreadsheet", data_url: file_spreadsheet_path(viewer.node.node_id),
+             save_url: (file_spreadsheet_path(viewer.node.node_id) if save),
+             download_url: blob_file_path(viewer.node.node_id, download: 1),
+             scripts: [ asset_path("jsuites.js"), asset_path("jspreadsheet.js") ],
+             styles: [ asset_path("jsuites.css"), asset_path("jspreadsheet.css") ] %>
 <% elsif viewer.kind == :model3d %>
   <%= render "files/viewers/model3d", name: viewer.node.name,
              named_url: named_blob_file_path(viewer.node.node_id, filename: viewer.node.name),

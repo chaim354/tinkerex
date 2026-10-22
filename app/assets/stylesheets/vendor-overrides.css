@@ -88,3 +88,48 @@ lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface)
    it as the one third-party surface that may keep its own scheme. color-scheme: light keeps its
    native form controls readable when the shell is dark. */
 .sheet-grid { color-scheme: light; background: #ffffff; color: #1a1e26; border-radius: var(--radius-panel); padding: 4px; }
+
+/* THE WORKBOOK VIEWER'S GRID FOLLOWS THE THEME (2026-10-21; files/viewers/_spreadsheet). Unlike the
+   project Sheets page above, an .xlsx is a file page, and every other viewer there is painted in
+   tokens, so this grid is too, in both themes: cells on --surface, headers on --raised, rules in
+   --line, and selection in ink (--fg), design-system.md rule 13. Scoped to `.spreadsheet-grid` so
+   the Sheets page keeps its light island. These beat jspreadsheet.css only because the controller
+   inserts that sheet BEFORE this one — the order spreadsheet_controller.js#loadStyles keeps. */
+.spreadsheet-grid { color-scheme: inherit; }
+.spreadsheet-grid .jss_content { scrollbar-color: var(--line-strong) transparent; }
+.spreadsheet-grid .jss_worksheet { background-color: var(--surface); color: var(--fg); font: 400 13px/18px var(--font-ui);
+                                   border-right-color: var(--line); border-bottom-color: var(--line); }
+.spreadsheet-grid .jss_worksheet > tbody > tr > td { border-top-color: var(--line); border-left-color: var(--line); }
+.spreadsheet-grid .jss_worksheet > thead > tr > td,
+.spreadsheet-grid .jss_worksheet > tbody > tr > td:first-child {
+  background-color: var(--raised); color: var(--fg-muted); border-top-color: var(--line); border-left-color: var(--line);
+  font: 400 12px/18px var(--font-mono);
+}
+/* The column letters stay centred whatever alignment the column itself carries. */
+.spreadsheet-grid .jss_worksheet > thead > tr > td { text-align: center; }
+.spreadsheet-grid .jss_worksheet > thead > tr > td.selected,
+.spreadsheet-grid .jss_worksheet > tbody > tr.selected > td:first-child { background-color: var(--line); color: var(--fg); }
+.spreadsheet-grid .jss_worksheet > tbody > tr > td.readonly { color: var(--fg-muted); }
+.spreadsheet-grid .jss_worksheet > tbody > tr > td.editor { background-color: var(--surface); }
+.spreadsheet-grid .jss_worksheet > tbody > tr > td > input { color: var(--fg); }
+.spreadsheet-grid .jss_worksheet .highlight,
+.spreadsheet-grid .jss_worksheet .selection { background-color: color-mix(in srgb, var(--fg) 8%, transparent); }
+.spreadsheet-grid .jss_worksheet .highlight-selected { background-color: transparent; }
+.spreadsheet-grid .jss_worksheet .highlight-top { border-top-color: var(--fg); box-shadow: 0 -1px var(--line); }
+.spreadsheet-grid .jss_worksheet .highlight-left { border-left-color: var(--fg); box-shadow: -1px 0 var(--line); }
+.spreadsheet-grid .jss_worksheet .highlight-right { border-right-color: var(--fg); }
+.spreadsheet-grid .jss_worksheet .highlight-bottom { border-bottom-color: var(--fg); }
+.spreadsheet-grid .jss_worksheet .selection-top,
+.spreadsheet-grid .jss_worksheet .copying-top { border-top-color: var(--fg); }
+.spreadsheet-grid .jss_worksheet .selection-left,
+.spreadsheet-grid .jss_worksheet .copying-left { border-left-color: var(--fg); }
+.spreadsheet-grid .jss_worksheet .selection-right,
+.spreadsheet-grid .jss_worksheet .copying-right { border-right-color: var(--fg); }
+.spreadsheet-grid .jss_worksheet .selection-bottom,
+.spreadsheet-grid .jss_worksheet .copying-bottom { border-bottom-color: var(--fg); }
+.spreadsheet-grid .jss_corner { background-color: var(--fg); border-color: var(--surface); }
+.spreadsheet-grid .jcontextmenu { background: var(--surface); color: var(--fg); border: 1px solid var(--line);
+                                  border-radius: var(--radius-panel); box-shadow: 0 6px 18px color-mix(in srgb, var(--fg) 18%, transparent); }
+.spreadsheet-grid .jcontextmenu > div { font: 400 13px/18px var(--font-ui); padding-left: 12px; }
+.spreadsheet-grid .jcontextmenu > div a { color: var(--fg); }
+.spreadsheet-grid .jcontextmenu > div:hover { background: var(--raised); }

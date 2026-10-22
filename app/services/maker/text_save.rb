@@ -3,8 +3,11 @@ module Maker
   # FilesController#update (any text file under the size cap since 2026-09-10; it was a file inside
   # a working tree until then), Projects::ReadmesController#update (the project's README, D3's
   # exception) and Files::TextFilesController#create (a new, empty one) — and a verb more than one
-  # controller performs gets a named service rather than being re-inlined (§14d). What must not
-  # drift between them is exactly what lives here:
+  # controller performs gets a named service rather than being re-inlined (§14d). A FOURTH since
+  # 2026-10-21, and it is not text: Files::SpreadsheetsController#update hands this the rebuilt
+  # bytes of an .xlsx (Maker::Xlsx::Edit). The name stayed because the verb did — `body` has always
+  # gone down as bytes (`.b`), and every rule below is about rewriting a library file in place, not
+  # about what the file holds. What must not drift between them is exactly what lives here:
   #
   #   * THE STALE CHECK. The caller edited SOME version; if the content token has moved since, the
   #     save would silently discard whatever moved it. 409, never a write. IT ASKS THE CATALOG

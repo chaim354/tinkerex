@@ -640,6 +640,65 @@ blocks the fetch"; the policy is report-only, so it never did — the bucket had
 latterly, no reachable endpoint. Pinned per leg by `content_security_policy_test.rb` and, for the
 port's answer, by the shared adapter contract.
 
+## The workbook viewer: an `.xlsx` is a grid, and a save is operations on its XML
+
+`:spreadsheet` (2026-10-21; `files/viewers/_spreadsheet`, `spreadsheet_controller.js`,
+`Files::SpreadsheetsController`, `Maker::Xlsx`; plan `docs/superpowers/plans/2026-10-21-xlsx-view-and-edit.md`).
+The file page shows each worksheet as a tab of the values Excel last stored; a maker edits cells
+and adds or deletes rows; Save rewrites the same node.
+
+**`spreadsheet` IS ITS OWN ROLE BECAUSE `document` IS A TEXT ROLE.** Every reader of `TEXT_ROLES` —
+`preview_kind`'s `:text` branch and the TextThumb registration — would have treated a zip as source
+text. It files into `docs/` like `document`, sits in `Maker::ModelIntake::EXCLUDED_ROLES`, and
+`FilePreview::SPREADSHEET_EXTS` is derived from it, so a new workbook extension is a `ROLE_BY_EXT`
+line — once `Maker::Xlsx` can actually read that format (`xlsm`/`xls`/`ods` cannot be read today).
+
+**EDITED AS OOXML; EVERY PART NO OPERATION REACHED IS COPIED VERBATIM.** Never route a save through
+a library that loads the workbook into objects and writes it back: rubyXL 3.4.38, measured on the
+test fixture, dropped every `x14ac:dyDescent` and the workbook's `mc:Ignorable` and rewrote
+`styles.xml` after a one-cell edit. `edit_test.rb` asserts untouched parts byte-for-byte and the
+edited sheet's other cells node-for-node, so a re-serialising writer goes red. The two stated
+exceptions: workbook.xml gains `fullCalcOnLoad` (nothing here evaluates a formula), and the
+calcChain goes with its relationship and content type (it goes stale the moment a formula cell is
+overwritten, and Excel repairs a stale one).
+
+**A SAVE SENDS OPERATIONS, NEVER THE GRID.** Row inserts and deletes are logged as they happen;
+cell values are diffed at Save against what was loaded, through each grid row's original index.
+A cell nobody touched is never rewritten, which is what makes a cut sheet (only the first 1,000
+rows shown) safe to edit. **Undo and redo are OFF** (`ignoreHistory = true`): jspreadsheet replays
+history with its events suppressed, so an undone insert would leave a logged insert the grid no
+longer shows. **Spare rows to type into exist only where the sheet really ends** — past a cut sheet
+they would be the file's own hidden rows. `test/system/spreadsheet_test.rb` mutation-checks the log,
+the diff, the row identities and the history switch.
+
+**ROW OPERATIONS ONLY WHERE EVERY ROW-ADDRESSED THING IS ONE `Edit` MOVES**: cells, merges, the
+dimension, and every formula in the workbook that points at the sheet (`Maker::Xlsx::FormulaRefs`,
+Excel's grow/shrink/`#REF!` rules; a shared formula is written out longhand first). Everything else
+— conditional formatting, validation, hyperlinks, filters, drawings, comments, tables, page breaks,
+an `extLst`, array formulas, a defined name mentioning the sheet, a chart or pivot table anywhere,
+a structured or external reference — switches them off for that sheet, with the reason on the page;
+cell edits still work. Both lists (`Workbook::ROW_SAFE_PARTS`, `ROW_SAFE_ELEMENTS`) are ALLOWLISTS:
+the structure a denylist forgets is the one left pointing at the wrong row. **Widening is teaching
+`Edit` to move the thing, then listing it — never listing it alone.** A protected sheet is
+read-only; a cell inside an array or data-table formula is locked.
+
+**THE SAVE IS `Maker::TextSave`** (git-editing.md, "a fourth door"), and the door checks the token
+BEFORE it reads, so a stale save costs no read (pinned).
+
+**BOUNDED TWICE, GerberZip's rule**: the declared sizes are the pre-check (refused before a part is
+inflated, pinned) and the capped read the bound; plus the catalog's size before any read, an entry
+count, and a whole-workbook cell budget for the payload.
+
+**THE GRID LIBRARY IS INJECTED, AND ITS STYLESHEETS GO IN BEFORE `vendor-overrides.css`.** jsuites
+and jspreadsheet are UMD bundles loaded as classic scripts by the controller, once per document;
+their two stylesheets are unlayered, so one inserted after the overrides would beat the token skin
+there (`.spreadsheet-grid`, both themes — the project Sheets page keeps its light island). They carry
+`data-turbo-track="dynamic"` so Turbo drops them on a page without a grid. **A restored snapshot is
+rebuilt, never reconnected over** (`back_through_turbo_cache` in the system test).
+
+**A VISITOR'S PAGE SHOWS AN `.xlsx` AS THE DOWNLOAD FALLBACK**: the payload door is session-authed,
+and the model page's pane shows the grid read-only (`save: false`).
+
 ## Extensionless text is a SEPARATE AXIS, and it must not move files
 
 `File.extname("LICENSE")` is `""`, and so is `File.extname(".gitignore")` — a leading dot with no

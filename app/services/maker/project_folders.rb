@@ -89,6 +89,9 @@ module Maker
       "code"           => "code",
       "instructions"   => "docs",
       "document"       => "docs",
+      # A workbook files beside the documents and the CSVs it usually sits next to — a third role
+      # in `docs`, for the reason `instructions` is the second (2026-10-21).
+      "spreadsheet"    => "docs",
       "image"          => "images",
       "source_archive" => "archives",
       # The board's fabrication set — Gerber layers, drill files and the `.gbrjob` that names them

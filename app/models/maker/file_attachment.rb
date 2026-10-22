@@ -14,6 +14,12 @@ module Maker
       "image"          => "Images",
       "instructions"   => "Instructions",
       "document"       => "Documents",
+      # A WORKBOOK, AND ITS OWN ROLE RATHER THAN `document` (2026-10-21). `document` is a TEXT role
+      # (TEXT_ROLES below), and every reader of that list — the file page's code viewer and the
+      # TextThumb registration — would have treated an `.xlsx`, which is a zip, as source text. It
+      # files into the same `docs/` folder as `document` (ProjectFolders), the way `instructions`
+      # already does; what differs is only that its bytes are not text.
+      "spreadsheet"    => "Spreadsheets",
       "vector"         => "Vector",
       "laser"          => "Laser",
       "cad_source"     => "CAD source",
@@ -100,6 +106,11 @@ module Maker
       "txt" => "document", "md" => "document", "markdown" => "document",
       "json" => "document", "csv" => "document", "tsv" => "document",
       "rst" => "document", "tex" => "document",
+      # An Excel workbook (2026-10-21): the file page shows it as a grid and saves basic edits back
+      # (Files::SpreadsheetsController, Maker::Xlsx). `xlsm`/`xls`/`ods` are deliberately absent —
+      # a macro workbook, the pre-2007 binary format and OpenDocument are three other formats the
+      # editor does not read, and naming them here would promise a viewer they do not get.
+      "xlsx" => "spreadsheet",
       # Source code, config and build files — the "firmware + software" half of a project (§1),
       # which until now was filed entirely as `other`. Three groupings are decisions rather than
       # observations. `h`/`hpp` sit with c/cpp because a firmware tree is headers and sources

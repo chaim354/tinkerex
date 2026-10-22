@@ -60,6 +60,12 @@ module FilePreview
   # counting loose in a folder, which is the point of there being one list.
   GERBER_EXTS = Maker::FileAttachment::ROLE_BY_EXT.select { |_ext, role| role == "pcb" }.keys.freeze
 
+  # Excel workbooks, shown as a grid with one tab per worksheet and saved back with basic edits
+  # (spreadsheet_controller.js, Files::SpreadsheetsController, Maker::Xlsx; 2026-10-21). DERIVED
+  # FROM THE ROLE, for GERBER_EXTS' reason: every extension of the role passes `EXT_RE`, so the one
+  # vocabulary carries it and a second literal here could only drift.
+  SPREADSHEET_EXTS = Maker::FileAttachment::ROLE_BY_EXT.select { |_ext, role| role == "spreadsheet" }.keys.freeze
+
   private
 
   # WHICH VIEWER THE PAGE GETS AND, FOR A BOARD, WHAT IT DRAWS: `[kind, layers, single]`, the three
@@ -200,6 +206,10 @@ module FilePreview
     # not in TEXT_ROLES, so `Maker::FileAttachment.text?` answers false for them anyway — belt and
     # braces, with the role table as the real guard and this line as the one that reads.)
     return :gerber if GERBER_EXTS.include?(ext)
+    # A workbook is a zip of XML, so no branch below could claim it honestly; its role is not a text
+    # role (FileAttachment's comment on `spreadsheet`), and no thumbnail renderer is registered for
+    # it, so without this line it would fall through to :other and a Download button.
+    return :spreadsheet if SPREADSHEET_EXTS.include?(ext)
     # DERIVED FROM THE ONE VOCABULARY (§14d), not a second list beside it. This was an inline set
     # of 26 extensions sitting next to Maker::FileAttachment::ROLE_BY_EXT, and it had already
     # drifted: five of its entries (xml log ini cfg conf) were in no ROLE_BY_EXT entry at all, so

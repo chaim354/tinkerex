@@ -149,6 +149,9 @@ root to: "home#index"
       patch "rename"
       patch "move"
     end
+    # AN .xlsx's GRID AND ITS SAVE (2026-10-21): GET the workbook as JSON, PATCH a list of edits back
+    # to the same file. /files/:file_id/spreadsheet, Files::SpreadsheetsController.
+    resource :spreadsheet, only: %i[show update], module: :files
   end
 
   # --- A text file made from nothing (2026-09-10) ---
