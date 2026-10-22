@@ -3,17 +3,116 @@
 # ES module, the CodeMirror pattern (bin/build-codemirror): no npm package, no CDN, one importmap pin.
 # KiCanvas has no release tags; the commit below is what `vendor/javascript/kicanvas.js` was built
 # from, and bumping it is a deliberate edit here followed by a rebuild and a look at a .kicad_sch.
-# Needs node + npm on PATH (the same as build-codemirror). Idempotent: rebuilds into a temp dir.
+# Needs node + npm on PATH (the same as build-codemirror). Idempotent: rebuilds into a temp dir, and
+# the same inputs give a byte-identical bundle (checked 2026-10-22).
+#
+# NO THIRD-PARTY FONTS, SO THIS SCRIPT PATCHES UPSTREAM SOURCE (2026-10-22). At the pinned commit
+# kicanvas-embed.ts ENDS by appending a <link> to fonts.googleapis.com — Material Symbols Outlined for
+# the icons, Nunito for the labels; upstream's own TODO there reads "Package these up as part of
+# KiCanvas". So every page with a viewer sent each visitor's browser to Google, which a self-hosted
+# box on an isolated network cannot reach and a self-hosted app should not call (the IBM Plex
+# @font-face in application.css says the same), and it broke the CSP on style-src-elem and font-src:
+# 22 report-only violations in ONE run of shell_test's phone sweep, ~49 on the Linux runners, past
+# CspReportsController's 30-a-minute cap, so the browser logged 429s and the sweep's console check
+# failed at random. Two edits, each exact-match-or-refuse (bin/build-o3dv's discipline: a needle
+# upstream reworded fails this script instead of shipping an unpatched bundle):
+#
+#   1. The <link> is DELETED, not repointed. The icon font's @font-face lives in application.css,
+#      same-origin and fingerprinted, and a document-level @font-face is what upstream's own <link>
+#      relied on too: the shadow trees resolve the family against the document's fonts.
+#   2. The embed's `:host` font stack, which opened with "Nunito", becomes `inherit`, so the labels
+#      take the page's own type (IBM Plex Sans, --font-ui) and there is no second UI font to ship.
+#
+# THE ICON FONT IS SHIPPED WHOLE, NOT SUBSET. It is @material-symbols/font-400 at the pinned version
+# below (Apache-2.0): opsz 48, GRAD 0, weight 400, exactly the instance upstream asked Google for,
+# plus a FILL axis that rests at 0, the outlined look. KiCanvas names its icons as ligature TEXT,
+# several of them read at runtime from an `icon` attribute, so a subset that missed one would draw
+# the icon's NAME as a word, with nothing red anywhere. 492 KB, fetched only when an icon renders;
+# Google's instance of it was 345 KB plus ~137 KB of Nunito, so the bytes are a wash.
+#
+# Then the artifact is CHECKED before anything is copied: no Google font host and no Nunito left in
+# it, and the icon family application.css declares is still the one the bundle asks for. Upstream
+# renaming that family would otherwise leave every icon spelled out in words.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 ROOT="$PWD"
 KICANVAS_COMMIT="b031159eb74aaa7eef2b026fd85d35bc05ff2095"
+SYMBOLS_VERSION="0.48.1"
+ICON_FAMILY="Material Symbols Outlined"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 git clone -q https://github.com/theacodes/kicanvas.git "$WORK/kicanvas"
 git -C "$WORK/kicanvas" checkout -q "$KICANVAS_COMMIT"
+
+# THE PATCH. Node rather than sed because sed cannot fail on "the needle was not there".
+EMBED="$WORK/kicanvas/src/kicanvas/elements/kicanvas-embed.ts" node <<'NODE'
+const fs = require("fs")
+const file = process.env.EMBED
+let src = fs.readFileSync(file, "utf8")
+
+function replaceOnce(needle, replacement, what) {
+  const count = src.split(needle).length - 1
+  if (count !== 1) {
+    console.error(`REFUSING TO BUILD: expected exactly one occurrence of ${what} in ${file}, found ${count}.`)
+    console.error("Upstream moved or reworded it. Re-read kicanvas-embed.ts at the pinned commit and update bin/build-kicanvas.")
+    process.exit(1)
+  }
+  src = src.replace(needle, () => replacement)
+}
+
+replaceOnce(`/* Import required fonts.
+ * TODO: Package these up as part of KiCanvas
+ */
+document.body.appendChild(
+    html\`<link
+        rel="stylesheet"
+        href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@48,400,0,0&family=Nunito:wght@300;400;500;600;700&display=swap"
+        crossorigin="anonymous" />\`,
+);`, `/* PATCHED BY tinkerex's bin/build-kicanvas: upstream appended a Google Fonts <link> here. The
+ * host page declares the icon font same-origin, and the labels inherit the page's own type. */`,
+  "the Google Fonts <link>")
+
+replaceOnce(`font-family:
+                    "Nunito", ui-rounded, "Hiragino Maru Gothic ProN",
+                    Quicksand, Comfortaa, Manjari, "Arial Rounded MT Bold",
+                    Calibri, source-sans-pro, sans-serif;`, "font-family: inherit;",
+  "the embed's Nunito font stack")
+
+fs.writeFileSync(file, src)
+NODE
+
 ( cd "$WORK/kicanvas" && npm ci --silent && npm run build --silent )
-mkdir -p "$ROOT/vendor/javascript"
-cp "$WORK/kicanvas/build/kicanvas.js" "$ROOT/vendor/javascript/kicanvas.js"
+OUT="$WORK/kicanvas/build/kicanvas.js"
+for banned in fonts.googleapis.com fonts.gstatic.com Nunito; do
+  if grep -qF "$banned" "$OUT"; then
+    echo "REFUSING TO SHIP: the patched bundle still contains '$banned'. Something else in upstream" >&2
+    echo "names a third-party font; find it in $KICANVAS_COMMIT and patch it above." >&2
+    exit 1
+  fi
+done
+if ! grep -qF "\"$ICON_FAMILY\"" "$OUT"; then
+  echo "REFUSING TO SHIP: the bundle no longer asks for the \"$ICON_FAMILY\" family, which is the one" >&2
+  echo "app/assets/stylesheets/application.css declares. Upstream changed its icon font." >&2
+  exit 1
+fi
+
+( cd "$WORK" && npm pack --silent --pack-destination "$WORK" "@material-symbols/font-400@$SYMBOLS_VERSION" >/dev/null )
+mkdir -p "$WORK/symbols"
+tar -xzf "$WORK/material-symbols-font-400-$SYMBOLS_VERSION.tgz" -C "$WORK/symbols"
+grep -qF "Apache License" "$WORK/symbols/package/LICENSE" || {
+  echo "REFUSING TO SHIP: @material-symbols/font-400@$SYMBOLS_VERSION's LICENSE is not Apache-2.0 (CLAUDE.md §9)." >&2
+  exit 1; }
+
+mkdir -p "$ROOT/vendor/javascript" "$ROOT/app/assets/fonts"
+cp "$OUT" "$ROOT/vendor/javascript/kicanvas.js"
 cp "$WORK/kicanvas/LICENSE.md" "$ROOT/vendor/javascript/LICENSE-kicanvas.md"
+cp "$WORK/symbols/package/material-symbols-outlined.woff2" "$ROOT/app/assets/fonts/material-symbols-outlined.woff2"
+{
+  printf '%s, the icon font of the vendored KiCanvas (vendor/javascript/kicanvas.js).\n' "$ICON_FAMILY"
+  printf 'Material Symbols are by Google; this is material-symbols-outlined.woff2 from the npm package\n'
+  printf '@material-symbols/font-400@%s (https://github.com/marella/material-symbols), unmodified,\n' "$SYMBOLS_VERSION"
+  printf 'written here by bin/build-kicanvas. Licensed under the Apache License, Version 2.0:\n\n'
+  cat "$WORK/symbols/package/LICENSE"
+} > "$ROOT/app/assets/fonts/LICENSE-material-symbols.txt"
 echo "kicanvas.js built from $KICANVAS_COMMIT: $(wc -c < "$ROOT/vendor/javascript/kicanvas.js") bytes"
+echo "material-symbols-outlined.woff2 from @material-symbols/font-400@$SYMBOLS_VERSION: $(wc -c < "$ROOT/app/assets/fonts/material-symbols-outlined.woff2") bytes"

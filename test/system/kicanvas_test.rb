@@ -121,6 +121,90 @@ class KicanvasTest < ApplicationSystemTestCase
     })()
   JS
 
+  # A KICANVAS PAGE CALLS NO THIRD PARTY AND RAISES NO CSP VIOLATION (2026-10-22). Upstream's bundle
+  # appended a Google Fonts <link> (Material Symbols for the icons, Nunito for the labels), so every
+  # viewer page fetched from fonts.googleapis.com and fonts.gstatic.com and broke style-src-elem and
+  # font-src: 15 reports from this file's two tests, 22 from one phone sweep in shell_test.rb, enough
+  # on the CI runners to pass CspReportsController's 30-a-minute cap and fail that sweep's console
+  # check on the 429s. bin/build-kicanvas now deletes the <link> and points the labels at the page's
+  # font, and application.css serves the icon font from our origin. The fix is NOT a wider CSP or a
+  # higher report cap; either would hide this from the very log the CSP plan reads.
+  #
+  # THE RECORDER IS INSTALLED BEFORE THE PAGE EXISTS, through CDP, because the <link> went in at
+  # module evaluation, a moment after connect(): a listener added after `visit` would race it and
+  # could pass by arriving late. A violation is what makes Chrome send a report, report-only or not,
+  # so an empty list here is "no CSP report", with no wait on the report's own delivery.
+  #
+  # AND THE POSITIVE HALF IS ASSERTED, so the test cannot pass on a viewer that drew no icons: the
+  # icon font is LOADED, every icon is ONE glyph wide, and the embed's type is the page's. A Material
+  # Symbol is exactly 1em (measured); without the font its NAME is drawn instead, "download" at 3.94em
+  # and the shortest, "list", at 1.22em, which is why the bound is 1em +/- 0.05 and not "under 1.5".
+  #
+  # MUTATION-CHECKED (§15; each run red, then restored): appending upstream's <link> to the bundle
+  # reddens the violation list (style-src-elem and font-src for Google's hosts); restoring the
+  # "Nunito" stack reddens the type assertion; deleting the @font-face reddens the icon width.
+  CSP_RECORDER_JS = <<~JS.freeze
+    window.__cspViolations = [];
+    document.addEventListener("securitypolicyviolation", (e) => {
+      window.__cspViolations.push(e.effectiveDirective + " " + e.blockedURI);
+    }, true);
+  JS
+
+  # Every <kc-ui-icon> drawn from the FONT (an "svg:" icon is a sprite, not a ligature), with its
+  # rendered width in ems. Shadow roots are walked as FIND_CANVAS_JS does, for the same reason.
+  FONT_ICONS_JS = <<~JS.freeze
+    (function() {
+      const out = [];
+      (function walk(root, depth) {
+        if (!root || depth > 10) return;
+        for (const el of root.querySelectorAll("*")) {
+          if (el.localName === "kc-ui-icon" && !(el.textContent || "").trim().startsWith("svg:")) {
+            const width = el.getBoundingClientRect().width;
+            if (width > 0) out.push([el.textContent.trim(), width / parseFloat(getComputedStyle(el).fontSize)]);
+          }
+          if (el.shadowRoot) walk(el.shadowRoot, depth + 1);
+        }
+      })(document.querySelector("kicanvas-embed")?.shadowRoot, 0);
+      return out;
+    })()
+  JS
+
+  test "a KiCanvas page loads no third-party font and raises no CSP violation" do
+    browser = page.driver.browser
+    recorder = browser.execute_cdp("Page.addScriptToEvaluateOnNewDocument", source: CSP_RECORDER_JS)
+    visit file_path(@node.node_id)
+    assert_selector ".kicanvas-stage[data-kicanvas-state='ready']"
+    wait_for_kicanvas_canvas
+    assert page.evaluate_script("Array.isArray(window.__cspViolations)"), "the CSP recorder never ran on this page"
+
+    # Icons drawn means their font was fetched, which is when a font-src violation would fire: the
+    # page has settled, so the absence assertions below are not read too early.
+    icons = nil
+    begin
+      wait_until { (icons = page.evaluate_script(FONT_ICONS_JS)).any? && icons.all? { |_name, ems| (ems - 1).abs < 0.05 } }
+    rescue Minitest::Assertion
+      flunk "KiCanvas's icons never rendered as single glyphs; [name, width in ems]: #{icons.inspect}"
+    end
+
+    assert_empty page.evaluate_script("window.__cspViolations"), "a KiCanvas page raised CSP violations"
+    # Not redundant with the line above: a policy widened to admit Google's hosts would empty the
+    # violation list and leave the visitor's browser calling Google. This one still fails then.
+    requested = page.evaluate_script("performance.getEntriesByType('resource').map((e) => e.name)")
+    origin = page.evaluate_script("location.origin")
+    assert_empty requested.reject { |u| u.start_with?(origin) }, "a KiCanvas page fetched from a third party"
+
+    # The glyph check alone passes on a machine with Material Symbols INSTALLED, @font-face or not:
+    # Chrome then resolves the family to the local copy. This asks for the app's own file.
+    assert requested.any? { |u| u.match?(%r{/assets/material-symbols-outlined-\h+\.woff2\z}) },
+           "the icon font was not fetched from this app: #{requested.inspect}"
+    assert_equal page.evaluate_script("getComputedStyle(document.body).fontFamily"),
+                 page.evaluate_script("getComputedStyle(document.querySelector('kicanvas-embed')).fontFamily"),
+                 "KiCanvas's labels are not in the page's own font"
+    assert_no_console_errors
+  ensure
+    browser.execute_cdp("Page.removeScriptToEvaluateOnNewDocument", identifier: recorder["identifier"]) if recorder
+  end
+
   test "the schematic follows the app's theme" do
     { "light" => [ 245, 244, 239 ], "dark" => [ 19, 18, 24 ] }.each do |theme, ground|
       page.execute_script("document.cookie = 'theme=#{theme}; path=/; max-age=31536000; samesite=lax'")

@@ -264,11 +264,14 @@ module Web
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: "Recent"
     end
 
-    test "the stylesheet references fingerprinted, servable Plex fonts" do
+    test "the stylesheet references fingerprinted, servable self-hosted fonts" do
       get Rails.application.assets.resolver.resolve("application.css")
       assert_response :success
       css = response.body
-      %w[ibm-plex-sans ibm-plex-sans-italic ibm-plex-mono-400 ibm-plex-mono-500].each do |name|
+      # Material Symbols is KiCanvas's icon font, same-origin since bin/build-kicanvas stopped it
+      # calling Google (kicanvas_test.rb asserts the viewer page then raises no CSP violation).
+      %w[ibm-plex-sans ibm-plex-sans-italic ibm-plex-mono-400 ibm-plex-mono-500
+         material-symbols-outlined].each do |name|
         font = css[%r{/assets/#{name}-[0-9a-f]{8,}\.woff2}]
         assert font, "application.css does not reference a fingerprinted #{name}.woff2"
         get font
