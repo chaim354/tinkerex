@@ -8,11 +8,13 @@
 </div>
 
 <%# RECENTLY CHANGED (structural redesign §7): the newest live files, as tiles that OPEN THE FILE —
-    a link to its file page, never a selection item (this page has no selection controller). They
-    once opened the file's folder in the Library with the file selected; a click that lands
-    somewhere other than the thing clicked read as a detour, so the owner asked for it to just open
-    (2026-10-20). A wrapping grid, not a row that scrolls sideways: sixteen tiles are a page of their
-    own, and pages/home.css wraps them.
+    a link to its file page, never a selection item (this page has no selection controller). A click
+    opens it and a double-click opens it in a new tab (FilesHelper#file_open_data, 2026-10-21);
+    right-click › Details lands in the Library with the file's side panel open. They once opened
+    the file's folder in the Library with the file selected; a click that lands somewhere other
+    than the thing clicked read as a detour, so the owner asked for it to just open (2026-10-20). A
+    wrapping grid, not a row that scrolls sideways: sixteen tiles are a page of their own, and
+    pages/home.css wraps them.
 
     GETTING STARTED IN ITS PLACE WHILE THERE IS NO LIVE FILE (F onboarding, 2026-10-13), and it is
     the one empty state on this page. `@recent_files.empty?` is exactly "no live, visible file"
@@ -50,13 +52,13 @@
         <% href = file_path(node.node_id) %>
         <% if Maker::Previews::Registry.for_filename(node.name).present? %>
           <%= link_to href, class: "grid-card file-cell",
-                      data: thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id])) do %>
+                      data: file_open_data(thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node, @addon_origins[node.node_id]))) do %>
             <%= render "files/thumb", thumb: @covers.thumb(node.node_id), ext_label: ext_label,
                        url: preview_src(@covers.thumb(node.node_id)), photo: Maker::FileAttachment.photo?(node.name) %>
             <span class="grid-name"><%= node.name %></span>
           <% end %>
         <% else %>
-          <%= link_to href, class: "grid-card", data: file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]) do %>
+          <%= link_to href, class: "grid-card", data: file_open_data(file_menu_data(node, @addon_origins[node.node_id])) do %>
             <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
             <span class="grid-name"><%= node.name %></span>
           <% end %>

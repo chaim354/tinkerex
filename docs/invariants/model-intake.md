@@ -5,7 +5,7 @@
 > `app/services/maker/model_intake/prune.rb`, `app/services/maker/model_folder.rb`,
 > `app/services/maker/model_projects.rb`,
 > `app/views/files/_model_strip.html.erb`, `Files::ModelsController` (the 3D models view),
-> `ModelsController`'s file-tree helpers and redirects, or the `origin` / `auto_node_id` /
+> `ModelsController`'s file-tree helpers and its `/models` redirect, or the `origin` / `auto_node_id` /
 > `folder_node_id` / `dismissed_at` columns on `maker_models`. The arc that produced it —
 > measurements, what each guard caught, what was deliberately left out — is in `docs/STATUS.md`.
 
@@ -136,41 +136,38 @@
   reads `@attachments`, ALREADY partitioned against the live-node index, so it adds no query (the
   page budget is asserted constant in N) and inherits `PageNodes`' tombstone rule instead of
   re-deriving it. **The count in the heading is derived from the same tree** — a panel that
-  filtered while `@file_count` did not is the same contradiction one line higher up. **It binds
-  only on the page that survives slice 5**: a model whose folder shows its strip never renders
-  `models/show` (the next rule), and the strip does not repeat this panel, because the folder's own
-  listing is the folder browser there. The panel renders for the models that keep the page.
-- **THE MODEL STRIP AND THE REDIRECTS REPLACE THE MODEL PAGE FOR A MODEL WITH A FOLDER TO LAND ON,
-  AND FOR NO OTHER (structural redesign slice 5).** `files/_model_strip` sits above that folder's
-  files carrying what `models/show` did — cover, status, details, print settings, notes, Edit, the
-  destroy button above and the print log — and `/models/:id` 302s there. There is no "manual"
-  origin to carve one exception out by, so **the page survives for every model with no strip to
-  land on**: a one-file model (about half of what the sweep creates), an import whose
-  `Models/<slug>` was never made or is in the trash, and a model whose folder a project claims.
-  Redirecting those would land the maker on a folder that shows nothing of what they clicked. The
+  filtered while `@file_count` did not is the same contradiction one line higher up. **Since
+  2026-10-21 the panel is the model page's list, on every model** (the next rule): a click shows
+  the file in the page's pane rather than leaving the page, and the strip does not repeat the panel,
+  because the folder's own listing is the folder browser there.
+- **EVERY MODEL RENDERS ITS OWN PAGE, AND A MODEL FOLDER CARRIES THE STRIP AS WELL (2026-10-21).**
+  `/models/:id` is the model page for every model, folder or not: its files on the left (the panel
+  above) and a pane on the right, a Turbo Frame (`models/_stage`) that opens on the first live
+  instructions attachment and otherwise on Details, and that `?file=` switches to any of the model's
+  live attachments (anything else falls back, never an error). From structural redesign slice 5
+  until then a folder model was 302'd to its folder and only the others kept the page; the owner
+  asked for a model with several files to open a page of its own, and the redirect went
+  (`models_redirects_test.rb`, `model_stage_test.rb`). `files/_model_strip` still sits above a
+  model folder's files carrying the head of that page — cover, status, details, print settings,
+  notes, Edit, the destroy button above and the print log — and **its title links the page**. The
   strip does NOT repeat the page's 3D viewer, gallery, instructions PDFs or file tree (the listing,
   the inspector and the workspace show those files), and it is not a selection item
   (`files-preview.md`, "The inspector"). `/models` 301s to the Library's 3D models view,
   `/files/models`, keeping `q`/`status`/`tag`/`sort`; import stays at `/models/new`, and its
-  `model_url` lands on the new folder through the same redirect.
-- **`Maker::ModelFolder` IS THE ONE ANSWER TO "WHICH MODEL DOES THIS FOLDER SHOW?" AND "WHERE DOES
-  `/models/:id` GO?", AND IT KEYS ON `folder_node_id`, NEVER `auto_node_id`.** `model_in` feeds
-  `FilesController#index`'s strip and `landing_folder_id` feeds `ModelsController#show`'s redirect,
-  and the second is DEFINED through the first (`model_in(user, id)&.id == model.id`), so the two
-  cannot disagree about whether a model has a strip to land on. `folder_node_id` is the column every
-  folder model sets: an IMPORT's `Models/<slug>` sets only it, an auto FOLDER model sets both to the
-  folder, and a one-file auto model's `auto_node_id` is a FILE on a shelf. Keyed on `auto_node_id`,
-  every import loses its strip (a mutation `model_folder_test.rb` catches). `model_in` reads
-  `catalogued`, hides an emptied auto model off the eager-loaded association (the rule above that
-  hides rather than dismisses it), and lets the OLDEST VISIBLE row win — several rows can name one
-  folder until `rake models:prune` runs, and a stale emptied auto row must not hide a live import
-  beside it. It does not check a project's claim, because `FilesController` asks only when
-  `@folder_project` is nil; `landing_folder_id` checks the claim itself, along with a live dir node.
-  **`/models/:id` is a 302, never a 301**: the answer changes when the folder is trashed, restored
-  or claimed, and a browser caches a 301 indefinitely. **Neither function calls the port or
-  `ensure_library_folder!`** — rendering a folder or following a link must not mint one, the
-  sweep's own rule below. Pinned by `test/services/maker/model_folder_test.rb` and
-  `test/integration/web/models_redirects_test.rb`.
+  `model_url` lands on the new model's page.
+- **`Maker::ModelFolder` IS THE ONE ANSWER TO "WHICH MODEL DOES THIS FOLDER SHOW?", AND IT KEYS ON
+  `folder_node_id`, NEVER `auto_node_id`.** `model_in` feeds `FilesController#index`'s strip; the
+  module's second answer, where `/models/:id` sent you, went with the redirect on 2026-10-21.
+  `folder_node_id` is the column every folder model sets: an IMPORT's `Models/<slug>` sets only it,
+  an auto FOLDER model sets both to the folder, and a one-file auto model's `auto_node_id` is a FILE
+  on a shelf. Keyed on `auto_node_id`, every import loses its strip (a mutation
+  `model_folder_test.rb` catches). `model_in` reads `catalogued`, hides an emptied auto model off
+  the eager-loaded association (the rule above that hides rather than dismisses it), and lets the
+  OLDEST VISIBLE row win — several rows can name one folder until `rake models:prune` runs, and a
+  stale emptied auto row must not hide a live import beside it. It does not check a project's
+  claim, because `FilesController` asks only when `@folder_project` is nil. **It calls neither the
+  port nor `ensure_library_folder!`** — rendering a folder must not mint one, the sweep's own rule
+  below. Pinned by `test/services/maker/model_folder_test.rb`.
 - **THE 3D MODELS VIEW IS GROUPED BY PROJECT (`Maker::ModelProjects`, 2026-10-20), AND A MODEL'S
   PROJECT IS THE NEAREST PROJECT-CLAIMED FOLDER AT-OR-ABOVE ITS KEY — WALKED FROM THE KEY'S PARENT
   WHEN THE KEY IS A FILE.** A one-file auto model's `auto_node_id` is the file (the bullet above),

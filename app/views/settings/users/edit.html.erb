@@ -1,0 +1,71 @@
+<% content_for :title, "#{@user.email} — Users — Tinkerex" %>
+
+<%# ONE ACCOUNT, FOR AN ADMIN (Settings::UsersController): reset its password, make or unmake it an
+    admin, delete it. Never the signed-in account, which set_user sends to the Account page. "Set
+    password" is the accent (design-system.md rule 13); Delete is the danger button, behind a typed
+    address rather than a click-through confirm, because it cannot be undone. %>
+<div class="page-head">
+  <h1><%= @user.email %></h1>
+  <%= link_to "Users", settings_users_path, class: "btn ghost small" %>
+</div>
+
+<p class="muted">
+  <%= @user.can_manage_accounts? ? "An admin." : "Not an admin." %>
+  <%= @user.last_sign_in_at ? "Last signed in #{time_ago_in_words(@user.last_sign_in_at)} ago." : "Has never signed in." %>
+  <%= "Locked after too many wrong passwords." if @user.access_locked? %>
+</p>
+
+<section class="user-manage">
+  <h2>Reset the password</h2>
+  <% if @user.errors.any? %>
+    <div class="form-errors" role="alert"><%= @user.errors.full_messages.to_sentence %>.</div>
+  <% end %>
+  <p class="muted">Signs <%= @user.email %> out of every browser and unlocks the account. A desktop app
+    already signed in keeps syncing.</p>
+  <%# scope: :user, for the reason the add form on the Users page gives: the field must be
+      user[password]. `value: nil` because that scope also makes the field read @user, which on this
+      page IS the account -- so a refused reset would otherwise refill the rejected password. %>
+  <%= form_with url: reset_password_settings_user_path(@user), method: :patch, scope: :user, class: "settings-add" do |f| %>
+    <label>
+      <span>New password</span>
+      <%= f.text_field :password, value: nil, required: true, minlength: Devise.password_length.min,
+                       autocomplete: "new-password", spellcheck: false %>
+    </label>
+    <%= f.submit "Set password", class: "btn primary" %>
+  <% end %>
+</section>
+
+<section class="user-manage">
+  <h2>Admin</h2>
+  <% if @user.can_manage_accounts? %>
+    <p class="muted">Can add, change and delete accounts on the Users page.</p>
+    <%= button_to "Remove admin", set_admin_settings_user_path(@user), method: :patch,
+                  params: { admin: "0" }, class: "btn" %>
+  <% elsif Tinkerex::Demo.demo?(@user) %>
+    <p class="muted">The shared demo account cannot be an admin.</p>
+  <% else %>
+    <p class="muted">An admin can add, change and delete accounts on the Users page.</p>
+    <%= button_to "Make admin", set_admin_settings_user_path(@user), method: :patch,
+                  params: { admin: "1" }, class: "btn" %>
+  <% end %>
+</section>
+
+<section class="user-manage">
+  <h2>Delete this account</h2>
+  <p>Removes <%= @user.email %> and everything it has in Tinkerex: its projects, tasks, notes, tags,
+    pins, previews and its copy of the library catalog. Every file in the library stays where it is.
+    <% if capabilities.syncable? %>Its library on the sync server is not removed.<% end %>
+    This cannot be undone.</p>
+  <% if @confirm_error %>
+    <div class="form-errors" role="alert"><%= @confirm_error %></div>
+  <% end %>
+  <%# No scope: the field is the flat confirm_email that #destroy reads, and a plain text_field on a
+      blank object_name emits exactly that name (CLAUDE.md §14d: only fields_for adds brackets). %>
+  <%= form_with url: settings_user_path(@user), method: :delete, class: "settings-add" do |f| %>
+    <label>
+      <span>Type <%= @user.email %> to confirm</span>
+      <%= f.text_field :confirm_email, required: true, autocomplete: "off", spellcheck: false %>
+    </label>
+    <%= f.submit "Delete account", class: "btn danger" %>
+  <% end %>
+</section>

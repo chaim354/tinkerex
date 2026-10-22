@@ -28,6 +28,9 @@ module Users
     DEMO_ACCOUNT_REFUSAL = "This is the shared demo account: its email and password can't be " \
                            "changed and it can't be deleted. It resets every night.".freeze
 
+    LAST_ADMIN_REFUSAL = "You are this server's only admin. Make another account an admin under " \
+                         "Settings → Users before deleting yours.".freeze
+
     # A DELIVERY FAILURE MUST NOT LOOK LIKE A BROKEN APP, BECAUSE THE ACCOUNT ALREADY EXISTS.
     # Devise mails the confirmation from an `after_commit` on the user, so the row is COMMITTED
     # before the SMTP connection is even attempted. Production leaves `raise_delivery_errors` at
@@ -107,6 +110,21 @@ module Users
     # NOT a `before_action`: the failure has to re-render the settings page with the error
     # attached to the resource, which needs the same resource that #edit renders.
     def destroy
+      # THE LAST ADMIN STAYS WHILE ANYONE ELSE IS HERE (2026-10-21): accounts are managed at Settings →
+      # Users by an admin, so deleting the only one leaves accounts nobody can manage but a console.
+      # This is the only door that can: Settings::UsersController never acts on the signed-in account.
+      # Asked before the password, because no password makes it right. The sole account may still go,
+      # and the demo account is not "anyone else": it can never be made an admin, so counting it would
+      # keep an owner with only the demo beside them (OVH) from ever deleting their account.
+      others = User.where.not(id: resource.id).where.not(email: Tinkerex::Demo.email.to_s)
+      if resource.last_account_manager? && others.exists?
+        resource.errors.add(:base, LAST_ADMIN_REFUSAL)
+        clean_up_passwords(resource)
+        set_minimum_password_length
+        respond_with_navigational(resource) { render :edit, status: :unprocessable_entity }
+        return
+      end
+
       supplied = params.dig(:user, :current_password).to_s
       if resource.valid_password?(supplied)
         super
@@ -120,14 +138,20 @@ module Users
 
     protected
 
-    # The first account is confirmed on the spot: a self-hoster has no mail server on day one,
-    # and Devise's own create path (build, save, then branch on active_for_authentication?)
-    # signs a confirmed account straight in. skip_confirmation! must run BEFORE save, which is
-    # why this hooks build_resource rather than an after_create. Protected, as Devise's own is:
-    # a public method on a controller is an action.
+    # The first account is the owner: confirmed on the spot, because a self-hoster has no mail server
+    # on day one (Devise's own create path -- build, save, then branch on active_for_authentication?
+    # -- signs a confirmed account straight in), and the admin who manages every account after it at
+    # Settings → Users. Both must be set BEFORE save, which is why this hooks build_resource rather
+    # than an after_create -- and the admin flag is decided here rather than in a User callback, which
+    # would also make the demo account (minted alone by Tinkerex::DemoReset) and every test's first
+    # user an admin. A later sign-up cannot ask for it: sign_up_params permits email and the two
+    # passwords only. Protected, as Devise's own is: a public method on a controller is an action.
     def build_resource(hash = {})
       super
-      resource.skip_confirmation! if Tinkerex::Registration.first_owner?
+      return unless Tinkerex::Registration.first_owner?
+
+      resource.skip_confirmation!
+      resource.admin = true
     end
 
     private

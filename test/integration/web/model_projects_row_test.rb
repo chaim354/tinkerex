@@ -57,13 +57,15 @@ module Web
       assert_select ".model-strip .model-projects select[name='project_id'] option", text: "Desk"
     end
 
-    test "the model page shows the same row" do
+    # IN THE DETAILS PANE since the model page became files-left, pane-right (#457): the row sits with
+    # the rest of the model's metadata, and ModelsController#load_details builds it only for that pane.
+    test "the model page's Details pane shows the same row" do
       knob = model_with_file("Knob", parent: nil)
 
-      get model_path(knob)
+      get model_path(knob, file: "details")
 
       assert_response :success
-      assert_select ".model-side .model-projects select[name='project_id'] option", count: 2
+      assert_select ".model-details .model-projects select[name='project_id'] option", count: 2
     end
   end
 end

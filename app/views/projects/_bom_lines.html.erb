@@ -50,7 +50,7 @@
             <% when :design_file %>
               <span class="badge bom-file">file</span>
               <% if node %>
-                <%= link_to node.name, file_path(node.node_id) %>
+                <%= link_to node.name, file_path(node.node_id), data: file_open_data %>
               <% else %>
                 <span class="muted">no longer in your library</span>
               <% end %>

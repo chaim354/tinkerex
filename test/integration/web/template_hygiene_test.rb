@@ -113,8 +113,13 @@ module Web
       # refuses to leave `private` while its maker has none, and once one is published the handle
       # itself locks (Maker::Project's own validation, User#handle_locked?) — so the order below is
       # the only one that works, not a preference.
+      #
+      # AN ADMIN, so Settings → Users renders (2026-10-21), with a second account for its per-account
+      # page: the signed-in account's own is the Account page, never one under /settings/users.
       @user = User.create!(email: "hygiene-#{SecureRandom.hex(4)}@example.com", handle: "hygiene",
-                           password: PASSWORD, confirmed_at: Time.current)
+                           password: PASSWORD, confirmed_at: Time.current, admin: true)
+      @other_account = User.create!(email: "hygiene-other-#{SecureRandom.hex(4)}@example.com",
+                                    confirmed_at: Time.current, omniauth_signup: true)
       sign_in_web!(@user, password: PASSWORD)
       @user.nodes.create!(node_id: "d-laser", name: "laser", kind: "dir")
       @user.nodes.create!(node_id: "d-empty", name: "empty", kind: "dir")
@@ -263,11 +268,12 @@ module Web
       @project.blocks.create!(user: @user, kind: "image", node_id: photo, caption: "Side on.")
       @sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0,
                                        data: Maker::Sheet.blank_data)
-      # FOLDERLESS ON PURPOSE (structural redesign slice 5). A model whose folder is live shows the
-      # Library's model strip there instead of needing this page, and `/models/:id` is to send it
-      # to that folder (Maker::ModelFolder.landing_folder_id), so "model detail" below sweeps the
-      # page every model WITHOUT a folder keeps: a one-file model, an import whose folder was never
-      # made. The strip itself is swept by "model folder", over its own fixture further down.
+      # FOLDERLESS ON PURPOSE. Every model renders its own page since 2026-10-21 (`/models/:id` no
+      # longer redirects a model with a live folder into the Library), so the page itself needs no
+      # folder to be swept. @model stays folderless so "model detail" below sweeps the
+      # attachment-list fallback of ModelsController#file_tree_for_model — a one-file model, an
+      # import whose folder was never made. The Library's model strip is swept by "model folder",
+      # over its own fixture further down.
       @model = @user.maker_models.create!(title: "Bracket", slug: "bracket", cover_node_id: "n-stl")
       # THE MODEL ARM AND THE FILE ARM OF THE SEARCH PAGE (tinkerex#286): a model and a file whose
       # names carry the sweep's query, or shared/_result_group's :model and :file branches are
@@ -461,6 +467,15 @@ module Web
     # added without anything noticing. The filtered and grid variants are listed separately because
     # they render DIFFERENT partials — the leak that prompted this file was in `files/_ext_filter`,
     # which the grid renders and the file page does not.
+    # FRAME REQUESTS (2026-10-21), `name => [path, frame id]`. Two templates render only when Turbo asks
+    # for a frame by name — this app's layouts/turbo_rails/frame and the model page's models/pane — and
+    # a plain `get` never does, so they are swept with the header Turbo sends. The two sweeps that read
+    # rendered prose and ERB delimiters cover these; the page-head and fileopen sweeps do not, because
+    # a frame carries no page head and its file links are the pane's own `.btn`s.
+    def frame_pages
+      { "model detail (pane, frame request)" => [ model_path(@model, file: "n-stl"), "model_stage" ] }
+    end
+
     def pages
       {
         "home" => root_path,
@@ -530,6 +545,9 @@ module Web
         # Slice 5: the old Models index as the Library's 3D models view, files/models/index.
         "3D models" => files_models_path,
         "model detail" => model_path(@model),
+        # 2026-10-21: the model page's pane with a FILE in it, the one page that renders
+        # models/_stage's file arm (its head, Download and "Open file page").
+        "model detail (file pane)" => model_path(@model, file: "n-stl"),
         "model new" => new_model_path,
         "model edit" => edit_model_path(@model),
         # The Shelves page (2026-10-20; it was Filing). It makes its own shelves on the visit, and
@@ -558,6 +576,9 @@ module Web
         # K (2026-10-20): the library folder page. One template for its states; the fixture confirms
         # the library, so the chosen state renders here (and the no-folder state on s3/chunk_remote).
         "settings/library" => settings_library_path,
+        # Accounts (2026-10-21): the list with its add form, and one other account's page.
+        "settings/users" => settings_users_path,
+        "settings/users edit" => edit_settings_user_path(@other_account),
         # Onboarding (2026-10-13): the Help page needs no fixture. Its three backend arms are
         # rendered by help_page_test.rb, which swaps the capabilities the page reads.
         "help" => help_path,
@@ -584,9 +605,10 @@ module Web
       }
     end
 
-    # KEEP THIS FILE AT EXACTLY THREE TEST METHODS. Minitest abandons a method at its first failure,
-    # so a mutation that breaks independent guards can only report each failure if the guards live
-    # in their own methods. Collapsing them costs that signal — which is why the seven-arm check
+    # KEEP ONE GUARD PER TEST METHOD (this read "exactly three" until the .page-head and fileopen
+    # sweeps made it five — the count was never the point). Minitest abandons a method at its first
+    # failure, so a mutation that breaks independent guards can only report each failure if the
+    # guards live in their own methods. Collapsing them costs that signal — which is why the seven-arm check
     # below is a method of its own and not a line inside the page loop (found in review).
 
     # EVERY ARM OF shared/_result_group, ON THE ONE PAGE THAT RENDERS THEM ALL (tinkerex#286). The
@@ -655,6 +677,48 @@ module Web
       assert_empty offenders, offenders.join("\n")
     end
 
+    # A CLICK OPENS A FILE AND A DOUBLE-CLICK OPENS IT IN A NEW TAB, ON EVERY FILE LINK (2026-10-21,
+    # docs/superpowers/specs/2026-10-21-file-click-and-model-page-design.md). RIDES THE `pages` SWEEP
+    # for the reason the .page-head test gives: a page added there is covered with no edit, so a new
+    # surface that links a file page without FilesHelper#file_open_data goes red here instead of
+    # opening on the first half of a double-click. Two exclusions and no list: rendered Markdown (a
+    # README, a text block) is prose, and a `.btn` is an action. A file page link is `/files/<a node
+    # id of this fixture>` exactly — no query, no fragment, no second segment (a blob or notes URL).
+    # An href URI cannot parse is not a file page link, so it is skipped rather than raised on.
+    #
+    # MUTATION-CHECKED (§15): dropping file_open_data from files/_connections' first group reds it
+    # naming "file detail (3d)"; a `> 10_000` floor reds it at the floor ("only 88 file-page links");
+    # dropping the `.btn` exclusion names the inspector's Open and the model pane's "Open file page".
+    # Dropping the `.markdown` exclusion stays GREEN: no fixture here has bytes, so no swept page
+    # renders a Markdown link to a file. That exclusion is the spec's rule, not yet exercised here.
+    test "every link to a file page opens through fileopen" do
+      node_ids = @user.nodes.pluck(:node_id).to_set
+      seen = 0
+      offenders = []
+      pages.each do |name, path|
+        get path
+        assert_response :success, "#{name} (#{path}) did not render"
+        css_select("a[href]").each do |a|
+          uri = begin
+            URI.parse(a["href"])
+          rescue URI::InvalidURIError
+            next
+          end
+          next unless uri.host.nil? && uri.query.nil? && uri.fragment.nil?
+          id = uri.path.to_s[%r{\A/files/([^/]+)\z}, 1]
+          next unless id && node_ids.include?(id)
+          next if a.ancestors(".markdown").any? || a.classes.include?("btn")
+          seen += 1
+          next if a["data-action"].to_s.include?("click->fileopen#click")
+          offenders << "#{name}: #{a.to_html.first(140)}"
+        end
+      end
+      # NON-VACUITY FIRST (§14e): a sweep that matched no file link would pass over nothing. The
+      # floor is about half the 88 measured when this landed — a non-vacuity check, not a pin.
+      assert_operator seen, :>, 40, "only #{seen} file-page links were examined across #{pages.size} pages"
+      assert_empty offenders, offenders.uniq.join("\n")
+    end
+
     test "no page renders an ERB delimiter into its output" do
       # STATIC AND FIRST, because it needs no fixtures, covers every template on disk including the
       # ones no request renders, and is the only thing here that sees the two-snippet shape. It
@@ -676,6 +740,13 @@ module Web
         # snippet it quoted, not an opener — checking only for `<%` would have missed this exact bug.
         assert_not_includes response.body, "<%", "#{name} leaked an ERB opener into the page"
         assert_not_includes response.body, "%>", "#{name} leaked an ERB closer into the page"
+      end
+
+      frame_pages.each do |name, (path, frame)|
+        get path, headers: { "Turbo-Frame" => frame }
+        assert_response :success, "#{name} (#{path}) did not render"
+        assert_not_includes response.body, "<%", "#{name} leaked an ERB opener into the frame"
+        assert_not_includes response.body, "%>", "#{name} leaked an ERB closer into the frame"
       end
     end
 
@@ -719,6 +790,14 @@ module Web
           LEAKED_PROSE.each do |phrase|
             assert_not_includes response.body, phrase,
                                 "#{name} rendered a code comment into the page (found #{phrase.inspect})"
+          end
+        end
+        frame_pages.each do |name, (path, frame)|
+          get path, headers: { "Turbo-Frame" => frame }
+          assert_response :success, "#{name} (#{path}) did not render"
+          LEAKED_PROSE.each do |phrase|
+            assert_not_includes response.body, phrase,
+                                "#{name} rendered a code comment into the frame (found #{phrase.inspect})"
           end
         end
       ensure

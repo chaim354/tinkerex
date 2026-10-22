@@ -207,12 +207,14 @@
   </form>
 </div>
 
-<%# THE LIBRARY AND ITS INSPECTOR (structural redesign spec §5.1–5.2, slice 3). A plain click on a
-    file tile SELECTS it (selection_controller.js): `.is-selected` on the tile, `?selected=` in the
-    URL, and the inspector frame below loads that one file's panel (FilesController#inspector).
-    Every tile stays a link to its page, so a double-click, Enter, a modifier click, the file menu's
-    Open and no-JavaScript all still open the page. The server reads `?selected=` too (@selected,
-    a file in THIS listing or nil), so a reload, Back or a shared link restores the panel.
+<%# THE LIBRARY AND ITS INSPECTOR (structural redesign spec §5.1–5.2, slice 3; reworked 2026-10-21).
+    A click on a file tile OPENS the file and a double-click opens it in a new tab
+    (fileopen_controller.js, on the layout's main). Right-click › Details SELECTS it
+    (selection_controller.js#details): `.is-selected` on the tile, `?selected=` in the URL, and the
+    inspector frame below loads that one file's panel (FilesController#inspector). Every tile stays
+    a link to its page, so the click, Enter, a modifier click, the file menu's Open and
+    no-JavaScript all open the page. The server reads `?selected=` too (@selected, a file in THIS
+    listing or nil), so a reload, Back or a shared link restores the panel.
 
     THE ASIDE ALWAYS RENDERS, empty and hidden until something is selected, so the controller always
     has a frame to point at. `src` is absent, not blank, when nothing is selected: turbo_frame_tag

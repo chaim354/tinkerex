@@ -66,6 +66,16 @@ module Web
       assert_select ".settings-fact", text: /light/
     end
 
+    # Users (2026-10-21) is admins-only, so the seven rows above are a plain account's hub.
+    test "an admin's hub gains the Users row, before Account" do
+      @user.update!(admin: true)
+      get settings_path
+
+      names = css_select("ul.settings-list.settings-hub li .settings-name").map { |el| el.text.strip }
+      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Tags", "Users", "Account", "Theme" ], names
+      assert_select "a.settings-name[href=?]", settings_users_path
+    end
+
     # THE HUB COUNTS WHAT THE SHELVES PAGE WILL SHOW, not the rows that page has made so far (found
     # in review): every existing user had filing rules and no shelf rows the day Shelves shipped,
     # and a plain row count read "0 shelves" until they opened the page.

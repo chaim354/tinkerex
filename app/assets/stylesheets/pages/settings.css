@@ -59,4 +59,7 @@
   .library-facts, .library-outcomes { max-width: 640px; margin: 0 0 12px; padding-left: 18px; }
   .library-outcomes { margin: 0; }
   .library-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* --- Users (2026-10-21): one account's page, three sections read top to bottom. --- */
+  .user-manage { max-width: 640px; margin-top: var(--space-5); }
 }

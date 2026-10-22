@@ -1,11 +1,12 @@
 require "test_helper"
 
 module Web
-  # SELECTION ON THE FILES PAGE (structural redesign spec §5.1, slice 3): a click on a file tile
-  # selects it and opens the inspector; `?selected=` is read by the server, so a reload, Back or a
-  # shared link restores it. selection_controller.js does the clicking — test/system/
-  # files_selection_test.rb drives it — and this pins the markup that controller reads, and the
-  # server's half: which ids it honours.
+  # SELECTION ON THE FILES PAGE (structural redesign spec §5.1, slice 3; reworked 2026-10-21): a click
+  # on a file tile OPENS the file (fileopen_controller.js), and right-click › Details selects it and
+  # opens the inspector (selection_controller.js#details); `?selected=` is read by the server, so a
+  # reload, Back or a shared link still restores it. test/system/files_selection_test.rb drives both
+  # controllers in a browser; this pins the markup they read, and the server's half: which ids it
+  # honours.
   #
   # PINNED TO A FRESH SHARE LIBRARY for the reason addon_origin_surfaces_test.rb gives: this is the
   # web layer, and on the ambient s3 or chunk_remote leg a bare row would reach real Aws calls or a
@@ -40,7 +41,7 @@ module Web
       FileUtils.remove_entry(@root) if @root&.exist?
     end
 
-    test "every file tile is a selectable item that still links to its page; folders are not" do
+    test "every file tile opens on a click, keeps its link, and is a Details item; folders are not" do
       %w[grid list].each do |view|
         get files_path(folder: @dir.node_id, view:)
         items = css_select("[data-selection-target='item']")
@@ -48,8 +49,9 @@ module Web
                      "#{view}: every file, and only files, is an item"
         items.each do |el|
           assert_equal file_path(el["data-selection-id"]), el["href"], "#{view}: an item stopped linking to its page"
-          assert_includes el["data-action"], "click->selection#click"
-          assert_includes el["data-action"], "dblclick->selection#open"
+          assert_includes el["data-action"], "click->fileopen#click"
+          assert_includes el["data-action"], "filemenu:details->selection#details"
+          refute_includes el["data-action"], "selection#click", "#{view}: a click must open, not select"
         end
         # The file menu's action shares the attribute, so selection must APPEND to it.
         assert_equal items.size, css_select("[data-selection-target='item'][data-action*='contextmenu->filemenu#open']").size,

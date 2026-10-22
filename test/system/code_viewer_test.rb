@@ -254,4 +254,39 @@ SCAD
                     "stream cancel in codeview_controller#fetchHead is not stopping the transfer"
     assert_no_console_errors
   end
+  # BACK FROM TURBO'S CACHE, BOTH VIEWERS (2026-10-21). Each removes its fallback <pre> once CodeMirror
+  # is up, so the snapshot Turbo restores holds a DEAD editor and no `fallback` target; connect then
+  # threw "Missing target element" and left CodeMirror DOM that answers nothing. Both now rest on
+  # connect (docs/invariants/files-preview.md). back_through_turbo_cache proves the page came out of
+  # the cache, so these cannot pass on a page Turbo simply fetched again.
+  test "the read-only viewer survives Back from Turbo's cache" do
+    open_file("firmware.cpp")
+    assert_selector "[data-controller='codeview'] .cm-content", text: "pinMode"
+    back_through_turbo_cache
+    assert_selector "[data-controller='codeview'] .cm-content", text: "pinMode", wait: 10
+    assert_selector "[data-controller='codeview'] .cm-editor", count: 1
+    assert_equal({ "readOnly" => true, "editable" => false }, editability_facts)
+    assert_no_console_errors
+  end
+
+  # THE EDITOR ALSO APPENDS ITS OWN SAVE BAR, so a restored snapshot carries a dead one beside the
+  # dead editor: resting must drop both, or the page shows two Save buttons and only one works. The
+  # save after the restore is what proves the remounted editor is the live one and its base token
+  # the right one (FilesController#update refuses a stale token).
+  test "the editor survives Back from Turbo's cache, with one live Save bar" do
+    open_file("notes.txt")
+    assert_selector "[data-controller='editor'] .editor-bar button", text: "Save"
+    back_through_turbo_cache
+    assert_selector "[data-controller='editor'] .cm-content", text: "just some words", wait: 10
+    assert_selector "[data-controller='editor'] .cm-editor", count: 1
+    assert_selector "[data-controller='editor'] .editor-bar", count: 1
+    assert_equal({ "readOnly" => false, "editable" => true }, editability_facts)
+
+    find("[data-controller='editor'] .cm-content").click
+    page.send_keys([ :control, :end ], "a fourth\n")
+    find("[data-controller='editor'] .editor-bar button", text: "Save").click
+    assert_selector "[data-controller='editor'] .editor-status", text: "Saved"
+    assert_includes @root.join("notes.txt").read, "a fourth"
+    assert_no_console_errors
+  end
 end

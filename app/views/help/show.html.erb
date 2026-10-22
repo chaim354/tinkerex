@@ -39,8 +39,9 @@
           slicer or another program, by copying it in — appears here within 15 minutes, or
           straight away with <em>Rescan library</em> under ⋯ on the <%= link_to "Files", files_path %>
           page.</p>
-        <p>The library is the whole folder the server was given, or a folder inside it, chosen in
-          <%= link_to "Library folder", settings_library_path %> under Settings. Changing it keeps
+        <p>The library is the whole folder the server was given, or a folder inside it, chosen by an
+          admin in <%= link_to "Library folder", settings_library_path %> under Settings, since it is
+          every account's library; other accounts see it there but cannot change it. Changing it keeps
           your files' projects, notes and tags when the new folder holds the same files, as when the
           old one was moved or renamed, and is refused when it holds a different set of files.
           <em>Start over with this folder</em> is for that case: it forgets every file the library
@@ -109,8 +110,9 @@
 
   <section aria-labelledby="account">
     <h2 id="account">Your account</h2>
-    <p>The first account made on this server is its owner. After that, sign-ups are closed unless
-      the person running the server opens them, and they can also add an account for you.</p>
+    <p>The first account made on this server is its owner and its first admin. After that, sign-ups
+      are closed unless the person running the server opens them, and an admin can add an account for
+      you, or reset your password, under Settings → Users.</p>
     <p>Your email, password and public handle are on your
       <%= link_to "Account", edit_user_registration_path %> page. Tinkerex sends email, to confirm
       an account or reset a password, only once the person running the server has set up mail: if
@@ -127,10 +129,12 @@
       <code>BOXES_SIDECAR_URL</code>, <code>OPENSCAD_SIDECAR_URL</code>.</p>
     <p>Accounts: <code>REGISTRATION</code> is closed by default, and <code>REGISTRATION=open</code>
       is accepted only on the sync-server backend, where every account has a library of its own.
-      <code>SMTP_ADDRESS</code> turns mail on. Without mail,
+      <code>SMTP_ADDRESS</code> turns mail on. An admin adds accounts, resets passwords and makes other
+      admins under Settings → Users, with no mail needed. From the console,
       <code>bin/rails 'tinkerex:owner[EMAIL]'</code> adds a confirmed account and
       <code>bin/rails 'tinkerex:password[EMAIL]'</code> resets a password, each reading the new
-      password from <code>TINKEREX_PASSWORD</code>.</p>
+      password from <code>TINKEREX_PASSWORD</code>, and <code>bin/rails 'tinkerex:admin[EMAIL]'</code>
+      makes an account an admin when none is left to do it.</p>
     <p>The source is at <%= link_to "github.com/chaim354/tinkerex", "https://github.com/chaim354/tinkerex" %>.</p>
   </details>
 </div>

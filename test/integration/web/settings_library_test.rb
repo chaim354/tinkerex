@@ -11,6 +11,9 @@ module Web
   #
   # On share the mount is a tmpdir of this test's own (LIBRARY_PATH, restored in teardown), so the
   # listing and the choice run against a real filesystem, and the scans they enqueue name its paths.
+  #
+  # The signed-in account is an ADMIN, as the first account always is: only an admin chooses the
+  # folder (2026-10-21). What a plain account meets is its own section below.
   class SettingsLibraryTest < ActionDispatch::IntegrationTest
     include ActiveJob::TestHelper
 
@@ -26,6 +29,14 @@ module Web
         FileLayer.reset!
       end
       @user = User.create!(email: "lib-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
+                           confirmed_at: Time.current, admin: true)
+      sign_in_web!(@user, password: PASSWORD)
+    end
+
+    # Signs the admin out and a plain account of the same server in.
+    def sign_in_plain_account!
+      delete destroy_user_session_path
+      @user = User.create!(email: "lib-plain-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
                            confirmed_at: Time.current)
       sign_in_web!(@user, password: PASSWORD)
     end
@@ -272,8 +283,108 @@ module Web
       assert_redirected_to settings_library_path
       assert_equal "", Setting.get(KEY), "the demo's library folder is unchanged"
       assert_no_enqueued_jobs
+      # Refused BY NAME, ahead of the admin gate that would refuse it anyway (its row says admin, and
+      # User#can_manage_accounts? says no to the demo whatever the row says). Off share there is no
+      # folder to choose, and that refusal comes first.
+      if @share
+        assert_equal "The shared demo account can't change the library folder.", flash[:alert]
+      else
+        assert_equal "This library has no folder to choose.", flash[:alert]
+      end
     ensure
       prior.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior
+    end
+
+    # ============================================================ a plain account (2026-10-21)
+
+    # The gate is Settings::LibraryController#require_admin!. Mutation-checked: drop its before_action
+    # and the folder changes and every account's catalog is queued for a rescan.
+    test "a plain account cannot change the folder, and nothing is queued" do
+      sign_in_plain_account!
+      live_node!
+      mkdirs("Alpha")
+
+      [ { relative: "Alpha" }, { relative: "Alpha", start_over: "1" } ].each do |params|
+        patch settings_library_path, params: params
+
+        assert_redirected_to settings_library_path
+        assert_equal(@share ? "Only an admin can change the library folder." : "This library has no folder to choose.",
+                     flash[:alert])
+        assert_equal "", Setting.get(KEY), "the folder is unchanged (#{params})"
+        assert_no_enqueued_jobs
+      end
+    end
+
+    # Pending is no exception: a plain account that meets an unconfirmed folder cannot confirm it.
+    test "a plain account cannot confirm the folder on first run either" do
+      Setting.forget(KEY)
+      sign_in_plain_account!
+
+      patch settings_library_path, params: { relative: "" }
+
+      assert_redirected_to settings_library_path
+      assert_nil Setting.get(KEY), "still unconfirmed"
+      assert_no_enqueued_jobs
+    end
+
+    # The chooser lists the MOUNT, folders outside the library a plain account never sees.
+    # Mutation-checked: take `children` out of require_admin!'s `only:` and the listing answers 200.
+    test "a plain account cannot list the mount's folders" do
+      sign_in_plain_account!
+      mkdirs("Alpha")
+
+      get children_settings_library_path, headers: { "Accept" => "application/json" }
+
+      if @share
+        assert_response :forbidden
+        assert_equal "Only an admin can change the library folder.", json["error"]
+        assert_nil json["entries"]
+      else
+        assert_response :not_found
+      end
+    end
+
+    # Mutation-checked: render the form whatever @can_change says and the chooser is back on the page.
+    test "a plain account sees the folder read-only, with the sentence that an admin changes it" do
+      Setting.put(KEY, "Workshop")
+      mkdirs("Workshop")
+      sign_in_plain_account!
+      live_node!
+      @user.update_column(:library_scan_refusal, "UnsafeScan 9/10 (90.0% > 20%)")
+
+      get settings_library_path
+
+      assert_response :success
+      assert_select "form[action=?]", settings_library_path, 0
+      assert_select ".folder-field", 0
+      assert_select "button[name=start_over]", 0
+      if @share
+        assert_select "strong code", "Workshop"
+        assert_match(/1 file indexed/, response.body)
+        assert_select "p.muted", /An admin changes the library folder, for every account on this server\./
+        assert_select ".flash-alert", /refused: UnsafeScan 9\/10.*An\s+admin can choose the folder again here\./m
+        assert_no_match(/Start over/, response.body, "the next step is the admin's")
+      else
+        assert_select "p.muted", /There is no folder to choose/
+      end
+    end
+
+    test "a plain account at an unconfirmed folder is told it waits for an admin" do
+      Setting.forget(KEY)
+      sign_in_plain_account!
+
+      get root_path
+      assert_response(@share ? :redirect : :success)
+      get settings_library_path
+
+      assert_response :success
+      assert_select "form[action=?]", settings_library_path, 0
+      if @share
+        assert_select "p", "This server's library folder has not been chosen yet."
+        assert_select "p.muted", /An admin chooses the library folder for every account on this server\./
+        assert_no_match(/Your library will be/, response.body)
+        assert_no_match(/LIBRARY_HOST_PATH/, response.body)
+      end
     end
 
     # ============================================================ the page

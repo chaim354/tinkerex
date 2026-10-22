@@ -35,8 +35,9 @@ Decisions taken with the owner before this was written:
 
 ## What the user sees
 
-**On a model** — `models/show.html.erb` and `files/_model_strip.html.erb` (the strip a model's
-folder opens with): an "In projects" row, built like `files/_attach.html.erb`. Chips for the
+**On a model** — the model page's Details pane (`models/_details.html.erb`, since #457 made the
+page files-left, pane-right) and `files/_model_strip.html.erb` (the strip a model's folder opens
+with): an "In projects" row, built like `files/_attach.html.erb`. Chips for the
 projects the model is linked to, each with a ×, and chips without a × for projects whose folder
 holds the model. Then an **Attach to project ▾** dropdown of the user's other non-archived
 projects, sorted by `FilesController#name_key`'s rule. Picking one attaches and returns to the

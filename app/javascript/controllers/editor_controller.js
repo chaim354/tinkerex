@@ -22,6 +22,7 @@ export default class extends Controller {
   async connect() {
     this.disconnected = false
     this.abort = new AbortController()
+    this.rest()
 
     let res
     try {
@@ -52,6 +53,24 @@ export default class extends Controller {
     if (this.disconnected) return
 
     this.mount(cm, languages, theme, text)
+  }
+
+  // CONNECT RESTS THE ELEMENT, codeview_controller.js#rest's rule (docs/invariants/files-preview.md).
+  // A page Turbo restores from its cache has no fallback, because mount() removed the <pre>, so
+  // connect threw "Missing target element" and the file never appeared — measured: no `.cm-content`
+  // at all after Back — while the Save bar addSaveBar appended survived as a button wired to nothing.
+  // Whatever is left of the last editor goes (both selectors, in case its DOM did survive), a fresh
+  // fallback takes its place, and the load below runs as on a first visit: the file is fetched again,
+  // so the editor holds what is on disk now, and a save still carries the base token, which
+  // FilesController#update refuses if the file moved on meanwhile.
+  rest() {
+    if (this.hasFallbackTarget) return
+    this.element.querySelectorAll(".cm-editor, .editor-bar").forEach((el) => el.remove())
+    const pre = document.createElement("pre")
+    pre.className = "preview-text"
+    pre.dataset.editorTarget = "fallback"
+    pre.textContent = "Loading…"
+    this.element.prepend(pre)
   }
 
   mount(cm, languages, theme, text) {

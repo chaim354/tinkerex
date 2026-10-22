@@ -458,6 +458,15 @@ root to: "home#index"
     # its own form, because Devise's update demands the current password and a handle is not a
     # credential.
     resource :handle, only: :update
+    # ACCOUNTS (2026-10-21): an admin lists and adds accounts on the index, and changes one on its own
+    # page (`edit`), which the three member actions post from. No `show` and no `update`: each change
+    # has its own door and its own words (Settings::UsersController).
+    resources :users, only: %i[index create edit destroy] do
+      member do
+        patch :reset_password
+        patch :set_admin
+      end
+    end
     # K (2026-10-20): which folder under the mount is the share library. Singular, like /settings
     # itself; `controller:` because Rails would otherwise pluralise it to `libraries`. `children` is
     # the chooser's path-based data source (LibraryBrowseController#children is the node-based one).

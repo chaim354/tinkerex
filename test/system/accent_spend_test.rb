@@ -58,7 +58,8 @@ class AccentSpendTest < ApplicationSystemTestCase
     # project page at ONE accent control where decision 3 allows it TWO, and the interesting
     # boundary would never be reached. With the handle the page sits exactly ON its cap, which is
     # the only state where a regression of one has anywhere to show.
-    @user.update!(handle: "bench")
+    # An admin, so Settings → Users is on a page this guard measures (2026-10-21).
+    @user.update!(handle: "bench", admin: true)
     @project = @user.maker_projects.create!(name: "Desk Lamp")
     # THE BUILD LOG IS THE POINT OF THIS FIXTURE. Each entry renders its own `upload_control`, so
     # the runaway the spec measured (ten on one page, seven of them the same "Upload & attach")
@@ -78,6 +79,9 @@ class AccentSpendTest < ApplicationSystemTestCase
   end
 
   test "every page spends the accent on exactly the action it exists for" do
+    # A second account for the Users page's per-account page. HERE, NOT IN setup: the landing test
+    # below needs the setup's account to be the only one, or the demo's door stays shut on share.
+    @other_account = User.create!(email: "accent-other@example.com", confirmed_at: Time.current, omniauth_signup: true)
     expected = {
       # RECENT'S ONE ACTION IS THE TOP BAR'S UPLOAD (slice 6, spec §4.2), although the page shows no
       # folder: FolderDestination's upload_primary! changes Upload's weight and leaves it asking with
@@ -116,7 +120,11 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/settings/shelves" => [ "Add shelf" ],
       # K (2026-10-20): the library folder page, with a catalog to keep (the model folder above), spends
       # it on Switch; Start over is quiet behind its confirmation. Off share there is nothing to choose.
-      "/settings/library" => FileLayer.current.is_a?(FileLayer::Share) ? [ "Switch to this folder" ] : []
+      "/settings/library" => FileLayer.current.is_a?(FileLayer::Share) ? [ "Switch to this folder" ] : [],
+      # Users (2026-10-21): the list spends it on Add account; one account's page on Set password, with
+      # Make admin quiet and Delete the danger button behind a typed address.
+      "/settings/users" => [ "Add account" ],
+      "/settings/users/:id/edit" => [ "Set password" ]
     }
     paths = {
       "/" => root_path, "/files" => files_path, "/files/models" => files_models_path,
@@ -125,7 +133,8 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/projects/desk-lamp" => project_path(@project), "/settings" => settings_path,
       "/tools" => tools_path, "/search" => search_path,
       "/inventory/suppliers" => suppliers_path, "/inventory/locations" => locations_path,
-      "/settings/shelves" => settings_shelves_path, "/settings/library" => settings_library_path
+      "/settings/shelves" => settings_shelves_path, "/settings/library" => settings_library_path,
+      "/settings/users" => settings_users_path, "/settings/users/:id/edit" => edit_settings_user_path(@other_account)
     }
 
     actual = paths.transform_values do |path|
