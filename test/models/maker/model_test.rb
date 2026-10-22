@@ -76,6 +76,7 @@ module Maker
 
     test "cover_node_id prefers an explicit override, then image, then model, else nil" do
       m = @user.maker_models.create!(title: "Lamp")
+      %w[mdl img].each { |id| @user.nodes.create!(node_id: id, name: "#{id}.bin", kind: "file") }
       assert_nil m.cover_node_id
 
       m.file_attachments.create!(user: @user, node_id: "mdl", role: "model", position: 0)
@@ -88,6 +89,7 @@ module Maker
 
     test "cover falls back to the first model file when there is no image" do
       m = @user.maker_models.create!(title: "Gear")
+      %w[src g1].each { |id| @user.nodes.create!(node_id: id, name: "#{id}.bin", kind: "file") }
       m.file_attachments.create!(user: @user, node_id: "src", role: "source_archive", position: 0)
       m.file_attachments.create!(user: @user, node_id: "g1", role: "model", position: 1)
       assert_equal "g1", m.reload.cover_node_id
@@ -95,6 +97,7 @@ module Maker
 
     test "cover falls back to the first attachment of any role when no image or model" do
       m = @user.maker_models.create!(title: "Docs")
+      @user.nodes.create!(node_id: "pdf1", name: "pdf1.pdf", kind: "file")
       m.file_attachments.create!(user: @user, node_id: "pdf1", role: "instructions", position: 0)
       assert_equal "pdf1", m.reload.cover_node_id
     end

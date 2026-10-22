@@ -53,7 +53,7 @@ class RederiveLaserRolesMigrationTest < ActiveSupport::TestCase
   end
 
   test "a row whose node is gone is skipped, not crashed on" do
-    att = @project.file_attachments.create!(user: @user, node_id: "ghost", role: "vector")
+    att = ghost_attachment!(@project, user: @user, node_id: "ghost", role: "vector")
     assert_nothing_raised { run_migration }
     assert_equal "vector", att.reload.role
   end

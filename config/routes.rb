@@ -479,8 +479,12 @@ root to: "home#index"
       member do
         patch :reset_password
         patch :set_admin
+        # Pentest H1b (2026-10-22): an admin signs one of this account's desktop devices out.
+        delete "devices/:device_id", action: :revoke_device, as: :revoke_device
       end
     end
+    # YOUR OWN DESKTOP DEVICES (pentest H1b, 2026-10-22): the list, and Sign out per row.
+    resources :devices, only: %i[index destroy]
     # K (2026-10-20): which folder under the mount is the share library. Singular, like /settings
     # itself; `controller:` because Rails would otherwise pluralise it to `libraries`. `children` is
     # the chooser's path-based data source (LibraryBrowseController#children is the node-based one).

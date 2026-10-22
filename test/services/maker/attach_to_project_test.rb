@@ -94,6 +94,7 @@ module Maker
     test "another user's model attachment does not claim my file" do
       other = User.create!(email: "atpo-#{SecureRandom.hex(4)}@example.com",
                            confirmed_at: Time.current, omniauth_signup: true)
+      other.nodes.create!(node_id: "f-1", name: "theirs.stl", kind: "file") # ids are unique per user, not globally
       other.maker_models.create!(title: "Theirs")
            .file_attachments.create!(user: other, node_id: "f-1", role: "model")
 

@@ -92,8 +92,8 @@ class TenantCleanupTest < ActiveSupport::TestCase
     },
 
     "maker_file_attachments" => ->(u) {
-      u.maker_file_attachments.create!(attachable: u.maker_items.first,
-                                       node_id: SecureRandom.uuid, role: "model")
+      node = u.nodes.create!(node_id: SecureRandom.uuid, name: "a.stl", kind: "file")
+      u.maker_file_attachments.create!(attachable: u.maker_items.first, node_id: node.node_id, role: "model")
     },
 
     "maker_collection_items" => ->(u) {

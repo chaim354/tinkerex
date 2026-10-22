@@ -49,7 +49,7 @@ class RederiveDocumentRolesMigrationTest < ActiveSupport::TestCase
 
   # An attachment whose node is gone has nothing to derive from and must not blow up the run.
   test "an attachment pointing at a missing node is skipped without raising" do
-    att = @project.file_attachments.create!(user: @user, node_id: "n-missing", role: "other")
+    att = ghost_attachment!(@project, user: @user, node_id: "n-missing", role: "other")
     assert_nothing_raised { run_migration }
     assert_equal "other", att.reload.role
   end

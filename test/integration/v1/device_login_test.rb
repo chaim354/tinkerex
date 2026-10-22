@@ -2,7 +2,7 @@ require "test_helper"
 
 module V1
   # Device enrollment by login (the Dropbox model). Valid creds of a CONFIRMED account ->
-  # a device token; wrong password / unknown email / unconfirmed / locked -> 401. Replaces
+  # a device token; wrong password / unknown email / unconfirmed -> 401. Replaces
   # the pairing-code flow. The v1 sync endpoints keep using the returned device token.
   class DeviceLoginTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
@@ -88,24 +88,25 @@ module V1
       end
     end
 
-    test "the account LOCKS after too many failed attempts (lockable)" do
-      User.create!(email: "lock@example.com", password: PASSWORD, confirmed_at: Time.current)
-      # Devise maximum_attempts = 10 (config/initializers/devise.rb). Exactly 10, not 11: the
-      # per-IP throttle on this endpoint (device_login_throttle_test.rb) allows 10 attempts in its
-      # window, so an 11th would be answered 429 by the throttle before lockable ever saw it.
-      10.times { login(email: "lock@example.com", password: "wrong") }
-      assert User.find_by(email: "lock@example.com").access_locked?,
-             "account is locked after exceeding maximum_attempts"
-      # Even the CORRECT password is now refused while locked. The throttle counter is cleared
-      # first so the 401 below is the LOCK's answer and not the throttle's 429 -- this test is
-      # about lockable; the throttle has its own file. The API's store, not Base's: each
-      # controller base class holds its own MemoryStore (test_helper.rb explains).
-      ActionController::API.cache_store.clear
-      assert_no_difference -> { Device.count } do
-        r = login(email: "lock@example.com", password: PASSWORD)
-        assert_response :unauthorized
-        assert_equal "invalid_credentials", JSON.parse(r.body)["error"]
+    # NO ACCOUNT LOCKS (pentest M4b, tinkerex#466). This test used to assert the opposite -- ten
+    # misses and the account was locked for an hour -- which was the finding: anyone who knew an
+    # address could keep its owner's desktop app from signing in, from one IP, every hour.
+    # Tinkerex::SignInThrottle bounds the stranger's source instead. Mutation-checked: with
+    # `config.lock_strategy = :failed_attempts` restored, the owner's login below answers 401.
+    test "wrong passwords from one source never keep the owner's device out from another" do
+      user = unique_user("nolock")
+      11.times do
+        post "/v1/devices/login", params: { email: user.email, password: "wrong" }, as: :json,
+                                  env: { "REMOTE_ADDR" => "198.51.100.66" }
       end
+      assert_response :too_many_requests, "precondition: the stranger's source is throttled"
+
+      assert_difference -> { Device.count }, 1 do
+        post "/v1/devices/login", params: { email: user.email, password: PASSWORD, device_name: "laptop" },
+                                  as: :json, env: { "REMOTE_ADDR" => "203.0.113.10" }
+        assert_response :created
+      end
+      assert_not user.reload.access_locked?
     end
 
     # --- the library and the sync grant (D1, 2026-10-13) ----------------------------------------
@@ -130,6 +131,17 @@ module V1
       end
     end
 
+    # THE SYNC SIBLING IS RECORDED (pentest H1b), so that once the sync server has a revoke door,
+    # signing a device out here can name the sync device to revoke. NULL where no grant was brokered.
+    def assert_sibling_recorded(body)
+      recorded = Device.find(body["device_id"]).sync_device_id
+      if (granted = body.dig("sync", "device_id"))
+        assert_equal granted, recorded
+      else
+        assert_nil recorded
+      end
+    end
+
     test "login names the library and carries a sync grant only on a syncable deployment" do
       user = unique_user("lib")
       r = login(email: user.email, password: PASSWORD)
@@ -138,6 +150,7 @@ module V1
       assert_equal %w[device_id device_token head_seq library sync user_id], body.keys.sort,
                    "the four original fields stay; library and sync are added, nothing else"
       assert_library_and_sync body
+      assert_sibling_recorded body
     end
 
     test "a sibling enrolled through POST /v1/devices answers the same two fields" do
@@ -150,6 +163,7 @@ module V1
       body = JSON.parse(response.body)
       assert_equal %w[device_id device_token library sync], body.keys.sort
       assert_library_and_sync body
+      assert_sibling_recorded body
     end
 
     # A SYNC SERVER THAT CANNOT BE REACHED ANSWERS 503 AND MINTS NO MAKER DEVICE. The order inside
@@ -185,11 +199,33 @@ module V1
       end
     end
 
+    # THE SIBLING ID IS RECORDED AT BOTH DOORS, ON EVERY LEG. The chunk_remote leg proves it against a
+    # real grant (assert_sibling_recorded above); here a stand-in grant makes share and s3 prove it
+    # too, so a mutation dropping `sync_device_id:` from either door fails on every leg, not one.
+    test "both doors record the sync sibling the grant names" do
+      user = unique_user("sibid")
+      FileLayer.current = FileLayer::ChunkRemote.new
+      granted = Object.new
+      granted.define_singleton_method(:call) do |*, **|
+        { url: "https://sync.example.test", device_token: "t", user_id: 7, device_id: 9001, head_seq: 0 }
+      end
+
+      replacing(FileLayer::ChunkRemote::SyncGrant, :new, ->(*, **) { granted }) do
+        body = JSON.parse(login(email: user.email, password: PASSWORD).body)
+        assert_equal 9001, Device.find(body["device_id"]).sync_device_id
+
+        post "/v1/devices", params: { name: "desktop" },
+                            headers: { "Authorization" => "Bearer #{body.fetch("device_token")}" }, as: :json
+        assert_response :created
+        assert_equal 9001, Device.find(JSON.parse(response.body)["device_id"]).sync_device_id
+      end
+    end
+
     # --- the shared demo account (H, 2026-10-14) ---------------------------------------------------
 
     # THE DEMO ENROLS NO DEVICE, BY EITHER DOOR, AND THE REFUSAL COMES FIRST: before a grant is
-    # brokered or a Device minted, and at login before the password is checked, so lockable counts
-    # nothing (Tinkerex::Demo; V1::DevicesController). The demo's password is known here and random in
+    # brokered or a Device minted, and at login before the password is checked, so a stranger
+    # spends nothing on it (Tinkerex::Demo; V1::DevicesController). The demo's password is known here and random in
     # production, so the 403 below is the guard's and never the generic 401 a wrong password earns;
     # every other test in this file is the control -- an ordinary account's identical login, 201. The
     # address is unique per test for the reason this file's header gives: were the guard ever gone,
@@ -214,7 +250,6 @@ module V1
           assert_response :forbidden, "a wrong password gets the same answer: nothing was checked"
         end
       end
-      assert_equal 0, demo.reload.failed_attempts, "refused before lockable counted anything"
     end
 
     test "the shared demo account is refused a sibling device through POST /v1/devices" do

@@ -169,6 +169,7 @@ module Maker
     # of those two is the rule.
     test "a print project prefers a model for its hero, and a chosen cover still wins" do
       project = @user.maker_projects.create!(name: "Bracket", kind: "print")
+      %w[img mdl].each { |id| @user.nodes.create!(node_id: id, name: "#{id}.bin", kind: "file") }
       project.file_attachments.create!(user: @user, node_id: "img", role: "image", position: 0)
       project.file_attachments.create!(user: @user, node_id: "mdl", role: "model", position: 1)
 
@@ -180,6 +181,7 @@ module Maker
 
     test "an other project's hero is the image, exactly as before the kind existed" do
       project = @user.maker_projects.create!(name: "Tray")
+      %w[img mdl].each { |id| @user.nodes.create!(node_id: id, name: "#{id}.bin", kind: "file") }
       project.file_attachments.create!(user: @user, node_id: "mdl", role: "model", position: 0)
       project.file_attachments.create!(user: @user, node_id: "img", role: "image", position: 1)
 

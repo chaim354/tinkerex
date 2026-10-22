@@ -121,6 +121,12 @@ module Web
       @other_account = User.create!(email: "hygiene-other-#{SecureRandom.hex(4)}@example.com",
                                     confirmed_at: Time.current, omniauth_signup: true)
       sign_in_web!(@user, password: PASSWORD)
+      # Desktop devices (pentest H1b, 2026-10-22), so Settings → Devices and the account page's Devices
+      # section render their lists, an expired row among them, rather than their empty states.
+      [ @user, @other_account ].each do |u|
+        Device.register!(user: u, name: "#{u.email} laptop")
+        Device.register!(user: u, name: "old tablet").update_column(:last_seen_at, 400.days.ago)
+      end
       @user.nodes.create!(node_id: "d-laser", name: "laser", kind: "dir")
       @user.nodes.create!(node_id: "d-empty", name: "empty", kind: "dir")
       file!("n-stl", "bracket.stl")
@@ -139,8 +145,7 @@ module Web
       @project = @user.maker_projects.create!(name: "Desk Lamp", tag_list: "laser, lamp")
       @project.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
       @project.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
-      @project.file_attachments.create!(user: @user, node_id: "gone", role: "model",
-                                        label: "ghost.stl", position: 2)
+      ghost_attachment!(@project, user: @user, node_id: "gone", role: "model", label: "ghost.stl", position: 2)
       # ONE REPOSITORY INSIDE THE PROJECT'S FOLDER, so a repo SECTION renders (S3-1: a working tree
       # is a section of the tree, projects/_file_tree_section, not a group of its own). A dir with a
       # `.git` marker child under the folder is what marks it — the same argument the `d-laser`
@@ -591,6 +596,8 @@ module Web
         # Accounts (2026-10-21): the list with its add form, and one other account's page.
         "settings/users" => settings_users_path,
         "settings/users edit" => edit_settings_user_path(@other_account),
+        # Pentest H1b (2026-10-22): the signed-in account's desktop devices.
+        "settings/devices" => settings_devices_path,
         # Onboarding (2026-10-13): the Help page needs no fixture. Its three backend arms are
         # rendered by help_page_test.rb, which swaps the capabilities the page reads.
         "help" => help_path,

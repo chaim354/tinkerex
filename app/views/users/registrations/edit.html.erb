@@ -17,6 +17,8 @@
       <%= f.label :password %>
       <%= f.password_field :password, autocomplete: "new-password" %>
       <span class="auth-hint">leave blank if you don't want to change it</span>
+      <%# User#revoke_devices_after_password_change (pentest H1b). %>
+      <span class="auth-hint">a new password signs out every desktop app (Settings → Devices)</span>
       <% if @minimum_password_length %>
         <span class="auth-hint"><%= @minimum_password_length %> characters minimum</span>
       <% end %>

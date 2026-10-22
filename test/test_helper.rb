@@ -304,6 +304,15 @@ module ActiveSupport
       ActiveRecord::Relation.define_method(:create_or_find_by!, original)
     end
 
+    # AN ATTACHMENT WHOSE NODE HAS GONE: the state Library::Reset leaves, or a hard-deleted node
+    # before Maker::AttachmentReaper's grace window ends. Maker::FileAttachment refuses to CREATE a
+    # row naming a node the user does not have (pentest I2c), so a test reaches this state the way
+    # the app does: the node exists, the row is written, then the node goes.
+    def ghost_attachment!(attachable, user:, node_id:, **attrs)
+      node = user.nodes.create!(node_id:, name: "#{node_id}.bin", kind: "file")
+      attachable.file_attachments.create!(user:, node_id:, **attrs).tap { node.delete }
+    end
+
     # Add more helper methods to be used by all tests here...
   end
 end

@@ -13,6 +13,25 @@ module V1
         @token = register
         post "/v1/maker/items", params: { item: { title: "Lamp" } }, as: :json, headers: auth(@token)
         @item_id = JSON.parse(response.body)["id"]
+        @user = User.find_by!(email: "fa@example.com")
+        %w[node-abc n1].each { |id| @user.nodes.create!(node_id: id, name: "#{id}.step", kind: "file") }
+      end
+
+      # PENTEST I2c (tinkerex#467): the API wrote whatever node_id it was posted. It now answers 422
+      # for an id this user's library does not hold, whether it names nothing or another tenant's
+      # file (Maker::FileAttachment#node_belongs_to_user).
+      test "attaching a node outside the user's own library is refused" do
+        register_other
+        User.find_by!(email: "other-fa@example.com").nodes.create!(node_id: "theirs", name: "theirs.step", kind: "file")
+
+        %w[theirs no-such-node].each do |node_id|
+          assert_no_difference -> { ::Maker::FileAttachment.count } do
+            post "/v1/maker/items/#{@item_id}/file_attachments",
+                 params: { file_attachment: { node_id:, role: "model" } }, as: :json, headers: auth(@token)
+            assert_response :unprocessable_entity
+          end
+          assert_match(/must be a file in your own library/, JSON.parse(response.body)["error"])
+        end
       end
 
       test "attach a file to an item by node_id" do

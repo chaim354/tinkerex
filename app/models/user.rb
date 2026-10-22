@@ -136,6 +136,29 @@ class User < ApplicationRecord
   end
   private :skip_passwordless_confirmation_notification
 
+  # A NEW PASSWORD SIGNS OUT EVERY DESKTOP DEVICE (pentest H1b, tinkerex#465). Devise already ends the
+  # account's other browser sessions, because the session carries the password's salt. Device tokens
+  # carry nothing of the password, so before this every one survived a reset, including the reset
+  # someone does after losing a laptop.
+  #
+  # A CALLBACK ON THE COLUMN, NOT A CALL AT EACH DOOR. Four doors change a password today: the
+  # emailed reset (Users::PasswordsController), the Account page (Users::RegistrationsController#
+  # update), an admin's reset (Settings::UsersController#reset_password) and
+  # `bin/rails tinkerex:password`. Every one of them writes encrypted_password, and so will a fifth,
+  # without anyone remembering to add a line to it. `after_update` runs inside the save's
+  # transaction, so a refused password revokes nothing and an accepted one revokes atomically. A
+  # create is not a change: a brand-new account has no devices. Each door has its own test in
+  # test/integration/web/password_change_revokes_devices_test.rb.
+  #
+  # chunk_remote: each device's SYNC token is the sync server's and survives this. The wire has no
+  # revoke door yet; Device#sync_device_id records which sibling to revoke once it does.
+  after_update :revoke_devices_after_password_change, if: :saved_change_to_encrypted_password?
+
+  def revoke_devices_after_password_change
+    Device.where(user_id: id).delete_all
+  end
+  private :revoke_devices_after_password_change
+
   normalizes :email, with: ->(e) { e.to_s.strip.downcase }
 
   # WHO MAY MANAGE ACCOUNTS (Settings → Users; docs/superpowers/specs/2026-10-21-admin-users-design.md).

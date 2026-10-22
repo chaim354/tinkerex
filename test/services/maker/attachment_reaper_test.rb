@@ -10,7 +10,11 @@ module Maker
       @project = @user.maker_projects.create!(name: "Lamp")
     end
 
+    # An id with no node row is attached as a ghost (test_helper's ghost_attachment!): the reaper's
+    # subject, which Maker::FileAttachment refuses to create directly.
     def attach(node_id, role: "model")
+      return ghost_attachment!(@project, user: @user, node_id:, role:) unless @user.nodes.exists?(node_id:)
+
       @project.file_attachments.create!(user: @user, node_id:, role:)
     end
 
@@ -72,8 +76,7 @@ module Maker
 
     test "one user's failure does not stop the sweep for everyone else" do
       other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com")
-      other.maker_projects.create!(name: "Theirs").file_attachments
-           .create!(user: other, node_id: "also-gone", role: "model")
+      ghost_attachment!(other.maker_projects.create!(name: "Theirs"), user: other, node_id: "also-gone", role: "model")
       attach("never-existed")
 
       assert_equal 2, Maker::AttachmentReaper.reap_all!
@@ -82,7 +85,7 @@ module Maker
     test "another user's attachments are never reaped by this user's sweep" do
       other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com")
       theirs = other.maker_projects.create!(name: "Theirs")
-      theirs.file_attachments.create!(user: other, node_id: "gone", role: "model")
+      ghost_attachment!(theirs, user: other, node_id: "gone", role: "model")
 
       Maker::AttachmentReaper.reap!(@user)
       assert_equal 1, theirs.file_attachments.count
