@@ -268,11 +268,12 @@ module Web
       @project.blocks.create!(user: @user, kind: "image", node_id: photo, caption: "Side on.")
       @sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0,
                                        data: Maker::Sheet.blank_data)
-      # FOLDERLESS ON PURPOSE (structural redesign slice 5). A model whose folder is live shows the
-      # Library's model strip there instead of needing this page, and `/models/:id` is to send it
-      # to that folder (Maker::ModelFolder.landing_folder_id), so "model detail" below sweeps the
-      # page every model WITHOUT a folder keeps: a one-file model, an import whose folder was never
-      # made. The strip itself is swept by "model folder", over its own fixture further down.
+      # FOLDERLESS ON PURPOSE. Every model renders its own page since 2026-10-21 (`/models/:id` no
+      # longer redirects a model with a live folder into the Library), so the page itself needs no
+      # folder to be swept. @model stays folderless so "model detail" below sweeps the
+      # attachment-list fallback of ModelsController#file_tree_for_model — a one-file model, an
+      # import whose folder was never made. The Library's model strip is swept by "model folder",
+      # over its own fixture further down.
       @model = @user.maker_models.create!(title: "Bracket", slug: "bracket", cover_node_id: "n-stl")
       # THE MODEL ARM AND THE FILE ARM OF THE SEARCH PAGE (tinkerex#286): a model and a file whose
       # names carry the sweep's query, or shared/_result_group's :model and :file branches are
@@ -532,6 +533,9 @@ module Web
         # Slice 5: the old Models index as the Library's 3D models view, files/models/index.
         "3D models" => files_models_path,
         "model detail" => model_path(@model),
+        # 2026-10-21: the model page's pane with a FILE in it, the one page that renders
+        # models/_stage's file arm (its head, Download and "Open file page").
+        "model detail (file pane)" => model_path(@model, file: "n-stl"),
         "model new" => new_model_path,
         "model edit" => edit_model_path(@model),
         # The Shelves page (2026-10-20; it was Filing). It makes its own shelves on the visit, and
@@ -589,9 +593,10 @@ module Web
       }
     end
 
-    # KEEP THIS FILE AT EXACTLY THREE TEST METHODS. Minitest abandons a method at its first failure,
-    # so a mutation that breaks independent guards can only report each failure if the guards live
-    # in their own methods. Collapsing them costs that signal — which is why the seven-arm check
+    # KEEP ONE GUARD PER TEST METHOD (this read "exactly three" until the .page-head and fileopen
+    # sweeps made it five — the count was never the point). Minitest abandons a method at its first
+    # failure, so a mutation that breaks independent guards can only report each failure if the
+    # guards live in their own methods. Collapsing them costs that signal — which is why the seven-arm check
     # below is a method of its own and not a line inside the page loop (found in review).
 
     # EVERY ARM OF shared/_result_group, ON THE ONE PAGE THAT RENDERS THEM ALL (tinkerex#286). The
@@ -658,6 +663,48 @@ module Web
                       "only #{seen} .page-head elements were examined across #{pages.size} pages — " \
                       "the sweep is not reaching the heads it claims to check"
       assert_empty offenders, offenders.join("\n")
+    end
+
+    # A CLICK OPENS A FILE AND A DOUBLE-CLICK OPENS IT IN A NEW TAB, ON EVERY FILE LINK (2026-10-21,
+    # docs/superpowers/specs/2026-10-21-file-click-and-model-page-design.md). RIDES THE `pages` SWEEP
+    # for the reason the .page-head test gives: a page added there is covered with no edit, so a new
+    # surface that links a file page without FilesHelper#file_open_data goes red here instead of
+    # opening on the first half of a double-click. Two exclusions and no list: rendered Markdown (a
+    # README, a text block) is prose, and a `.btn` is an action. A file page link is `/files/<a node
+    # id of this fixture>` exactly — no query, no fragment, no second segment (a blob or notes URL).
+    # An href URI cannot parse is not a file page link, so it is skipped rather than raised on.
+    #
+    # MUTATION-CHECKED (§15): dropping file_open_data from files/_connections' first group reds it
+    # naming "file detail (3d)"; a `> 10_000` floor reds it at the floor ("only 88 file-page links");
+    # dropping the `.btn` exclusion names the inspector's Open and the model pane's "Open file page".
+    # Dropping the `.markdown` exclusion stays GREEN: no fixture here has bytes, so no swept page
+    # renders a Markdown link to a file. That exclusion is the spec's rule, not yet exercised here.
+    test "every link to a file page opens through fileopen" do
+      node_ids = @user.nodes.pluck(:node_id).to_set
+      seen = 0
+      offenders = []
+      pages.each do |name, path|
+        get path
+        assert_response :success, "#{name} (#{path}) did not render"
+        css_select("a[href]").each do |a|
+          uri = begin
+            URI.parse(a["href"])
+          rescue URI::InvalidURIError
+            next
+          end
+          next unless uri.host.nil? && uri.query.nil? && uri.fragment.nil?
+          id = uri.path.to_s[%r{\A/files/([^/]+)\z}, 1]
+          next unless id && node_ids.include?(id)
+          next if a.ancestors(".markdown").any? || a.classes.include?("btn")
+          seen += 1
+          next if a["data-action"].to_s.include?("click->fileopen#click")
+          offenders << "#{name}: #{a.to_html.first(140)}"
+        end
+      end
+      # NON-VACUITY FIRST (§14e): a sweep that matched no file link would pass over nothing. The
+      # floor is about half the 88 measured when this landed — a non-vacuity check, not a pin.
+      assert_operator seen, :>, 40, "only #{seen} file-page links were examined across #{pages.size} pages"
+      assert_empty offenders, offenders.uniq.join("\n")
     end
 
     test "no page renders an ERB delimiter into its output" do

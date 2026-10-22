@@ -794,6 +794,12 @@ selected file: a Turbo Frame body rendered **without the layout**, built from `f
   file; do not route them back through the Library. Their file menu's Details is the one door there:
   nothing on those pages cancels `filemenu:details`, so the entry follows `file_menu_data`'s
   `details_url`, the file's own folder with `?selected=` (a root file's carries no folder).
+  **Every link to a file page on a signed-in page opts in through `FilesHelper#file_open_data`** —
+  tiles, list names, photos, the hero, an image block, BOM part names, search results, the
+  connections panel, the repo browser (`lib/file_chooser.js`) — **except rendered Markdown and a
+  `.btn` action**, and that is the whole exclusion list. `template_hygiene_test.rb`'s fileopen sweep
+  goes red on any other file-page link in `pages` that lacks it; never widen its two exclusions. It
+  reads server HTML, so the repo browser's JS-built rows are pinned in `repo_browser_test.rb`.
 
 **`PHOTO_EXTS` is a DISPLAY subset of the image role, not a second vocabulary.** `jpg jpeg heic heif`
 — what a camera writes — get `.thumb.photo` (cropped to fill, on `--photo-stage`); PNG, GIF, WebP,

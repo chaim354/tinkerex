@@ -8,18 +8,20 @@
   off the enclosing template — exactly as the block this was extracted from always did — because
   every caller on this page already builds those three the same way, over the same tile_ids union.
 
-  THE TILE OPENS THE FILE (file_path), like Photos, Schematics and the hero beside it. It once
-  opened the file's folder in the Library with the file selected (slice 6); a click that lands
-  somewhere other than the thing clicked read as a detour, so the owner asked for it to just open
-  (2026-10-20). This tile is NOT a selection item — nothing here goes through with_selection,
-  because this page has no selection controller. The file menu's Open follows this href.
+  THE TILE OPENS THE FILE (file_path), like Photos, Schematics and the hero beside it: a click
+  opens it and a double-click opens it in a new tab (FilesHelper#file_open_data, 2026-10-21). It
+  once opened the file's folder in the Library with the file selected (slice 6); a click that
+  lands somewhere other than the thing clicked read as a detour, so the owner asked for it to just
+  open (2026-10-20). This tile is NOT a selection item — nothing here goes through with_selection,
+  because this page has no selection controller. The file menu's Open follows this href, and its
+  Details lands in the Library with the file's side panel open.
 %>
 <% node = row.node %>
 <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
 <div class="attachment-tile">
   <%= link_to file_path(row.node_id), class: "grid-card file-cell",
-              data: thumb_cell_data(row.node_id, ext)
-                      .merge(file_menu_data(node, @addon_origins[row.node_id])) do %>
+              data: file_open_data(thumb_cell_data(row.node_id, ext)
+                                     .merge(file_menu_data(node, @addon_origins[row.node_id]))) do %>
     <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,
                url: preview_src(@page_thumbs.thumb(row.node_id)) %>
     <span class="grid-name"><%= node.name %></span>

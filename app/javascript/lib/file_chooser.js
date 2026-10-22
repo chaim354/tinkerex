@@ -283,9 +283,10 @@ export class FileChooser {
       // createElementNS for the same reason (design system: no emoji in the interface).
       row.replaceChildren(lineGlyph(isFile), document.createTextNode(entry.name))
       if (this.mode === "browse") {
-        // A FILE ROW IN BROWSE MODE CARRIES NO CLICK HANDLER AT ALL — it is an `<a href>`, so
+        // A FILE ROW IN BROWSE MODE CARRIES NO CLICK HANDLER OF ITS OWN — it is an `<a href>`, so
         // middle-click, ⌘-click, "Open in new tab" and keyboard focus all work the way a maker
-        // expects of a file link, none of which a `div` with a listener can offer.
+        // expects of a file link, none of which a `div` with a listener can offer. Its one action
+        // is fileopen's (rowEl), which leaves every one of those to the browser.
         if (!isFile) row.addEventListener("click", () => this.descend(depth, entry))
       } else {
         row.addEventListener("click", () => (isFile ? this.pickFile(depth, entry) : this.descend(depth, entry)))
@@ -311,6 +312,11 @@ export class FileChooser {
     // and is not focusable, which is the honest rendering for a caller that gave us no route.
     if (this.fileUrlTemplate) {
       link.setAttribute("href", this.fileUrlTemplate.replace("__ID__", encodeURIComponent(entry.node_id)))
+      // A CLICK OPENS THE FILE, A DOUBLE-CLICK OPENS IT IN A NEW TAB (2026-10-21) — the same opt-in
+      // every server-rendered file link carries (FilesHelper#file_open_data). Stimulus binds the
+      // action when the row is inserted; fileopen is mounted on the layout's <main>, which holds
+      // every browse-mode host (projects/_repo_browser).
+      link.dataset.action = "click->fileopen#click"
     }
     return link
   }

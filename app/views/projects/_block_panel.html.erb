@@ -45,13 +45,13 @@
         <%# `inline_image?`, NOT the role, and it is the hero's own split (tinkerex#285): a .heic is
             an image by role and a broken picture as raw bytes, so it takes the thumbnail branch. %>
         <% if Maker::FileAttachment.inline_image?(node.name) %>
-          <%= link_to file_path(node.node_id) do %>
+          <%= link_to file_path(node.node_id), data: file_open_data do %>
             <%= image_tag blob_file_path(node.node_id), class: "block-image",
                           alt: block.caption.presence || node.name %>
           <% end %>
         <% else %>
           <%= link_to file_path(node.node_id), class: "file-cell block-thumb",
-                      data: thumb_cell_data(node.node_id, ext) do %>
+                      data: file_open_data(thumb_cell_data(node.node_id, ext)) do %>
             <%= render "files/thumb", thumb: @page_thumbs.thumb(node.node_id), ext_label: ext,
                        url: preview_src(@page_thumbs.thumb(node.node_id)) %>
           <% end %>
