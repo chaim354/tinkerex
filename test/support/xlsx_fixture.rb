@@ -161,7 +161,7 @@ module XlsxFixture
   # Parts!A1:E6. Row 1 bold headers at a custom height; rows 2-4 parts with a formula total each;
   # row 5 the sums; row 6 a merged A6:C6 label and a percentage formula. E2/E3 are dates.
   def parts_sheet_xml(rows: nil, merges: %(<mergeCells count="1"><mergeCell ref="A6:C6"/></mergeCells>),
-                      extra_before_margins: "", sheet_pr: "")
+                      extra_before_margins: "", sheet_pr: "", ext: true)
     rows ||= parts_rows_xml
     DECL + WS_OPEN + sheet_pr +
       %(<dimension ref="A1:E6"/>) +
@@ -171,10 +171,14 @@ module XlsxFixture
       %(<sheetData>#{rows}</sheetData>) +
       merges + extra_before_margins +
       %(<pageMargins left="0.7" right="0.7" top="0.75" bottom="0.75" header="0.3" footer="0.3"/>) +
-      %(<extLst><ext uri="{TINKEREX-FIXTURE}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">) +
-      %(<x14:fixtureMarker keep="1"/></ext></extLst>) +
-      %(</worksheet>)
+      (ext ? EXT_LST : "") + %(</worksheet>)
   end
+
+  # An extension list Excel would keep and this app has never heard of. It also switches row
+  # operations off for the sheet (Maker::Xlsx::Workbook::ROW_SAFE_ELEMENTS), so the row-operation
+  # tests build Parts with `ext: false`.
+  EXT_LST = (%(<extLst><ext uri="{TINKEREX-FIXTURE}" xmlns:x14="http://schemas.microsoft.com/office/spreadsheetml/2009/9/main">) +
+             %(<x14:fixtureMarker keep="1"/></ext></extLst>)).freeze
 
   def parts_rows_xml
     %(<row r="1" spans="1:5" ht="20.25" customHeight="1" x14ac:dyDescent="0.25">) +

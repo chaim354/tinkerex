@@ -28,7 +28,7 @@ class CssHygieneTest < ActiveSupport::TestCase
   LAYER_ORDER = "@layer tokens, base, components, shell, pages;".freeze
   OURS = %w[
     application.css components.css shell.css
-    pages/files.css pages/projects.css pages/models.css pages/tools.css pages/preview.css pages/home.css pages/inventory.css pages/settings.css pages/search.css pages/public.css pages/landing.css
+    pages/files.css pages/projects.css pages/models.css pages/tools.css pages/preview.css pages/home.css pages/inventory.css pages/settings.css pages/search.css pages/public.css pages/landing.css pages/spreadsheet.css
   ].freeze
   OVERRIDES = "vendor-overrides.css".freeze
   DELETED = %w[projects.css models.css notes.css].freeze
@@ -120,7 +120,7 @@ class CssHygieneTest < ActiveSupport::TestCase
   test "the layout links our sheets first, lexxy after, and the overrides last" do
     assert_includes LAYOUT.read, %(render "layouts/head"), "the layout no longer renders the shared head"
     layout = HEAD.read
-    order = %w[application components shell pages/files pages/projects pages/models pages/tools pages/preview pages/home pages/inventory pages/settings pages/search pages/public pages/landing lexxy vendor-overrides]
+    order = %w[application components shell pages/files pages/projects pages/models pages/tools pages/preview pages/home pages/inventory pages/settings pages/search pages/public pages/landing pages/spreadsheet lexxy vendor-overrides]
     positions = order.map { |name| [ name, layout.index(%("#{name}")) ] }
     positions.each { |name, pos| assert pos, "the layout does not link #{name}" }
     assert_equal positions.map(&:last), positions.map(&:last).sort, "link order is #{positions.map(&:first).inspect}; it must be #{order.inspect}"
