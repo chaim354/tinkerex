@@ -81,10 +81,18 @@ module Maker
       # inside the css Tempfile block) creates a temp file the flagless arm never names.
       def rasterize(in_path, size:, css_path:)
         out_path = "#{in_path}.png"
-        # --background white: render onto an OPAQUE white canvas rather than transparent.
-        # Thumbnails sit on a light card, and a transparent PNG of thin geometry reads as
-        # blank; white gives dark geometry consistent contrast. --stylesheet: see STYLESHEET.
-        argv = [ bin, "--width", size.to_s, "--height", size.to_s, "--background", "white" ]
+        # --background Palette::PAPER: render onto an OPAQUE white canvas rather than transparent.
+        # The browser MULTIPLIES every thumbnail onto a themed card (`Maker::Previews::Palette`), so
+        # the ground must be exactly white to become the card; a transparent PNG of thin geometry
+        # would read as blank, and the file's own (often black) colours need a light ground in both
+        # themes. --stylesheet: see STYLESHEET.
+        #
+        # NAMED FROM THE PALETTE, WITH NO REVISION BUMP ANYWHERE. resvg 0.47 takes a CSS colour, and
+        # `#ffffff` rendered BYTE-IDENTICAL to the `white` this replaced (measured through this
+        # method, stylesheet and all, on the three fixture SVGs), so no Svg/Dxf/Lbrn2/Gerber picture
+        # changed through this line — bump a renderer only for a change its pixels can see.
+        # (TextThumb's bump is for its INK, not for this.)
+        argv = [ bin, "--width", size.to_s, "--height", size.to_s, "--background", Palette::PAPER ]
         argv.push("--stylesheet", css_path) if css_path
         argv.push(in_path, out_path)
 

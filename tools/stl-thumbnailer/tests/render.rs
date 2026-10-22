@@ -196,3 +196,112 @@ fn zero_normals_are_recomputed_and_render() {
         "recomputed-normal mesh should be visible + shaded, got {ratio:.4}"
     );
 }
+
+// ---- INK ON PAPER (2026-10-21) -------------------------------------------------------------------
+//
+// The web app multiplies every thumbnail onto a themed card, so the ground must be EXACTLY white —
+// a shade off survives the multiply as a tinted square — and the model must be the palette's
+// material. Both values are mirrored in Ruby (`Maker::Previews::Palette`) and in the CSS, and
+// `test/services/maker/previews/palette_test.rb` holds the three spellings equal by PARSING the
+// constants in src/lib.rs. These tests are the other half: they prove the constants are what the
+// pixels actually come out as, which no Ruby test may assert (the CI runner bakes an older binary).
+
+/// The material as the PNG should carry it at full light: `Palette::MATERIAL`, `#7f7b73`.
+const MATERIAL_RGB: [u8; 3] = [0x7f, 0x7b, 0x73];
+
+#[test]
+fn background_is_pure_white() {
+    let png = render_stl(TETRA, 128, 128).expect("render should succeed");
+    let pixels = decode(&png, 128, 128);
+    assert_eq!(
+        pixels[0],
+        [255, 255, 255, 255],
+        "the corner must be exactly opaque white — it is multiplied onto the card"
+    );
+    assert_eq!(
+        pixels[pixels.len() - 1],
+        [255, 255, 255, 255],
+        "and so must the opposite corner"
+    );
+}
+
+/// The whole frame, not one corner: an empty mesh is nothing BUT ground, so every pixel of it is
+/// the ground colour. Catches a ground that is white at the corner and tinted anywhere else.
+#[test]
+fn an_empty_mesh_is_white_paper_everywhere() {
+    let mut empty = vec![0u8; 80];
+    empty.extend_from_slice(&0u32.to_le_bytes());
+    let png = render_stl(&empty, 32, 32).expect("empty mesh should yield a blank-but-valid PNG");
+    let pixels = decode(&png, 32, 32);
+    assert!(
+        pixels.iter().all(|p| *p == [255, 255, 255, 255]),
+        "an empty render must be pure white paper"
+    );
+}
+
+/// THE BRIGHTEST FACE IS THE MATERIAL. The shader multiplies MATERIAL by an intensity of at most
+/// 1.0, which it reaches only on a face square-on to the key light — so this builds exactly that
+/// face: a square plate perpendicular to the light direction `(0.5, 0.6, 0.7)` in src/lib.rs.
+///
+/// A PLATE, NOT A CUBE: no face of an axis-aligned cube is square-on to that light (the best is
+/// `|n . l| = 0.667`, intensity 0.76), so a cube's brightest face measures #615e57 and cannot show
+/// whether MATERIAL itself is right. If the key light ever moves, move this plate with it — the
+/// failure then says the plate no longer faces the light, not that the colour is wrong.
+///
+/// The plate's DOMINANT colour is asserted rather than its brightest pixel, because the
+/// anti-aliased rim blends the material with the white ground and is brighter than the face.
+#[test]
+fn a_face_square_on_to_the_key_light_renders_the_material() {
+    let l = normalize([0.5, 0.6, 0.7]);
+    let u = normalize(cross(l, [0.0, 0.0, 1.0]));
+    let v = cross(l, u);
+    let corner = |su: f32, sv: f32| -> [f32; 3] {
+        [
+            10.0 * (su * u[0] + sv * v[0]),
+            10.0 * (su * u[1] + sv * v[1]),
+            10.0 * (su * u[2] + sv * v[2]),
+        ]
+    };
+    let (a, b, c, d) = (
+        corner(-1., -1.),
+        corner(1., -1.),
+        corner(1., 1.),
+        corner(-1., 1.),
+    );
+    let png = render_stl(&binary_stl_zero_normals(&[[a, b, c], [a, c, d]]), 128, 128)
+        .expect("render should succeed");
+    let pixels = decode(&png, 128, 128);
+
+    use std::collections::HashMap;
+    let mut counts: HashMap<[u8; 4], usize> = HashMap::new();
+    for p in pixels.iter().filter(|p| **p != [255, 255, 255, 255]) {
+        *counts.entry(*p).or_default() += 1;
+    }
+    let (face, n) = counts
+        .iter()
+        .max_by_key(|(_, c)| **c)
+        .expect("the plate must be visible");
+    assert!(
+        *n > 1000,
+        "the plate should fill a good part of the frame, got {n} pixels"
+    );
+    for ch in 0..3 {
+        assert!(
+            (face[ch] as i32 - MATERIAL_RGB[ch] as i32).abs() <= 2,
+            "a face square-on to the light rendered {face:?}; the material is {MATERIAL_RGB:?}"
+        );
+    }
+}
+
+fn normalize(p: [f32; 3]) -> [f32; 3] {
+    let m = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
+    [p[0] / m, p[1] / m, p[2] / m]
+}
+
+fn cross(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}

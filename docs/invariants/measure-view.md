@@ -403,6 +403,15 @@
     BEHIND IT.** `tools/stl-thumbnailer` has no idea a `maker_previews` row exists. Rebuilding the
     binary without bumping `Stl::THUMBNAIL_REVISION` re-renders nothing; bumping without rebuilding
     re-renders everything with the old binary. **Ship both or neither.**
+  - **THE THUMBNAILERS' COLOURS ARE THE DESIGN SYSTEM'S, SPELLED FOUR TIMES AND HELD EQUAL
+    STATICALLY** (2026-10-21, ink on paper). `Maker::Previews::Palette` (PAPER/INK/MATERIAL) is
+    what `Mesh`, `TextThumb` and `SvgRasterizer` paint; the crate's `BG`/`MATERIAL` mirror it, as
+    do the CSS `--model-material` and Paper's `--fg`. `palette_test.rb` PARSES all of them rather
+    than rendering, because the CI runner image bakes `stl-thumbnailer` at image build — a Ruby test
+    asserting STL pixels would be testing that image's binary, not this checkout's crate (the
+    crate's own `tests/render.rs` asserts the pixels). Every renderer of ours paints an exactly
+    white ground: the browser multiplies it onto the themed card. A palette change is a revision
+    bump in every renderer that paints it — `Stl` and `ThreeMf` together, `Mesh`, `TextThumb`.
 - **THE STL/3MF WORLD IS Z-UP, IN BOTH RENDERERS, AND NO EXISTING TEST COULD SEE IT WHEN IT WAS NOT.**
   The formats declare no orientation, but every producer and consumer in 3D printing treats +Z as up
   (the 3MF core spec puts the build plate in the XY plane). `auto_frame` orbited **Y** and the Three.js

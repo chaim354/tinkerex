@@ -204,10 +204,16 @@ module Maker
       # An `unsupported` row IS a row for the current content, so this sweep leaves it alone —
       # deliberately. Clearing those is the separate, still-open F3D sweep (the record, CLAUDE.md §11); doing
       # it here would silently merge two migrations with different correctness arguments.
+      #
+      # AT THE CURRENT REVISION, stated rather than defaulted: this is a claim about the CONTENT
+      # axis, and the column default (1) silently stopped being current the day Mesh declared a
+      # revision (2 — ink on paper, 2026-10-21). An `unsupported` row an older build wrote IS stale
+      # on the code axis and re-enqueues, by design — that is how F3D's re-render reaches them.
       test "leaves an unsupported row for the current content alone" do
         n = node!("part.step", "tok-cur")
         Maker::Preview.create!(user:, node_id: n.node_id, version_id: token_for(n),
-                               kind: "thumbnail", status: "unsupported")
+                               kind: "thumbnail", status: "unsupported",
+                               renderer_revision: current_revision("part.step"))
 
         assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
           assert_equal 0, Maker::Previews::MissingBackfill.call
