@@ -74,11 +74,31 @@ module Web
       end
       # Under Tools, which is the tool family it belongs to.
       foot = css_select("aside.rail .rail-nav--foot li a").map { |a| a["title"] }
-      assert_equal foot.index("Tools") + 1, foot.index("Calculator")
+      assert_equal foot.index("Tools") + 1, foot.index("Calculator (Alt+C)")
 
       get tools_path
       assert_select "#calculator form.calculator-pin-form input[name=_method][value=delete]", 1
       assert_select "#calculator form.calculator-pin-form button", text: "Unpin from sidebar"
+    end
+
+    # THE SHORTCUT IS NAMED WHERE THE CALCULATOR IS OFFERED (calculator_controller.js#shortcut), as the
+    # maker's keyboard prints it — ⌥C on a Mac, Alt+C elsewhere — and every opener carries the
+    # platform-neutral `aria-keyshortcuts`.
+    MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36".freeze
+    WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36".freeze
+
+    test "the shortcut is named on the card, the pinned link and the panel, in this keyboard's spelling" do
+      @user.update_column(:calculator_pinned, true)
+      { MAC => "⌥C", WINDOWS => "Alt+C" }.each do |agent, keys|
+        get tools_path, headers: { "User-Agent" => agent }
+        assert_select "#calculator .calculator-card-keys kbd", { text: keys, count: 1 }, agent
+        assert_select "#calculator button.calculator-card-open[aria-keyshortcuts='Alt+C']", 1
+        assert_select "aside.rail a.rail-calculator[title=?][aria-keyshortcuts='Alt+C']", "Calculator (#{keys})"
+
+        get project_path(@project, add: "calculations"), headers: { "User-Agent" => agent }
+        assert_select "section.calculations-panel button[data-calculator-open][title=?][aria-keyshortcuts='Alt+C']",
+                      "Open calculator (#{keys})"
+      end
     end
 
     test "unpinning takes the link away" do

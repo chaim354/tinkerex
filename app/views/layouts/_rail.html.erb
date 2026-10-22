@@ -72,11 +72,12 @@
           aria-current and the one-lit-link rule is untouched. A real href all the same: a modified
           click, or a page whose script failed, lands on the Tools card that opens it.
           `calculator_pinned?` reads the user row the request already loaded, so the pin costs the
-          rail no query. %>
+          rail no query. Its title, the collapsed rail's tooltip, names the keyboard shortcut. %>
       <% if current_user.calculator_pinned? %>
         <li>
-          <%= link_to tools_path(anchor: "calculator"), class: "rail-link rail-calculator", title: "Calculator",
-                      "aria-haspopup": "dialog", data: { calculator_open: "" } do %>
+          <%= link_to tools_path(anchor: "calculator"), class: "rail-link rail-calculator",
+                      title: "Calculator (#{calculator_shortcut})", "aria-haspopup": "dialog",
+                      "aria-keyshortcuts": CalculationsHelper::CALCULATOR_KEYS, data: { calculator_open: "" } do %>
             <%= rail_icon(:calculator) %><span class="rail-label">Calculator</span>
           <% end %>
         </li>

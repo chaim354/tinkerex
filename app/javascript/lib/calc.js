@@ -171,6 +171,9 @@ function foldLiterals(tokens) {
   return out
 }
 
+// A number and its unit as the maker wrote them, for a message: `5'` keeps its mark, `5 ft` reads `5ft`.
+const written = (num, unit) => num.text + (unit.text.length === 1 ? unit.text : unit.u)
+
 function strayError(tok) {
   if (tok.t === "num" || tok.t === "frac") return `Missing an operator before "${tok.text}".`
   return `Unexpected "${tok.text}".`
@@ -298,17 +301,43 @@ class Parser {
     return { k: "unit", e: node, u: t.u, p }
   }
 
-  // FEET-AND-INCHES IS ONE LENGTH: `5'6"`, `5ft 6in`, `2' 6 1/2"`. Only a number literal carrying a
-  // bare foot, then a number literal carrying a bare inch, with nothing between them — which is
-  // why it is reached only from primary()'s number branches, never after a `)`. Anything looser
-  // (`5' 6`, `5ft 6mm`, `6in 5ft`) keeps its "Missing an operator" error rather than a guess.
+  // FEET-AND-INCHES IS ONE LENGTH: `5'6"`, `5ft 6in`, `2' 6 1/2"` — and `5' 6`, `5' 6 1/2`, `5' 1/2`,
+  // because A BARE NUMBER AFTER FEET IS INCHES, the way a tape measure is read aloud (2026-10-22).
+  // Only a number literal carrying a bare foot, then a number literal, with nothing between them —
+  // which is why it is reached only from primary()'s number branches, never after a `)`.
+  //
+  // THE BARE NUMBER MUST END THERE: nothing may follow it but `+ - * / )` or the end. `5' 6^2`,
+  // `5' 6%`, `5' 6deg` and `5' 6(2)` attach something to the 6 itself, so they keep their "Missing
+  // an operator" error rather than a guess. A tight `INT/INT` after feet is a fraction of an inch
+  // (`5' 1/2` is 60.5 in): foldLiterals left it as division only because no unit followed it.
+  //
+  // ANY OTHER UNIT ON THAT NUMBER IS REFUSED, NEVER ADDED. `5' 6mm` is not a measurement anyone reads
+  // off a tape, so it says what does work — the pair, or a `+` — rather than quietly summing a foot
+  // and a millimetre count. `6in 5ft` (inches first) is not a pair either.
   compound(node) {
     if (node.k !== "unit" || node.u !== "ft" || node.p !== 1) return node
-    const [n, unit, after] = [this.peek(), this.toks[this.i + 1], this.toks[this.i + 2]]
+    let j = this.i
+    let n = this.toks[j]
     if (!n || (n.t !== "num" && n.t !== "frac")) return node
-    if (!unit || unit.t !== "unit" || unit.u !== "in") return node
-    if (isOp(after, "^") || (after && after.t === "sup")) return node
-    this.i += 2
+    const [slash, den] = [this.toks[j + 1], this.toks[j + 2]]
+    if (isInt(n) && isTightSlash(slash) && isInt(den) && !den.sb) {
+      n = { t: "frac", whole: 0, n: n.value, d: den.value, text: `${n.text}/${den.text}` }
+      j += 2
+    }
+    const [unit, after] = [this.toks[j + 1], this.toks[j + 2]]
+    if (unit && unit.t === "unit") {
+      if (isOp(after, "^") || (after && after.t === "sup")) return node // `6in^2` is square inches
+      if (unit.u !== "in") {
+        const feet = written(this.toks[this.i - 2], this.toks[this.i - 1])
+        const other = written(n, unit)
+        fail(`Only inches can follow feet, like 5' 6". To add ${other}, write ${feet} + ${other}.`)
+      }
+      this.i = j + 2
+    } else if (!unit || ["+", "-", "*", "/", ")"].some((op) => isOp(unit, op))) {
+      this.i = j + 1
+    } else {
+      return node
+    }
     const inches = n.t === "num" ? { k: "num", v: n.value } : { k: "frac", whole: n.whole, n: n.n, d: n.d }
     return { k: "compound", ft: node, inch: { k: "unit", e: inches, u: "in", p: 1 } }
   }

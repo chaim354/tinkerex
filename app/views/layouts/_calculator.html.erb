@@ -13,13 +13,16 @@
 
   A NATIVE <dialog>: showModal() makes the rest of the page inert, so Tab stays inside, and Esc
   closes it; the controller puts focus in the input on open and back on the opener on close.
+  ALT+C (⌥C) OPENS IT TOO, from any page that is not taking typing (calculator#shortcut), and the
+  keys and clipboard events typed inside it stop at the dialog (calculator#contain), so a page-wide
+  listener — a sheet's grid — never acts on them.
   Nothing in it is `.primary` — the accent is spent once per screen, and this sits on every one.
 %>
 <div class="calculator-host" data-controller="calculator"
      data-calculator-save-url-value="<%= new_calculation_path(project_id: calculator_project_id) %>"
-     data-action="click@document->calculator#openFrom turbo:before-cache@document->calculator#close">
+     data-action="click@document->calculator#openFrom keydown@document->calculator#shortcut turbo:before-cache@document->calculator#close">
   <dialog class="calculator" aria-labelledby="calculator-title" data-calculator-target="dialog"
-          data-action="close->calculator#closed click->calculator#backdrop">
+          data-action="close->calculator#closed click->calculator#backdrop keydown->calculator#contain paste->calculator#contain copy->calculator#contain cut->calculator#contain">
     <div class="calculator-head">
       <h2 id="calculator-title">Calculator</h2>
       <button type="button" class="calculator-close" data-action="calculator#close" aria-label="Close calculator"
@@ -68,7 +71,7 @@
     </details>
 
     <p class="calculator-help muted">
-      Units mm cm m in ft — <code>12.5mm + 1/4in</code>, <code>3 1/2in</code>, <code>3 ft to mm</code>,
+      Units mm cm m in ft — <code>12.5mm + 1/4in</code>, <code>3 1/2in</code>, <code>5' 6</code>, <code>3 ft to mm</code>,
       <code>sqrt(2)</code>, <code>sin(30deg)</code>, <code>pi</code>, <code>300mm + 10%</code>.
     </p>
   </dialog>

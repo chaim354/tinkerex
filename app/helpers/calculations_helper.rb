@@ -11,6 +11,16 @@ module CalculationsHelper
     @project.id if @project.is_a?(Maker::Project) && @project.persisted?
   end
 
+  # THE KEYBOARD SHORTCUT (calculator_controller.js#shortcut), AS THE MAKER'S KEYBOARD PRINTS IT: ⌥C on
+  # a Mac or an iPad, Alt+C elsewhere. The controller listens for both spellings of the one chord,
+  # so a user agent read wrongly costs a label, never the shortcut. `aria-keyshortcuts` takes the
+  # platform-neutral name, which is always Alt+C.
+  CALCULATOR_KEYS = "Alt+C".freeze
+
+  def calculator_shortcut
+    request.user_agent.to_s.match?(/Macintosh|iPhone|iPad/) ? "⌥C" : CALCULATOR_KEYS
+  end
+
   # WHAT THE CALCULATOR SHOWED, AGAIN: the number to ten significant digits with its unit, or for an
   # inch result saved at 1/16 or 1/32 the fraction the modal drew (`≈` when it rounds). The same
   # rules as lib/calc.js's formatNumber and formatInches, restated for the server because the panel

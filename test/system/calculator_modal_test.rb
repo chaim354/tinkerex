@@ -27,6 +27,18 @@ require "application_system_test_case"
 #     click, so there the opener is not "the element focused before", and only #closed returns to it.
 #   * `.calculator-host { display: contents }` deleted from shell.css — GREEN: the host's grid cell
 #     is empty and zero-height, so nothing here can see it. The rule is argued in its comment.
+#
+# THE KEYBOARD SHORTCUT AND THE DIALOG'S OWN KEYS, MUTATION-CHECKED 2026-10-22, then restored:
+#   * the dialog's `keydown/paste/copy/cut->calculator#contain` actions deleted — RED: the grid's
+#     Backspace emptied A1 ("Also found \"\""). It went red only once the keys were sent through the
+#     action API with Backspace first; see the test.
+#   * #takesTyping answering false — RED on the search field; its isContentEditable line deleted —
+#     RED on the contenteditable probe; `textarea` dropped from its selector — RED on the textarea.
+#   * #contain no longer offering the shortcut — RED: focus stayed on the × ("calculator-close").
+#   * the `event.code === "KeyC"` fallback deleted — RED: "a Mac's ⌥C, which arrives as ç, opens it";
+#     the letter test replaced by `event.code === "KeyC"` alone — RED: Alt+J on that key opened it.
+#   * #open setting returnFocus even when already open — GREEN, for #closed's reason above: Chrome's
+#     <dialog> puts focus back where it was before showModal() whatever returnFocus says.
 class CalculatorModalTest < ApplicationSystemTestCase
   setup do
     use_fresh_share_library!
@@ -43,6 +55,11 @@ class CalculatorModalTest < ApplicationSystemTestCase
     input.send_keys(:enter)
   end
 
+  # The shortcut, pressed on whatever has focus — the way a maker presses it, not aimed at an element.
+  def press_alt_c = page.driver.browser.action.key_down(:alt).send_keys("c").key_up(:alt).perform
+
+  def focus(selector) = page.execute_script("document.querySelector(arguments[0]).focus()", selector)
+
   test "the Tools card opens the modal; Enter evaluates; Esc closes and focus goes back to the card" do
     visit tools_path
     refute dialog_open?
@@ -57,6 +74,102 @@ class CalculatorModalTest < ApplicationSystemTestCase
     find("#calculator-input").send_keys(:escape)
     assert_no_selector "dialog.calculator[open]"
     assert_includes focused.to_s, "calculator-card-open", "focus goes back to the control that opened it"
+    assert_no_console_errors
+  end
+
+  # THE KEYBOARD SHORTCUT (2026-10-22, calculator#shortcut). Pressed from a button on the page it opens
+  # the modal with focus in the input; pressed again from a button INSIDE the modal it brings focus
+  # back to the input rather than doing nothing; and Esc still hands focus back to where it began.
+  test "Alt+C opens the modal from the page, and pressed inside it puts focus back in the input" do
+    visit tools_path
+    focus("#calculator .calculator-pin")
+    press_alt_c
+    assert_selector "dialog.calculator[open]"
+    assert_equal "calculator-input", focused, "focus lands in the input"
+    calculate("5' 6 to mm")
+    assert_selector "dialog.calculator .calculator-result", text: "1676.4 mm"
+
+    focus("dialog.calculator .calculator-close")
+    press_alt_c
+    assert dialog_open?, "the shortcut must not close or reopen an open modal"
+    assert_equal "calculator-input", focused, "the shortcut inside the modal returns focus to the input"
+    assert_equal "5' 6 to mm", find("#calculator-input").value, "and keeps what was typed"
+
+    find("#calculator-input").send_keys(:escape)
+    refute dialog_open?
+    assert_includes focused.to_s, "calculator-pin", "focus goes back to where the shortcut was pressed"
+
+    # A REAL MAC'S ⌥C ARRIVES AS key "ç" with code "KeyC", which no driver here synthesises (both send
+    # "c"), so that event is dispatched by hand. The letter wins over the key's position wherever the
+    # layout gives a letter: Alt on Dvorak's physical C key is Alt+J, not the shortcut.
+    alt_key_c = ->(key) do
+      page.execute_script(<<~JS, key)
+        document.activeElement.dispatchEvent(new KeyboardEvent("keydown",
+          { key: arguments[0], code: "KeyC", altKey: true, bubbles: true, cancelable: true }))
+      JS
+    end
+    alt_key_c.("j")
+    refute dialog_open?, "Alt+J on the physical C key is not the shortcut"
+    alt_key_c.("ç")
+    assert dialog_open?, "a Mac's ⌥C, which arrives as ç, opens it"
+    find("#calculator-input").send_keys(:escape)
+
+    visit project_path(@project) # and on any other signed-in page
+    press_alt_c
+    assert_selector "dialog.calculator[open]"
+    assert_no_console_errors
+  end
+
+  # NEVER WHILE TYPING: in each of these, Alt+C belongs to the field (on a Mac ⌥C types ç). The last
+  # press, from outside any field on the same page, shows the shortcut was live the whole time, so
+  # the refusals are not a dead shortcut passing.
+  test "Alt+C does nothing in a text field, a textarea or a contenteditable editor" do
+    visit tools_path
+    page.execute_script(<<~JS)
+      const main = document.querySelector("main")
+      const area = document.createElement("textarea"); area.id = "probe-textarea"
+      const rich = document.createElement("div"); rich.id = "probe-editable"; rich.contentEditable = "true"
+      rich.textContent = "notes"
+      main.prepend(area, rich)
+    JS
+    [ ".topbar-search input[type=search]", "#probe-textarea", "#probe-editable" ].each do |field|
+      find(field).click
+      press_alt_c
+      refute dialog_open?, "#{field}: the shortcut fired while typing"
+    end
+
+    focus("#calculator .calculator-pin")
+    press_alt_c
+    assert_selector "dialog.calculator[open]"
+  end
+
+  # KEYS TYPED INTO THE CALCULATOR STOP AT THE DIALOG (calculator#contain). jspreadsheet listens for
+  # keys on `document`, and a calculator opened by keyboard leaves the grid's cell selected (a click
+  # elsewhere would have deselected it), so without the stop the grid took Enter, opened its own
+  # editor on a digit, and Backspace CLEARED THE CELL.
+  test "keys typed into a calculator opened over a sheet never reach the grid" do
+    data = Maker::Sheet.blank_data
+    data["cells"][0][0] = "keep me"
+    sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0, data: data)
+    visit sheet_path(sheet)
+    a1 = "[data-sheet-target='grid'] td[data-x='0'][data-y='0']"
+    assert_selector a1, text: "keep me", wait: 10
+    find(a1).click # selects A1
+
+    press_alt_c
+    assert_selector "dialog.calculator[open]"
+    # BACKSPACE FIRST, the way a maker clears the last expression, and every key sent to whatever has
+    # focus (the action API), as a person types. Both matter to the mutation check: with the stop
+    # removed, a digit first makes the grid open its own cell editor, which the closing Esc cancels,
+    # restoring the cell, so the test passed; and keys aimed at the input with Capybara's element
+    # `send_keys` never reproduced the cleared cell at all.
+    page.driver.browser.action.send_keys(:backspace, "3 ftt", :backspace, " to mm", :enter).perform
+    assert_selector ".calculator-result", text: "914.4 mm"
+    assert_equal "3 ft to mm", find("#calculator-input").value
+    assert_selector a1, exact_text: "keep me" # the grid's own Backspace empties the cell at once
+    page.driver.browser.action.send_keys(:escape).perform
+    refute dialog_open?, "Esc closes the calculator, not an editor the grid opened"
+    assert_selector a1, exact_text: "keep me"
     assert_no_console_errors
   end
 

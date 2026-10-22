@@ -21,6 +21,9 @@
   .calculator-card .addon-icon .rail-icon { width: 22px; height: 22px; }
   .calculator-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
   .calculator-card-actions form { display: inline; }
+  /* The shortcut, drawn the way the top bar draws its ⌘K (shell.css .topbar-kbd). */
+  .calculator-card-keys { white-space: nowrap; }
+  .calculator-card-keys kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
   /* `.tool-card` is a built-in tool's card (the calculator): the same face, a different class, so
      every `.addon-card` is still one a manifest made. It is not a link, so it takes no hover. */
   .addon-card, .tool-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }

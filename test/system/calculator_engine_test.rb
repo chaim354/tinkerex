@@ -12,7 +12,8 @@ require "application_system_test_case"
 # WHAT IT PINS: precedence (unary minus looser than ^, ^ right-associative), implicit
 # multiplication and its limits, percent as desk-calculator percent, every unit and alias, the four
 # conversion spellings and `in`'s double duty, the fraction-literal rule against ordinary division,
-# feet-and-inches pairs (`5'6"` is 66 in), the left-operand display unit both ways, areas and
+# feet-and-inches pairs (`5'6"` is 66 in) and a bare number after feet as inches (`5' 6`, since
+# 2026-10-22, with the followers that keep it refused), the left-operand display unit both ways, areas and
 # volumes, trig in radians and degrees (an angle's text is "45°", no space), rounding
 # noise, every error message a maker can be shown, and formatInches/formatNumber.
 #
@@ -30,6 +31,18 @@ require "application_system_test_case"
 #   (e) compound's inch-only check dropped — red on `"5ft 6mm": expected "Missing an operator
 #       before \"6\".", got … "text" => "66 in"`, so the refusal rows carry weight too.
 #   (f) the space put back before "°" — red on `"asin(0.5) to deg": expected 30°, got … "30 °"`.
+# (e)'s row now expects the "Only inches can follow feet" message, and (i) below is its successor.
+#
+# AND ON 2026-10-22, for the bare-inches reading (`5' 6`), each RED, each restored from a saved copy:
+#   (g) Parser#compound's bare-number branch made unreachable — 17 rows red, starting
+#       `"5' 6": expected 66 in (dim 1), got "Missing an operator before \"6\"."`.
+#   (h) compound's tight-fraction step dropped — 2 rows red, `"5' 1/2": expected 60.5 in, got
+#       [30.5, …]`: without it the 1 is the inches and `/2` halves the whole length.
+#   (i) the other-unit refusal dropped — the 5 "Only inches can follow feet" rows red, starting
+#       `"5' 6 mm": expected "Only inches …", got … "text" => "66 in"`.
+#   (j) the followers check dropped (anything may follow the bare number) — 5 rows red, starting
+#       `"5' 6^2": expected "Missing an operator before \"6\".", got … "text" => "4356 in²"`, the
+#       wrong guess that check exists to refuse.
 class CalculatorEngineTest < ApplicationSystemTestCase
   setup { sign_in_as("calc-engine@example.com") }
 
@@ -146,6 +159,26 @@ class CalculatorEngineTest < ApplicationSystemTestCase
     [ %q(5'6" + 1in), 67, "67 in", 1 ],
     [ %q(2 * 5'6"), 132, "132 in", 1 ],
     [ %q(-5'6"), -66, "-66 in", 1 ],
+    # ...and a BARE number after feet is inches (2026-10-22), so long as nothing attaches to it
+    [ "5' 6", 66, "66 in", 1 ],
+    [ "5'6", 66, "66 in", 1 ],
+    [ "5ft 6", 66, "66 in", 1 ],
+    [ "5 feet 6", 66, "66 in", 1 ],
+    [ "5’ 6", 66, "66 in", 1 ],
+    [ "5' 6 1/2", 66.5, "66.5 in", 1 ],
+    [ "5' 1/2", 60.5, "60.5 in", 1 ],
+    [ "5' 0.5", 60.5, "60.5 in", 1 ],
+    [ "5' 6/2", 63, "63 in", 1 ],         # a tight INT/INT is a fraction of an inch...
+    [ "5' 6 / 2", 33, "33 in", 1 ],       # ...a spaced slash is division of the whole length
+    [ "5' 6 + 1in", 67, "67 in", 1 ],
+    [ "5' 6 - 1/2in", 65.5, "65.5 in", 1 ],
+    [ "5' 6 * 2", 132, "132 in", 1 ],
+    [ "2 * 5' 6", 132, "132 in", 1 ],
+    [ "(5' 6)", 66, "66 in", 1 ],
+    [ "-5' 6", -66, "-66 in", 1 ],
+    [ "5' 6 to mm", 1676.4, "1676.4 mm", 1 ],
+    [ %q(5' 6"), 66, "66 in", 1 ],
+    [ "5'", 5, "5 ft", 1 ],               # feet alone stay feet
     # areas and volumes
     [ "10in * 2in", 20, "20 in²", 2 ],
     [ "6in^2 / 2in", 3, "3 in", 1 ],
@@ -194,11 +227,21 @@ class CalculatorEngineTest < ApplicationSystemTestCase
     "5in - 2" => "Can't subtract a plain number from a length. Give the 2 a unit, like 2in.",
     "2 - 5in" => "Can't subtract a length from a plain number. Give the 2 a unit, like 2in.",
     # a feet-and-inches pair needs a foot NUMBER then an inch NUMBER; anything looser is not one
-    "5' 6" => 'Missing an operator before "6".',
-    "5ft 6mm" => 'Missing an operator before "6".',
     "6in 5ft" => 'Missing an operator before "5".',
     "(5)ft 6in" => 'Missing an operator before "6".',
     "5ft 6in^2" => 'Missing an operator before "6".',
+    "5 6" => 'Missing an operator before "6".',
+    "5' 6^2" => 'Missing an operator before "6".',
+    "5' 6%" => 'Missing an operator before "6".',
+    "5' 6deg" => 'Missing an operator before "6".',
+    "5' 6(2)" => 'Missing an operator before "6".',
+    "5' 6 7" => 'Missing an operator before "6".',
+    # ...and only inches can follow feet: any other unit is refused, never summed
+    "5' 6 mm" => %q(Only inches can follow feet, like 5' 6". To add 6mm, write 5' + 6mm.),
+    "5ft 6mm" => %q(Only inches can follow feet, like 5' 6". To add 6mm, write 5ft + 6mm.),
+    "5 feet 6 cm" => %q(Only inches can follow feet, like 5' 6". To add 6cm, write 5ft + 6cm.),
+    "5' 6'" => %q(Only inches can follow feet, like 5' 6". To add 6', write 5' + 6'.),
+    "5' 1/2 m" => %q(Only inches can follow feet, like 5' 6". To add 1/2m, write 5' + 1/2m.),
     "10in*2in + 3" => "Can't add a plain number to an area. Give the 3 a unit, like 3in².",
     "5mm + 2mm*3mm" => "Can't add mm and mm² — they're different kinds of measurement.",
     "5mm - 2mm*3mm" => "Can't subtract mm² from mm — they're different kinds of measurement.",

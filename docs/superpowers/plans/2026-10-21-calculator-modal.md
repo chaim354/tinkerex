@@ -73,6 +73,46 @@ Each is recorded here because the owner was asleep; each is cheap to reverse.
 13. **History is the last 20 results in `localStorage`**, wrapped in try/catch, so a private window
     or blocked storage costs the history and nothing else.
 
+## Decisions after review (2026-10-22)
+
+The owner reviewed the open questions and asked for two changes (14 and 15); everything else above
+stands. The details inside each were decided while building it and are recorded here.
+
+14. **A keyboard shortcut opens the calculator: Alt+C, shown as ⌥C on a Mac.**
+    - **Why this key.** `⌘/Ctrl+Shift+C` is DevTools' inspect-element key in Chrome, Edge and
+      Firefox, and nearly every `⌘/Ctrl` letter is a browser command. Alt+C is unbound in Chrome,
+      Firefox, Edge (its Alt keys are D, E, F and Shift+B/I/T) and Safari. No `accesskey` in the app
+      uses C. jspreadsheet's grid ignores Alt chords where it would start a cell edit on a bare key.
+    - **Why not a bare key.** WCAG 2.1.4 requires that a one-character shortcut can be turned off,
+      and `=` starts a formula in a selected sheet cell.
+    - **Where it never fires.** In any `input`, `textarea`, `select`, contenteditable (Lexxy) or
+      CodeMirror editor, so it can never eat a typed character: ⌥C types ç on a Mac.
+    - **Which key counts.** The letter C on whatever layout. On a Mac, where ⌥ turns the key into ç,
+      it falls back to the physical C key.
+    - **Already open.** Pressed again from inside the modal, it puts focus back in the input.
+    - **Where it is shown.** The Tools card's description shows the platform's spelling, read from
+      the user agent; a wrong guess costs a label, never the key. The pinned rail link's title (the
+      collapsed rail's tooltip), the panel's Open calculator button and the help page name it too.
+      Every opener carries `aria-keyshortcuts="Alt+C"`.
+    - **Keys typed in the dialog stay in the dialog.** `keydown`, `paste`, `copy` and `cut` stop at
+      the dialog, because a calculator opened from the keyboard leaves a sheet cell selected (a
+      click elsewhere would have cleared it). jspreadsheet puts its key and clipboard handlers on
+      `document`, so before this its Backspace cleared that cell (measured), and by its code a paste
+      would land in it and a cut would clear it.
+15. **A bare number after feet is inches**: `5' 6` is 66 in. So are `5' 6 1/2` (66.5 in) and
+    `5' 1/2` (60.5 in), whose tight fraction is a fraction of an inch.
+    - **What may follow the bare number.** Only `+ - * / )`, a conversion, or the end:
+      `5' 6 + 1in`, `5' 6 * 2`, `5' 6 to mm`.
+    - **What keeps the old "Missing an operator" error.** Anything that attaches to the 6 itself:
+      `5' 6^2`, `5' 6%`, `5' 6deg`, `5' 6(2)`, `5' 6 7`. Reading those as inches would be a guess:
+      `5' 6^2` would come out as 4356 in².
+    - **The edge cases.** `5'` alone stays 5 ft. `5' 6"` is unchanged (66 in). `5 6`, with no feet
+      mark, stays refused.
+    - **An explicit non-inch unit is refused, not summed.** `5' 6 mm` answers "Only inches can follow
+      feet, like 5' 6". To add 6mm, write 5' + 6mm." Nobody reads feet and millimetres off one
+      tape, so this follows decision 4: say what works, never guess. `5ft 6mm`, `5' 6 cm` and
+      `5' 6'` get the same message.
+
 ## Rules for every implementer (read first)
 
 1. Focused tests only: `LIBRARY_BACKEND=share LIBRARY_PATH=$(mktemp -d) bin/rails test <files>`.

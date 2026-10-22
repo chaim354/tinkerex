@@ -11,6 +11,7 @@ import { evaluate, formatInches } from "lib/calc"
 // calculation's "Open in calculator" — with `data-calculator-expression` and
 // `data-calculator-fraction` to start from. The openers sit outside this element (the rail, a
 // project panel), where a Stimulus action cannot reach it, so `click@document` is the one door.
+// The keyboard's door is Alt+C (⌥C), `keydown@document` (#shortcut, 2026-10-22).
 //
 // ENTER EVALUATES; IT DOES NOT EVALUATE AS YOU TYPE. A half-typed `3 +` is an error on every key,
 // and a calculator that flashes red while you write is one nobody trusts. Typing only marks the last
@@ -49,17 +50,50 @@ export default class extends Controller {
   }
 
   open({ expression, fraction, opener } = {}) {
-    this.returnFocus = opener || document.activeElement
+    // Already open (the shortcut, pressed again from a button inside it), focus goes back to the
+    // input and the place to return to on close stays the one the maker opened it from.
+    if (!this.dialogTarget.open) {
+      this.returnFocus = opener || document.activeElement
+      this.dialogTarget.showModal()
+    }
     // A saved calculation reopens at the display it was saved with (an empty attribute is decimal);
     // the rail and the card carry no attribute and keep this browser's own choice.
     if (fraction !== undefined) this.setDenominator(Number(fraction) || 0)
-    if (!this.dialogTarget.open) this.dialogTarget.showModal()
     if (expression) {
       this.inputTarget.value = expression
       this.calculate()
     }
     this.inputTarget.focus()
     this.inputTarget.select()
+  }
+
+  // THE KEYBOARD SHORTCUT, Alt+C (⌥C on a Mac), from anywhere on a signed-in page that is not taking
+  // typing (2026-10-22). Alt rather than Ctrl/⌘: Ctrl+Shift+C is the browsers' inspect-element key
+  // and nearly every Ctrl/⌘ letter is taken, while Alt+C is unbound in Chrome, Firefox, Edge and
+  // Safari, and jspreadsheet's grid ignores Alt-chords where it would start editing on a bare key.
+  // A bare key was ruled out because a single-character shortcut must be possible to turn off
+  // (WCAG 2.1.4) and `=` starts a formula in a selected sheet cell. Never in a field, a contenteditable
+  // (Lexxy) or a CodeMirror editor, so it can never eat a typed character: on a Mac ⌥C types ç.
+  shortcut(event) {
+    if (event.defaultPrevented || event.repeat || event.isComposing) return
+    if (!event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+    // The letter C on whatever layout; on a Mac, where ⌥ turns the key into ç, the physical C key.
+    if (!(/^c$/i.test(event.key) || (!/^[a-z]$/i.test(event.key) && event.code === "KeyC"))) return
+    if (takesTyping(event.composedPath()[0] || event.target)) return
+    event.preventDefault()
+    this.open()
+  }
+
+  // KEYS AND CLIPBOARD EVENTS INSIDE THE CALCULATOR STOP AT THE DIALOG. A page-wide listener cannot
+  // tell them from the page's own: jspreadsheet puts its key, paste, copy and cut handlers on
+  // `document`, and a cell stays selected under a keyboard-opened calculator (a click elsewhere
+  // would have deselected it). Measured: Backspace typed here CLEARED THE CELL. Read from
+  // vendor/javascript/jspreadsheet.js: the arrows and Enter move the grid's selection and swallow
+  // the key, a paste lands in the cell, and a cut clears it. The shortcut is offered first, so Alt+C
+  // from a button in the dialog still brings focus back to the input.
+  contain(event) {
+    if (event.type === "keydown") this.shortcut(event)
+    event.stopPropagation()
   }
 
   close() {
@@ -252,6 +286,14 @@ export default class extends Controller {
       ? `Saves ${this.fractionText(this.answer) || this.answer.text}`
       : "Press Enter to calculate first."
   }
+}
+
+// Where a keystroke is someone's typing: any form field, a contenteditable (Lexxy's editor and
+// CodeMirror's content are both one), or anything inside a CodeMirror or Lexxy editor.
+function takesTyping(element) {
+  if (!(element instanceof Element)) return false
+  if (element.isContentEditable) return true
+  return !!element.closest("input, textarea, select, .cm-editor, lexxy-editor")
 }
 
 function readStorage(key) {
