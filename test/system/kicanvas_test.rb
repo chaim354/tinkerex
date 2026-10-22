@@ -94,4 +94,45 @@ class KicanvasTest < ApplicationSystemTestCase
     wait_for_kicanvas_canvas
     assert_no_console_errors
   end
+
+  # THE SCHEMATIC IS PAINTED IN KICANVAS' THEME FOR THE APP'S THEME (2026-10-21): "kicad", KiCad's
+  # own paper, under Paper, and "witchhazel" under Graphite. Before, it was Witch Hazel in both. Read
+  # off the PAINTED canvas, not the stored preference: a schematic draws through Canvas 2D, so its
+  # corner pixel is the theme's background, and a preference written under the wrong key or after
+  # the import would leave the key right and the picture wrong.
+  #
+  # MUTATION-CHECKED (§15; output in the PR, then reverted): deleting `choosePreference()` from
+  # kicanvas_controller.js reddens the Paper arm with `[19, 18, 24]`, the Witch Hazel ground.
+  CANVAS_CORNER_JS = <<~JS.freeze
+    (function() {
+      function findCanvas(root, depth) {
+        if (!root || depth > 8) return null;
+        const c = root.querySelector && root.querySelector("canvas");
+        if (c) return c;
+        for (const el of (root.querySelectorAll ? root.querySelectorAll("*") : [])) {
+          const found = el.shadowRoot && findCanvas(el.shadowRoot, depth + 1);
+          if (found) return found;
+        }
+        return null;
+      }
+      const canvas = findCanvas(document.querySelector("kicanvas-embed")?.shadowRoot, 0);
+      const ctx = canvas && canvas.getContext("2d");
+      return ctx ? Array.from(ctx.getImageData(3, 3, 1, 1).data).slice(0, 3) : null;
+    })()
+  JS
+
+  test "the schematic follows the app's theme" do
+    { "light" => [ 245, 244, 239 ], "dark" => [ 19, 18, 24 ] }.each do |theme, ground|
+      page.execute_script("document.cookie = 'theme=#{theme}; path=/; max-age=31536000; samesite=lax'")
+      visit file_path(@node.node_id)
+      assert_selector ".kicanvas-stage[data-kicanvas-state='ready']"
+      wait_for_kicanvas_canvas
+      wait_until(message: "the #{theme} schematic never painted KiCanvas' #{theme} ground") do
+        page.evaluate_script(CANVAS_CORNER_JS) == ground
+      end
+    end
+    assert_no_console_errors
+  ensure
+    page.execute_script("document.cookie = 'theme=light; path=/; max-age=31536000; samesite=lax'")
+  end
 end

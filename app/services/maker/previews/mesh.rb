@@ -30,6 +30,48 @@ module Maker
 
       F3D = ENV.fetch("F3D_BIN", "f3d").freeze
 
+      # WHAT F3D PAINTS, SPELLED OUT ON EVERY RENDER RATHER THAN LEFT TO ITS CONFIG — the palette's
+      # ink on paper (`Maker::Previews::Palette`). F3D reads its PACKAGED config (Homebrew's here,
+      # the release tarball's in production) before our flags, and that config is a desktop viewer's:
+      # it turns on a grid, an axis gizmo and a FILENAME BANNER — which printed the job's TEMPFILE
+      # path (`f3d-in…step`) across the top of every thumbnail — over F3D's own `#333333` ground.
+      # Measured on F3D 3.5.0 against a real STEP before and after.
+      #
+      #   * `--color` is F3D's fallback colour: it applies only where the FILE names none, so an OBJ
+      #     draws in the palette's material while a STEP keeps its own colours. That is intended —
+      #     the file's colours are information; ours is a default.
+      #   * THE `--flag=value` FORM IS REQUIRED, NOT STYLE. A boolean option takes its value only
+      #     after `=`: `--grid false` is `--grid` (on) followed by a SECOND INPUT FILE named "false" —
+      #     measured: the grid stayed, and the banner read "(1/2)".
+      #   * NOT `--no-config`, which looks like the one-flag answer and was tried: it also drops the
+      #     per-format blocks that matter — `up: +Z` and the iso `camera-direction`, so a STEP
+      #     renders from directly ABOVE, and the occt block's scalar colouring, so it renders grey
+      #     instead of in its own colours. The config is kept; only what it paints is overridden.
+      #
+      # Changing anything here changes every F3D picture: bump THUMBNAIL_REVISION below.
+      PNG_FLAGS = [
+        "--background-color=#{Palette::PAPER}",
+        "--color=#{Palette::MATERIAL}",
+        "--grid=false",
+        "--axis=false",
+        "--filename=false",
+        "--metadata=false"
+      ].freeze
+
+      # WHICH BUILD OF THIS RENDERER PRODUCED A STORED THUMBNAIL (§14h). A finished design's content
+      # never changes, so without a revision past `Enqueue::BASE_REVISION` an F3D picture already in
+      # the library is served forever whatever this file now draws.
+      #
+      #   1 -> (undeclared — `Enqueue::BASE_REVISION`) F3D's packaged look: a #333333 ground, a grid,
+      #        an axis gizmo and a banner naming the job's tempfile.
+      #   2 -> ink on paper (2026-10-21): PNG_FLAGS — white ground, the palette's material where the
+      #        file names no colour, no grid, axes or banner.
+      THUMBNAIL_REVISION = 2
+
+      # One number: `model_glb` is refused below, so `thumbnail` is the only kind this produces. The
+      # signature matches the measurable renderers' so `Enqueue.revision_for` has one way to ask.
+      def payload_revision(_kind) = THUMBNAIL_REVISION
+
       # Extension (without dot) → the tempfile suffix F3D needs to pick its loader plugin.
       def available?
         out, status = Open3.capture2e(F3D, "--version")
@@ -88,7 +130,7 @@ module Maker
           out_path = "#{fin.path}#{out_ext}"
           begin
             args = [ F3D, fin.path, "--output", out_path ]
-            args += [ "--resolution", "#{size},#{size}" ] if out_ext == ".png"
+            args += [ "--resolution", "#{size},#{size}", *PNG_FLAGS ] if out_ext == ".png"
 
             _stdout, stderr, status = Open3.capture3(*args)
             unless status.success? && File.exist?(out_path) && File.size?(out_path)

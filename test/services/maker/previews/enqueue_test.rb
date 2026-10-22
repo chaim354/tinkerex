@@ -167,22 +167,23 @@ module Maker
       # A renderer declaring no revision sits at the base — which is exactly what the migration
       # stamped every pre-existing row with, so installing this mechanism invalidated nothing.
       #
-      # `.obj` (Mesh), NOT `.stl`: this test named a real extension, and the extension it named
-      # acquired a revision when the STL camera was fixed — at which point the test failed for the
-      # right reason and had to move rather than be relaxed. If Mesh ever declares one too, MOVE THE
-      # FIXTURE AGAIN to whatever still declares nothing (Pdf, ImageThumb, TextThumb); do not delete
-      # the assertion, because "silence means BASE_REVISION" is what makes a renderer's cache
-      # invalidate only when someone deliberately says so.
+      # `.pdf` (Pdf), NOT `.stl` OR `.obj`: this test named a real extension, and the extension it
+      # named acquired a revision TWICE — `.stl` when the STL camera was fixed, `.obj` (Mesh) when
+      # the thumbnails became ink on paper (2026-10-21) — and each time the test failed for the
+      # right reason and had to move rather than be relaxed. If Pdf ever declares one too, MOVE THE
+      # FIXTURE AGAIN to whatever still declares nothing (ImageThumb); do not delete the assertion,
+      # because "silence means BASE_REVISION" is what makes a renderer's cache invalidate only when
+      # someone deliberately says so.
       test "a renderer with no declared revision sits at the base" do
-        assert_not Maker::Previews::Mesh.respond_to?(:payload_revision),
+        assert_not Maker::Previews::Pdf.respond_to?(:payload_revision),
                    "this fixture needs a renderer that declares NOTHING — pick another one"
         assert_equal Maker::Previews::Enqueue::BASE_REVISION,
-                     Maker::Previews::Enqueue.revision_for_name("part.obj", "thumbnail")
+                     Maker::Previews::Enqueue.revision_for_name("part.pdf", "thumbnail")
 
         @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
                                      status: "ready", renderer_revision: 1)
         assert_no_enqueued_jobs do
-          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.obj", version_id: "v1")
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.pdf", version_id: "v1")
         end
       end
 

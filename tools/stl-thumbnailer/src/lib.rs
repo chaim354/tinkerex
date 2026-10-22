@@ -6,6 +6,9 @@
 //! wgpu, X11 or Mesa is involved — it runs identically on a headless server
 //! and inside the desktop core.
 //!
+//! The picture is **ink on paper**: a warm mid-grey model (`MATERIAL`) on a pure-white ground
+//! (`BG`), because the web app multiplies every thumbnail onto a themed card — see `BG`.
+//!
 //! Anti-aliasing is done by supersampling: we render at `SSAA`x the requested
 //! resolution and box-downsample. (euc 0.5.3 has no built-in MSAA; SSAA gives
 //! equivalent edge quality on CPU and is trivially correct.)
@@ -23,10 +26,23 @@ use vek::{Mat4, Vec3, Vec4};
 
 /// Supersampling factor: render at SSAA x size, then box-downsample for AA.
 const SSAA: u32 = 3;
-/// Background color of the thumbnail (a dark neutral), 8-bit RGB.
-const BG: [u8; 3] = [0x20, 0x22, 0x28];
-/// Base material color (a warm light gray — fresh filament/plastic look).
-const MATERIAL: Vec3<f32> = Vec3::new(0.78, 0.80, 0.84);
+/// Background of the thumbnail: **PURE WHITE, and exactly white**, 8-bit RGB. The web app shows
+/// every thumbnail MULTIPLIED onto a themed card, so white becomes the card and the model stays the
+/// model in both themes; a ground even a shade off white survives that as a tinted square. (It was
+/// a dark `#202228`, which made every STL a dark tile among white ones.) The Rails side's
+/// `Maker::Previews::Palette::PAPER` is the same value, and `palette_test.rb` parses this line to
+/// hold them equal — keep it a literal array of three hex bytes.
+const BG: [u8; 3] = [0xff, 0xff, 0xff];
+/// Base material colour: `#7f7b73`, the palette's warm mid grey (`Palette::MATERIAL` and the CSS
+/// `--model-material`, held equal by `palette_test.rb` — keep it three `0x../255.0` terms). The
+/// shader multiplies it by an intensity of at most 1.0, so **the brightest face IS this colour** and
+/// every other face is darker: the material is chosen to clear 3:1 against the white ground and the
+/// card it is multiplied onto, which a light material (it was a cool `0.78, 0.80, 0.84`) did not.
+const MATERIAL: Vec3<f32> = Vec3::new(
+    0x7f as f32 / 255.0,
+    0x7b as f32 / 255.0,
+    0x73 as f32 / 255.0,
+);
 /// Ambient term so faces away from the key light aren't pure black.
 const AMBIENT: f32 = 0.28;
 /// World up. **+Z, the STL/3MF convention** — see `auto_frame`. Named rather than spelled inline

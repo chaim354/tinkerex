@@ -22,41 +22,67 @@ lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface)
 /* Links are ink (design-system.md rule 13): the accent is spent on the one action. */
 .lexxy-content a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 
-/* CodeMirror 6 (the source viewer, the editor, diffs, history blobs).
+/* CodeMirror 6 (the source viewer, the editor, diffs, history blobs, the README editor).
 
-   THE PAINTING RULES ARE LIGHT-ONLY, and that is the whole arrangement: under the dark theme, or
-   `system` resolving dark, app/javascript/lib/codemirror_theme.js adds oneDark and nothing here
-   opposes it. Scoping them to the light theme is not decoration — an unscoped `.cm-editor { background: var(--surface) }` in
-   THIS sheet beats oneDark outright (the sheet is unlayered AND linked after the style module CM
-   mounts into the head, and `:root[data-theme] .cm-editor` out-specifies oneDark's own
-   generated-class selector), so the theme would load and paint nothing.
+   UNSCOPED, AND THAT IS THE WHOLE ARRANGEMENT (2026-10-21). Every colour below is a token, so one
+   rule holds in Paper and Graphite alike and a theme switch repaints an open editor with no
+   remount; the syntax colours are the same idea in JS (lib/codemirror_theme.js, a HighlightStyle of
+   --code-* properties). oneDark is gone and nothing is chosen at mount. Do NOT scope a rule here to
+   `:root[data-theme="light"]` or a media query: CodeMirror's view now ALWAYS runs its LIGHT
+   base-theme variant (nothing sets EditorView.darkTheme), so a rule that applies only in one theme
+   leaves that variant's literals (#f5f5f5 gutters, #d9d9d9 selection, black cursor) in the other.
 
-   `system` IS MATCHED THROUGH A MEDIA QUERY, not as a bare `:root[data-theme="system"]`.
-   application.css puts Graphite on `system` under `(prefers-color-scheme: dark)`, and the JS
-   resolves `system` with that same dark test; the light painting below asks the COMPLEMENT,
-   `(prefers-color-scheme: light)` (the only other value a browser reports). A bare selector would
-   paint this app's surface over oneDark for exactly the users whose OS is dark and whose theme is
-   "system" — the halves must agree, and the way to make them agree is to ask one question.
+   WHY THESE SELECTORS WIN, measured rather than assumed. CodeMirror's style module is a <style>
+   that style-mod inserts as the FIRST child of <head>, so this sheet (unlayered, linked last) wins
+   every tie by source order. Its rules are its generated scope classes — `&` is one class, `&light`
+   another — so `&light .cm-gutters` is (0,2,0) and `.cm-editor .cm-gutters` ties it. Where the
+   library's selector is longer the rule here copies its shape (`.cm-editor.cm-focused > .cm-scroller
+   > .cm-selectionLayer …`, `.cm-editor.cm-merge-b …`) so it ties again instead of out-guessing it.
+   test/system/code_theme_test.rb reads the computed ground, the gutter and a keyword's colour in
+   both themes and across a live switch.
 
-   The border, the radius and the selection colour are ours in BOTH themes: the first two are the
-   panel shape every surface in the app shares, and the third is the accent the rest of the page
-   selects with. */
-.cm-editor { border: 1px solid var(--line); border-radius: var(--radius-panel); }
-.cm-editor .cm-selectionBackground, .cm-editor ::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+   Tints: the selection and the active line keep ACCENT tints (design-system.md rule 13 — text
+   affordances, not UI selection state); the diff speaks --ok / --danger; everything else is the
+   panel vocabulary (--surface, --raised, --line, --fg, --fg-muted). */
+.cm-editor { border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }
+.cm-editor.cm-focused { outline: none; border-color: var(--fg); }
+.cm-editor .cm-gutters { background: var(--raised); color: var(--fg-muted); border-right: 1px solid var(--line); }
+.cm-editor .cm-activeLine { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.cm-editor .cm-activeLineGutter { background: color-mix(in srgb, var(--accent) 12%, var(--raised)); }
+.cm-editor .cm-cursor, .cm-editor .cm-dropCursor { border-left-color: var(--fg); }
+.cm-editor .cm-selectionBackground, .cm-editor ::selection,
+.cm-editor.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.cm-editor .cm-selectionMatch { background: color-mix(in srgb, var(--accent) 14%, transparent); }
+.cm-editor.cm-focused .cm-matchingBracket { background: color-mix(in srgb, var(--fg) 16%, transparent); }
+.cm-editor.cm-focused .cm-nonmatchingBracket { background: var(--danger-soft); }
+.cm-editor .cm-specialChar { color: var(--danger); }
+.cm-editor .cm-foldPlaceholder { background: var(--raised); border-color: var(--line); color: var(--fg-muted); }
+.cm-editor .cm-snippetField { background: color-mix(in srgb, var(--fg) 12%, transparent); }
 
-:root[data-theme="light"] .cm-editor { background: var(--surface); color: var(--fg); }
-:root[data-theme="light"] .cm-editor .cm-gutters { background: var(--raised); color: var(--fg-muted); border-right: 1px solid var(--line); }
-:root[data-theme="light"] .cm-editor .cm-activeLine { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-:root[data-theme="light"] .cm-editor .cm-activeLineGutter { background: color-mix(in srgb, var(--accent) 12%, var(--raised)); }
-:root[data-theme="light"] .cm-editor .cm-cursor { border-left-color: var(--fg); }
+/* Search (Mod-F, basicSetup's keymap) and the completion / hover tooltips, which mount INSIDE
+   .cm-editor. The selected completion is a selection, so it is ink (rule 13). */
+.cm-editor .cm-searchMatch { background: var(--warn-soft); outline: 1px solid var(--warn); }
+.cm-editor .cm-searchMatch-selected { background: color-mix(in srgb, var(--accent) 30%, transparent); }
+.cm-editor .cm-panels { background: var(--raised); color: var(--fg); }
+.cm-editor .cm-panels-top { border-bottom: 1px solid var(--line); }
+.cm-editor .cm-panels-bottom { border-top: 1px solid var(--line); }
+.cm-editor .cm-textfield { background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.cm-editor .cm-button, .cm-editor .cm-button:active { background: var(--surface); background-image: none; color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius-control); }
+.cm-editor .cm-tooltip { background: var(--raised); color: var(--fg); border: 1px solid var(--line); }
+.cm-editor .cm-tooltip-section:not(:first-child) { border-top-color: var(--line); }
+.cm-editor .cm-tooltip-autocomplete ul li[aria-selected] { background: var(--fg); color: var(--surface); }
+.cm-editor .cm-tooltip-autocomplete-disabled ul li[aria-selected] { background: var(--fg-muted); color: var(--surface); }
 
-@media (prefers-color-scheme: light) {
-  :root[data-theme="system"] .cm-editor { background: var(--surface); color: var(--fg); }
-  :root[data-theme="system"] .cm-editor .cm-gutters { background: var(--raised); color: var(--fg-muted); border-right: 1px solid var(--line); }
-  :root[data-theme="system"] .cm-editor .cm-activeLine { background: color-mix(in srgb, var(--accent) 8%, transparent); }
-  :root[data-theme="system"] .cm-editor .cm-activeLineGutter { background: color-mix(in srgb, var(--accent) 12%, var(--raised)); }
-  :root[data-theme="system"] .cm-editor .cm-cursor { border-left-color: var(--fg); }
-}
+/* The unified merge view (diffview_controller.js; the editor carries .cm-merge-b, and a deleted
+   chunk is a .cm-deletedChunk widget above the line it was replaced by). Line tints are the soft
+   tokens, the changed characters inside a line the strong ones mixed down, the change gutter the
+   strong ones whole. */
+.cm-editor.cm-merge-b .cm-changedLine { background: var(--ok-soft); }
+.cm-editor .cm-deletedChunk { background: var(--danger-soft); }
+.cm-editor.cm-merge-b .cm-changedText { background: color-mix(in srgb, var(--ok) 28%, transparent); }
+.cm-editor.cm-merge-b .cm-deletedText { background: color-mix(in srgb, var(--danger) 28%, transparent); }
+.cm-editor.cm-merge-b .cm-changedLineGutter { background: var(--ok); }
+.cm-editor .cm-deletedLineGutter { background: var(--danger); }
 
 /* The spreadsheet grid (jspreadsheet CE + jsuites) stays a LIGHT ISLAND in PR 1 — spec §13 names
    it as the one third-party surface that may keep its own scheme. color-scheme: light keeps its

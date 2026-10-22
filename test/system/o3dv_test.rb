@@ -143,6 +143,66 @@ class O3dvTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # THE VIEWER IS ON THE DESIGN SYSTEM, LIVE (2026-10-21). Three claims only a browser settles, each
+  # read off the engine rather than the markup: a mesh with no colour of its own wears the palette's
+  # `--model-material` (it was a cool blue-grey literal); flipping `html[data-theme]` — what
+  # theme_controller.js writes — repaints the open viewer's ground with no reload; and "Use this view
+  # as preview" photographs on the render paper (white) even from Graphite, because every thumbnail
+  # is multiplied onto its card (design-system.md rule 5) and a dark ground would stay a dark square.
+  # The ground is read back with readPixels in the same task as a Render(), since the engine's
+  # context keeps no drawing buffer.
+  #
+  # MUTATION-CHECKED (§15; outputs in the PR, then reverted): `defaultColor` back to
+  # `new OV.RGBColor(150, 160, 170)` reddens the material assertion with `["96a0aa"]`; deleting the
+  # `data-theme` MutationObserver's `observe` reddens "never repainted for Graphite"; deleting
+  # usePreview's white `SetBackgroundColor` reddens the capture with `[37, 38, 34]`.
+  STAGE_PIXEL_JS = <<~JS.freeze
+    (function () {
+      const el = document.querySelector(".model-viewer");
+      const three = window.Stimulus.getControllerForElementAndIdentifier(el, "modelviewer").viewer.GetViewer();
+      three.Render();
+      const gl = three.renderer.getContext();
+      const px = new Uint8Array(4);
+      gl.readPixels(2, 2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return Array.from(px).slice(0, 3);
+    })()
+  JS
+
+  test "the viewer wears the palette's material, repaints on a theme switch and saves a view on white" do
+    node = write_model!(name: "bracket.stl", body: binary_stl)
+    view_in_3d!(node)
+    assert_rendered(MeshFixture::STL_DIMS)
+    token = page.evaluate_script("getComputedStyle(document.documentElement).getPropertyValue('--model-material').trim()")
+    assert_equal "#7f7b73", token, "the token this test reads must be the palette's material"
+    assert_equal [ "7f7b73" ], mesh_materials.map { _1["hex"] }.uniq, "an uncoloured STL wears --model-material"
+    assert_equal [ 235, 232, 225 ], page.evaluate_script(STAGE_PIXEL_JS), "Paper's --raised before the switch"
+
+    page.execute_script("document.documentElement.dataset.theme = 'dark'")
+    wait_until(message: "the open viewer never repainted for Graphite") { page.evaluate_script(STAGE_PIXEL_JS) == [ 37, 38, 34 ] }
+
+    click_on "Use this view as preview"
+    assert_selector ".mv-status", text: "Saved as the preview."
+    # THE STORED BYTES, decoded by the browser: the row's own blob, same-origin, drawn into a canvas.
+    row = @user.maker_previews.find_by!(node_id: node.node_id, kind: "thumbnail")
+    saved = Rails.application.routes.url_helpers.rails_blob_path(row.asset, only_path: true)
+    corner = page.evaluate_async_script(<<~JS, saved)
+      const done = arguments[arguments.length - 1];
+      const probe = new Image();
+      probe.onload = () => {
+        const c = document.createElement("canvas"); c.width = probe.width; c.height = probe.height;
+        const ctx = c.getContext("2d"); ctx.drawImage(probe, 0, 0);
+        done(Array.from(ctx.getImageData(1, 1, 1, 1).data).slice(0, 3));
+      };
+      probe.onerror = () => done(null);
+      probe.src = arguments[0];
+    JS
+    assert_equal [ 255, 255, 255 ], corner, "a view saved from Graphite is still photographed on the render paper"
+    assert_equal [ 37, 38, 34 ], page.evaluate_script(STAGE_PIXEL_JS), "the open viewer keeps Graphite's ground after the capture"
+    assert_no_console_errors
+  ensure
+    page.execute_script("document.documentElement.dataset.theme = 'light'")
+  end
+
   # THE OPEN VIEWER'S BAR AT 375px (design-system.md rule 11). shell_test.rb's phone sweep launches
   # the Gerber viewer but not this one, and "Use this view as preview" took the open bar's buttons
   # to 435px: unwrapped, the page scrolled sideways to 464. The viewport is set through CDP for the
