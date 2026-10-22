@@ -274,7 +274,11 @@ fn a_face_square_on_to_the_key_light_renders_the_material() {
 
     use std::collections::HashMap;
     let mut counts: HashMap<[u8; 4], usize> = HashMap::new();
-    for p in pixels.iter().filter(|p| **p != [255, 255, 255, 255]) {
+    // The CORNER is the background, whatever colour it is: this test is about the material, and
+    // the two ground tests above answer for the ground, so a ground mutation reddens them and not
+    // this one.
+    let ground = pixels[0];
+    for p in pixels.iter().filter(|p| **p != ground) {
         *counts.entry(*p).or_default() += 1;
     }
     let (face, n) = counts

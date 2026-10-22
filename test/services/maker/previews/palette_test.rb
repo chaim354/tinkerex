@@ -50,7 +50,7 @@ module Maker
       test "INK is Paper's --fg, the first :root block's" do
         block = css[/^\s*:root\s*\{(.*?)^\s*\}/m, 1]
         assert_not_nil block, "application.css has no :root { … } block"
-        assert_match(/color-scheme:\s*light/, block, "the first :root block is no longer Paper")
+        assert block.match?(/color-scheme:\s*light/), "the first :root block is no longer Paper"
 
         fg = block[/^\s*--fg:\s*([^;]+);/, 1]
         assert_not_nil fg, "the Paper :root block no longer defines --fg"
