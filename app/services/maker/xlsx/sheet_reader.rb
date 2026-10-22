@@ -179,8 +179,9 @@ module Maker
       end
 
       # Excel's column width is in characters of the default font's widest digit (7px for 11pt
-      # Calibri) plus 5px of padding.
-      def px(chars) = (chars * 7 + 5).round.clamp(40, 400)
+      # Calibri, plus 5px of padding). The grid draws in the app's own 13px UI face, a little wider,
+      # so a character is 8px and the padding the cell's own: an ISO date fits the default column.
+      def px(chars) = (chars * 8 + 12).round.clamp(40, 400)
     end
   end
 end

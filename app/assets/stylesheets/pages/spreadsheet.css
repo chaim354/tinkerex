@@ -10,7 +10,7 @@
   /* The sheet tabs ARE the tab component, drawn as buttons because a tab here shows a pane rather
      than following a link; this only takes away what a button brings. The bar scrolls sideways
      like every tab bar (components.css), so a workbook of thirty sheets keeps one row. */
-  .spreadsheet-tabs { flex: 1 1 16rem; min-width: 0; }
+  .spreadsheet-tabs { flex: 1 1 16rem; min-width: 0; overflow-y: hidden; }
   .spreadsheet-tabs .tab-link { background: none; border-top: 0; border-left: 0; border-right: 0;
                                 font: inherit; font-weight: 500; cursor: pointer; }
   .spreadsheet-status { color: var(--fg-muted); font-size: 13px; }

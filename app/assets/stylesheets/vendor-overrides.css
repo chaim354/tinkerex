@@ -79,6 +79,8 @@ lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface)
   background-color: var(--raised); color: var(--fg-muted); border-top-color: var(--line); border-left-color: var(--line);
   font: 400 12px/18px var(--font-mono);
 }
+/* The column letters stay centred whatever alignment the column itself carries. */
+.spreadsheet-grid .jss_worksheet > thead > tr > td { text-align: center; }
 .spreadsheet-grid .jss_worksheet > thead > tr > td.selected,
 .spreadsheet-grid .jss_worksheet > tbody > tr.selected > td:first-child { background-color: var(--line); color: var(--fg); }
 .spreadsheet-grid .jss_worksheet > tbody > tr > td.readonly { color: var(--fg-muted); }

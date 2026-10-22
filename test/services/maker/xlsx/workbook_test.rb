@@ -44,9 +44,9 @@ class Maker::Xlsx::WorkbookTest < ActiveSupport::TestCase
   test "column widths come from the sheet, in pixels" do
     widths = sheet_payload[:widths]
     assert_equal 5, widths.size
-    assert_equal (24.7109375 * 7 + 5).round, widths[0]
-    assert_equal (12.7109375 * 7 + 5).round, widths[1]
-    assert_equal (8.43 * 7 + 5).round, widths[4], "an unlisted column takes the default width"
+    assert_equal (24.7109375 * 8 + 12).round, widths[0]
+    assert_equal (12.7109375 * 8 + 12).round, widths[1]
+    assert_equal (8.43 * 8 + 12).round, widths[4], "an unlisted column takes the default width"
   end
 
   test "a formula with no stored result shows as its own text" do

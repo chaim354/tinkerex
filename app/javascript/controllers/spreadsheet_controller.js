@@ -19,6 +19,9 @@ import { Controller } from "@hotwired/stimulus"
 // THE GRID DOES NOT EVALUATE FORMULAS (`parseFormulas: false`): it shows the values Excel stored,
 // and a typed `=…` stays text in the grid and is saved as a formula Excel calculates on open.
 const loading = new Map()
+// What CellFormat shows a number or a date as: a sign, a currency symbol, digits with thousands
+// commas, a fraction, an exponent, a percent; or an ISO date with an optional time.
+const NUMERIC = /^(-?[$€£¥]?[\d,]*\.?\d+(E[-+]?\d+)?%?|\d{4}-\d{2}-\d{2}( \d{2}:\d{2})?|\d{2}:\d{2}(:\d{2})?)$/i
 
 function loadScript(src) {
   if (!loading.has(src)) {
@@ -202,8 +205,14 @@ export default class extends Controller {
     const cols = Math.max(sheet.shown_cols, 1) + (editable && !sheet.more_cols ? 3 : 0)
     sheet.original = Array.from({ length: rows }, (_, y) => sheet.rows[y] || [])
     sheet.ids = Array.from({ length: rows }, (_, y) => y)
-    const columns = Array.from({ length: cols }, (_, x) => ({ width: sheet.widths[x] || 80, type: "text", readOnly: !editable }))
+    const columns = Array.from({ length: cols }, (_, x) => ({ width: sheet.widths[x] || 80, type: "text", align: "left", readOnly: !editable }))
     const rowOps = this.rowOps(sheet)
+    // Excel's alignment for a cell with no alignment of its own: text to the left, a number or a
+    // date to the right. Read off the loaded values; a typed cell keeps the column's left.
+    const style = {}
+    sheet.rows.forEach((row, y) => row.forEach((value, x) => {
+      if (NUMERIC.test(value)) style[`${columnName(x)}${y + 1}`] = "text-align: right"
+    }))
 
     const grid = document.createElement("div")
     grid.className = "spreadsheet-grid"
@@ -214,6 +223,7 @@ export default class extends Controller {
         data: sheet.rows.map((row) => row.slice()),
         minDimensions: [ cols, rows ],
         columns,
+        style,
         editable,
         allowInsertRow: rowOps,
         allowManualInsertRow: rowOps,
@@ -398,7 +408,10 @@ export default class extends Controller {
       }
       this.dirty = false
       await this.load()
-      if (!this.disconnected) this.setStatus("Saved")
+      // Nothing here calculates a formula, so a total over an edited cell still shows the old
+      // result until Excel or LibreOffice opens the file (the save asks them to recalculate).
+      const formulas = this.sheets.some((sheet) => Object.keys(sheet.formulas || {}).length > 0)
+      if (!this.disconnected) this.setStatus(formulas ? "Saved. Formulas update when the file is next opened in Excel or LibreOffice." : "Saved")
     } catch (error) {
       this.setStatus("Not saved. Check your connection and try again.", true)
     } finally {
