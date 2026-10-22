@@ -74,10 +74,25 @@ module V1
         assert_equal [ "Vase" ], titles, "uppercase query must still match a lowercase-stored title via LOWER()"
       end
 
+      # A LITERAL MUST BE FOUND, NOT MERELY NOT-OVERMATCH. This once asserted `q: "%"` returns
+      # `[]`, which passes with or without `ESCAPE '\'` on SQLite: lacking it, the sanitized
+      # pattern `%\%%` hunts for a backslash nobody stored and finds nothing — the same answer the
+      # test wanted. Both rows below share "100", so each half carries weight: drop ESCAPE and the
+      # search finds nothing; drop sanitize_sql_like and `%` matches "100 percent" too.
       test "search treats % as a literal, not a wildcard" do
-        get "/v1/maker/items", params: { q: "%" }, headers: auth(@token)
+        post "/v1/maker/items", params: { item: { title: "100% infill" } }, as: :json, headers: auth(@token)
+        post "/v1/maker/items", params: { item: { title: "100 percent" } }, as: :json, headers: auth(@token)
+        get "/v1/maker/items", params: { q: "100%" }, headers: auth(@token)
         titles = JSON.parse(response.body)["items"].map { |i| i["title"] }
-        assert_equal [], titles, "a literal % must not match every row"
+        assert_equal [ "100% infill" ], titles
+      end
+
+      test "search treats _ as a literal, not a single-character wildcard" do
+        post "/v1/maker/items", params: { item: { title: "M3_8 bolt" } }, as: :json, headers: auth(@token)
+        post "/v1/maker/items", params: { item: { title: "M3-8 bolt" } }, as: :json, headers: auth(@token)
+        get "/v1/maker/items", params: { q: "M3_8" }, headers: auth(@token)
+        titles = JSON.parse(response.body)["items"].map { |i| i["title"] }
+        assert_equal [ "M3_8 bolt" ], titles
       end
     end
   end

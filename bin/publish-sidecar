@@ -45,7 +45,12 @@ echo "==> 3/5 building and pushing $REVISION"
 bin/build-sidecar "$NAME"
 
 echo "==> 4/5 rolling the $NAME accessory"
-if bin/kamal accessory exec "$NAME" --reuse -q true >/dev/null 2>&1; then
+# THE PROBE'S COMMAND MUST NOT BE A WORD THOR READS AS A BOOLEAN. `--reuse -q true` hands `true` to
+# `-q` as its value, so kamal runs `docker exec <c>` with NO command, which fails on a RUNNING
+# container — the probe then reads "absent", `boot` skips the existing container and exits 0, and
+# nothing is rolled (caught by step 5 on the first real run, 2026-10-19). Any of true/false/yes/no/
+# on/off after a boolean flag vanishes the same way; `echo probe` cannot.
+if bin/kamal accessory exec "$NAME" --reuse -q "echo probe" >/dev/null 2>&1; then
   first=no
   bin/kamal accessory reboot "$NAME"
 else

@@ -136,9 +136,14 @@ named below. Trimmed long-form notes used to live in `docs/plan-direct-client.md
   and `docs/superpowers/plans/2026-08-02-addon-sdk-host-prep.md`.
 - **What survived the pivot:** almost none of the above. The `path:` procs in particular solved
   per-addon route-helper variation, which the current approach removes entirely by collapsing to
-  one generic route. Two *unrelated* findings from that work were worth keeping and are now §14e
-  invariants: the `assert_select` message-vs-comparator footgun, and `pin_all_from`'s lazy
-  expansion making importmap wiring unverifiable by config inspection.
+  one generic route. Two *unrelated* findings from that work were worth keeping: the
+  `assert_select` message-vs-comparator footgun, and `pin_all_from`'s lazy expansion making
+  importmap wiring unverifiable by config inspection. **This line called them §14e invariants from
+  2026-08-02 (PR #116), but the commit that wrote them (`11d02986`) lived only on the PR #115
+  branch and never reached `main`.** Both were re-probed on 2026-10-22 (rails-dom-testing 2.3.0,
+  importmap-rails 2.2.3), still held, and landed in CLAUDE.md §14e then: the first in the
+  `assert_select`'s-arguments bullet, the second folded into the CSP bullet ("only a browser
+  knows") as its importmap instance.
 - **Current approach:** addons as **runtime-loaded manifest + plain-ESM bundles**, served by a
   permissive static container and proxied same-origin by one generic `Tools::AddonsController` —
   `docs/superpowers/specs/2026-08-02-addons-runtime-bundle-design.md`. Republishing a bundle *is*
@@ -147,7 +152,7 @@ named below. Trimmed long-form notes used to live in `docs/plan-direct-client.md
 - **Note for a future reader:** the repo actually built for that current approach is
   `chaim354/tinkerex-addons`, not the `maker-addons` name this abandoned engine-gem plan proposed
   above — don't go looking for a repo by that name. See CLAUDE.md §14c for the invariants and
-  `docs/STATUS.md`'s 2026-08-03 entry for the arc.
+  `tinkerex#57` (the 2026-08-03 arc, once STATUS.md's entry) in the record, CLAUDE.md §11.
 
 ---
 

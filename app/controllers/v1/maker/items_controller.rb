@@ -12,10 +12,14 @@ module V1
         if params[:q].present?
           # LOWER(...) keeps the search case-insensitive on BOTH SQLite and Postgres
           # (Postgres LIKE is case-sensitive; SQLite LIKE is not — see CLAUDE.md §15 adapter-agnostic).
+          # `ESCAPE '\'` is SearchController's idiom and is load-bearing: SQLite has no default LIKE
+          # escape character, so without it the backslash sanitize_sql_like puts before `%` and `_`
+          # is matched literally and a search for "100%" finds nothing on self-host.
           term = ActiveRecord::Base.sanitize_sql_like(params[:q].to_s.strip.downcase)
           like = "%#{term}%"
           items = items.where(
-            "LOWER(title) LIKE :q OR LOWER(summary) LIKE :q OR LOWER(description) LIKE :q", q: like
+            "LOWER(title) LIKE :q ESCAPE '\\' OR LOWER(summary) LIKE :q ESCAPE '\\' " \
+            "OR LOWER(description) LIKE :q ESCAPE '\\'", q: like
           )
         end
         render json: { items: items.map { |i| item_json(i) } }
