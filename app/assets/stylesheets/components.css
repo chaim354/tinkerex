@@ -624,6 +624,55 @@
     margin: 0 0 var(--space-4); padding: 10px 12px; border: 1px solid var(--info); border-radius: var(--radius-panel);
     background: var(--info-soft); color: var(--fg); font-size: 14px; overflow-wrap: anywhere;
   }
+/* --- The calculator (layouts/_calculator.html.erb, calculator_controller.js; 2026-10-21). A
+   native <dialog> opened with showModal(), so it sits in the top layer above every page and its
+   ::backdrop is the scrim; the UA's own dialog border, padding and colours are reset here. At
+   phone width it takes the whole width less the gutter and scrolls inside itself, so nothing on
+   a 375px screen scrolls sideways (design-system.md rule 11). --- */
+dialog.calculator {
+  width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
+  background: var(--surface); color: var(--fg); font: 400 14px/1.4 var(--font-ui);
+}
+dialog.calculator::backdrop { background: var(--scrim); }
+.calculator-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.calculator-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.calculator-close { min-width: var(--control-height-small); min-height: var(--control-height-small); background: none; border: 0; border-radius: var(--radius-control); color: var(--fg-muted); font-size: 20px; line-height: 1; cursor: pointer; }
+.calculator-close:hover { background: var(--raised); color: var(--fg); }
+.calculator-entry { padding: 14px 16px 0; }
+.calculator-input-label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--fg-muted); }
+.calculator-input-row { display: flex; gap: var(--space-2); }
+.calculator-input-row .calculator-input { flex: 1; min-width: 0; font: 400 16px/22px var(--font-mono); }
+.calculator-equals { min-width: 44px; font-size: 18px; }
+.calculator-answer { padding: 10px 16px 4px; min-height: 52px; overflow-wrap: anywhere; }
+.calculator-result { display: block; font: 600 22px/1.3 var(--font-mono); color: var(--fg); }
+.calculator-result.stale { color: var(--fg-muted); }
+.calculator-result-alt { display: block; font: 400 13px/1.4 var(--font-mono); }
+.calculator-error { margin: 0; padding: 6px 10px; border-radius: var(--radius-control); background: var(--danger-soft); color: var(--danger); font-size: 13px; }
+.calculator-fraction { display: flex; align-items: center; gap: var(--space-2); padding: 4px 16px 10px; font-size: 12px; }
+.calculator-section { margin: 0 16px; border-top: 1px solid var(--line); }
+.calculator-section > summary { padding: 10px 0; font-weight: 500; cursor: pointer; }
+.calculator-section[open] > summary { padding-bottom: 6px; }
+.calculator-section[open] { padding-bottom: 12px; }
+.calculator-history { list-style: none; margin: 0 0 8px; padding: 0; max-height: 180px; overflow-y: auto; }
+.calculator-history-item { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--radius-control); background: none; color: var(--fg); font: 400 13px/1.4 var(--font-mono); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.calculator-history-item:hover { background: var(--raised); }
+.calculator-history-item code { font: inherit; }
+.calculator-history-result { color: var(--fg-muted); }
+.calculator-save-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-2); }
+.calculator-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; color: var(--fg-muted); }
+.calculator-field select, .calculator-field input { width: 100%; min-width: 0; box-sizing: border-box; }
+.calculator-save-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin-top: var(--space-2); }
+.calculator-save-what { font: 400 12px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+.calculator-saved { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: var(--radius-control); background: var(--ok-soft); color: var(--fg); font-size: 13px; }
+.calculator-save-error { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: var(--radius-control); background: var(--danger-soft); color: var(--danger); font-size: 13px; }
+.calculator-save-hint { margin: 0 0 var(--space-2); font-size: 13px; }
+.calculator-help { margin: 0; padding: 10px 16px 14px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; }
+.calculator-help code { font: 400 12px/1 var(--font-mono); white-space: nowrap; }
+@media (max-width: 480px) {
+  .calculator-save-fields { grid-template-columns: minmax(0, 1fr); }
+}
+
   /* The demo's door on the sign-in card (users/sessions/new): its button and one sentence, set off
      from the form below by the hairline the card's links use above them. */
   .demo-entry { margin: 0 0 var(--space-4); padding: 0 0 var(--space-4); border-bottom: 1px solid var(--line); }

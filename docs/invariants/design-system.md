@@ -194,8 +194,8 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     put there would change what a visitor sees and what the downloads carry; the public page already
     omits an empty panel in each of its own partials. `ProjectsController::ON_DEMAND` names the
     panels that leave the maker's normal page while they hold no row (Build log, Tasks, BOM, Wiring,
-    Releases, Sheets), and `panel_has_rows?` answers from data `#show` already loaded, so the
-    decision costs no query. Three things not to undo. **A panel the maker hid stays hidden**: the
+    Releases, Sheets, Calculations), and `panel_has_rows?` answers from data `#show` already loaded,
+    so the decision costs no query. Three things not to undo. **A panel the maker hid stays hidden**: the
     layout's `visible?` is asked first, so neither `?add=` nor the add menu can bring it back. **The
     editor shows every panel**: `@editing` skips all of this, so an empty panel can still be
     arranged. **"+ Add panel" is per-visit and persists nothing**: `?add=<key>` opens that one

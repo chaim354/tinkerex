@@ -1,0 +1,53 @@
+<%#
+  SAVE A RESULT TO A PROJECT (the calculator modal; CalculationsController). Its own element id
+  because `create` answers with a stream that REPLACES this form — cleared after a save, with the
+  maker's own label and choice kept after a refusal.
+
+  THE FOUR HIDDEN FIELDS ARE FILLED BY calculator_controller.js AT SUBMIT (`prepareSave`) from the
+  result on screen, never from these values: what is saved is what the maker is looking at. Their
+  `value: nil` is deliberate — a scoped form falls back to the model, and a refused save must not
+  carry the previous expression forward into the next one (the form-with-scope trap, §14d).
+
+  `scope: :calculation` because Maker::Calculation is namespaced and would otherwise post
+  `maker_calculation[...]`, which `params.require(:calculation)` refuses (§14d's scope: bug class);
+  calculations_test.rb asserts the rendered field names.
+%>
+<%= form_with model: @calculation, scope: :calculation, url: calculations_path, method: :post,
+              id: "calculator-save-form", class: "calculator-save-form",
+              data: { action: "submit->calculator#prepareSave" } do |f| %>
+  <% if @saved %>
+    <p class="calculator-saved" role="status">
+      Saved “<%= @saved.label %>” to
+      <%= link_to @saved.project.name, project_path(@saved.project, anchor: "project-calculations"),
+                  data: { turbo_frame: "_top" } %>.
+    </p>
+  <% end %>
+  <% if @calculation.errors.any? %>
+    <p class="calculator-save-error" role="alert"><%= @calculation.errors.full_messages.to_sentence %></p>
+  <% end %>
+  <% if @projects.empty? %>
+    <p class="muted">Saved calculations live on a project, and you have none yet.
+      <%= link_to "Make a project", new_project_path, data: { turbo_frame: "_top" } %> first.</p>
+  <% else %>
+    <div class="calculator-save-fields">
+      <label class="calculator-field">
+        <span>Project</span>
+        <%= f.select :project_id, @projects, { include_blank: "Choose a project…", selected: @calculation.project_id },
+                     required: true %>
+      </label>
+      <label class="calculator-field">
+        <span>Label</span>
+        <%= f.text_field :label, value: @calculation.label, placeholder: "Shelf depth", required: true,
+                         maxlength: Maker::Calculation::LABEL_MAX, autocomplete: "off" %>
+      </label>
+    </div>
+    <%= f.hidden_field :expression, value: nil, data: { calculator_target: "saveExpression" } %>
+    <%= f.hidden_field :result, value: nil, data: { calculator_target: "saveResult" } %>
+    <%= f.hidden_field :unit, value: nil, data: { calculator_target: "saveUnit" } %>
+    <%= f.hidden_field :inch_fraction, value: nil, data: { calculator_target: "saveFraction" } %>
+    <div class="calculator-save-actions">
+      <%= f.submit "Save", class: "btn small", name: nil %>
+      <span class="calculator-save-what muted" data-calculator-target="saveWhat"></span>
+    </div>
+  <% end %>
+<% end %>

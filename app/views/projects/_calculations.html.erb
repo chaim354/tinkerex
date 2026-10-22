@@ -1,0 +1,22 @@
+<%#
+  SAVED CALCULATIONS (2026-10-21; plan 2026-10-21-calculator-modal.md): results saved from the
+  calculator modal's Save to project, oldest first, each with its label, the expression and the
+  answer. ON DEMAND (ProjectsController::ON_DEMAND): absent while empty, offered by "+ Add panel",
+  and quiet when opened that way — its heading, the button that opens the calculator, and one line
+  saying how a row gets here, because the calculator is the only way in.
+
+  NEVER PUBLIC. public/projects/_page's `public_panels` map is the whole definition of a public
+  face, and this key is not in it, so neither a visitor's page nor the owner's preview renders it.
+
+  Reads @project, @calculations and @panel_layout, like the panels around it. The rows are their own
+  partial so CalculationsController#create's stream can replace them when a save from the modal
+  lands while this page is open.
+%>
+<section class="panel calculations-panel<%= " panel--quiet" if @calculations.empty? %>" id="project-calculations">
+  <div class="panel-head">
+    <h2><%= panel_title(@panel_layout, "calculations") %></h2>
+    <button type="button" class="btn small" data-calculator-open aria-haspopup="dialog">Open calculator</button>
+  </div>
+  <%= panel_intro(@panel_layout, "calculations") %>
+  <%= render "projects/calculation_rows", project: @project, calculations: @calculations %>
+</section>

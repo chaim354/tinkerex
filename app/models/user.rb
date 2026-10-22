@@ -78,6 +78,9 @@ class User < ApplicationRecord
   has_many :maker_boms, class_name: "Maker::Bom", dependent: :destroy
   has_many :maker_bom_lines, class_name: "Maker::BomLine", dependent: :destroy
   has_many :maker_connections, class_name: "Maker::Connection", dependent: :destroy
+  # Calculator results saved onto a project (2026-10-21). Destroyed with the project too
+  # (Maker::Project#calculations); this is the tenant sweep's own door.
+  has_many :maker_calculations, class_name: "Maker::Calculation", dependent: :destroy
   # Content blocks (2026-09-09): the text, link and image blocks on a project's page. Destroyed
   # with the project too (Maker::Project#blocks); this is the tenant sweep's own door, the one
   # test/models/tenant_cleanup_test.rb asks for.
@@ -181,7 +184,7 @@ class User < ApplicationRecord
     u explore admin administrator api v1 assets rails up files projects models tools settings
     trash search tags inventory shelves suppliers locations repos library notes attachments
     build_log_entries users login logout sign_in sign_up signin signup register account
-    connections csp-violation-report sheets tasks
+    connections csp-violation-report sheets tasks calculations
     tinkerex support help about root www mail
   ].freeze
 
