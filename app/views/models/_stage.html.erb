@@ -1,0 +1,28 @@
+<%# locals: (model:, stage:, viewer:) %>
+<%# THE MODEL PAGE'S PANE (2026-10-21): Details, or one of the model's files through files/_viewer,
+    the file page's own chain. A Turbo Frame the list's links target (data-turbo-frame), and
+    `target="_top"` so every link and form INSIDE it — Download, Open file page, Edit, the print
+    log's forms — moves the whole page rather than the pane. The gallery's links opt back into the
+    frame explicitly (models/_details).
+
+    THE PANE VIEWS; THE FILE PAGE EDITS. `editable: false` and `save: false` are the visitor's modes
+    of the code and Measure viewers, already supported, so nothing here can write to the library;
+    editing, notes and history are one click away through "Open file page". No thumbnail poll
+    either: a render in flight shows the viewer's own "Generating preview…". %>
+<%= turbo_frame_tag "model_stage", class: "model-stage", target: "_top",
+                    data: { modelstage_target: "stage" } do %>
+  <% if stage == :details %>
+    <%= render "models/details" %>
+  <% else %>
+    <div class="model-stage-head">
+      <h2 class="model-stage-name"><%= stage.name %></h2>
+      <span class="model-stage-actions">
+        <%= link_to "Download", blob_file_path(stage.node_id, download: 1), class: "btn small" %>
+        <%= link_to "Open file page", file_path(stage.node_id), class: "btn small" %>
+      </span>
+    </div>
+    <div class="preview">
+      <%= render "files/viewer", viewer: viewer, editable: false, save: false %>
+    </div>
+  <% end %>
+<% end %>

@@ -1,7 +1,8 @@
+<%# locals: (nodes:, model:, current:) %>
 <%#
   Recursive folder tree for a model's files. `nodes` is [{dir:, children:[...]}, {file:}, ...] as
   built by ModelsController#build_file_tree. Folders are native <details> (collapsible, no JS);
-  files link to the existing /files/:node_id preview page.
+  a file opens in the model page's pane, and in a new tab on its file page on a double-click.
 %>
 <ul class="file-tree">
   <% nodes.each do |item| %>
@@ -9,13 +10,17 @@
       <li class="tree-dir">
         <details open>
           <summary><span class="tree-folder"><%= folder_glyph %><%= item[:dir].name %></span></summary>
-          <%= render "file_tree", nodes: item[:children] %>
+          <%= render "file_tree", nodes: item[:children], model: model, current: current %>
         </details>
       </li>
     <% else %>
       <% node = item[:file] %>
       <li class="tree-file">
-        <%= link_to node.name, file_path(node.node_id), title: node.name, class: "tree-fname" %>
+        <%= link_to node.name, model_path(model, file: node.node_id), title: node.name, class: "tree-fname",
+                    aria: { current: ("true" if node.node_id == current) },
+                    data: file_open_data({ turbo_frame: "model_stage", turbo_action: "advance",
+                                           modelstage_target: "entry" },
+                                         new_tab: file_path(node.node_id)) %>
       </li>
     <% end %>
   <% end %>

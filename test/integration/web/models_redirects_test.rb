@@ -2,8 +2,9 @@ require "test_helper"
 
 module Web
   # /models FOLDS INTO THE LIBRARY (structural redesign §5.4, slice 5): the index is a Library view at
-  # /files/models, and a model page redirects to its folder whenever that folder will show its strip —
-  # otherwise the page stays (Maker::ModelFolder.landing_folder_id is the one answer).
+  # /files/models, and /models still 301s there. A MODEL PAGE NO LONGER REDIRECTS (2026-10-21): every
+  # model renders its own page — files on the left, a pane on the right — folder model or not
+  # (model_stage_test.rb carries the page itself).
   class ModelsRedirectsTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -21,13 +22,11 @@ module Web
       assert_redirected_to files_models_path(q: "brack", status: "printed", tag: "shop", sort: "title")
     end
 
-    test "a folder model's page redirects to its folder, temporarily, and the folder shows its strip" do
+    test "a folder model renders its own page, never a redirect to its folder" do
       model = @user.maker_models.create!(title: "Wall Bracket", folder_node_id: "d-bracket")
       get model_path(model)
-      assert_response :found
-      assert_redirected_to files_path(folder: "d-bracket")
-      follow_redirect!
-      assert_select ".model-strip h2", text: "Wall Bracket"
+      assert_response :success
+      assert_select ".page-head h1", text: "Wall Bracket"
     end
 
     test "a one-file model and a folderless import keep the model page" do
@@ -42,33 +41,14 @@ module Web
       assert_response :success
     end
 
-    test "a model whose folder is in the trash keeps the model page" do
-      model = @user.maker_models.create!(title: "Wall Bracket", folder_node_id: "d-bracket")
-      @user.nodes.find_by!(node_id: "d-bracket").update!(deleted: true)
-      get model_path(model)
-      assert_response :success
-    end
-
-    # A PROJECT'S CLAIM WINS (model-intake.md), so the folder shows the project and no strip — and a
-    # redirect there would land the maker on a folder that shows nothing of the model they clicked.
-    test "a model whose folder a project claims keeps the model page" do
-      model = @user.maker_models.create!(title: "Wall Bracket", folder_node_id: "d-bracket")
-      @user.maker_projects.create!(name: "Shelf Unit").update_column(:folder_node_id, "d-bracket")
-      get model_path(model)
-      assert_response :success
-      assert_select "h1", text: "Wall Bracket"
-    end
-
-    # THE OWNERSHIP 404 COMES FIRST. `set_model` resolves through current_user before #show reaches
-    # Maker::ModelFolder, so another user's FOLDER model — one that WOULD redirect for its owner — is a
-    # 404 here, never a 302 whose Location names their folder. A folderless fixture could not tell the
-    # two orders apart (cross_user_authorization_test.rb's assert_unreadable passes on any non-2xx).
+    # THE OWNERSHIP 404 COMES FIRST. `set_model` resolves through current_user before #show reads
+    # anything of the model, so another user's FOLDER model is a 404 here and nothing of theirs — not
+    # its folder, not a file — reaches the response.
     test "another user's folder model is a 404, never a redirect into their folder" do
       other = User.create!(email: "mr-other-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
                            confirmed_at: Time.current)
       other.nodes.create!(node_id: "d-theirs", name: "theirs", kind: "dir", mtime: 1, size: 0)
       theirs = other.maker_models.create!(title: "Their Bracket", folder_node_id: "d-theirs")
-      assert_equal "d-theirs", Maker::ModelFolder.landing_folder_id(other, theirs), "fixture: it redirects for its owner"
 
       get model_path(theirs)
       assert_response :not_found
@@ -128,7 +108,7 @@ module Web
       assert_select "aside.rail a.rail-link[href=?]", files_models_path, text: /3D models/
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: /Library/
 
-      # The same key on a model page that survives: ModelsController's pages are the 3D models place.
+      # The same key on a model page: ModelsController's pages are the 3D models place.
       get model_path(@user.maker_models.create!(title: "Orphan"))
       assert_select "aside.rail [aria-current='page']", count: 1, text: /3D models/
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: /Library/

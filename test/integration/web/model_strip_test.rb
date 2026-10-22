@@ -2,7 +2,7 @@ require "test_helper"
 
 module Web
   # THE MODEL STRIP (structural redesign §5.4, slice 5): a catalogued model's folder shows its cover,
-  # status, details and print log above the files, which is what the model page used to carry.
+  # status, details and print log above the files, and its title links the model's own page.
   class ModelStripTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -23,6 +23,8 @@ module Web
       assert_response :success
       assert_select ".library-main > .model-strip", count: 1
       assert_select ".model-strip h2", text: "Wall Bracket"
+      # THE TITLE OPENS THE MODEL'S OWN PAGE (2026-10-21), which every model renders now.
+      assert_select ".model-strip h2 a[href=?]", model_path(@model)
       assert_select ".model-strip .badge.mstatus-want_to_print", text: "Wanted"
       assert_select ".model-strip", text: /Ada/
       assert_select ".model-strip a[href=?]", "https://example.com/b"

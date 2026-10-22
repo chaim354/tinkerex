@@ -270,9 +270,9 @@ class FilesController < ApplicationController
       # could not hide.
       @folder_project = @folder && current_user.maker_projects.find_by(folder_node_id: @folder.node_id)
       # THE FOLDER'S 3D MODEL, IF IT IS ONE (structural redesign §5.4, slice 5): the model strip above
-      # the files. Maker::ModelFolder is the one definition (the redirect from /models/:id reads it
-      # too). A project's claim wins, so a claimed folder never asks. Constant in N, beside
-      # @folder_project's lookup and for the same reason.
+      # the files. Maker::ModelFolder is the strip's one definition. A project's claim wins, so a
+      # claimed folder never asks. Constant in N, beside @folder_project's lookup and for the same
+      # reason.
       @folder_model = (@folder && @folder_project.nil?) ? Maker::ModelFolder.model_in(current_user, @folder.node_id) : nil
       load_model_strip(@folder_model) if @folder_model
       # `.outside_repo_metadata` here for the same reason it is on the flat scope above, and on

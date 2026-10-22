@@ -67,7 +67,7 @@ landed it (§11).
    projects. **The Library's 3D models view (`files/models`, slice 5) lights the 3D models place,
    not Library**, although its first segment is `files`: `sidebar_current`'s files arm checks
    `controller_path == "files/models"` before the pin walk. The phone tab bar has no place of its
-   own for it, so it lights Library for `[:models]`, on the view and on the model pages that survive
+   own for it, so it lights Library for `[:models]`, on the view and on the model pages
    (`models/*`, which `SECTIONS` still maps to 3D models); `models_redirects_test.rb` pins both
    lights on the view. `SECTIONS`' `models` entry no longer names `shelves`, so `settings/shelves`
    lights Settings. The sidebar and the phone tab bar both read `sidebar_current`;

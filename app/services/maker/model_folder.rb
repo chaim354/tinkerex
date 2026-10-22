@@ -1,7 +1,7 @@
 module Maker
-  # THE ONE ANSWER TO "WHICH 3D MODEL DOES THIS FOLDER SHOW?" AND "WHERE DOES /models/:id SEND YOU?"
-  # (structural redesign §5.4, slice 5). The Library's model strip and ModelsController#show's redirect
-  # read this, so the two can never disagree about whether a model has a strip to land on.
+  # THE ONE ANSWER TO "WHICH 3D MODEL DOES THIS FOLDER SHOW?" (structural redesign §5.4, slice 5). The
+  # Library's model strip reads this. It answered a second question too — where /models/:id sent you —
+  # until 2026-10-21, when every model got its own page and the redirect it fed was removed.
   #
   # KEYED ON `folder_node_id`, NOT `auto_node_id`: an imported model's Models/<slug> sets only the
   # first, an auto folder model sets both to the folder, and a one-file auto model's `auto_node_id`
@@ -22,19 +22,6 @@ module Maker
       user.maker_models.catalogued.includes(:file_attachments)
           .where(folder_node_id:).order(:id)
           .detect { |model| !(model.auto? && model.file_attachments.empty?) }
-    end
-
-    # The folder /models/:id redirects to, or nil to keep the model page: the model's folder, when it
-    # is live, no project claims it (a project's claim wins — model-intake.md), and it shows THIS
-    # model's strip. Everything else — a one-file model, a trashed folder, an import whose folder was
-    # never made — keeps the page.
-    def landing_folder_id(user, model)
-      id = model.folder_node_id
-      return nil if id.blank?
-      return nil unless user.nodes.present.exists?(node_id: id, kind: "dir")
-      return nil if user.maker_projects.exists?(folder_node_id: id)
-
-      model_in(user, id)&.id == model.id ? id : nil
     end
   end
 end
