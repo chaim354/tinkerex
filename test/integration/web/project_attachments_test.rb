@@ -483,6 +483,27 @@ module Web
       assert_select ".picker-result", text: /bracket.stl/
     end
 
+    # Each pair shares its prefix, so both halves carry weight: without `ESCAPE '\'` SQLite matches
+    # sanitize_sql_like's backslash literally and the search finds nothing; without the sanitizing,
+    # `%` and `_` are wildcards and the search finds both. The count is asserted ON ITS OWN, because
+    # `text:` filters before `count:` counts — `count: 1, text: "x"` passes with a stray row beside x.
+    test "the attach picker's search treats % and _ as literals" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      user.nodes.create!(node_id: "f-pct", name: "100%-infill.stl", kind: "file")
+      user.nodes.create!(node_id: "f-num", name: "100-infill.stl", kind: "file")
+      user.nodes.create!(node_id: "f-und", name: "m3_8.stl", kind: "file")
+      user.nodes.create!(node_id: "f-dash", name: "m3-8.stl", kind: "file")
+
+      get new_project_attachment_path(project), params: { q: "100%" }
+      assert_select ".picker-result", 1
+      assert_select ".picker-result .picker-name", text: "100%-infill.stl"
+
+      get new_project_attachment_path(project), params: { q: "m3_8" }
+      assert_select ".picker-result", 1
+      assert_select ".picker-result .picker-name", text: "m3_8.stl"
+    end
+
     test "attach creates a reference with an inferred role" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
