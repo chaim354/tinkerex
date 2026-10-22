@@ -315,7 +315,7 @@ class ComposeGeneratorSystemTest < ApplicationSystemTestCase
     assert_no_selector "#compose-share-password-error", visible: true
 
     # What no input should hold: a lone surrogate, and the two characters YAML counts as unprintable.
-    refused = build({ folderPath: "/a￿b" }, { smtpAddress: "s", appHost: "h", smtpPassword: "x￾y" }, { folderPath: "/ab" })
+    refused = build({ folderPath: "/a\uFFFFb" }, { smtpAddress: "s", appHost: "h", smtpPassword: "x\uFFFEy" }, { folderPath: "/ab" })
     assert_match(/cannot be written/, refused[0].dig("errors", "folderPath"))
     assert_match(/cannot be written/, refused[1].dig("errors", "smtpPassword"))
     assert_empty refused[2]["errors"]

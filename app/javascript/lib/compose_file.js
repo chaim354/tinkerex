@@ -103,7 +103,7 @@ function hostPathColonOk(path) {
 // where String#isWellFormed needs Safari 16.4 or Firefox 119), and neither U+FFFE nor U+FFFF, which
 // YAML counts as unprintable: Psych and compose's own parser both refuse the file (measured).
 function writable(text) {
-  if (/[￾￿]/.test(text)) return false
+  if (/[\ufffe\uffff]/.test(text)) return false
   try {
     encodeURIComponent(text)
     return true
