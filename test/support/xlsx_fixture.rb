@@ -119,7 +119,8 @@ module XlsxFixture
       %(</Relationships>)
   end
 
-  # cellXfs: 0 default · 1 bold · 2 yellow fill · 3 date (built-in 14) · 4 "0.0%" (custom 164).
+  # cellXfs: 0 default · 1 bold · 2 yellow fill · 3 date (built-in 14) · 4 "0.0%" (custom 164) ·
+  # 5 Text (built-in 49, "@") — used by no fixture cell, there for a test to put one in.
   def styles_xml
     DECL + %(<styleSheet xmlns="#{MAIN_NS}">) +
       %(<numFmts count="1"><numFmt numFmtId="164" formatCode="0.0%"/></numFmts>) +
@@ -129,11 +130,12 @@ module XlsxFixture
       %(<fill><patternFill patternType="solid"><fgColor rgb="FFFFFF00"/><bgColor indexed="64"/></patternFill></fill></fills>) +
       %(<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>) +
       %(<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>) +
-      %(<cellXfs count="5"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>) +
+      %(<cellXfs count="6"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>) +
       %(<xf numFmtId="0" fontId="1" fillId="0" borderId="0" xfId="0" applyFont="1"/>) +
       %(<xf numFmtId="0" fontId="0" fillId="2" borderId="0" xfId="0" applyFill="1"/>) +
       %(<xf numFmtId="14" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>) +
-      %(<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>) +
+      %(<xf numFmtId="164" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/>) +
+      %(<xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>) +
       %(<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>) +
       %(</styleSheet>)
   end

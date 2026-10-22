@@ -124,6 +124,13 @@ class Maker::Xlsx::EditTest < ActiveSupport::TestCase
     assert_equal %(<c r="C3" t="inlineStr"><is><t>n/a</t></is></c>), x(cell(doc, "C3"))
   end
 
+  # A Text-formatted cell is where a maker keeps part numbers: Excel stores `007` there as typed.
+  test "a number typed into a Text-formatted cell stays text" do
+    rows = parts_rows_xml.sub(%(<c r="B3"><v>20</v></c>), %(<c r="B3" s="5"/>))
+    doc = sheet_doc(edit([ set(2, 1, "007") ], xlsx_bytes(parts_sheet: parts_sheet_xml(rows:))))
+    assert_equal %(<c r="B3" s="5" t="inlineStr"><is><t>007</t></is></c>), x(cell(doc, "B3"))
+  end
+
   test "clearing a cell keeps a styled cell and removes a plain one" do
     doc = sheet_doc(edit([ set(1, 4, ""), set(1, 1, "") ]))
     assert_equal %(<c r="E2" s="3"/>), x(cell(doc, "E2"))

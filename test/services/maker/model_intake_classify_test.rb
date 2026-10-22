@@ -14,6 +14,7 @@ module Maker
       #       body.stl
       #       manual.pdf
       #       lid.mage               -> a MillMage CNC project: EXCLUDED_ROLES, so it never joins
+      #       cutlist.xlsx           -> a spreadsheet: EXCLUDED_ROLES too (2026-10-21)
       #       parts/
       #         clip.stl
       dir("d-shelf", "3D Models", nil)
@@ -23,6 +24,7 @@ module Maker
       file("f-body",   "body.stl",   "d-enc")
       file("f-manual", "manual.pdf", "d-enc")
       file("f-mage",   "lid.mage",   "d-enc")
+      file("f-cutlist", "cutlist.xlsx", "d-enc")
       dir("d-parts", "parts", "d-enc")
       file("f-clip", "clip.stl", "d-parts")
 
@@ -165,6 +167,12 @@ module Maker
     # shelf" case above, which is the same claim stated over the whole folder.
     test "a MillMage project inside a model folder does not join the model" do
       refute_includes classify.files_for("d-enc"), "f-mage"
+    end
+
+    # The `spreadsheet` role joined the denylist with the role itself (2026-10-21), for the reason
+    # above: dropping it would leave the membership test green.
+    test "a spreadsheet inside a model folder does not join the model" do
+      refute_includes classify.files_for("d-enc"), "f-cutlist"
     end
 
     # THE DENYLIST NAMES REAL ROLES. A typo -- "vectors", "documents" -- excludes nothing and every

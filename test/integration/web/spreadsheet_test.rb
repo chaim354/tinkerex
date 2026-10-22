@@ -94,6 +94,20 @@ module Web
       assert_equal original, read_back(node)
     end
 
+    # The door checks the token before it reads: a save made against an old version is refused
+    # without paying for the read and the rebuild it would throw away.
+    test "a stale save never reads the workbook" do
+      node = seed_xlsx!("bom.xlsx", xlsx_bytes)
+      adapter = FileLayer.current
+      adapter.define_singleton_method(:read) { |*, **| raise "a stale save read the file" }
+
+      save!(node, [ set(1, 1, "12") ], token: "stale")
+
+      assert_response :conflict
+    ensure
+      adapter&.singleton_class&.remove_method(:read)
+    end
+
     # THE STORE ARM: the catalog still agrees (no scan since the desktop edit), so only the port's
     # `expect_token:` comparison against the bytes on disk can refuse — Maker::TextSave's header.
     test "a desktop edit the catalog has not seen yet is refused, not overwritten" do

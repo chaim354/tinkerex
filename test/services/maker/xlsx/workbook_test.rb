@@ -184,6 +184,18 @@ class Maker::Xlsx::WorkbookTest < ActiveSupport::TestCase
     assert_match(/too large/, error.message)
   end
 
+  # THE PRE-CHECK REFUSES BEFORE ANYTHING IS INFLATED — the point of having one beside the capped
+  # read, which on its own would inflate up to the budget first. Any part read at all is a failure.
+  test "an oversized declaration is refused without inflating a single part" do
+    entry = Zip::Entry.instance_method(:get_input_stream)
+    Zip::Entry.define_method(:get_input_stream) { |*| raise "a part was inflated before the declared sizes were checked" }
+    with_const(Maker::Xlsx::Package, :MAX_INFLATED, 1_000) do
+      assert_raises(Maker::Xlsx::Unreadable) { Maker::Xlsx::Package.open(xlsx_bytes) }
+    end
+  ensure
+    Zip::Entry.define_method(:get_input_stream, entry)
+  end
+
   # A ZIP CAN LIE ABOUT ITS SIZES, so the capped read is the bound and the declaration only a
   # pre-check (files-preview.md's GerberZip rule). This archive declares 10 bytes per part and
   # inflates each to the whole XML; the declared sum passes, the read must not.
