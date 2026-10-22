@@ -140,6 +140,28 @@ that message (`WebHelpers::KICANVAS_PLACEHOLDER_FETCH`) and nothing wider. The f
 `bin/build-kicanvas` (a `Literal` around the href) or upstream; do not route the placeholder to a
 204 to hide it, and do not widen the ignore.
 
+**KiCanvas calls no third party, and `bin/build-kicanvas` is what keeps that true (2026-10-22).**
+Upstream's `kicanvas-embed.ts` appends a Google Fonts `<link>` when the module loads (Material
+Symbols Outlined for the icons, Nunito for the labels). So every viewer page sent the visitor's
+browser to Google and broke the CSP on `style-src-elem` and `font-src`: 22 reports in one phone
+sweep, about 49 on the Linux runners, past `CspReportsController`'s 30-a-minute cap, and the 429s
+failed the sweep's console check at random. The build now deletes the `<link>` and sets the embed's
+`:host` font to `inherit`, so the labels use `--font-ui`. The icon font is `@material-symbols/font-400`
+at a pinned version, shipped whole and declared by an `@font-face` in `application.css`. It is not
+subset because a subset that missed one ligature would draw that icon's name as a word. Three things
+not to undo:
+
+- **The fix is never a wider CSP or a higher report cap.** Both hide the call from the very log the
+  "collect, then enforce" plan reads (`config/initializers/content_security_policy.rb`).
+- **The build refuses an artifact that still names `fonts.googleapis.com`, `fonts.gstatic.com` or
+  Nunito, or that no longer asks for `"Material Symbols Outlined"`.** If upstream renamed the family,
+  every icon would be spelled out as a word, with nothing red anywhere.
+- **`kicanvas_test.rb` records `securitypolicyviolation` events from the first byte**, through a
+  listener installed over CDP (one added after `visit` would race the module). It asserts that none
+  fire, that nothing is fetched cross-origin, that the icon font comes from `/assets/`, and that
+  every font icon is exactly 1em wide (without the font, an icon's name is drawn at 1.22em to
+  3.94em).
+
 ## `:gerber` is `:kicanvas`'s MIRROR IMAGE — same shape, opposite answer on one question
 
 `FilesController::GERBER_EXTS` is **derived** from `Maker::FileAttachment::ROLE_BY_EXT`'s `pcb`

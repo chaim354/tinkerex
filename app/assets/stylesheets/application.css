@@ -197,6 +197,16 @@
     font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap;
     src: url("ibm-plex-mono-500.woff2") format("woff2");
   }
+  /* KiCanvas's icon font (Apache-2.0, LICENSE-material-symbols.txt), written by bin/build-kicanvas,
+     which also deletes the Google Fonts <link> upstream injected; its labels inherit --font-ui. This
+     document-level rule reaches the viewer's shadow DOM, and nothing else names the family, so the
+     492 KB file is fetched only on a page where a KiCanvas icon renders. `block`, not `swap`: an icon
+     is a ligature, so a fallback face would spell its NAME ("zoom_in") until the font arrived.
+     Rename the family and every icon reads as a word: the build checks the bundle still asks for it. */
+  @font-face {
+    font-family: "Material Symbols Outlined"; font-style: normal; font-weight: 400; font-display: block;
+    src: url("material-symbols-outlined.woff2") format("woff2");
+  }
 
   *, *::before, *::after { box-sizing: border-box; }
   /* THE `hidden` ATTRIBUTE IS AUTHORITATIVE, HERE AND ONCE (F-S34-2). Any author `display` outranks
