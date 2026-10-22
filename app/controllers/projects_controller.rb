@@ -31,7 +31,9 @@ class ProjectsController < ApplicationController
   # empty, unless this request opens one with ?add=<key> ("+ Add panel"). Nothing else is on demand:
   # Files and Publish always show, Photos and Schematics already render nothing when empty, and an
   # empty folder panel stays quiet (docs/invariants/design-system.md rule 14).
-  ON_DEMAND = %w[build_log tasks bom wiring releases sheets].freeze
+  # Calculations (2026-10-21) joined because a saved result is its only way in: an empty panel
+  # would be a heading over nothing, and its quiet state says how to fill it.
+  ON_DEMAND = %w[build_log tasks bom wiring releases sheets calculations].freeze
 
   # The sentence #demo_may_publish? refuses with (Tinkerex::Demo; the argument is at the method).
   DEMO_PUBLISH_REFUSAL = "The shared demo can't publish projects: everything made here stays " \
@@ -153,7 +155,7 @@ class ProjectsController < ApplicationController
     @blocks_by_key = @blocks.index_by(&:layout_key)
     @panel_layout = @project.panel_layout(folders: @listing.panel_folders,
                                           blocks: @blocks.map { |b| [ b.key, b.kind ] })
-    # WHAT THE CHOOSER CALLS EACH PANEL. The eleven fixed labels plus one per folder — its own name,
+    # WHAT THE CHOOSER CALLS EACH PANEL. The twelve fixed labels plus one per folder — its own name,
     # which is the only label a folder key could honestly carry. Built here rather than in the
     # chooser because the chooser has no listing of its own, and a label map assembled in a view
     # would be a second definition the panels door could not reuse. A key with no entry cannot
@@ -455,6 +457,10 @@ class ProjectsController < ApplicationController
     #
     # SKIPPED WHEN HIDDEN (stage 4, S4-7) — one query, and projects/_wiring is its only reader.
     @connections = @panel_layout.visible?("wiring") ? @project.connections.to_a : []
+    # SAVED CALCULATIONS (2026-10-21). ONE query, oldest first (Maker::Project#calculations), skipped
+    # when hidden like the wiring table above: projects/_calculations is its only reader, and the
+    # stats line does not count them.
+    @calculations = @panel_layout.visible?("calculations") ? @project.calculations.to_a : []
     # The entry form binds to a real object: `rich_text_area` reads its value from the form's
     # object, and Action Text's form helper is not built for the object-less `fields_for` the plain
     # textarea used.
@@ -616,6 +622,7 @@ class ProjectsController < ApplicationController
     when "wiring" then @connections.any?
     when "releases" then @releases.any?
     when "sheets" then @sheets.any?
+    when "calculations" then @calculations.any?
     end
   end
 

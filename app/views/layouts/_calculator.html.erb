@@ -1,0 +1,75 @@
+<%#
+  THE CALCULATOR MODAL (2026-10-21; docs/superpowers/plans/2026-10-21-calculator-modal.md). Rendered
+  ONCE, in the signed-in shell, so it can open over any page without navigating: anything carrying
+  `data-calculator-open` opens it — the rail's pinned link, the Tools card, a saved calculation's
+  "Open in calculator" — through calculator_controller.js's one delegated click listener, which is
+  why none of those openers needs a controller of its own. A core feature rather than an addon: an
+  addon is a sandboxed bundle on its own page and cannot open over this one.
+
+  IT COSTS THE LAYOUT NO QUERY. The engine is lib/calc.js, in the browser; the only server data the
+  modal needs is the project list for Save to project, and that arrives in the `calculator-save`
+  frame when the maker opens that section (CalculationsController#new). `calculator_project_id`
+  reads `@project`, which a project page has already loaded.
+
+  A NATIVE <dialog>: showModal() makes the rest of the page inert, so Tab stays inside, and Esc
+  closes it; the controller puts focus in the input on open and back on the opener on close.
+  Nothing in it is `.primary` — the accent is spent once per screen, and this sits on every one.
+%>
+<div class="calculator-host" data-controller="calculator"
+     data-calculator-save-url-value="<%= new_calculation_path(project_id: calculator_project_id) %>"
+     data-action="click@document->calculator#openFrom turbo:before-cache@document->calculator#close">
+  <dialog class="calculator" aria-labelledby="calculator-title" data-calculator-target="dialog"
+          data-action="close->calculator#closed click->calculator#backdrop">
+    <div class="calculator-head">
+      <h2 id="calculator-title">Calculator</h2>
+      <button type="button" class="calculator-close" data-action="calculator#close" aria-label="Close calculator"
+              title="Close (Esc)">×</button>
+    </div>
+
+    <form class="calculator-entry" data-turbo="false" data-action="submit->calculator#submit">
+      <label for="calculator-input" class="calculator-input-label">Expression</label>
+      <span class="calculator-input-row">
+        <input id="calculator-input" type="text" class="calculator-input" autocomplete="off" autocapitalize="off"
+               spellcheck="false" enterkeyhint="go" maxlength="500" placeholder="12.5mm + 1/4in"
+               data-calculator-target="input" data-action="input->calculator#edited">
+        <button type="submit" class="btn calculator-equals" aria-label="Calculate">=</button>
+      </span>
+    </form>
+
+    <div class="calculator-answer" aria-live="polite">
+      <output class="calculator-result" for="calculator-input" data-calculator-target="result"></output>
+      <span class="calculator-result-alt muted" data-calculator-target="alt"></span>
+      <p class="calculator-error" role="alert" data-calculator-target="error" hidden></p>
+    </div>
+
+    <div class="calculator-fraction" role="group" aria-label="Show inches as" data-calculator-target="fractionChoice" hidden>
+      <span class="calculator-fraction-label muted">Inches as</span>
+      <span class="view-toggle">
+        <button type="button" class="toggle active" data-action="calculator#chooseFraction" data-calculator-denominator-param="0" aria-pressed="true">Decimal</button>
+        <button type="button" class="toggle" data-action="calculator#chooseFraction" data-calculator-denominator-param="16" aria-pressed="false">1/16</button>
+        <button type="button" class="toggle" data-action="calculator#chooseFraction" data-calculator-denominator-param="32" aria-pressed="false">1/32</button>
+      </span>
+    </div>
+
+    <details class="calculator-section calculator-save" data-calculator-target="saveDetails"
+             data-action="toggle->calculator#saveToggled">
+      <summary>Save to project</summary>
+      <p class="calculator-save-hint muted" data-calculator-target="saveHint" hidden>Press Enter to calculate first, then save.</p>
+      <turbo-frame id="calculator-save" data-calculator-target="saveFrame"
+                   data-action="turbo:frame-missing->calculator#saveMissing">
+        <p class="muted">Loading your projects…</p>
+      </turbo-frame>
+    </details>
+
+    <details class="calculator-section calculator-recent" data-calculator-target="recent" hidden>
+      <summary>Recent</summary>
+      <ol class="calculator-history" data-calculator-target="history"></ol>
+      <button type="button" class="linkbtn small" data-action="calculator#clearHistory">Clear recent</button>
+    </details>
+
+    <p class="calculator-help muted">
+      Units mm cm m in ft — <code>12.5mm + 1/4in</code>, <code>3 1/2in</code>, <code>3 ft to mm</code>,
+      <code>sqrt(2)</code>, <code>sin(30deg)</code>, <code>pi</code>, <code>300mm + 10%</code>.
+    </p>
+  </dialog>
+</div>

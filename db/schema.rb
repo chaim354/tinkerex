@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_21_200000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_21_230100) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -130,6 +130,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_21_200000) do
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.index ["user_id", "project_id", "logged_at"], name: "index_maker_build_log_entries_on_project_logged_at"
+  end
+
+  create_table "maker_calculations", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "expression", null: false
+    t.integer "inch_fraction"
+    t.string "label", null: false
+    t.integer "project_id", null: false
+    t.float "result", null: false
+    t.string "unit", default: "", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "project_id", "created_at"], name: "index_maker_calculations_on_project_created_at"
   end
 
   create_table "maker_collection_items", force: :cascade do |t|
@@ -559,6 +572,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_21_200000) do
 
   create_table "users", force: :cascade do |t|
     t.boolean "admin", default: false, null: false
+    t.boolean "calculator_pinned", default: false, null: false
     t.datetime "confirmation_sent_at"
     t.string "confirmation_token"
     t.datetime "confirmed_at"
@@ -597,6 +611,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_21_200000) do
   add_foreign_key "maker_addon_files", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_state_revisions", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_states", "users"
+  add_foreign_key "maker_calculations", "users"
   add_foreign_key "maker_connections", "users"
   add_foreign_key "maker_filing_rules", "users"
   add_foreign_key "maker_pins", "users"

@@ -35,6 +35,10 @@
         </main>
       </div>
       <%= render "layouts/tabbar" %>
+      <%# THE CALCULATOR MODAL, once per signed-in page and closed until something carrying
+          `data-calculator-open` opens it (layouts/_calculator.html.erb). Last in the shell, so its
+          dialog is never a grid cell of body.app-shell and never the first Tab stop. %>
+      <%= render "layouts/calculator" %>
     <% else %>
       <%# STAGE 4, S4-5: THE VISITOR'S ONLY CHROME, ON A PUBLIC SURFACE ALONE. Devise's pages share
           this branch and must not get a site nav under their sign-in card, which is what the guard

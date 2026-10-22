@@ -67,6 +67,20 @@
           <%= rail_icon(:tools) %><span class="rail-label">Tools</span>
         <% end %>
       </li>
+      <%# THE PINNED CALCULATOR (2026-10-21; Tools::CalculatorPinsController). It OPENS THE MODAL rather
+          than going anywhere (`data-calculator-open`, calculator_controller.js), so it never carries
+          aria-current and the one-lit-link rule is untouched. A real href all the same: a modified
+          click, or a page whose script failed, lands on the Tools card that opens it.
+          `calculator_pinned?` reads the user row the request already loaded, so the pin costs the
+          rail no query. %>
+      <% if current_user.calculator_pinned? %>
+        <li>
+          <%= link_to tools_path(anchor: "calculator"), class: "rail-link rail-calculator", title: "Calculator",
+                      "aria-haspopup": "dialog", data: { calculator_open: "" } do %>
+            <%= rail_icon(:calculator) %><span class="rail-label">Calculator</span>
+          <% end %>
+        </li>
+      <% end %>
       <% if sidebar_inventory? %>
         <li>
           <%= link_to inventory_items_path, class: "rail-link", title: "Inventory",

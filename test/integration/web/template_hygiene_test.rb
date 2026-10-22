@@ -330,6 +330,12 @@ module Web
       # per-row form-wiring) entirely.
       @project.connections.create!(user: @user, from_label: "Driver board", to_label: "Stepper motor",
                                    wire: "22 AWG", position: 0)
+      # 2026-10-21: TWO SAVED CALCULATIONS, one at each display, or projects/_calculation_rows' list
+      # never renders and the inch-fraction arm of CalculationsHelper#calculation_result_text with it.
+      @project.calculations.create!(user: @user, label: "Shelf depth", expression: "12.5mm + 1/4in",
+                                    result: 18.85, unit: "mm")
+      @project.calculations.create!(user: @user, label: "Leg", expression: "3 3/16in", result: 3.1875,
+                                    unit: "in", inch_fraction: 16)
       # STAGE 3, S3-5: ONE RELEASE CARRYING EVERY BRANCH ITS TWO PANELS HAVE -- a verified tag (the
       # badge plus a short oid), a BOM revision, a changelog, a file still current (which renders a
       # Download), one whose content has moved on since ("changed"), and one that has left the
@@ -570,6 +576,8 @@ module Web
         # The New ▾ menu's lazy tool list (slice 2): a fragment, swept like a page so a comment
         # leak in it would show. The sweep's ADDON_SOURCE_PATH points at the fixtures, so it lists.
         "new menu tools" => tools_new_menu_path,
+        # 2026-10-21: the calculator modal's Save to project form, its lazy frame's fragment.
+        "calculator save form" => new_calculation_path(project_id: @project.id),
         "tools addon" => tools_addon_path("fixture"),
         "trash" => trash_index_path,
         "search" => search_path(q: "lamp"),
