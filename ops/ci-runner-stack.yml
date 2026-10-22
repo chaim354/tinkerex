@@ -157,7 +157,7 @@ x-host-budget:
 # correctly, so they stay here. `cpuset` cannot: each runner gets its own threads, so each service
 # names its own.
 x-runner: &runner
-  image: tinkerex-ci-runner:2026-09-07.2
+  image: tinkerex-ci-runner:2026-10-22.1
   restart: unless-stopped
   mem_limit: 4g
   # EQUAL TO mem_limit, SO A RUNNER CAN NEVER SWAP. The box has no swap today and Docker warns that
