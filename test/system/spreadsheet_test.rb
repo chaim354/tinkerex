@@ -60,6 +60,27 @@ class SpreadsheetViewerTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # THE GRID IS PAINTED IN TOKENS, so an open one follows a theme switch with nothing to repaint
+  # (design-system.md, "the viewers follow the theme"). Read off the computed colours — the table's
+  # background (the cells are transparent over it) and a cell's text: the vendored jspreadsheet.css
+  # alone would leave the table white in both themes.
+  test "the open grid follows a theme switch" do
+    open_file("bom.xlsx")
+    look = -> { page.evaluate_script(<<~JS) }
+      (() => { const grid = document.querySelector(".spreadsheet-pane:not([hidden]) .jss_worksheet")
+               const td = grid.querySelector("td[data-x='0'][data-y='1']")
+               return [ getComputedStyle(grid).backgroundColor, getComputedStyle(td).color ] })()
+    JS
+
+    page.execute_script("document.documentElement.dataset.theme = 'light'")
+    light = look.call
+    page.execute_script("document.documentElement.dataset.theme = 'dark'")
+    dark = look.call
+
+    assert_not_equal light, dark
+    assert_not_equal "rgb(255, 255, 255)", dark[0], "the dark grid is still jspreadsheet's white"
+  end
+
   test "a cell typed over is saved into the same file, and the formula beside it shows on select" do
     open_file("bom.xlsx")
 

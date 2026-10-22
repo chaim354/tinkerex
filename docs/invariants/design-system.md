@@ -76,7 +76,7 @@ landed it (§11).
 
 **THE VIEWERS FOLLOW THE THEME, AND AN OPEN ONE REPAINTS ON A SWITCH (2026-10-21).** Where the
 colour is CSS (the Gerber viewer's `--fg` on `--raised`, Measure's chrome, the code viewers, the
-frames) that is the cascade's doing. The 3D viewer's renderer takes a colour, not a style, so it
+workbook grid's `.spreadsheet-grid` skin, the frames) that is the cascade's doing. The 3D viewer's renderer takes a colour, not a style, so it
 reads its ground from the stage's computed `--raised` and repaints through a `data-theme`
 MutationObserver plus the OS scheme query, released with the engine; "Use this view as preview"
 photographs on white, never on the theme's ground, so a saved view multiplies onto the card like
