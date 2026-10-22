@@ -110,6 +110,24 @@ module Web
       assert_select ".model-index", count: 0
     end
 
+    # …BUT IN THE PAGE'S OWN <head>, the request-level half of model_page_test.rb's Back test. Turbo
+    # records a promoted frame visit only when the response's tracked head elements match the page's;
+    # turbo-rails' own frame layout carries none, which left Back showing the wrong pane. This app's
+    # layouts/turbo_rails/frame renders layouts/_head, so the frame answer and the full page carry the
+    # same tracked tags — compared as the set Turbo compares (nonces aside, which Turbo blanks).
+    test "a frame request carries the page's tracked head, so Turbo can record the visit" do
+      tracked = lambda do
+        css_select("head [data-turbo-track='reload']").map { |el| el.to_html.gsub(/ nonce="[^"]*"/, "") }
+      end
+      get model_path(@model)
+      page_head = tracked.call
+      refute_empty page_head, "fixture: the full page carries no tracked head elements"
+
+      get model_path(@model, file: "n-stl"), headers: { "Turbo-Frame" => "model_stage" }
+      assert_equal page_head, tracked.call
+      assert_select "head title", text: "Wall Bracket — Tinkerex"
+    end
+
     test "the list's file links target the pane and open the file page in a new tab" do
       get model_path(@model)
       links = css_select(".model-index .tree-fname")

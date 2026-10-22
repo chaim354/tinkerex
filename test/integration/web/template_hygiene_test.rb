@@ -467,6 +467,15 @@ module Web
     # added without anything noticing. The filtered and grid variants are listed separately because
     # they render DIFFERENT partials — the leak that prompted this file was in `files/_ext_filter`,
     # which the grid renders and the file page does not.
+    # FRAME REQUESTS (2026-10-21), `name => [path, frame id]`. Two templates render only when Turbo asks
+    # for a frame by name — this app's layouts/turbo_rails/frame and the model page's models/pane — and
+    # a plain `get` never does, so they are swept with the header Turbo sends. The two sweeps that read
+    # rendered prose and ERB delimiters cover these; the page-head and fileopen sweeps do not, because
+    # a frame carries no page head and its file links are the pane's own `.btn`s.
+    def frame_pages
+      { "model detail (pane, frame request)" => [ model_path(@model, file: "n-stl"), "model_stage" ] }
+    end
+
     def pages
       {
         "home" => root_path,
@@ -729,6 +738,13 @@ module Web
         assert_not_includes response.body, "<%", "#{name} leaked an ERB opener into the page"
         assert_not_includes response.body, "%>", "#{name} leaked an ERB closer into the page"
       end
+
+      frame_pages.each do |name, (path, frame)|
+        get path, headers: { "Turbo-Frame" => frame }
+        assert_response :success, "#{name} (#{path}) did not render"
+        assert_not_includes response.body, "<%", "#{name} leaked an ERB opener into the frame"
+        assert_not_includes response.body, "%>", "#{name} leaked an ERB closer into the frame"
+      end
     end
 
     # THE OTHER HALF OF THE SAME FAILURE, and the one a delimiter check alone would miss: a comment
@@ -771,6 +787,14 @@ module Web
           LEAKED_PROSE.each do |phrase|
             assert_not_includes response.body, phrase,
                                 "#{name} rendered a code comment into the page (found #{phrase.inspect})"
+          end
+        end
+        frame_pages.each do |name, (path, frame)|
+          get path, headers: { "Turbo-Frame" => frame }
+          assert_response :success, "#{name} (#{path}) did not render"
+          LEAKED_PROSE.each do |phrase|
+            assert_not_includes response.body, phrase,
+                                "#{name} rendered a code comment into the frame (found #{phrase.inspect})"
           end
         end
       ensure

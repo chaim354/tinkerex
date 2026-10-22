@@ -616,6 +616,12 @@ by one helper, `WebHelpers#back_through_turbo_cache`. It proves the page came ou
 before anything is asserted about it, because a Back that re-fetched the page would pass every
 "rests at the poster" assertion against a page that was never open.
 
+**THE READ-ONLY CODE VIEWER RESTS TOO (2026-10-21).** `codeview_controller.js#mount` removes its
+fallback `<pre>` once CodeMirror is up, so a snapshot Turbo restores holds a dead editor and no
+target, and connect threw "Missing target element". `#rest` puts a fresh fallback back first. Found
+through Back across the model page's pane (`model_page_test.rb`); it was reachable by Back to any text
+file's page before that. `editor_controller.js` has the same `mount`, and does not rest yet.
+
 **ON S3 A VIEWER'S FETCH LEAVES THE ORIGIN, AND BOTH HALVES OF LETTING IT ARE STATED ONCE.** The
 blob route answers a presigned redirect to the bucket, so the 3D viewer, KiCanvas, the Gerber viewer
 and the public bundle all fetch cross-origin. The browser reads that response only if (1) the

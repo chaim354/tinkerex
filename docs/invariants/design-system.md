@@ -102,6 +102,17 @@ landed it (§11).
     (code, diffs, the Measure stage, the spreadsheet) scrolls inside its own `overflow-x: auto`
     container; long names get `overflow-wrap: anywhere`.
 
+**THE PAGE'S `<head>` IS ONE PARTIAL, `layouts/_head`, AND `layouts/turbo_rails/frame` IS THIS APP'S
+OWN, NOT AN ACCIDENTAL SHADOW OF THE GEM'S (2026-10-21).** turbo-rails applies `turbo_rails/frame` to
+every frame request, and the gem's copy carries only the CSRF tags. Turbo records a frame navigation
+promoted to a page visit (`data-turbo-action="advance"`, the model page's pane) only when the
+response's `data-turbo-track` head elements match the page's, so with the gem's layout the URL
+advanced while Turbo's `lastRenderedLocation` stayed behind, and every later snapshot was filed under
+the wrong address (Back showed the wrong pane). Deleting the override as redundant brings that back;
+`model_stage_test.rb` compares the two heads and `model_page_test.rb` walks Back through them. A
+stylesheet or script tag goes in `_head`, never in either layout, or the two heads diverge again.
+`css_hygiene_test.rb` reads the link order from `_head`.
+
 ## Contracts a restyle may not break
 
 12. **Class names are a contract: restyle, never rename.** The selectors the tests pin (spec §10),

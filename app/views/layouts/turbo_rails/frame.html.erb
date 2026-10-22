@@ -1,0 +1,17 @@
+<%# THIS APP'S OWN COPY OF turbo-rails' FRAME LAYOUT (2026-10-21), which the gem applies to every
+    frame request (Turbo::Frames::FrameRequest) and which this file shadows by path. The gem's carries
+    only the CSRF tags in its <head>; this one carries the page's real head (layouts/_head), because a
+    frame navigation PROMOTED to a page visit (data-turbo-action="advance") is recorded by Turbo only
+    when the response's tracked head elements match the page's. With the gem's, the model page's pane
+    advanced the URL while Turbo's lastRenderedLocation stayed on the first one, and Back showed the
+    wrong pane (test/system/model_page_test.rb). Turbo reads only the frame out of the body; the head
+    costs bytes, not rendering. `lang` is kept because Turbo copies it from the response. %>
+<!DOCTYPE html>
+<html lang="en" data-theme="<%= ui_theme %>">
+  <head>
+    <%= render "layouts/head" %>
+  </head>
+  <body>
+    <%= yield %>
+  </body>
+</html>

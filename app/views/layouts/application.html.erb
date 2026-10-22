@@ -1,28 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="<%= ui_theme %>">
   <head>
-    <title><%= content_for(:title) || "Tinkerex" %></title>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="application-name" content="Tinkerex">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="color-scheme" content="<%= color_scheme_meta %>">
-    <meta name="theme-color" content="<%= theme_color_hex %>">
-    <%= csrf_meta_tags %>
-    <%= csp_meta_tag %>
-
-    <%= yield :head %>
-
-    <link rel="icon" href="/favicon.ico" sizes="32x32">
-    <link rel="icon" href="/icon.svg" type="image/svg+xml">
-    <link rel="apple-touch-icon" href="/icon.png">
-
-    <%= stylesheet_link_tag "application", "components", "shell",
-                            "pages/files", "pages/projects", "pages/models", "pages/tools", "pages/preview", "pages/home", "pages/inventory", "pages/settings", "pages/search", "pages/public", "pages/landing",
-                            "data-turbo-track": "reload" %>
-    <%= stylesheet_link_tag "lexxy", "data-turbo-track": "reload" %>
-    <%= stylesheet_link_tag "vendor-overrides", "data-turbo-track": "reload" %>
-    <%= javascript_importmap_tags "application", importmap: (@importmap || Rails.application.importmap) %>
+    <%= render "layouts/head" %>
   </head>
 
   <body class="<%= body_classes %>">

@@ -874,6 +874,9 @@ module Web
                               -> { add.call("ps", SMALL) },
                               -> { add.call("pl", LARGE - SMALL) },
                               "models#show (file pane)")
+      # THE PANE WAS MEASURED, NOT DETAILS: a regression in ModelsController#stage_for would quietly
+      # turn this into a second measurement of the Details page above.
+      assert_select "turbo-frame#model_stage .model-stage-name", text: "ps0.stl"
     end
 
     # A REAL FOLDER, NOT THE ROOT. This test has always been named for the folder view and has

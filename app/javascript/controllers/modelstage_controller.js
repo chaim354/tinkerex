@@ -16,6 +16,17 @@ export default class extends Controller {
       if (new URL(link.href).searchParams.get("file") === shown) link.setAttribute("aria-current", "true")
       else link.removeAttribute("aria-current")
     })
-    if (window.matchMedia("(max-width: 899px)").matches) this.stageTarget.scrollIntoView({ block: "start" })
+    if (window.matchMedia("(max-width: 899px)").matches) this.reveal()
+  }
+
+  // CLEAR OF THE STICKY TOP BAR, which wraps to two rows on a phone: scrolled to the viewport's very
+  // top, the pane's own head (its name, Download, "Open file page") sat behind it. The bar's bottom is
+  // MEASURED at the moment of the scroll rather than written into CSS, which would have to track every
+  // way the bar can wrap.
+  reveal() {
+    const bar = document.querySelector("header.topbar")
+    const clearance = bar ? Math.ceil(bar.getBoundingClientRect().bottom) : 0
+    this.stageTarget.style.scrollMarginTop = `${Math.max(0, clearance) + 8}px`
+    this.stageTarget.scrollIntoView({ block: "start" })
   }
 }

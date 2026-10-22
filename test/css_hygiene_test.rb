@@ -22,6 +22,9 @@ require "test_helper"
 class CssHygieneTest < ActiveSupport::TestCase
   SHEETS_DIR = Rails.root.join("app/assets/stylesheets")
   LAYOUT = Rails.root.join("app/views/layouts/application.html.erb")
+  # The <head> the layout renders, and the one place the stylesheet links are written (2026-10-21:
+  # shared with this app's turbo_rails/frame layout, see layouts/_head.html.erb).
+  HEAD = Rails.root.join("app/views/layouts/_head.html.erb")
   LAYER_ORDER = "@layer tokens, base, components, shell, pages;".freeze
   OURS = %w[
     application.css components.css shell.css
@@ -115,7 +118,8 @@ class CssHygieneTest < ActiveSupport::TestCase
   end
 
   test "the layout links our sheets first, lexxy after, and the overrides last" do
-    layout = LAYOUT.read
+    assert_includes LAYOUT.read, %(render "layouts/head"), "the layout no longer renders the shared head"
+    layout = HEAD.read
     order = %w[application components shell pages/files pages/projects pages/models pages/tools pages/preview pages/home pages/inventory pages/settings pages/search pages/public pages/landing lexxy vendor-overrides]
     positions = order.map { |name| [ name, layout.index(%("#{name}")) ] }
     positions.each { |name, pos| assert pos, "the layout does not link #{name}" }

@@ -46,14 +46,19 @@ class ModelsController < ApplicationController
     # accident and watched this page change otherwise has no thread to pull.
     @missing_attachment_count = missing.size
     @stage = stage_for(params[:file])
-    @viewer = viewer_state_for(@stage) unless @stage == :details
-    # A FRAME REQUEST IS THE PANE ALONE: the list sits outside the frame (its scroll survives a click),
-    # so a file switch needs one viewer's setup and nothing else — not the tree walk, not the hero's
-    # covers, not the print log. Details is the one pane that needs the details data.
-    if turbo_frame_request_id == "model_stage"
-      load_details if @stage == :details
-      return render(partial: "models/stage", locals: { model: @model, stage: @stage, viewer: @viewer })
+    # THE DETAILS DATA IS DETAILS' ALONE: the hero's covers, the 3D switcher's manifests, the print log
+    # and its composer choices render only in that pane, so a page opening on a file (every model
+    # with instructions, by default) pays none of it.
+    if @stage == :details
+      load_details
+    else
+      @viewer = viewer_state_for(@stage)
     end
+    # A FRAME REQUEST IS THE PANE ALONE: the list sits outside the frame (its scroll survives a click),
+    # so a switch needs one pane's setup and nothing else, not the tree walk. models/pane renders in
+    # this app's turbo_rails/frame layout, whose real <head> is what lets Turbo record the promoted
+    # visit (layouts/_head says why; a bare partial here broke Back).
+    return render(:pane) if turbo_frame_request_id == "model_stage"
 
     # The model's files as a folder TREE (preserves the imported zip's structure) for the detail
     # page, instead of a flat role-grouped list.
@@ -70,7 +75,6 @@ class ModelsController < ApplicationController
     # folder produced, so none of them could see a model that has no folder at all.
     @file_tree  = file_tree_for_model
     @file_count = count_files(@file_tree)
-    load_details
   end
 
   # GET /models/new — the import form (the importer Stimulus controller drives it).

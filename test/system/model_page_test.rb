@@ -59,6 +59,45 @@ class ModelPageTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+# A PROMOTED FRAME VISIT NEEDS THE PAGE'S OWN <head>. Before Turbo records an advanced pane as
+# rendered it compares the response's tracked head elements with the page's (PageRenderer
+# #shouldRender); a pane answered with no head — no layout, or turbo-rails' own turbo_rails/frame,
+# which carries only the CSRF tags — fails that check, so Turbo never moves lastRenderedLocation
+# off the first URL and sets view.forceReloaded for the rest of the tab. Every later snapshot is
+# then filed under the wrong URL (Back shows the wrong pane) and every later visit stops scrolling.
+# The first Back below is the snapshot cache's; the second is the one the stale location broke.
+test "a pane switch keeps Turbo's history true: Back through the file page returns pane by pane" do
+  visit model_path(@model)
+  open_in_pane "notes.txt"
+  assert_equal false, page.evaluate_script("Turbo.session.view.forceReloaded"),
+               "Turbo refused the pane's head and stopped handling scroll for this tab"
+  open_in_pane "bracket.stl"
+  find(".model-stage-head a", text: "Open file page").click
+  assert_current_path file_path(stl.node_id)
+
+  page.go_back
+  assert_selector "turbo-frame#model_stage .model-stage-name", text: "bracket.stl"
+  assert_includes page.current_url, "file=#{stl.node_id}"
+  page.go_back
+  assert_selector "turbo-frame#model_stage .model-stage-name", text: "notes.txt"
+  assert_includes page.current_url, "file=#{notes.node_id}"
+  assert_no_console_errors
+end
+
+# A PANE SWITCH IS TWO STEPS IN TURBO: the frame paints its contents, then a few ticks later the
+# promoted visit records the URL as rendered (FrameController#loadResponse → fetchResponseLoaded →
+# session.visit). The next click is made only once the second has happened — a person cannot click
+# inside those few milliseconds, a test can, and a visit started inside them cancels the recording
+# and files the next snapshot under the previous URL. That race is the TEST's, not the page's.
+def open_in_pane(name)
+  within(".model-index") { click_link name }
+  assert_selector "turbo-frame#model_stage .model-stage-name", text: name
+  rendered = "Turbo.session.view.lastRenderedLocation.href"
+  deadline = Time.now + 3
+  sleep 0.05 until page.evaluate_script(rendered) == page.current_url || Time.now > deadline
+  assert_equal page.current_url, page.evaluate_script(rendered), "Turbo never recorded #{name}'s pane as rendered"
+end
+
   test "a double-click on a list entry opens its file page in a new tab" do
     visit model_path(@model)
     tab = window_opened_by { find(".model-index a", text: "bracket.stl").double_click }
@@ -90,6 +129,22 @@ class ModelPageTest < ApplicationSystemTestCase
     deadline = Time.now + 3
     sleep 0.05 until (after = page.evaluate_script(pane_top)) < before - 40 || Time.now > deadline
     assert_operator after, :<, before - 40, "the pane was not scrolled into view (#{before}px → #{after}px)"
+    # …AND NOT UNDER THE STICKY TOP BAR, which wraps to two rows on a phone: scrolled to the viewport's
+    # very top, the pane's own head (its name, Download, "Open file page") sits behind the bar. Asked
+    # of Details, the one pane here tall enough for the page to scroll it all the way up — notes.txt's
+    # is not, the page bottoms out first, so the bar check above it could not fail.
+    within(".model-index") { click_link "Details" }
+    assert_selector "turbo-frame#model_stage .model-details"
+    settled = nil
+    deadline = Time.now + 3
+    loop do
+      sleep 0.15
+      top = page.evaluate_script(pane_top)
+      break if top == settled || Time.now > deadline
+      settled = top
+    end
+    bar_bottom = page.evaluate_script("document.querySelector('header.topbar').getBoundingClientRect().bottom")
+    assert_operator settled, :>=, bar_bottom - 1, "the pane's head is under the top bar (#{settled}px < #{bar_bottom}px)"
     assert_no_console_errors
   ensure
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
