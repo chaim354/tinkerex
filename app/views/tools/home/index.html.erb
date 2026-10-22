@@ -24,9 +24,11 @@
         <span class="addon-title">Calculator</span>
       </span>
       <span class="addon-desc muted">Lengths in mm, cm, m, inches and feet, inch fractions, and
-        conversions. Save a result to a project.</span>
+        conversions. Save a result to a project. <span class="calculator-card-keys">Opens over any page
+        with <kbd><%= calculator_shortcut %></kbd>.</span></span>
       <span class="calculator-card-actions">
-        <button type="button" class="btn small calculator-card-open" data-calculator-open aria-haspopup="dialog">Open calculator</button>
+        <button type="button" class="btn small calculator-card-open" data-calculator-open aria-haspopup="dialog"
+                aria-keyshortcuts="<%= CalculationsHelper::CALCULATOR_KEYS %>">Open calculator</button>
         <%# A button_to per state, so the label says what the click DOES. Plain `.btn`: the accent
             is not spent on this page (design-system.md rule 13). %>
         <% if current_user.calculator_pinned? %>
