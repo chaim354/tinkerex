@@ -55,7 +55,8 @@
              data-action="toggle->calculator#saveToggled">
       <summary>Save to project</summary>
       <p class="calculator-save-hint muted" data-calculator-target="saveHint" hidden>Press Enter to calculate first, then save.</p>
-      <turbo-frame id="calculator-save" data-calculator-target="saveFrame">
+      <turbo-frame id="calculator-save" data-calculator-target="saveFrame"
+                   data-action="turbo:frame-missing->calculator#saveMissing">
         <p class="muted">Loading your projects…</p>
       </turbo-frame>
     </details>

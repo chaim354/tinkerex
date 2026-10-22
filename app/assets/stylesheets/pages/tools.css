@@ -21,7 +21,9 @@
   .calculator-card .addon-icon .rail-icon { width: 22px; height: 22px; }
   .calculator-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
   .calculator-card-actions form { display: inline; }
-  .addon-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }
+  /* `.tool-card` is a built-in tool's card (the calculator): the same face, a different class, so
+     every `.addon-card` is still one a manifest made. It is not a link, so it takes no hover. */
+  .addon-card, .tool-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }
   .addon-card:hover { text-decoration: none; border-color: var(--fg); }
   .addon-card.disabled { opacity: .6; }
   .addon-card-head { display: flex; align-items: center; gap: 10px; }

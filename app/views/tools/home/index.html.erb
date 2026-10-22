@@ -5,8 +5,10 @@
 <%#
   BUILT IN, ABOVE THE ADD-ONS (2026-10-21; plan 2026-10-21-calculator-modal.md). The calculator is a
   core feature — a modal that opens over any page (layouts/_calculator.html.erb) — so its card is
-  written here and is not an addon card in disguise: the add-on grid below still holds only cards a
-  manifest made. Its own grid and heading keep the two kinds apart.
+  written here and is not an addon card in disguise: it is `.tool-card`, never `.addon-card`, so
+  every `.addon-card` on this page is still one a manifest made — which is what
+  test/controllers/tools/home_controller_test.rb counts. Its own grid and heading keep the two
+  kinds apart; the inner head/icon/title/description classes are shared for their look.
 
   The card OPENS the modal (`data-calculator-open`) and offers the sidebar pin. At phone width,
   where the tab bar keeps its four destinations and there is no rail, this card IS the way to the
@@ -16,7 +18,7 @@
 <section class="tools-section" aria-labelledby="tools-built-in">
   <h2 class="tools-section-head" id="tools-built-in">Built in</h2>
   <div class="tools-grid">
-    <div class="addon-card calculator-card" id="calculator">
+    <div class="tool-card calculator-card" id="calculator">
       <span class="addon-card-head">
         <span class="addon-icon"><%= rail_icon(:calculator) %></span>
         <span class="addon-title">Calculator</span>

@@ -305,6 +305,11 @@
   /* Saved calculations (projects/_calculations, 2026-10-21): label and answer on one line, the
      expression under them in mono (it is data), the three acts after. Long expressions wrap
      rather than widen the panel. */
+  /* A FULL LINE OF ITS OWN, because the rows can arrive inside a QUIET panel: "+ Add panel" opens
+     it empty (`.panel--quiet` is a flex row of heading and control), and a save from the modal
+     replaces only the rows (CalculationsController#create's stream), so until the next visit the
+     list is a flex item there. Inert in the panel's ordinary block layout. */
+  .calculations-panel .calculation-rows { flex-basis: 100%; min-width: 0; }
   .calculations-panel .calculation-list { list-style: none; margin: 0; padding: 0; }
   .calculations-panel .calculation-row { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
   .calculations-panel .calculation-row:last-child { border-bottom: 0; }

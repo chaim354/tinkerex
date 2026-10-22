@@ -206,6 +206,18 @@ export default class extends Controller {
     this.renderSaveWhat()
   }
 
+  // THE FRAME CAME BACK WITHOUT ITS FORM — a session that expired since the page loaded answers
+  // with the sign-in page — and Turbo's own answer is "Content missing". Say what to do instead.
+  // The src is cleared, so the next time Save to project opens it asks the server again.
+  saveMissing(event) {
+    event.preventDefault()
+    const note = document.createElement("p")
+    note.className = "calculator-save-error"
+    note.textContent = "Couldn't load your projects. Reload the page, signing in again if asked, then try again."
+    this.saveFrameTarget.replaceChildren(note)
+    this.saveFrameTarget.removeAttribute("src")
+  }
+
   // WHAT IS SAVED IS WHAT IS ON SCREEN: the four hidden fields are filled here, at submit, from the
   // current answer — never from whatever the form held when it rendered.
   prepareSave(event) {

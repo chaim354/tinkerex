@@ -18,6 +18,8 @@ require "application_system_test_case"
 #   * #prepareSave no longer copying the expression — RED: the save was refused (blank expression)
 #     and "Saved … to Desk Lamp" never appeared.
 #   * `writeStorage(HISTORY_KEY, …)` deleted from #remember — RED: Recent was empty after the reload.
+#   * the frame's `turbo:frame-missing->calculator#saveMissing` action deleted — RED: the ended
+#     session's frame said "Content missing" and nothing else.
 #   * #closed's focus hand-back deleted — GREEN, because Chrome's <dialog> restores focus to the
 #     element focused before showModal() on its own. Kept anyway: Safari does not focus a button on
 #     click, so there the opener is not "the element focused before", and only #closed returns to it.
@@ -177,6 +179,18 @@ class CalculatorModalTest < ApplicationSystemTestCase
     end
     assert_selector ".calculator-save-hint", text: "Press Enter to calculate first"
     assert_equal 0, Maker::Calculation.count
+  end
+
+  # A SESSION THAT ENDED SINCE THE PAGE LOADED answers the frame with the sign-in page, and Turbo's
+  # own answer to a frame response without its frame is the words "Content missing" (#saveMissing).
+  test "if the session has ended, Save to project says to reload rather than Content missing" do
+    visit tools_path
+    find("#calculator .calculator-card-open").click
+    calculate("3 ft to mm")
+    page.driver.browser.manage.delete_all_cookies
+    find("details.calculator-save > summary").click
+    assert_selector "turbo-frame#calculator-save .calculator-save-error", text: "Couldn't load your projects. Reload the page"
+    assert_no_text "Content missing"
   end
 
   test "Open in calculator puts a saved expression back, at the display it was saved with" do
