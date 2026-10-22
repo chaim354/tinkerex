@@ -13,13 +13,13 @@ class DeployHygieneTest < ActiveSupport::TestCase
                     "add `/sidecar/` to .dockerignore — `COPY . .` ships the GPL sidecars otherwise"
   end
 
-# EVERY DEMO SEED FILE REACHES THE IMAGE. Tinkerex::DemoReset writes db/seeds/demo from inside the
-# container, so a seed file the build context drops is one the reset silently never writes: the
-# macOS " 2" duplicate sweep in .dockerignore dropped the catan project's real `laser/game box
-# 2.lbrn2` from the first image that shipped it (2026-10-16, tinkerex#384). This applies the file the
-# way the builder does: rules in order, a `!` rule re-including, the last match winning, and a rule
-# that matches a parent directory excluding everything beneath it. OS clutter is left out because
-# the reset skips it anyway (Library::OsClutter).
+  # EVERY DEMO SEED FILE REACHES THE IMAGE. Tinkerex::DemoReset writes db/seeds/demo from inside the
+  # container, so a seed file the build context drops is one the reset silently never writes: the
+  # macOS " 2" duplicate sweep in .dockerignore dropped the catan project's real `laser/game box
+  # 2.lbrn2` from the first image that shipped it (2026-10-16, tinkerex#384). This applies the file the
+  # way the builder does: rules in order, a `!` rule re-including, the last match winning, and a rule
+  # that matches a parent directory excluding everything beneath it. OS clutter is left out because
+  # the reset skips it anyway (Library::OsClutter).
   def dockerignore_rules
     @dockerignore_rules ||= ROOT.join(".dockerignore").read.lines.map(&:strip).reject { |l| l.empty? || l.start_with?("#") }.map do |line|
       negate = line.start_with?("!")
