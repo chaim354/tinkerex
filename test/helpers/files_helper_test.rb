@@ -217,6 +217,15 @@ class FilesHelperTest < ActiveSupport::TestCase
     assert_equal "/files/n-1", file_open_data({}, new_tab: "/files/n-1")[:fileopen_new_tab_url]
   end
 
+  # A TILE IS A SELECTION ITEM FOR DETAILS ONLY (2026-10-21): the menu's Details asks the tile through
+  # a `filemenu:details` event, and nothing here intercepts a click any more — fileopen does.
+  test "with_selection appends the Details hook and nothing that intercepts a click" do
+    data = with_selection({ action: "contextmenu->filemenu#open" }, "n-1")
+    assert_equal "contextmenu->filemenu#open filemenu:details->selection#details", data[:action]
+    assert_equal "item", data[:selection_target]
+    assert_equal "n-1", data[:selection_id]
+  end
+
   # A FOLDER'S WHOLE MENU, ASSERTED AS AN EXACT HASH rather than key by key. The claim is not "it has
   # a delete url" but "it has NOTHING ELSE": a note url would open a popover POSTing to an endpoint
   # no directory has, a download url would put a dead entry on every folder, and a `node_id` would

@@ -94,14 +94,15 @@ module FilesHelper
     { thumbs_target: "cell", node_id:, ext: ext_label }
   end
 
-  # A FILE TILE IS A SELECTABLE ITEM (structural redesign §5.1): click selects, double-click opens,
-  # and the link's own behaviour stays for everything else (selection_controller.js). Merged into
-  # whatever data the tile already carries — its `action` is APPENDED to, never replaced, because
-  # the file menu's `contextmenu->filemenu#open` lives in the same attribute. A FOLDER IS NEVER
-  # PASSED THROUGH THIS: a folder click navigates into it.
+  # A FILE TILE IS A SELECTION ITEM FOR DETAILS (2026-10-21). A click opens the file
+  # (fileopen_controller.js, through file_open_data) and a double-click opens it in a new tab; the
+  # side panel opens from the file menu's Details, which dispatches `filemenu:details` on the tile and
+  # is answered here by selection_controller.js#details. Merged into whatever data the tile already
+  # carries — its `action` is APPENDED to, never replaced. A FOLDER IS NEVER PASSED THROUGH THIS: a
+  # folder click navigates into it.
   def with_selection(data, node_id)
     data.merge(selection_target: "item", selection_id: node_id,
-               action: [ data[:action], "click->selection#click", "dblclick->selection#open" ].compact.join(" "))
+               action: [ data[:action], "filemenu:details->selection#details" ].compact.join(" "))
   end
 
   # A FILE LINK THAT OPENS ON A CLICK AND IN A NEW TAB ON A DOUBLE-CLICK (2026-10-21,

@@ -124,6 +124,30 @@ module Web
       assert_select ".grid-folder[data-action]", count: 1
     end
 
+    # DETAILS REACHES EVERY MENU-BEARING FILE CELL (2026-10-21): the Library's grid and list, Recent and
+    # a project's tiles all build the menu from file_menu_data, and a surface that dropped the url would
+    # offer no Details entry with nothing anywhere going red. A cell's own note url names its node.
+    test "every menu-bearing file cell carries a details url naming its folder and itself" do
+      dir = @user.nodes.create!(node_id: "dir-cad", name: "cad", kind: "dir", mtime: 1, size: 0)
+      @user.nodes.create!(node_id: "n-in", name: "inner.stl", kind: "file", mtime: 1, size: 5,
+                          parent_node_id: dir.node_id, content_hash: "h-in", current_version_id: "v-in")
+      project = @user.maker_projects.create!(name: "Lamp")
+      project.file_attachments.create!(user: @user, node_id: "n-stl", role: "model")
+
+      [ files_path(view: "list"), files_path(view: "grid"), files_path(folder: dir.node_id, view: "grid"),
+        root_path, project_path(project) ].each do |path|
+        get path
+        assert_response :success
+        cells = css_select("[data-action*='filemenu#open'][data-note-url]")
+        refute_empty cells, "#{path} rendered no file menu"
+        cells.each do |cell|
+          id = cell["data-note-url"][%r{/files/([^/]+)/notes}, 1]
+          parent = @user.nodes.find_by!(node_id: id).parent_node_id
+          assert_equal files_path(folder: parent, selected: id), cell["data-details-url"], "#{path}: #{id}"
+        end
+      end
+    end
+
     # The menu is gated on `data-note-url` (`if (!noteUrl) return`), so a cell with a download url
     # and no note url renders no menu at all — the Download would be unreachable. They travel
     # together or the entry is dead.

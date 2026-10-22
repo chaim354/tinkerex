@@ -1,14 +1,19 @@
 import { Controller } from "@hotwired/stimulus"
 
-// CLICK TO SELECT, DOUBLE-CLICK OR ENTER TO OPEN (structural redesign spec §5.1, slice 3).
-// A plain click on a FILE tile selects it: `.is-selected` on the tile, `?selected=<id>` in the URL
-// (a REPLACE, never a push, so Back leaves the Library instead of stepping through selections; and
-// through Turbo's history so the next page's referer carries the selection — see #replaceUrl), and
-// the inspector frame loads that file's panel.
-// EVERYTHING ELSE KEEPS THE LINK'S OWN BEHAVIOUR, which is why the tiles stay `<a href=file_path>`:
-// a modifier or middle click opens a tab, Enter (a click whose `detail` is 0) opens the page, a
-// double-click opens it, the file menu's Open reads the href, and with JavaScript off every tile is
-// just a link. Folders are not items and navigate as links.
+// DETAILS OPENS THE PANEL; A CLICK OPENS THE FILE (2026-10-21,
+// docs/superpowers/specs/2026-10-21-file-click-and-model-page-design.md; before that a click
+// selected, structural redesign spec §5.1, slice 3). The panel opens from the file menu's Details
+// (filemenu_controller.js dispatches `filemenu:details` on the tile, answered by #details below) or
+// from a page the server rendered with `?selected=`. Once open, the selection is what it always was:
+// `.is-selected` on the tile (the ink ring), `?selected=<id>` in the URL (a REPLACE, never a push, so
+// Back leaves the Library instead of stepping through selections; and through Turbo's history so the
+// next page's referer carries the selection — see #replaceUrl), the inspector frame loading that
+// file's panel, the arrows moving it while the panel is open, and Escape closing it.
+// A CLICK AND A DOUBLE-CLICK ARE fileopen_controller.js's, NOT THIS CONTROLLER'S: a click opens the
+// file and a double-click opens it in a new tab. The tiles stay `<a href=file_path>` for the same
+// reasons as before: that click, the file menu's Open, a modifier or middle click, Enter (a click
+// whose `detail` is 0) and no-JavaScript all rely on the href. Folders are not items and navigate as
+// links.
 export default class extends Controller {
   static targets = ["item", "frame"]
   static values = { inspectorUrl: String }
@@ -22,17 +27,12 @@ export default class extends Controller {
     this.element.removeEventListener("keydown", this.onKeydown)
   }
 
-  click(event) {
-    if (event.detail === 0 || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+  // RIGHT-CLICK › DETAILS (filemenu_controller.js) asks the tile through a cancelable
+  // `filemenu:details` event. On the Library the answer is this panel, opened in place, and the cancel
+  // is what tells the menu not to navigate to its details url.
+  details(event) {
     event.preventDefault()
     this.select(event.currentTarget)
-  }
-
-  open(event) {
-    event.preventDefault()
-    const href = event.currentTarget.getAttribute("href")
-    if (window.Turbo) window.Turbo.visit(href)
-    else window.location.assign(href)
   }
 
   select(item) {
@@ -40,8 +40,8 @@ export default class extends Controller {
     const id = item.dataset.selectionId
     this.replaceUrl((url) => url.searchParams.set("selected", id))
     const src = this.inspectorUrlValue.replace("__ID__", encodeURIComponent(id))
-    // The second click of a double-click lands here too; re-assigning the same src would fetch the
-    // panel again for a page that is about to be replaced.
+    // Details on the tile already selected lands here too; re-assigning the same src would fetch the
+    // panel it is already showing.
     if (this.frameTarget.getAttribute("src") !== src) this.frameTarget.src = src
     this.element.classList.add("has-inspector")
     item.focus({ preventScroll: true })
@@ -96,10 +96,13 @@ export default class extends Controller {
     })
   }
 
-  // Arrows move the selection in document order and Escape closes — only from a TILE (arrows) or
-  // anywhere in the library outside a form control (Escape). The listener is on this element, which
-  // holds the inspector too, and the inspector has a project <select> whose own arrow keys must
-  // keep choosing a project; elsewhere on the page arrows still scroll.
+  // Arrows move the selection in document order and Escape closes — only while the panel is OPEN,
+  // and only from a TILE (arrows) or anywhere in the library outside a form control (Escape). With
+  // the panel closed the arrows are the browser's: a click no longer selects (2026-10-21), so a
+  // focused tile with no panel is just a link, and an arrow that opened the panel would be a second,
+  // hidden door to Details. The listener is on this element, which holds the inspector too, and the
+  // inspector has a project <select> whose own arrow keys must keep choosing a project; elsewhere on
+  // the page arrows still scroll.
   keydown(event) {
     if (event.key === "Escape") {
       if (!this.element.classList.contains("has-inspector") || this.isFormControl(event.target)) return
@@ -107,6 +110,7 @@ export default class extends Controller {
       return
     }
     const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[event.key]
+    if (!this.element.classList.contains("has-inspector")) return
     if (!step || event.metaKey || event.ctrlKey || event.altKey) return
     const items = this.itemTargets
     if (!items.includes(event.target)) return

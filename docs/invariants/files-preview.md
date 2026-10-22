@@ -559,9 +559,9 @@ grey. `Maker::ThreeMfManifest` reads both — **one bounded port read, judged on
 column first and cached in `Rails.cache` by content token with the bytes' nil cached and a port
 failure never, `Maker::GerberArchive`'s shape exactly** — and `FilesController#show` /
 `ModelsController#show` hand it over as data attributes (per `<option>` on the model page: the
-manifest is a fact about one FILE and the switcher swaps files). Since slice 5 the model page
-renders only for a model with no folder strip to land on; the Library's model strip carries no
-viewer, so in a model folder the manifest reaches the viewer through the file page.
+manifest is a fact about one FILE and the switcher swaps files). Every model renders its own page
+(2026-10-21); a file opened in its pane goes through `files/_viewer`, the file page's own chain, so
+the manifest reaches the viewer the same way on both.
 
 **The colours are applied BY THE ENGINE'S MESH INDEX, and three rules keep that safe.** The match is
 `userData.originalMeshInstance.id.meshIndex`, never a name — a Bambu `<object>` carries no `name`
@@ -779,16 +779,21 @@ selected file: a Turbo Frame body rendered **without the layout**, built from `f
   `files/inspector_gone` with 404. **Never fold `FetchError` into that rescue**: an unmounted share is
   "couldn't reach", not "gone" (§14a), so if an adapter's `stat` ever starts raising it, it gets its
   own frame with a 503. No adapter's `stat` raises it today (it is a database read of the node).
-- **The tiles stay links.** Selection (`selection_controller.js`) intercepts only a plain click; every
-  tile keeps `href=file_path`, which the file menu's Open, a modifier click, Enter and no-JavaScript
-  all rely on. **The model strip above a model folder's files (`files/_model_strip`, slice 5) is not
-  a selection item**: nothing in it goes through `with_selection`, because a model is not a file in
-  the listing, so it never opens this frame (`model_strip_test.rb` asserts no `data-selection-target`
-  inside it). **Recent and the project hub have no inspector (slice 6), so their file tiles are
-  never selection items either**: neither page mounts a `selection` controller, so nothing there goes
-  through `with_selection`. **Their tiles and list rows link `file_path` and open the file.** They
-  linked the file's folder in the Library with `?selected=` until 2026-10-20, when the owner asked
-  for a click to just open the file; do not route them back through the Library.
+- **The tiles stay links.** A click opens the file and a double-click opens it in a new tab
+  (`fileopen_controller.js`, 2026-10-21); the panel opens from the file menu's Details
+  (`filemenu:details` → `selection_controller.js#details`) or a `?selected=` page. Every tile keeps
+  `href=file_path`, which a single click, the file menu's Open, a modifier click, Enter and
+  no-JavaScript all rely on. **The model strip above a model folder's files (`files/_model_strip`,
+  slice 5) is not a selection item**: nothing in it goes through `with_selection`, because a model is
+  not a file in the listing, so it never opens this frame (`model_strip_test.rb` asserts no
+  `data-selection-target` inside it). **Recent and the project hub have no inspector (slice 6), so
+  their file tiles are never selection items either**: neither page mounts a `selection` controller,
+  so nothing there goes through `with_selection`. **Their tiles and list rows link `file_path` and
+  open the file on a click, and in a new tab on a double-click.** They linked the file's folder in
+  the Library with `?selected=` until 2026-10-20, when the owner asked for a click to just open the
+  file; do not route them back through the Library. Their file menu's Details is the one door there:
+  nothing on those pages cancels `filemenu:details`, so the entry follows `file_menu_data`'s
+  `details_url`, the file's own folder with `?selected=` (a root file's carries no folder).
 
 **`PHOTO_EXTS` is a DISPLAY subset of the image role, not a second vocabulary.** `jpg jpeg heic heif`
 — what a camera writes — get `.thumb.photo` (cropped to fill, on `--photo-stage`); PNG, GIF, WebP,
