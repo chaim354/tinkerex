@@ -277,13 +277,14 @@ module Web
 
     # --- On-demand panels (structural redesign §6, slice 6) ---------------------------------------
     #
-    # AN EMPTY Build log, Tasks, BOM, Wiring, Releases or Sheets IS ABSENT FROM THE NORMAL PAGE — not
+    # AN EMPTY Build log, Tasks, BOM, Wiring, Releases, Sheets or Calculations IS ABSENT FROM THE NORMAL PAGE — not
     # quiet — and "+ Add panel" opens one for this visit with ?add=<key>, where it renders quiet (S4-1's
     # heading and one add control) with its composer. Decided in ProjectsController#show alone
     # (design-system.md rule 14). `@project` in `setup` is populated, so these build their own.
     ADD_MENU = { "build_log" => [ "Build log", "project-build-log" ], "tasks" => [ "Tasks", "project-tasks" ],
                  "bom" => [ "Bill of materials", "project-bom" ], "wiring" => [ "Wiring", "project-wiring" ],
-                 "releases" => [ "Releases", "project-releases" ], "sheets" => [ "Sheets", "project-sheets" ] }.freeze
+                 "releases" => [ "Releases", "project-releases" ], "sheets" => [ "Sheets", "project-sheets" ],
+                 "calculations" => [ "Calculations", "project-calculations" ] }.freeze
 
     def add_menu_links
       css_select(".head-actions details.add-panel .menu-list a.menu-item").map { |a| [ a.text.strip, a["href"] ] }
@@ -295,7 +296,7 @@ module Web
       get project_path(fresh)
 
       assert_response :success
-      %w[build-log tasks bom wiring releases sheets].each do |name|
+      %w[build-log tasks bom wiring releases sheets calculations].each do |name|
         assert_select "section.#{name}-panel", count: 0
       end
       assert_select "section.attachments-panel"
@@ -322,9 +323,9 @@ module Web
       assert_select "#project-tasks", count: 1
       assert_select "#project-tasks .tasks-group", count: 0
       assert_select "section.build-log-panel", count: 0
-      # The open panel leaves the menu; the other five stay in it.
+      # The open panel leaves the menu; the other six stay in it.
       assert_select ".add-panel a.menu-item", text: "Tasks", count: 0
-      assert_equal 5, add_menu_links.size
+      assert_equal ADD_MENU.size - 1, add_menu_links.size
     end
 
     # EACH LINK'S ANCHOR IS THE ID OF THE PANEL IT OPENS (ProjectsHelper::PANEL_ANCHORS), and each
@@ -369,7 +370,7 @@ module Web
 
       get project_path(fresh, add: "publish")
       assert_response :success
-      assert_equal 6, add_menu_links.size, "a key that is not on demand opens nothing and closes nothing"
+      assert_equal ADD_MENU.size, add_menu_links.size, "a key that is not on demand opens nothing and closes nothing"
       get "#{project_path(fresh)}?add[]=tasks"
       assert_response :success
       assert_select "section.tasks-panel", count: 0

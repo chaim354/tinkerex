@@ -23,7 +23,7 @@ module ProjectsHelper
   # ProjectsController::ON_DEMAND, which `fetch` holds it to.
   PANEL_ANCHORS = { "build_log" => "project-build-log", "tasks" => "project-tasks", "bom" => "project-bom",
                     "wiring" => "project-wiring", "releases" => "project-releases",
-                    "sheets" => "project-sheets" }.freeze
+                    "sheets" => "project-sheets", "calculations" => "project-calculations" }.freeze
 
   # The maker's title, else the default label — Maker::Project::PANEL_LABELS for a fixed key, the
   # folder's own name for a folder key, which only the caller knows.

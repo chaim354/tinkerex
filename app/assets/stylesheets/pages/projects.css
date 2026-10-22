@@ -302,6 +302,24 @@
   .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .sheets-panel .sheet-row:last-child { border-bottom: 0; }
   .sheets-panel .sheet-row .muted { font: 11px/1.4 var(--font-mono); }
+  /* Saved calculations (projects/_calculations, 2026-10-21): label and answer on one line, the
+     expression under them in mono (it is data), the three acts after. Long expressions wrap
+     rather than widen the panel. */
+  .calculations-panel .calculation-list { list-style: none; margin: 0; padding: 0; }
+  .calculations-panel .calculation-row { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .calculations-panel .calculation-row:last-child { border-bottom: 0; }
+  .calculations-panel .calculation-main { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
+  .calculations-panel .calculation-label { font-weight: 500; overflow-wrap: anywhere; }
+  .calculations-panel .calculation-result { font: 600 14px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+  .calculations-panel .calculation-expression { font: 400 12px/1.4 var(--font-mono); color: var(--fg-muted); overflow-wrap: anywhere; }
+  .calculations-panel .calculation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+  .calculations-panel .calculation-actions form { display: inline; }
+  .calculations-panel .calculation-rename > summary { list-style: none; cursor: pointer; }
+  .calculations-panel .calculation-rename > summary::-webkit-details-marker { display: none; }
+  .calculations-panel .calculation-rename[open] { flex-basis: 100%; order: 1; }
+  .calculations-panel .calculation-rename-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .calculations-panel .calculation-rename-form input[type="text"] { flex: 1; min-width: 0; }
+  .calculations-panel .calculations-empty { margin: 0; font-size: 13px; }
   .sheet-new-form { display: flex; gap: 6px; align-items: center; }
   .picker-search { display: flex; gap: 8px; margin-bottom: 16px; }
   .picker-search input { flex: 1; max-width: 480px; }

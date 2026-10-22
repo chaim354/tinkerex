@@ -1,0 +1,49 @@
+<%#
+  THE CALCULATIONS PANEL'S ROWS (projects/_calculations), and what CalculationsController#create's
+  stream replaces by id (CalculationsHelper#calculation_rows_id). Locals, not ivars, because the
+  stream renders it with no page around it.
+
+  Each row: the label, the answer as the calculator showed it (calculation_result_text — the inch
+  fraction it was saved at, if any), the expression, and three acts. "Open in calculator" puts the
+  expression and its inch display back in the modal (`data-calculator-*`); Rename and Delete are
+  plain forms that come back here (Projects::ConnectionsController's idiom). The rename form is
+  `scope: :calculation` so it posts `calculation[label]`, which CalculationsController#update
+  requires (§14d), and its field states its own value (the form-with-scope fallback trap).
+
+  Locals: project, calculations.
+%>
+<div class="calculation-rows" id="<%= calculation_rows_id(project) %>">
+  <% if calculations.empty? %>
+    <p class="muted calculations-empty">Work something out in the calculator and choose Save to project —
+      it lands here with a label, ready to open again.</p>
+  <% else %>
+    <ul class="calculation-list">
+      <% calculations.each do |calculation| %>
+        <li class="calculation-row" id="calculation-<%= calculation.id %>">
+          <div class="calculation-main">
+            <span class="calculation-label"><%= calculation.label %></span>
+            <span class="calculation-result"><%= calculation_result_text(calculation) %></span>
+          </div>
+          <code class="calculation-expression"><%= calculation.expression %></code>
+          <div class="calculation-actions">
+            <button type="button" class="linkbtn small calculation-open" aria-haspopup="dialog"
+                    data-calculator-open data-calculator-expression="<%= calculation.expression %>"
+                    data-calculator-fraction="<%= calculation.inch_fraction %>">Open in calculator</button>
+            <details class="calculation-rename">
+              <summary class="linkbtn small">Rename</summary>
+              <%= form_with model: calculation, scope: :calculation, url: calculation_path(calculation), method: :patch,
+                            class: "calculation-rename-form" do |f| %>
+                <%= f.text_field :label, value: calculation.label, id: "calculation-label-#{calculation.id}", "aria-label": "Label",
+                                 required: true, maxlength: Maker::Calculation::LABEL_MAX, autocomplete: "off" %>
+                <%= f.submit "Save", class: "btn small", name: nil %>
+              <% end %>
+            </details>
+            <%= button_to "Delete", calculation_path(calculation), method: :delete, class: "linkbtn small danger",
+                          form_class: "calculation-delete-form",
+                          form: { data: { turbo_confirm: "Delete “#{calculation.label}”?" } } %>
+          </div>
+        </li>
+      <% end %>
+    </ul>
+  <% end %>
+</div>

@@ -14,6 +14,13 @@
 
   /* --- Tools (addons) gallery --- */
   .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
+  /* The gallery's two kinds (2026-10-21): Built in (the calculator, written in the view) above the
+     Add-ons a manifest makes. The heading is the page's section heading, quieter than the h1. */
+  .tools-section { margin-bottom: var(--space-5); }
+  .tools-section-head { margin: 0 0 var(--space-3); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
+  .calculator-card .addon-icon .rail-icon { width: 22px; height: 22px; }
+  .calculator-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
+  .calculator-card-actions form { display: inline; }
   .addon-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }
   .addon-card:hover { text-decoration: none; border-color: var(--fg); }
   .addon-card.disabled { opacity: .6; }

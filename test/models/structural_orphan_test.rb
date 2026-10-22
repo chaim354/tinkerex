@@ -59,6 +59,10 @@ class StructuralOrphanTest < ActiveSupport::TestCase
       p = u.maker_projects.create!(name: "Lamp")
       [ p, p.sheets.create!(user: u, name: "Cut list") ]
     },
+    "maker_calculations.project_id" => ->(u) {
+      p = u.maker_projects.create!(name: "Lamp")
+      [ p, p.calculations.create!(user: u, label: "Shelf depth", expression: "12.5mm + 1/4in", result: 18.85, unit: "mm") ]
+    },
     "maker_connections.project_id" => ->(u) {
       p = u.maker_projects.create!(name: "Lamp")
       [ p, p.connections.create!(user: u, from_label: "Driver board", to_label: "Stepper motor") ]

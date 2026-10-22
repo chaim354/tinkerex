@@ -52,7 +52,7 @@ module Maker
     # under the loop is a panel the chooser cannot list — one question with two answers (§14a).
     # The key IS the partial's basename; keep them equal.
     #
-    # `publish` IS THE LAST MEMBER (the tenth then; `models` made eleven) because S4-4 landed
+    # `publish` IS THE LAST MEMBER (the tenth then; `models` made eleven, `calculations` twelve) because S4-4 landed
     # `projects/_publish.html.erb` (amendment 9's first branch, checked by `ls` at Task A step 1):
     # the panel exists, so it goes through the loop rather than being rendered under it.
     #
@@ -61,7 +61,8 @@ module Maker
     # crafted request cannot put an unknown key in the `panels` column and `render` can never be
     # handed a partial name that does not exist.
     # `models` (2026-10-21): the project's 3D models as cards — projects/_models, Maker::ProjectModels.
-    PANELS = %w[attachments photos models schematics build_log tasks bom wiring releases sheets publish].freeze
+    # `calculations` (2026-10-21): results saved from the calculator modal — projects/_calculations.
+    PANELS = %w[attachments photos models schematics build_log tasks bom wiring releases sheets calculations publish].freeze
 
     # HOW ONE PANEL DRAWS WHAT IT HOLDS (2026-09-08, folder panels; spec decision 6). Per panel and
     # persisted in `panels["views"]`, which is what retired the page-wide `project_view` cookie: a
@@ -76,7 +77,7 @@ module Maker
     VIEWS = %w[tiles list browser].freeze
 
     # What the chooser calls each one. Its own map rather than `key.humanize`, because three of the
-    # eleven disagree with what humanize would say: `attachments` is "Files" (the panel has been
+    # twelve disagree with what humanize would say: `attachments` is "Files" (the panel has been
     # headed Files since S2-2 — the key is the partial's name, and renaming the partial would touch
     # eight call sites), `bom` is "Bill of materials", and `build_log` is "Build log", not
     # "Build Log". A chooser whose labels differ from the headings above them is a chooser nobody
@@ -84,7 +85,8 @@ module Maker
     PANEL_LABELS = {
       "attachments" => "Files", "photos" => "Photos", "models" => "Models", "schematics" => "Schematics",
       "build_log" => "Build log", "tasks" => "Tasks", "bom" => "Bill of materials",
-      "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "publish" => "Publish"
+      "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "calculations" => "Calculations",
+      "publish" => "Publish"
     }.freeze
 
     has_many :build_log_entries, -> { order(:logged_at) },
@@ -101,6 +103,11 @@ module Maker
     # THE WIRING TABLE (stage 3, S3-3): connections between two labelled ends, in position order.
     has_many :connections, -> { order(:position, :id) },
              class_name: "Maker::Connection", foreign_key: :project_id, dependent: :destroy
+    # SAVED CALCULATIONS (2026-10-21): the calculator modal's results, oldest first, for the
+    # Calculations panel. `:destroy`, not `:nullify`: the row names the project in its own
+    # `project_belongs_to_user` validation, so a nulled pointer would be an unsaveable row (§14d).
+    has_many :calculations, -> { ordered },
+             class_name: "Maker::Calculation", foreign_key: :project_id, dependent: :destroy
     # CONTENT BLOCKS (2026-09-09): text, link and image blocks the page editor arranges beside the
     # panels. Row order is creation order; the LAYOUT orders them on the page.
     has_many :blocks, -> { order(:id) },
