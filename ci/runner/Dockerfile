@@ -81,7 +81,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git openssh-client curl ca-certificates lsof bash \
       libssl-dev zlib1g-dev libyaml-dev libffi-dev libreadline-dev \
       sqlite3 libsqlite3-dev \
-      libvips-tools \
+      libvips-tools libheif-plugin-libde265 \
       xz-utils unzip \
       nodejs \
  && rm -rf /var/lib/apt/lists/*
@@ -97,6 +97,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # on the runtime, and node 20 runs the same bundle. Proved to run rather than merely installed, the
 # way resvg/pdfium/stl-thumbnailer below each are.
 RUN node --version
+# `libheif-plugin-libde265` IS THE HEVC DECODER, AND ON THIS BASE IT IS ONLY A "Suggests". Noble's
+# libheif1 1.17 ships its codecs as separate plugin packages: it Depends on the AV1 one (aomdec)
+# and merely Suggests libde265, so `--no-install-recommends` leaves an iPhone `.heic` undecodable —
+# `heif: Unsupported feature: Unsupported codec` — while vipsthumbnail itself runs fine, so
+# ImageThumb.available? stays true and image_thumb_test.rb ERRORS rather than skipping. The Rails
+# image (Debian trixie) pulls the plugin in by itself, so production was never affected. FOUND
+# 2026-10-22, when the runner containers were recreated: the old ones, whose image never had it,
+# had passed that test for six weeks, so it must have been installed into them by hand. A
+# container keeps only what its image says. image_thumb_test.rb is the proof.
 
 # ---------------------------------------------------------------------------------------------
 # Ruby, via mise — the same manager the Mac runner used, so `.ruby-version` resolves the same way.

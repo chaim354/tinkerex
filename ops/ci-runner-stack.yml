@@ -1,5 +1,5 @@
 # The CI runner stack, deployed through Portainer (portainer.home, 2.39.6) on the Unraid box.
-# Four self-hosted GitHub Actions runners for chaim354/tinkerex — CLAUDE.md §15.
+# Three self-hosted GitHub Actions runners for chaim354/tinkerex — CLAUDE.md §15.
 #
 # TWO HOSTS, AND CONFUSING THEM COSTS AN AFTERNOON — the same trap ops/kaneo-stack.yml records.
 # Nginx Proxy Manager is 192.168.1.7, where the `*.home` wildcard resolves, INCLUDING
@@ -13,11 +13,11 @@
 # stack, change this file in the same breath. A committed file that has silently diverged from what
 # runs reads as the truth and nothing can go red for it.
 #
-# BEFORE THE FIRST DEPLOY, THE OPERATOR CREATES THE FOUR WORK DIRECTORIES ON THE BOX. Docker creates
+# BEFORE THE FIRST DEPLOY, THE OPERATOR CREATES THE RUNNERS' WORK DIRECTORIES ON THE BOX. Docker creates
 # a missing bind-mount path ROOT-OWNED, and these containers run jobs as a non-root user, so the
 # runner cannot write its own work dir — a first-boot failure that reads as a broken image:
 #
-#   ssh root@192.168.1.146 'mkdir -p /mnt/user/appdata/tinkerex-ci/runner-{1,2,3,4}/_work'
+#   ssh root@192.168.1.146 'mkdir -p /mnt/user/appdata/tinkerex-ci/runner-{1,2,3}/_work'
 #   ssh root@192.168.1.146 'chown -R 1001:121 /mnt/user/appdata/tinkerex-ci'
 #
 # 1001:121 IS MEASURED, NOT ASSUMED, AND THE OBVIOUS GUESS IS WRONG. In
@@ -46,47 +46,68 @@
 # `stack.Env = payload.Env` unconditionally (2.39.6, stack_update.go — read, then probed on a
 # throwaway stack: an update that omitted the variables handed back `env: null`). So every automated
 # update of this file had to re-send the token, and a client that redacts secrets on read — the MCP
-# does — could only wipe it, leaving four containers that "register nowhere". A file the daemon
+# does — could only wipe it, leaving containers that "register nowhere". A file the daemon
 # bind-mounts is read by nothing but the container, and the stack carries NO variables at all, so an
 # update is the file content and nothing else.
 #
 # ROTATING IT: write the new PAT into the file (root, 0400, no trailing newline needed — the wrapper
-# strips one) and `docker restart tinkerex-runner-1 tinkerex-runner-2 tinkerex-runner-3
-# tinkerex-runner-4` on the box; the entrypoint re-reads the file on every start.
+# strips one) and `docker restart tinkerex-runner-1 tinkerex-runner-2 tinkerex-runner-3`
+# on the box; the entrypoint re-reads the file on every start.
 #
 # DELIBERATELY NOT THE ghcr.io TOKEN, ALTHOUGH THAT ONE WORKS — measured 2026-08-31, it mints a
 # runner registration token fine (HTTP 201). It is a CLASSIC PAT carrying `admin:enterprise`,
-# `admin:org`, `admin:repo_hook`, `repo` and `write:packages`. The token reaches four container
+# `admin:org`, `admin:repo_hook`, `repo` and `write:packages`. The token reaches every container's
 # entrypoints (the wrapper exports it; myoung34's entrypoint un-exports it before the gosu
 # hand-off, so jobs inherit neither it nor the root-owned file), and CI executes branch
 # code — so reusing it would put an org- and enterprise-admin credential one hostile PR away from
-# exfiltration. The scoped token's blast radius is four CI runners on one repository. Its scoping
+# exfiltration. The scoped token's blast radius is the CI runners of one repository. Its scoping
 # was verified rather than assumed, the same way the tinkerex-sync deploy key's was:
 # `POST /repos/chaim354/tinkerex/actions/runners/registration-token` -> 201, and GitHub reports no
 # `x-oauth-scopes` header for it at all, which is what distinguishes a fine-grained token from the
 # classic one above.
 #
-# WHEN IT EXPIRES, ALL FOUR CONTAINERS KEEP RUNNING AND REGISTER NOWHERE. Fine-grained PATs cannot
+# WHEN IT EXPIRES, EVERY CONTAINER KEEPS RUNNING AND REGISTERS NOWHERE. Fine-grained PATs cannot
 # be renewed in place. The symptom is every job queueing at 0 elapsed, which is indistinguishable
 # from the box being down and is fixed completely differently — `docker logs tinkerex-runner-1`
 # tells them apart in one command. See ci/runners/README.md.
 #
 # WHY A PAT AND NOT A REGISTRATION TOKEN. A registration token is single-use and expires in ~1h
-# (ci/runners/README.md), which is the wrong shape for four containers that must re-register
-# themselves across a host reboot. When the PAT expires, all four fail to register and every job
+# (ci/runners/README.md), which is the wrong shape for containers that must re-register
+# themselves across a host reboot. When the PAT expires, every one fails to register and every job
 # queues — which looks exactly like "the box is down" and is fixed differently. See the README.
 #
-# FOUR SERVICES, NOT ONE WITH `replicas: 4`. Compose replicas share a volume definition, so four
-# replicas would contend over one work directory and corrupt each other's checkouts. Four because
-# ci.yml has seven jobs and the four heavy legs — test, test-s3, test-chunk-remote, system — then
-# overlap instead of running serially. Eight was rejected: the Rails parallel runner forks per-core
-# INSIDE each job, and eight concurrent suites oversubscribe a 36-core box in exactly the way
-# test/sqlite_concurrency_test.rb is sensitive to.
+# SEPARATE SERVICES, NOT ONE WITH `replicas:`. Compose replicas share a volume definition, so
+# replicas would contend over one work directory and corrupt each other's checkouts.
+#
+# THREE, NOT FOUR, AND THE NUMBER IS SET BY THE BOX'S MEMORY, NOT BY ci.yml (2026-10-22). It was
+# four, so that the four heavy legs (test, test-s3, test-chunk-remote, system) all overlapped.
+# On 2026-10-22 four full gates ran at once and FROZE THE WHOLE HOST: each container sat at
+# `mem_limit: 8g, cpus: 8.0`, sane alone, but four of them promised 32 GB on a 31 GB box that also
+# runs two 4 GB VMs (the production Kamal VM among them) and ~20 other containers. No container
+# reached its own cap; the HOST ran out first, and with no swap it did not OOM-kill anything, it
+# livelocked: load average 172 on 36 threads, ssh timing out in banner exchange, Kaneo, Portainer
+# and the VM all down until a power-cycle. `cpus: 8.0` made it worse in a way that reads as
+# harmless: a CFS quota does not change what `Etc.nprocessors` reports, so
+# `parallelize(workers: :number_of_processors)` forked 36 workers in EVERY job, 144 in all.
+#
+# THE INVARIANT IS THE SUM, written down in `x-host-budget` below and checked by
+# test/ci_hygiene_test.rb: the runners' mem_limits plus what the box reserves must fit in its RAM,
+# and their cpusets must be disjoint and off the VMs' pinned threads. A job that needs more than
+# its share is then OOM-killed INSIDE its own container (one red job) and the host never notices.
+# Raise a limit, or add a runner, and that test goes red until the arithmetic is redone.
+#
+# A CPUSET, NOT `cpus:`. Pinning is what changes `Etc.nprocessors` (it reads sched_getaffinity), so
+# a runner on 6 threads forks 6 test workers; a quota of 6 would still fork 36. Measured
+# 2026-10-22 in this image under `--cpuset-cpus=4-6,22-24 --memory=4g`: nproc 6, `bin/ci test`
+# 5,345 runs in 151 s of test time (2m48s gate) with the cgroup pressed against its 4 GB cap
+# (file cache reclaimed there, never an OOM kill). That is why each runner is 4 GB and 6 threads,
+# and why there are three: four runners inside the same 12 GB would get 3 GB each, less than the
+# test leg was measured filling.
 #
 # THE WORK DIRS ARE BIND MOUNTS ONTO THE ARRAY, NOT DOCKER NAMED VOLUMES — DO NOT "SIMPLIFY" THEM
 # BACK. A named volume lives in /var/lib/docker/volumes/, which on this host is a 50 GB LOOP DEVICE:
 # measured 2026-08-31, 30G used and 20G AVAIL (61%), already holding 24 images / 19.74 GB and 74
-# local volumes / 7.7 GB. Four runner work dirs — each a full Rails checkout plus its bundle plus
+# local volumes / 7.7 GB. The runner work dirs — each a full Rails checkout plus its bundle plus
 # the sibling tinkerex-sync checkout the chunk_remote leg needs — plus this stack's own ~5 GB image
 # and its build cache crowd that 20 GB hard. ON UNRAID A FULL docker.img TAKES DOWN EVERY CONTAINER
 # ON THE BOX, not just CI, and it would be us that caused it. /mnt/user is 6.4T with 5.8T avail, so
@@ -97,23 +118,55 @@
 #
 # MEM_LIMIT IS LOAD-BEARING AND IS WHY test/support/worker_budget.rb READS THE CGROUP. Without that
 # reader, /proc/meminfo inside these containers reports the HOST's 33.35 GB and the system gate
-# plans for 8 browser workers (~17 GB) inside an 8 GB container. Change this number and that budget
+# plans for 8 browser workers (~17 GB) inside a 4 GB container. Change this number and that budget
 # follows it; delete it and the suite plans for a box it does not have.
+
+# THE BOX THESE RUNNERS SHARE, MEASURED 2026-10-22 — what the budget test checks the limits against.
+# Compose ignores `x-` keys, so this is documentation that a test can read.
+#   ram           MemTotal 32,572,252 kB (31.06 GiB); written as 31g, a little under.
+#   vm_*          `virsh dominfo`: kamal1 (the production Kamal VM, .95) and Linux, 4 GiB each,
+#                 plus their qemu overhead (kamal1's qemu process measured 4.4 GB RSS).
+#   containers    everything else Docker runs here; ~4 GB measured idle (StirlingPDF 1 GB,
+#                 Jellyfin 0.5 GB and more when transcoding), reserved at 6g.
+#   host          Unraid's RAM-resident root filesystem, kernel and the array's page cache.
+#   reserved_cpus `virsh vcpupin`: Linux on 0-3, kamal1 on 32-35, each with its hyperthread
+#                 sibling (N and N+18 share a core on this 18-core part), plus one core for the host.
+# Re-measure, rather than trust this, before changing a runner's limits.
+x-host-budget:
+  ram: 31g
+  cpus: 36
+  reserved_ram:
+    vm_kamal1: 4g
+    vm_linux: 4g
+    vm_overhead: 1g
+    containers: 6g
+    host: 4g
+  reserved_cpus:
+    vm_linux: "0-3,18-21"
+    vm_kamal1: "14-17,32-35"
+    host: "13,31"
 
 # THE ANCHOR CARRIES NO `environment:`, AND THAT IS DELIBERATE — DO NOT "TIDY" IT BACK.
 # A YAML merge key does NOT deep-merge: a service's own `environment:` block REPLACES the anchor's
-# entirely. Put the five shared values here and give each service only its `RUNNER_NAME`, and three
-# of the four runners silently lose REPO_URL, ACCESS_TOKEN_FILE, RUNNER_SCOPE and LABELS — they never
+# entirely. Put the five shared values here and give each service only its `RUNNER_NAME`, and all but
+# one of the runners silently lose REPO_URL, ACCESS_TOKEN_FILE, RUNNER_SCOPE and LABELS — they never
 # register, every job queues, and nothing in this repo can go red for it. So every service below
 # repeats all six. The check that proves it, and its mutation-check (§15) — the anchor form scores 1:
-#   docker compose -f ops/ci-runner-stack.yml config | grep -c "REPO_URL"   # must print 4
-# Scalars and lists (image, restart, mem_limit, cpus, cap_add, security_opt) the merge key handles
-# correctly, so they stay here.
+#   docker compose -f ops/ci-runner-stack.yml config | grep -c "REPO_URL"   # must print 3
+# Scalars and lists (image, restart, mem_limit, cap_add, security_opt) the merge key handles
+# correctly, so they stay here. `cpuset` cannot: each runner gets its own threads, so each service
+# names its own.
 x-runner: &runner
-  image: tinkerex-ci-runner:2026-09-07.2
+  image: tinkerex-ci-runner:2026-10-22.1
   restart: unless-stopped
-  mem_limit: 8g
-  cpus: 8.0
+  mem_limit: 4g
+  # EQUAL TO mem_limit, SO A RUNNER CAN NEVER SWAP. The box has no swap today and Docker warns that
+  # the limit is ignored; if swap is ever added, a CI job paging the host to death is the same freeze.
+  memswap_limit: 4g
+  # IF THE HOST DOES RUN OUT ANYWAY, THE KERNEL KILLS CI FIRST — not the production VM, which as the
+  # biggest process on the box is otherwise its first choice.
+  oom_score_adj: 1000
+  pids_limit: 8192
   # SHM_SIZE IS FOR CHROME, AND WITHOUT IT EVERY SYSTEM TEST ERRORS. Docker defaults /dev/shm to
   # 64 MB; Chrome needs far more and simply exits at startup, which surfaces as
   # `Selenium::WebDriver::Error::SessionNotCreatedError: session not created: Chrome instance
@@ -137,6 +190,7 @@ services:
   runner-1:
     <<: *runner
     container_name: tinkerex-runner-1
+    cpuset: "4-6,22-24"
     environment:
       REPO_URL: https://github.com/chaim354/tinkerex
       ACCESS_TOKEN_FILE: /run/secrets/runner_token
@@ -160,6 +214,7 @@ services:
   runner-2:
     <<: *runner
     container_name: tinkerex-runner-2
+    cpuset: "7-9,25-27"
     environment:
       REPO_URL: https://github.com/chaim354/tinkerex
       ACCESS_TOKEN_FILE: /run/secrets/runner_token
@@ -174,6 +229,7 @@ services:
   runner-3:
     <<: *runner
     container_name: tinkerex-runner-3
+    cpuset: "10-12,28-30"
     environment:
       REPO_URL: https://github.com/chaim354/tinkerex
       ACCESS_TOKEN_FILE: /run/secrets/runner_token
@@ -183,18 +239,4 @@ services:
       RUNNER_NAME: tinkerex-unraid-3
     volumes:
       - /mnt/user/appdata/tinkerex-ci/runner-3/_work:/_work
-      - /mnt/user/appdata/tinkerex-ci/runner.token:/run/secrets/runner_token:ro
-
-  runner-4:
-    <<: *runner
-    container_name: tinkerex-runner-4
-    environment:
-      REPO_URL: https://github.com/chaim354/tinkerex
-      ACCESS_TOKEN_FILE: /run/secrets/runner_token
-      RUNNER_SCOPE: repo
-      LABELS: self-hosted,linux,X64,maker-unraid
-      DISABLE_AUTO_UPDATE: "true"
-      RUNNER_NAME: tinkerex-unraid-4
-    volumes:
-      - /mnt/user/appdata/tinkerex-ci/runner-4/_work:/_work
       - /mnt/user/appdata/tinkerex-ci/runner.token:/run/secrets/runner_token:ro
