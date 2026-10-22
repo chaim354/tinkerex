@@ -12,7 +12,8 @@ require "application_system_test_case"
 # WHAT IT PINS: precedence (unary minus looser than ^, ^ right-associative), implicit
 # multiplication and its limits, percent as desk-calculator percent, every unit and alias, the four
 # conversion spellings and `in`'s double duty, the fraction-literal rule against ordinary division,
-# the left-operand display unit both ways, areas and volumes, trig in radians and degrees, rounding
+# feet-and-inches pairs (`5'6"` is 66 in), the left-operand display unit both ways, areas and
+# volumes, trig in radians and degrees (an angle's text is "45°", no space), rounding
 # noise, every error message a maker can be shown, and formatInches/formatNumber.
 #
 # MUTATION-CHECKED (test/system/README.md, CLAUDE.md §15) on 2026-10-21, each RED, each restored by
@@ -24,11 +25,17 @@ require "application_system_test_case"
 #   (b) the + / − dimension check skipped when one side is plain — 7 rows red, starting
 #       `"12mm + 1": expected "Can't add a plain number to a length. …", got … "text" => "13 mm"`.
 #   (c) ^ made a left-associative loop — red on `"2^3^2": expected 512 (dim 0), got [64, …]`.
+#   (d) Parser#compound made a no-op — all 15 feet-and-inches rows red, starting
+#       `"2'6\"": expected 30 in (dim 1), got "Missing an operator before \"6\"."`.
+#   (e) compound's inch-only check dropped — red on `"5ft 6mm": expected "Missing an operator
+#       before \"6\".", got … "text" => "66 in"`, so the refusal rows carry weight too.
+#   (f) the space put back before "°" — red on `"asin(0.5) to deg": expected 30°, got … "30 °"`.
 class CalculatorEngineTest < ApplicationSystemTestCase
   setup { sign_in_as("calc-engine@example.com") }
 
-  # [input, value, text, dim]. The unit is the text after its first space ("" when there is none),
-  # and `fractionable` must be exactly "the unit is in", so both are checked off these four.
+  # [input, value, text, dim]. The unit is the text after its first space ("" when there is none) —
+  # except an angle, which is written "45°" with no space — and `fractionable` must be exactly "the
+  # unit is in", so both are checked off these four.
   ANSWERS = [
     # precedence and associativity
     [ "1+2*3", 7, "7", 0 ],
@@ -123,6 +130,22 @@ class CalculatorEngineTest < ApplicationSystemTestCase
     [ "12.5mm + 1/4in", 18.85, "18.85 mm", 1 ],
     [ "1/4in + 12.5mm", 0.742125984252, "0.7421259843 in", 1 ],
     [ "1ft - 6in", 0.5, "0.5 ft", 1 ],
+    # feet-and-inches is one length, shown in inches
+    [ %q(2'6"), 30, "30 in", 1 ],
+    [ %q(2' 6"), 30, "30 in", 1 ],
+    [ "5ft 6in", 66, "66 in", 1 ],
+    [ "5 ft 6 in", 66, "66 in", 1 ],
+    [ %q(2'6 1/2"), 30.5, "30.5 in", 1 ],
+    [ %q(2' 6 1/2"), 30.5, "30.5 in", 1 ],
+    [ "5ft 6 1/2in", 66.5, "66.5 in", 1 ],
+    [ %q(5' 1/2"), 60.5, "60.5 in", 1 ],
+    [ "5’6”", 66, "66 in", 1 ],
+    [ %q(5'6" to mm), 1676.4, "1676.4 mm", 1 ],
+    [ %q(5' 6" in mm), 1676.4, "1676.4 mm", 1 ],
+    [ "5ft 6in in mm", 1676.4, "1676.4 mm", 1 ],
+    [ %q(5'6" + 1in), 67, "67 in", 1 ],
+    [ %q(2 * 5'6"), 132, "132 in", 1 ],
+    [ %q(-5'6"), -66, "-66 in", 1 ],
     # areas and volumes
     [ "10in * 2in", 20, "20 in²", 2 ],
     [ "6in^2 / 2in", 3, "3 in", 1 ],
@@ -142,11 +165,11 @@ class CalculatorEngineTest < ApplicationSystemTestCase
     [ "tan(45deg)", 1, "1", 0 ],
     [ "sin(pi)", 0, "0", 0 ],
     [ "cos(90deg)", 0, "0", 0 ],
-    [ "asin(0.5) to deg", 30, "30 °", 0 ],
-    [ "acos(0.5) to deg", 60, "60 °", 0 ],
-    [ "atan(1) to deg", 45, "45 °", 0 ],
-    [ "atan(1) in deg", 45, "45 °", 0 ],
-    [ "atan(1) to °", 45, "45 °", 0 ],
+    [ "asin(0.5) to deg", 30, "30°", 0 ],
+    [ "acos(0.5) to deg", 60, "60°", 0 ],
+    [ "atan(1) to deg", 45, "45°", 0 ],
+    [ "atan(1) in deg", 45, "45°", 0 ],
+    [ "atan(1) to °", 45, "45°", 0 ],
     [ "abs(-3mm)", 3, "3 mm", 1 ],
     [ "round(12.6mm)", 13, "13 mm", 1 ],
     [ "round(1/4in + 12.5mm)", 1, "1 in", 1 ],
@@ -170,6 +193,12 @@ class CalculatorEngineTest < ApplicationSystemTestCase
     "5in + (1+1)" => "Can't add a plain number to a length. Give it a unit, like 1in.",
     "5in - 2" => "Can't subtract a plain number from a length. Give the 2 a unit, like 2in.",
     "2 - 5in" => "Can't subtract a length from a plain number. Give the 2 a unit, like 2in.",
+    # a feet-and-inches pair needs a foot NUMBER then an inch NUMBER; anything looser is not one
+    "5' 6" => 'Missing an operator before "6".',
+    "5ft 6mm" => 'Missing an operator before "6".',
+    "6in 5ft" => 'Missing an operator before "5".',
+    "(5)ft 6in" => 'Missing an operator before "6".',
+    "5ft 6in^2" => 'Missing an operator before "6".',
     "10in*2in + 3" => "Can't add a plain number to an area. Give the 3 a unit, like 3in².",
     "5mm + 2mm*3mm" => "Can't add mm and mm² — they're different kinds of measurement.",
     "5mm - 2mm*3mm" => "Can't subtract mm² from mm — they're different kinds of measurement.",
@@ -253,7 +282,7 @@ class CalculatorEngineTest < ApplicationSystemTestCase
     wrong = []
     ANSWERS.each_with_index do |(input, value, text, dim), i|
       r = results[i]
-      unit = text[/ (.+)\z/, 1].to_s
+      unit = text.end_with?("°") ? "°" : text[/ (.+)\z/, 1].to_s
       got = r["ok"] ? [ r["value"], r["text"], r["unit"], r["dim"], r["fractionable"] ] : r["error"]
       wrong << "#{input.inspect}: expected #{text} (dim #{dim}), got #{got.inspect}" unless
         r["ok"] && r["value"] == value && r["text"] == text && r["unit"] == unit && r["dim"] == dim &&

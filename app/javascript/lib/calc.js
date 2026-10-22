@@ -249,8 +249,8 @@ class Parser {
   primary() {
     const t = this.next()
     if (!t) fail("The expression ends too soon.")
-    if (t.t === "num") return this.suffix({ k: "num", v: t.value })
-    if (t.t === "frac") return this.suffix({ k: "frac", whole: t.whole, n: t.n, d: t.d })
+    if (t.t === "num") return this.compound(this.suffix({ k: "num", v: t.value }))
+    if (t.t === "frac") return this.compound(this.suffix({ k: "frac", whole: t.whole, n: t.n, d: t.d }))
     if (t.t === "const") return { k: "num", v: Math.PI, constant: true }
     if (t.t === "func") {
       if (!isOp(this.next(), "(")) fail(`${t.text} needs parentheses, like ${FUNCTIONS[t.f]}.`)
@@ -296,6 +296,21 @@ class Parser {
       }
     }
     return { k: "unit", e: node, u: t.u, p }
+  }
+
+  // FEET-AND-INCHES IS ONE LENGTH: `5'6"`, `5ft 6in`, `2' 6 1/2"`. Only a number literal carrying a
+  // bare foot, then a number literal carrying a bare inch, with nothing between them — which is
+  // why it is reached only from primary()'s number branches, never after a `)`. Anything looser
+  // (`5' 6`, `5ft 6mm`, `6in 5ft`) keeps its "Missing an operator" error rather than a guess.
+  compound(node) {
+    if (node.k !== "unit" || node.u !== "ft" || node.p !== 1) return node
+    const [n, unit, after] = [this.peek(), this.toks[this.i + 1], this.toks[this.i + 2]]
+    if (!n || (n.t !== "num" && n.t !== "frac")) return node
+    if (!unit || unit.t !== "unit" || unit.u !== "in") return node
+    if (isOp(after, "^") || (after && after.t === "sup")) return node
+    this.i += 2
+    const inches = n.t === "num" ? { k: "num", v: n.value } : { k: "frac", whole: n.whole, n: n.n, d: n.d }
+    return { k: "compound", ft: node, inch: { k: "unit", e: inches, u: "in", p: 1 } }
   }
 }
 
@@ -426,6 +441,8 @@ function evaluateNode(n) {
     }
     case "call":
       return checked(callFunction(n.f, evaluateNode(n.e)))
+    case "compound": // shown in inches, the finer of the two: 5'6" is 66 in
+      return checked({ v: evaluateNode(n.ft).v + evaluateNode(n.inch).v, dim: 1, u: "in" })
     case "pow": {
       const b = evaluateNode(n.l)
       const e = evaluateNode(n.r)
@@ -511,7 +528,7 @@ function run(input) {
     value,
     unit,
     dim: x.dim,
-    text: formatNumber(value) + (unit ? " " + unit : ""),
+    text: formatNumber(value) + (unit === "°" ? "°" : unit ? " " + unit : ""), // 45°, but 12 mm
     fractionable: unit === "in",
   }
 }
