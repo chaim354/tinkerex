@@ -152,6 +152,11 @@ class FilesHelperTest < ActiveSupport::TestCase
   # those in too rather than moving the whole file to ActionView::TestCase.
   include Rails.application.routes.url_helpers
 
+  # An UNSAVED node is all the builders read: its id, its name and its parent.
+  def menu_node(name = "widget.stl", parent: "d-1")
+    Node.new(node_id: "n-1", name:, parent_node_id: parent)
+  end
+
   # A NIL ORIGIN MUST YIELD nil, NOT "". Rails renders `data: { x: nil }` as NO attribute and
   # `data: { x: "" }` as `data-x=""` — and the regression net over these surfaces
   # (file_menu_wiring_test.rb, addon_origin_surfaces_test.rb) matches on ATTRIBUTE PRESENCE, so a
@@ -160,7 +165,7 @@ class FilesHelperTest < ActiveSupport::TestCase
   # and filemenu_controller.js is truthiness-guarded, so it produces no entry either way. The test
   # net is the reason, not the menu.)
   test "file_menu_data omits the addon keys entirely when no addon made the file" do
-    data = file_menu_data("n-1", "widget.stl", nil)
+    data = file_menu_data(menu_node, nil)
 
     assert_nil data[:addon_open_url],
                "a blank renders data-addon-open-url=\"\", which the presence selectors count as a link"
@@ -170,7 +175,7 @@ class FilesHelperTest < ActiveSupport::TestCase
   # THE PAIR TRAVELS TOGETHER, out of the one hash AddonOrigins builds — a cell carrying the url
   # with no label puts "undefined" in the menu.
   test "file_menu_data carries both addon keys when one is present" do
-    data = file_menu_data("n-1", "widget.stl", { url: "/tools/boxes?state=7", label: "Edit in Box Generator" })
+    data = file_menu_data(menu_node, { url: "/tools/boxes?state=7", label: "Edit in Box Generator" })
 
     assert_equal "/tools/boxes?state=7", data[:addon_open_url]
     assert_equal "Edit in Box Generator", data[:addon_open_label]
@@ -182,13 +187,34 @@ class FilesHelperTest < ActiveSupport::TestCase
   # `download` attribute — on chunk_remote and s3 the endpoint 302s to a presigned CROSS-ORIGIN URL,
   # where `download` is ignored.
   test "file_menu_data always carries the note url, a forcing download url and where to delete" do
-    data = file_menu_data("n-1", "widget.stl", nil)
+    data = file_menu_data(menu_node, nil)
 
     assert_equal file_notes_path("n-1"), data[:note_url]
     assert_includes data[:download_url], "download=1"
     assert_equal file_path("n-1"), data[:delete_url]
     assert_equal "widget.stl", data[:node_name]
     assert_equal "contextmenu->filemenu#open", data[:action]
+  end
+
+  # DETAILS IS THE LIBRARY WITH THIS FILE SELECTED (2026-10-21), built here like every other entry so
+  # filemenu_controller.js never assembles a URL. The FOLDER is the file's parent, because
+  # FilesController#index honours `selected` only for a file in the listing it renders; a file at
+  # the library root has no parent, and its URL carries no folder.
+  test "file_menu_data's details url opens the Library on the file's own folder with it selected" do
+    assert_equal files_path(folder: "d-1", selected: "n-1"), file_menu_data(menu_node, nil)[:details_url]
+    assert_equal files_path(selected: "n-1"), file_menu_data(menu_node(parent: nil), nil)[:details_url]
+  end
+
+  # APPENDED, NEVER REPLACED: the file menu's contextmenu action and the selection hooks share the
+  # attribute. An absent new-tab url must render NO attribute (Rails drops a nil data value, but the
+  # key must not even be there for an exact-hash caller).
+  test "file_open_data appends the fileopen action and names a new-tab url only when given one" do
+    data = file_open_data({ action: "contextmenu->filemenu#open", node_id: "n-1" })
+    assert_equal "contextmenu->filemenu#open click->fileopen#click", data[:action]
+    assert_equal "n-1", data[:node_id]
+    refute data.key?(:fileopen_new_tab_url)
+    assert_equal({ action: "click->fileopen#click" }, file_open_data)
+    assert_equal "/files/n-1", file_open_data({}, new_tab: "/files/n-1")[:fileopen_new_tab_url]
   end
 
   # A FOLDER'S WHOLE MENU, ASSERTED AS AN EXACT HASH rather than key by key. The claim is not "it has
@@ -201,11 +227,12 @@ class FilesHelperTest < ActiveSupport::TestCase
                  folder_menu_data("dir-1", "cad"))
   end
 
-  # `node_name` IS PASSED, NEVER DERIVED — the rule `ext_label` already follows below. The menu's
-  # `confirm` reads it, and deriving it here would mean a lookup per row on a page rendering
-  # hundreds; a caller that has the node already has the name.
+  # `node_name` IS THE CALLER'S, NEVER LOOKED UP. The menu's `confirm` reads it, and a lookup here
+  # would be a query per row on a page rendering hundreds: `folder_menu_data` takes the name as an
+  # argument, and `file_menu_data` reads it off the node its caller already holds (since 2026-10-21,
+  # when Details needed the parent too).
   test "node_name passes through verbatim on both builders" do
-    assert_equal "Bracket v2.stl", file_menu_data("n-1", "Bracket v2.stl", nil)[:node_name]
+    assert_equal "Bracket v2.stl", file_menu_data(menu_node("Bracket v2.stl"), nil)[:node_name]
     assert_equal "Bracket v2.stl", folder_menu_data("n-1", "Bracket v2.stl")[:node_name]
   end
 

@@ -2,7 +2,7 @@
   ONE ROW'S TILE — thumbnail + name, plus (for a Linked row only) the Detach/Move-into-project
   corner. Extracted from _attachment_group.html.erb (stage 3, S3-1) so _file_tree_section.html.erb
   and _generated_group.html.erb can render the identical tile without a second copy of the
-  seven-key thumb_cell_data/file_menu_data wire contract (docs/invariants/files-preview.md).
+  thumb_cell_data/file_menu_data wire contract (docs/invariants/files-preview.md).
 
   Local: row (Maker::ProjectFolderListing::Row). Reads @project, @addon_origins and @page_thumbs
   off the enclosing template — exactly as the block this was extracted from always did — because
@@ -19,7 +19,7 @@
 <div class="attachment-tile">
   <%= link_to file_path(row.node_id), class: "grid-card file-cell",
               data: thumb_cell_data(row.node_id, ext)
-                      .merge(file_menu_data(row.node_id, node.name, @addon_origins[row.node_id])) do %>
+                      .merge(file_menu_data(node, @addon_origins[row.node_id])) do %>
     <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,
                url: preview_src(@page_thumbs.thumb(row.node_id)) %>
     <span class="grid-name"><%= node.name %></span>

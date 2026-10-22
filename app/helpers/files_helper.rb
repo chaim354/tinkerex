@@ -38,16 +38,21 @@ module FilesHelper
   #
   # NOT A SHARED `_file_cell` PARTIAL: the four `link_to` block bodies genuinely differ, and only
   # the data hash is the identical part.
-  # `node_name` IS AN ARGUMENT, NOT DERIVED, for the reason `ext_label` already is below: the caller
-  # holds the node and this helper holds only its id, and a lookup here would be a second query per
-  # row on a page that renders hundreds. The menu's `confirm` reads it — a missing one degrades to
-  # "Delete this item?" rather than to a broken menu.
-  def file_menu_data(node_id, node_name, origin)
+  # `node_name` IS READ OFF THE CALLER'S NODE, NEVER LOOKED UP: a lookup here would be a second query
+  # per row on a page that renders hundreds. The menu's `confirm` reads it — a missing one degrades
+  # to "Delete this item?" rather than to a broken menu.
+  #
+  # DETAILS (2026-10-21) is the Library with this file selected: its own folder, so the listing
+  # FilesController#index renders contains it, and `selected=` its id. A root file has no parent and
+  # `files_path` drops the nil. It takes the NODE, not an id and a name, because it now needs the
+  # parent too, and every caller already holds the node.
+  def file_menu_data(node, origin)
     { action: "contextmenu->filemenu#open",
-      node_name:,
-      note_url: file_notes_path(node_id),
-      download_url: blob_file_path(node_id, download: 1),
-      delete_url: file_path(node_id),
+      node_name: node.name,
+      note_url: file_notes_path(node.node_id),
+      download_url: blob_file_path(node.node_id, download: 1),
+      delete_url: file_path(node.node_id),
+      details_url: files_path(folder: node.parent_node_id, selected: node.node_id),
       addon_open_url: origin&.dig(:url),
       addon_open_label: origin&.dig(:label) }
   end
@@ -97,6 +102,17 @@ module FilesHelper
   def with_selection(data, node_id)
     data.merge(selection_target: "item", selection_id: node_id,
                action: [ data[:action], "click->selection#click", "dblclick->selection#open" ].compact.join(" "))
+  end
+
+  # A FILE LINK THAT OPENS ON A CLICK AND IN A NEW TAB ON A DOUBLE-CLICK (2026-10-21,
+  # fileopen_controller.js, mounted on the layout's <main>). Merged into a link's data the way
+  # with_selection is: the action is APPENDED, never replaced, because the file menu and the
+  # thumbnail poll share the hash. `new_tab:` is for a link whose href is NOT the file page — the
+  # model page's list, whose click swaps the pane — and is omitted everywhere else, so the key is
+  # absent rather than nil.
+  def file_open_data(data = {}, new_tab: nil)
+    opened = data.merge(action: [ data[:action], "click->fileopen#click" ].compact.join(" "))
+    new_tab ? opened.merge(fileopen_new_tab_url: new_tab) : opened
   end
 
   # WHAT THE "Type" COLUMN SHOWS, AND IT MUST AGREE WITH WHAT THE "Type" HEADER SORTS BY

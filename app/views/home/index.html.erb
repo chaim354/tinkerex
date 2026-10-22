@@ -50,13 +50,13 @@
         <% href = file_path(node.node_id) %>
         <% if Maker::Previews::Registry.for_filename(node.name).present? %>
           <%= link_to href, class: "grid-card file-cell",
-                      data: thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id])) do %>
+                      data: thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node, @addon_origins[node.node_id])) do %>
             <%= render "files/thumb", thumb: @covers.thumb(node.node_id), ext_label: ext_label,
                        url: preview_src(@covers.thumb(node.node_id)), photo: Maker::FileAttachment.photo?(node.name) %>
             <span class="grid-name"><%= node.name %></span>
           <% end %>
         <% else %>
-          <%= link_to href, class: "grid-card", data: file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]) do %>
+          <%= link_to href, class: "grid-card", data: file_menu_data(node, @addon_origins[node.node_id]) do %>
             <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
             <span class="grid-name"><%= node.name %></span>
           <% end %>
