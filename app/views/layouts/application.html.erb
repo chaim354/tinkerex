@@ -1,28 +1,7 @@
 <!DOCTYPE html>
 <html lang="en" data-theme="<%= ui_theme %>">
   <head>
-    <title><%= content_for(:title) || "Tinkerex" %></title>
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="application-name" content="Tinkerex">
-    <meta name="mobile-web-app-capable" content="yes">
-    <meta name="color-scheme" content="<%= color_scheme_meta %>">
-    <meta name="theme-color" content="<%= theme_color_hex %>">
-    <%= csrf_meta_tags %>
-    <%= csp_meta_tag %>
-
-    <%= yield :head %>
-
-    <link rel="icon" href="/favicon.ico" sizes="32x32">
-    <link rel="icon" href="/icon.svg" type="image/svg+xml">
-    <link rel="apple-touch-icon" href="/icon.png">
-
-    <%= stylesheet_link_tag "application", "components", "shell",
-                            "pages/files", "pages/projects", "pages/models", "pages/tools", "pages/preview", "pages/home", "pages/inventory", "pages/settings", "pages/search", "pages/public", "pages/landing",
-                            "data-turbo-track": "reload" %>
-    <%= stylesheet_link_tag "lexxy", "data-turbo-track": "reload" %>
-    <%= stylesheet_link_tag "vendor-overrides", "data-turbo-track": "reload" %>
-    <%= javascript_importmap_tags "application", importmap: (@importmap || Rails.application.importmap) %>
+    <%= render "layouts/head" %>
   </head>
 
   <body class="<%= body_classes %>">
@@ -40,8 +19,13 @@
         <%= render "layouts/topbar" %>
         <%= render "layouts/flash" %>
         <%# Pages that need the full width opt in with content_for :container_class, "container-wide"
-            (the addon host page does, from its manifest). Inert everywhere else. %>
-        <main id="main" class="container <%= content_for(:container_class) %>">
+            (the addon host page does, from its manifest). Inert everywhere else.
+
+            fileopen_controller.js is mounted ONCE, here, so every file link on a signed-in page can
+            opt in through FilesHelper#file_open_data (a click opens the file, a double-click opens
+            it in a new tab). The visitor's main below has none: public pages are out of scope
+            (docs/superpowers/specs/2026-10-21-file-click-and-model-page-design.md). %>
+        <main id="main" class="container <%= content_for(:container_class) %>" data-controller="fileopen">
           <%# Renders nothing unless this request's port call failed (the partial decides). Signed-in
               only: a visitor is never told about the owner's storage, and a Public:: controller
               has no `capabilities` helper to name a cause with. %>
@@ -51,6 +35,10 @@
         </main>
       </div>
       <%= render "layouts/tabbar" %>
+      <%# THE CALCULATOR MODAL, once per signed-in page and closed until something carrying
+          `data-calculator-open` opens it (layouts/_calculator.html.erb). Last in the shell, so its
+          dialog is never a grid cell of body.app-shell and never the first Tab stop. %>
+      <%= render "layouts/calculator" %>
     <% else %>
       <%# STAGE 4, S4-5: THE VISITOR'S ONLY CHROME, ON A PUBLIC SURFACE ALONE. Devise's pages share
           this branch and must not get a site nav under their sign-in card, which is what the guard

@@ -3,19 +3,18 @@
 # and the poll is the correctness fallback" shape the sync engine already uses (§12 step 1). The
 # periodic Maker::ProjectIntake run is what makes it correct; this is what makes it feel instant.
 #
-# A CONCERN, NOT A THIRD COPY, and that is a decision worth recording rather than defaulting to —
+# A CONCERN, NOT A SECOND COPY, and that is a decision worth recording rather than defaulting to —
 # CLAUDE.md's own tally of the port_writable? branch is the precedent this follows: "a NEW [inline
 # copy] needs an argument for being inline rather than a service, and a verb that more than one
-# caller performs does not have one." Two upload doors already needed this exact rescue-and-call
-# (FilesController#create/#finalize_upload); wiring in a THIRD (Projects::UploadsController#create,
-# then the project page's own inline share/s3 uploader and, since redesign slice 4 moved the hub's
-# Upload into the top bar, the build-log entries') is the second caller crossing into "more than
-# one" territory a second time, and copy-pasting the block below into a second controller — all of
-# it, including the reasoning for why StandardError is right here and wrong in the service — is
-# exactly the kind of drift this codebase keeps paying for and keeps writing down when it finds it
-# again. (FilesController#enqueue_preview has a near-duplicate in Projects::UploadsController today
-# — that pre-existing four-line, one-rescue duplication is a SMALLER trade this concern does not
-# try to retroactively fix; it is not a precedent for adding a THIRD copy of this longer one.)
+# caller performs does not have one." Two upload doors needed this exact rescue-and-call
+# (FilesController#create/#finalize_upload). A third did too while Projects::UploadsController
+# served a project-level route (the project page's own share/s3 uploader until redesign slice 4,
+# retired in F-S21-1, 2026-10-19), and the addon save door calls it through Tools::BaseController.
+# Copy-pasting the block below into each of them — all of it, including the reasoning for why
+# StandardError is right here and wrong in the service — is exactly the kind of drift this codebase
+# keeps paying for and keeps writing down when it finds it again. (The upload doors' preview
+# enqueue was duplicated that way, a private copy per controller, until F-S21-2 sent both through
+# Maker::Addons::LibraryOutput.enqueue_preview.)
 #
 # BEST-EFFORT, AND RESCUED WIDELY — StandardError, not a named list — FOR THE SAME REASON in every
 # controller that includes this: the write it follows has ALREADY SUCCEEDED (bytes in the store,
@@ -29,10 +28,13 @@
 # exactly as unanticipated as a FileLayer outage, and both must fail the SAME way: log and let the
 # upload the user actually asked for stand.
 #
-# CALL-SITE ORDERING, WHERE THIS CONCERN IS INCLUDED, IS NOT THIS FILE'S CALL — but it is worth a
-# pointer here because it is easy to get backwards. Where a controller ALSO makes its own explicit
-# `file_attachments.create!` for the same upload (Projects::UploadsController does; FilesController
-# does not), that create! MUST run before this call, not after — see that controller for why.
+# CALL-SITE ORDERING, FOR A CALLER THAT ALSO ATTACHES — none does today, and it is easy to get
+# backwards. Projects::UploadsController did, for its project-level route, until F-S21-1 retired
+# that route. A controller that makes its own explicit `file_attachments.create!` for a file landing
+# in a project folder must make it BEFORE this call. The sweep's own attach is an
+# `insert_all(unique_by:)` that silently skips a row already there. Reversed, the bare `create!`
+# lands second, hits index_maker_file_attachments_uniqueness the ordinary way, and raises
+# ActiveRecord::RecordNotUnique on every upload.
 #
 # THE RETURN VALUE USED TO BE THROWN AWAY BY EVERY CALLER, AND THAT WAS A REAL REGRESSION, NOT A
 # HARMLESS ONE. #intake_project_folder answers exactly what Maker::ProjectIntake.for_node answers —
@@ -47,16 +49,16 @@
 # nudge existed) to "the write quietly succeeds, the file quietly stays at the project root, and the
 # user sees a plain 'Uploaded x.' with no sign anything unusual happened" (after the eager nudge,
 # before this fix) — the SAME outcome (two distinct files, nothing lost), MISSING feedback. See
-# #left_unfiled_by_conflict? and #project_intake_notice below, and
-# project_upload_attach_test.rb's long-standing "duplicate filename" test for the full accounting of
-# the mechanism this restores feedback for, without changing it.
+# #left_unfiled_by_conflict? and #project_intake_notice below, and project_folder_intake_test.rb's
+# "a duplicate filename via the Files-page uploader" test for the full accounting of the mechanism
+# this restores feedback for, without changing it.
 #
 # THE RETURN VALUE IS NOW READ FOR WHAT THE SWEEP FILED AS WELL AS FOR WHAT IT COULD NOT (stage 4,
 # S4-2; stories 1.5, 4.1): #filed_sentence names the file and the folder off Result#plan, so an
 # upload no longer lands on a page that visibly sorted itself while the flash said nothing.
-# AND THE CONFLICT'S FOLDER COMES OFF THE Result (#conflict_folders) rather than being re-derived
-# here — see
-# #conflict_folder for the one file whose destination the name alone cannot answer.
+# AND THE CONFLICT'S FOLDER COMES OFF THAT FILE'S OWN Maker::ProjectIntake::Filing rather than
+# being re-derived here — see #conflict_folder for the one file whose destination the name alone
+# cannot answer.
 module ProjectFolderIntake
   extend ActiveSupport::Concern
 
@@ -89,12 +91,13 @@ module ProjectFolderIntake
   end
 
   # Did THIS upload's own file get left at the project root because a file already occupied its
-  # destination category folder — #intake_project_folder's Result carrying a `[name, :conflict]`
-  # entry in `skips` for exactly this file? The one question a caller has once the nudge has run
-  # (see the header above for why that question used to go unanswered).
+  # destination category folder — #intake_project_folder's Result carrying a `:conflict` Filing,
+  # with the folder it tried, for exactly this file? The one question a caller has once the nudge
+  # has run (see the header above for why that question used to go unanswered). Asked as "is there
+  # a folder to name", so this answer and the folder #conflict_folder names come off ONE row.
   #
-  # MATCHES ON NAME, BECAUSE NAME IS ALL Result#skips HAS. Maker::ProjectIntake#file_all records
-  # `[node.name, reason]` (see #skip in app/services/maker/project_intake.rb) — never a node_id —
+  # MATCHES ON NAME, BECAUSE NAME IS WHAT A Filing CARRIES. Maker::ProjectIntake#place records
+  # `node.name` on the row (see #skip in app/services/maker/project_intake.rb) — never a node_id —
   # so a caller here is asking the most precise question this data can honestly answer, not an
   # approximation of a more precise one that exists somewhere and was left out.
   #
@@ -111,7 +114,7 @@ module ProjectFolderIntake
   def left_unfiled_by_conflict?(intake_result, name)
     return false unless intake_result.is_a?(Maker::ProjectIntake::Result)
 
-    intake_result.skips.any? { |skipped_name, reason| reason == :conflict && skipped_name == name }
+    !intake_result.conflict_folder(name).nil?
   end
 
   # The "Uploaded <name>." notice every flash-producing door here already wanted, with the missing
@@ -193,22 +196,24 @@ module ProjectFolderIntake
     filed ? "#{lead}. #{filed}" : "#{lead}."
   end
 
-  # THE FOLDER THE SWEEP ACTUALLY TRIED. Read off Result#conflict_folders, which
-  # Maker::ProjectIntake#place records as it collides — never re-derived here. The fallback keeps a
-  # Result built without the map (a test double, an older caller) reading exactly as it did before.
+  # THE FOLDER THE SWEEP ACTUALLY TRIED, off the conflict's own Filing — Maker::ProjectIntake#place
+  # records it on the row as it collides, and nothing here re-derives it.
   #
-  # THE RE-DERIVATION WAS RIGHT FOR EVERY FILE WHOSE DESTINATION COMES FROM ITS NAME AND WRONG FOR
-  # THE ONE WHOSE DESTINATION COMES FROM ITS CONTENT: a board zip collides in `pcb/` while
-  # `folder_for` answers `archives/` (stage 4, S4-2).
+  # NO FALLBACK, AND THAT IS THE POINT (F-S06-1). Re-deriving the folder from the file's NAME is
+  # right for every file whose destination comes from its name and wrong for the one whose
+  # destination comes from its CONTENT: a board zip collides in `pcb/` while its name says
+  # `archives/`. 521bfb30 found that sentence wrong while adding the board-zip rule (stage 4, S4-2)
+  # and fixed it with a name-keyed map beside the skips, keeping this fallback for a Result built
+  # without the map. The fallback hid a conflict recorded without its folder behind a plausible
+  # answer, so a broken record reddened one test instead of every conflict sentence.
   def conflict_folder(intake_result, filename)
-    intake_result.conflict_folders[filename].presence ||
-      Maker::ProjectFolders.folder_for(current_user, filename)
+    intake_result.conflict_folder(filename)
   end
 
   # WHAT THE SWEEP JUST DID, IN THE FLASH (stage 4, S4-2; stories 1.5, 4.1). The sweep moved the
   # maker's file and said nothing, so an upload landed on a page that visibly did not sort and the
-  # only record was a log line. READ OFF Result#plan — the [name, folder] pairs #place BUILT AS IT
-  # MOVED — so what this names and what the sweep did cannot disagree.
+  # only record was a log line. READ OFF Result#plan — the [name, folder] pairs of the Filings
+  # #place BUILT AS IT MOVED — so what this names and what the sweep did cannot disagree.
   #
   # THE UPLOADED FILE BY NAME WHEN IT IS THE ONLY ONE, a count otherwise: a save writes a SET, and
   # "Filed 3 files into design/, docs/." is what the maker needs to know to go look. `to_sentence`

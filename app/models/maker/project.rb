@@ -47,20 +47,22 @@ module Maker
     # preset, and `other` is the column default, so a migration alone changes no page (spec §4).
     #
     # ADD A PANEL HERE OR IT RENDERS FOR NOBODY. projects/show.html.erb loops over
-    # `Maker::Project#visible_panels` and renders `projects/_<key>`; a tenth partial dropped into
+    # `Maker::Project#visible_panels` and renders `projects/_<key>`; a new partial dropped into
     # the view directory with no entry here is a file no page reaches, and a `render` appended
     # under the loop is a panel the chooser cannot list — one question with two answers (§14a).
     # The key IS the partial's basename; keep them equal.
     #
-    # `publish` IS THE TENTH AND LAST MEMBER because S4-4 landed `projects/_publish.html.erb`
-    # (amendment 9's first branch, checked by `ls` at Task A step 1): the panel exists, so it goes
-    # through the loop rather than being rendered under it.
+    # `publish` IS THE LAST MEMBER (the tenth then; `models` made eleven, `calculations` twelve) because S4-4 landed
+    # `projects/_publish.html.erb` (amendment 9's first branch, checked by `ls` at Task A step 1):
+    # the panel exists, so it goes through the loop rather than being rendered under it.
     #
     # NOTHING OUTSIDE THIS CONSTANT MAY REACH THE LOOP. Maker::ProjectKind.layout_for intersects
     # every stored override with it and Projects::PanelsController intersects every write, so a
     # crafted request cannot put an unknown key in the `panels` column and `render` can never be
     # handed a partial name that does not exist.
-    PANELS = %w[attachments photos schematics build_log tasks bom wiring releases sheets publish].freeze
+    # `models` (2026-10-21): the project's 3D models as cards — projects/_models, Maker::ProjectModels.
+    # `calculations` (2026-10-21): results saved from the calculator modal — projects/_calculations.
+    PANELS = %w[attachments photos models schematics build_log tasks bom wiring releases sheets calculations publish].freeze
 
     # HOW ONE PANEL DRAWS WHAT IT HOLDS (2026-09-08, folder panels; spec decision 6). Per panel and
     # persisted in `panels["views"]`, which is what retired the page-wide `project_view` cookie: a
@@ -75,15 +77,16 @@ module Maker
     VIEWS = %w[tiles list browser].freeze
 
     # What the chooser calls each one. Its own map rather than `key.humanize`, because three of the
-    # ten disagree with what humanize would say: `attachments` is "Files" (the panel has been
+    # twelve disagree with what humanize would say: `attachments` is "Files" (the panel has been
     # headed Files since S2-2 — the key is the partial's name, and renaming the partial would touch
     # eight call sites), `bom` is "Bill of materials", and `build_log` is "Build log", not
     # "Build Log". A chooser whose labels differ from the headings above them is a chooser nobody
     # trusts. Totality pinned in project_kind_test.rb.
     PANEL_LABELS = {
-      "attachments" => "Files", "photos" => "Photos", "schematics" => "Schematics",
+      "attachments" => "Files", "photos" => "Photos", "models" => "Models", "schematics" => "Schematics",
       "build_log" => "Build log", "tasks" => "Tasks", "bom" => "Bill of materials",
-      "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "publish" => "Publish"
+      "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "calculations" => "Calculations",
+      "publish" => "Publish"
     }.freeze
 
     has_many :build_log_entries, -> { order(:logged_at) },
@@ -100,6 +103,11 @@ module Maker
     # THE WIRING TABLE (stage 3, S3-3): connections between two labelled ends, in position order.
     has_many :connections, -> { order(:position, :id) },
              class_name: "Maker::Connection", foreign_key: :project_id, dependent: :destroy
+    # SAVED CALCULATIONS (2026-10-21): the calculator modal's results, oldest first, for the
+    # Calculations panel. `:destroy`, not `:nullify`: the row names the project in its own
+    # `project_belongs_to_user` validation, so a nulled pointer would be an unsaveable row (§14d).
+    has_many :calculations, -> { ordered },
+             class_name: "Maker::Calculation", foreign_key: :project_id, dependent: :destroy
     # CONTENT BLOCKS (2026-09-09): text, link and image blocks the page editor arranges beside the
     # panels. Row order is creation order; the LAYOUT orders them on the page.
     has_many :blocks, -> { order(:id) },
@@ -218,7 +226,8 @@ module Maker
     # stale read waiting for the first caller that writes `panels` and reads the layout back in the
     # same request — which is exactly what Projects::PanelsController does.
     # `folders:` IS THE PROJECT'S CURRENT DEPTH-ONE FOLDERS — Maker::ProjectFolderListing
-    # #panel_folders, `[[node_id, repo?], …]` — and it DEFAULTS TO `[]` so a caller holding no
+    # #panel_folders, `[[node_id, repo?, shelf], …]` (the shelf, 2026-10-20, carries the folder's
+    # default view and group; nil for none) — and it DEFAULTS TO `[]` so a caller holding no
     # listing keeps the fixed-key layout it has always had. A caller that HAS one passes it: the
     # layout's totality is against the folders that exist NOW (Maker::ProjectKind's header), so a
     # page that renders folder panels and a chooser that lists them must both say which folders

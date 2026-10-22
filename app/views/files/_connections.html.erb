@@ -16,6 +16,10 @@
   PRIVATE PAGE ONLY. Public::FilesController#view renders the viewers under files/viewers/ and
   never this partial: a link is a fact about the owner's library, and both ends of one may be
   files no visitor may see.
+
+  EVERY PARTNER LINK, IN ALL FOUR GROUPS, CARRIES FilesHelper#file_open_data (2026-10-21): these
+  are file rows, not prose, so a click opens the partner's page and a double-click opens it in a
+  new tab. The unlink `×` buttons are forms and are untouched.
 %>
 <section class="connections-panel">
   <h2>Connected</h2>
@@ -25,7 +29,7 @@
       <h3 class="muted">This came from</h3>
       <% @derived_from.each do |link, node| %>
         <div class="connection-row">
-          <%= link_to node.name, file_path(node.node_id) %>
+          <%= link_to node.name, file_path(node.node_id), data: file_open_data %>
           <%= button_to "×", file_link_path(link), method: :delete,
                 params: { from: @node.node_id }, class: "chip-x",
                 form: { data: { turbo_confirm: "Unlink #{node.name}?" } },
@@ -40,7 +44,7 @@
       <h3 class="muted">Made from this</h3>
       <% @derived.each do |link, node| %>
         <div class="connection-row">
-          <%= link_to node.name, file_path(node.node_id) %>
+          <%= link_to node.name, file_path(node.node_id), data: file_open_data %>
           <%= button_to "×", file_link_path(link), method: :delete,
                 params: { from: @node.node_id }, class: "chip-x",
                 form: { data: { turbo_confirm: "Unlink #{node.name}?" } },
@@ -59,7 +63,7 @@
       <% @photos.each do |link, node| %>
         <div class="connection-row">
           <%= link_to file_path(node.node_id), class: "photo-cell file-cell", title: node.name,
-                      data: thumb_cell_data(node.node_id, "IMG") do %>
+                      data: file_open_data(thumb_cell_data(node.node_id, "IMG")) do %>
             <%= render "files/thumb", thumb: @link_thumbs.thumb(node.node_id), ext_label: "IMG",
                        url: preview_src(@link_thumbs.thumb(node.node_id)) %>
           <% end %>
@@ -77,7 +81,7 @@
       <h3 class="muted">This is a photo of</h3>
       <% @depicts.each do |link, node| %>
         <div class="connection-row">
-          <%= link_to node.name, file_path(node.node_id) %>
+          <%= link_to node.name, file_path(node.node_id), data: file_open_data %>
           <%= button_to "×", file_link_path(link), method: :delete,
                 params: { from: @node.node_id }, class: "chip-x",
                 form: { data: { turbo_confirm: "Unlink #{node.name}?" } },

@@ -22,7 +22,7 @@ module Web
       @root = use_fresh_share_library!
       @user = User.create!(email: "am-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @lamp = @user.maker_projects.create!(name: "Desk Lamp")
       @bench = @user.maker_projects.create!(name: "Bench")
       @node = create_node!(@user, node_id: "f-1", name: "bracket.stl", kind: "file")

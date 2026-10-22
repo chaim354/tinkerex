@@ -7,9 +7,10 @@
 # Whatever folder the file is in becomes the library, with a .trash/ inside it, so not Downloads.
 # Overrides go in an optional .env beside this file: LIBRARY_HOST_PATH to keep the file here and the
 # library elsewhere, PUID/PGID to run as someone other than the folder's owner, TINKEREX_PORT, and
-# the accounts/mail knobs (.env.example lists them; docs/INSTALL.md explains them).
+# the accounts/mail knobs (.env.example lists them; docs/INSTALL.md explains them). A network share
+# instead of a folder needs no .env: see the commented `library` lines below.
 # docker-compose.build.yml rebuilds all four images from a clone instead of pulling them;
-# docker-compose.chunk_remote.yml adds the sync server (INSTALL.md section 5).
+# docker-compose.chunk_remote.yml adds the sync server, a work in progress (INSTALL.md section 9).
 
 services:
   web:
@@ -39,6 +40,11 @@ services:
     volumes:
       - tinkerex_storage:/rails/storage
       - ${LIBRARY_HOST_PATH:-.}:/library
+      # A NETWORK SHARE INSTEAD OF A FOLDER (docs/INSTALL.md, "A network share instead of a folder"):
+      # delete the line above, uncomment the one below, and fill in the `library` volume at the end
+      # of this file. Optionally set LIBRARY_HOST_PATH above to the share's address, which only
+      # names the folder on the setup page.
+      # - library:/library
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost/up"]
       interval: 30s
@@ -73,3 +79,15 @@ services:
 volumes:
   tinkerex_storage: {}
   openscad_cache: {}
+  # The network share behind `library:/library` above. Docker connects to it as the app starts, so
+  # the app does not start while the share cannot be reached, and Docker does not retry: run
+  # `docker compose up -d` again once it can. A drop while running reconnects by itself. In `o`, a
+  # `$` in the password is written `$$` and a comma `,,`; `guest` replaces username and password
+  # for a guest share. Docker keeps these settings in the volume, so after changing them run
+  # `docker compose down` and `docker volume rm <folder>_library` -- it holds only the settings,
+  # never your files.
+  # library:
+  #   driver_opts:
+  #     type: cifs
+  #     device: "//192.168.1.50/Files"
+  #     o: "username=you,password=your-password,vers=3.0,uid=1000,gid=1000,file_mode=0664,dir_mode=0775"

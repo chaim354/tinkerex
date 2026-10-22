@@ -6,13 +6,6 @@ require "rails/all"
 # you've limited to :test, :development, or :production.
 Bundler.require(*Rails.groups)
 
-# THE SYNC ENGINE IS NOT A DEPENDENCY OF THIS APP (Arc D Part 2 -- see the Gemfile for what went
-# with it): it is in no Gemfile group, nothing here loads it, and `Sync::` is undefined in this
-# process. This line used to be the conditional require that decided. What survives is only
-# LibraryBackend itself, required by hand because it sits in config.autoload_lib's `ignore:` list
-# (that file argues why one constant must not be owned by Zeitwerk and a manual require at once).
-require_relative "../lib/library_backend"
-
 module Tinkerex
   class Application < Rails::Application
     # Initialize configuration defaults for originally generated Rails version.
@@ -21,7 +14,7 @@ module Tinkerex
     # Please, add to the `ignore` list any other `lib` subdirectories that do
     # not contain `.rb` files, or that should not be reloaded or eager loaded.
     # Common ones are `templates`, `generators`, or `middleware`, for example.
-    config.autoload_lib(ignore: %w[assets tasks generators library_backend.rb])
+    config.autoload_lib(ignore: %w[assets tasks generators])
 
     # ACTIVE STORAGE VARIANTS ARE OFF, and this is a security setting, not a tuning one.
     #

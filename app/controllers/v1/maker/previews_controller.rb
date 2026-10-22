@@ -31,7 +31,8 @@ module V1
       # OBSERVABLE WIRE CHANGE, AND IT IS THE CORRECT ONE: after a renderer bump this endpoint now
       # answers `ready` (the old artifact stays served while the rebuild runs) rather than a fresh
       # `pending`. That is CLAUDE.md §14h's "A CONTENT REPOINT BLANKS THE ARTIFACT; A RENDERER
-      # REBUILD DOES NOT" arriving at the API, which never had it.
+      # REBUILD DOES NOT" arriving at the API, which never had it. The row itself reads
+      # `rebuilding` since F-S08-2; `preview_json` below keeps this wire's `ready`, and says why.
       #
       # `skip_unrenderable: false` IS THE ONE POLICY THAT STAYS THIS DOOR'S OWN — see
       # `Enqueue`'s own comment. An API client must get a pollable row for a name no renderer
@@ -107,11 +108,24 @@ module V1
         params.require(:preview).permit(:node_id, :version_id, :kind, :filename)
       end
 
+      # `ready` WHENEVER THE ROW IS `servable?`, AND A `url` ONLY THEN (F-S08-2). tinkerex-client's
+      # `Preview` documents "`url` is null until `status == "ready"`", and this wire kept neither half
+      # (a ready row whose asset is gone still reads `ready` with no url, as it always has; the
+      # client's card offers a retry for it, client/maker-app/src/preview-status.js):
+      #   - a picture mid-rebuild is `ready`, an older build's picture of this same content, which is
+      #     what `ready` promised before the status was split (the rebuild note on #create) — while a
+      #     MEASURED kind mid-rebuild is not: its older payload is wrong, so it reads `pending`, the
+      #     web Measure poll's answer for the same row. `rebuilding` itself never reaches this wire;
+      #     exposing a new value is a change to make deliberately, with the client.
+      #   - `url` was emitted for ANY attached asset, so a row repointed at new content (`pending`) or
+      #     one whose render failed handed out an OLDER asset beside a status saying it was not ready.
+      #     No client reads a url off a row that is not ready: tinkerex-client asserts it only on a
+      #     ready one.
       def preview_json(p)
         {
           id: p.id, node_id: p.node_id, version_id: p.version_id, kind: p.kind,
-          status: p.status, error: p.error, width: p.width, height: p.height,
-          url: (p.asset.attached? ? url_for(p.asset) : nil),
+          status: p.wire_status, error: p.error, width: p.width, height: p.height,
+          url: (url_for(p.asset) if p.servable?),
           created_at: p.created_at, updated_at: p.updated_at
         }
       end

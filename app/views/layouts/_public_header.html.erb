@@ -25,9 +25,11 @@
       set by the controller that renders them, and `defined?` is what keeps this partial usable on
       /explore, which has neither. %>
   <% author = (@pub&.handle if defined?(@pub)) || (@owner&.handle if defined?(@owner)) %>
+  <%# A public page that is not about published projects names itself instead (the compose
+      generator does), through `content_for :public_intro`; every other page keeps the line. %>
   <% if author %>
     <%= link_to "@#{author}", public_user_path(author), class: "public-author" %>
   <% else %>
-    <p class="public-intro muted">Projects makers have published — the files, the photos and the build log.</p>
+    <p class="public-intro muted"><%= content_for(:public_intro).presence || "Projects makers have published — the files, the photos and the build log." %></p>
   <% end %>
 </header>

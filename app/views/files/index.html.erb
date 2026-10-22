@@ -207,12 +207,14 @@
   </form>
 </div>
 
-<%# THE LIBRARY AND ITS INSPECTOR (structural redesign spec §5.1–5.2, slice 3). A plain click on a
-    file tile SELECTS it (selection_controller.js): `.is-selected` on the tile, `?selected=` in the
-    URL, and the inspector frame below loads that one file's panel (FilesController#inspector).
-    Every tile stays a link to its page, so a double-click, Enter, a modifier click, the file menu's
-    Open and no-JavaScript all still open the page. The server reads `?selected=` too (@selected,
-    a file in THIS listing or nil), so a reload, Back or a shared link restores the panel.
+<%# THE LIBRARY AND ITS INSPECTOR (structural redesign spec §5.1–5.2, slice 3; reworked 2026-10-21).
+    A click on a file tile OPENS the file and a double-click opens it in a new tab
+    (fileopen_controller.js, on the layout's main). Right-click › Details SELECTS it
+    (selection_controller.js#details): `.is-selected` on the tile, `?selected=` in the URL, and the
+    inspector frame below loads that one file's panel (FilesController#inspector). Every tile stays
+    a link to its page, so the click, Enter, a modifier click, the file menu's Open and
+    no-JavaScript all open the page. The server reads `?selected=` too (@selected, a file in THIS
+    listing or nil), so a reload, Back or a shared link restores the panel.
 
     THE ASIDE ALWAYS RENDERS, empty and hidden until something is selected, so the controller always
     has a frame to point at. `src` is absent, not blank, when nothing is selected: turbo_frame_tag
@@ -234,7 +236,7 @@
         This is the folder of the project <%= link_to @folder_project.name, project_path(@folder_project) %>.
         <% if @folder_project.autofile? %>
           Files left loose here are filed into type folders within 15 minutes, except a README and
-          anything in a git repository (<%= link_to "Filing", settings_filing_rules_path %>).
+          anything in a git repository (<%= link_to "Shelves", settings_shelves_path %>).
         <% else %>
           Automatic filing is off for this project, so files here stay where you put them.
         <% end %>
@@ -244,7 +246,8 @@
         folder view whose folder a catalogued model names and no project claims. %>
     <% if @folder_model %>
       <%= render "files/model_strip", model: @folder_model, cover_live: @strip_cover_live, covers: @strip_covers,
-                 print_runs: @strip_print_runs, printers: @strip_printers, materials: @strip_materials %>
+                 print_runs: @strip_print_runs, printers: @strip_printers, materials: @strip_materials,
+                 projects: @strip_projects %>
     <% end %>
 <% if @truncated %>
   <p class="truncated">

@@ -127,6 +127,103 @@ class O3dvTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # "USE THIS VIEW AS PREVIEW" (2026-10-20). What only a browser settles: that the engine draws the
+  # current camera into a PNG at the server's thumbnail size, that the bytes leave without a
+  # `fetch(data:)` the CSP's connect-src would refuse, and that the CSRF header the fetch carries is
+  # one the session accepts. The door's refusals are request-level (file_preview_test.rb).
+  test "the current view becomes the file's preview" do
+    node = write_model!(name: "bracket.stl", body: binary_stl)
+    view_in_3d!(node)
+    assert_rendered(MeshFixture::STL_DIMS)
+    click_on "Use this view as preview"
+    assert_selector ".mv-status", text: "Saved as the preview."
+    row = @user.maker_previews.find_by!(node_id: node.node_id, kind: "thumbnail")
+    assert_equal "viewer", row.source
+    assert_equal [ 512, 512 ], [ row.width, row.height ]
+    assert_no_console_errors
+  end
+
+  # THE VIEWER IS ON THE DESIGN SYSTEM, LIVE (2026-10-21). Three claims only a browser settles, each
+  # read off the engine rather than the markup: a mesh with no colour of its own wears the palette's
+  # `--model-material` (it was a cool blue-grey literal); flipping `html[data-theme]` — what
+  # theme_controller.js writes — repaints the open viewer's ground with no reload; and "Use this view
+  # as preview" photographs on the render paper (white) even from Graphite, because every thumbnail
+  # is multiplied onto its card (design-system.md rule 5) and a dark ground would stay a dark square.
+  # The ground is read back with readPixels in the same task as a Render(), since the engine's
+  # context keeps no drawing buffer.
+  #
+  # MUTATION-CHECKED (§15; outputs in the PR, then reverted): `defaultColor` back to
+  # `new OV.RGBColor(150, 160, 170)` reddens the material assertion with `["96a0aa"]`; deleting the
+  # `data-theme` MutationObserver's `observe` reddens "never repainted for Graphite"; deleting
+  # usePreview's white `SetBackgroundColor` reddens the capture with `[37, 38, 34]`.
+  STAGE_PIXEL_JS = <<~JS.freeze
+    (function () {
+      const el = document.querySelector(".model-viewer");
+      const three = window.Stimulus.getControllerForElementAndIdentifier(el, "modelviewer").viewer.GetViewer();
+      three.Render();
+      const gl = three.renderer.getContext();
+      const px = new Uint8Array(4);
+      gl.readPixels(2, 2, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      return Array.from(px).slice(0, 3);
+    })()
+  JS
+
+  test "the viewer wears the palette's material, repaints on a theme switch and saves a view on white" do
+    node = write_model!(name: "bracket.stl", body: binary_stl)
+    view_in_3d!(node)
+    assert_rendered(MeshFixture::STL_DIMS)
+    token = page.evaluate_script("getComputedStyle(document.documentElement).getPropertyValue('--model-material').trim()")
+    assert_equal "#7f7b73", token, "the token this test reads must be the palette's material"
+    assert_equal [ "7f7b73" ], mesh_materials.map { _1["hex"] }.uniq, "an uncoloured STL wears --model-material"
+    assert_equal [ 235, 232, 225 ], page.evaluate_script(STAGE_PIXEL_JS), "Paper's --raised before the switch"
+
+    page.execute_script("document.documentElement.dataset.theme = 'dark'")
+    wait_until(message: "the open viewer never repainted for Graphite") { page.evaluate_script(STAGE_PIXEL_JS) == [ 37, 38, 34 ] }
+
+    click_on "Use this view as preview"
+    assert_selector ".mv-status", text: "Saved as the preview."
+    # THE STORED BYTES, decoded by the browser: the row's own blob, same-origin, drawn into a canvas.
+    row = @user.maker_previews.find_by!(node_id: node.node_id, kind: "thumbnail")
+    saved = Rails.application.routes.url_helpers.rails_blob_path(row.asset, only_path: true)
+    corner = page.evaluate_async_script(<<~JS, saved)
+      const done = arguments[arguments.length - 1];
+      const probe = new Image();
+      probe.onload = () => {
+        const c = document.createElement("canvas"); c.width = probe.width; c.height = probe.height;
+        const ctx = c.getContext("2d"); ctx.drawImage(probe, 0, 0);
+        done(Array.from(ctx.getImageData(1, 1, 1, 1).data).slice(0, 3));
+      };
+      probe.onerror = () => done(null);
+      probe.src = arguments[0];
+    JS
+    assert_equal [ 255, 255, 255 ], corner, "a view saved from Graphite is still photographed on the render paper"
+    assert_equal [ 37, 38, 34 ], page.evaluate_script(STAGE_PIXEL_JS), "the open viewer keeps Graphite's ground after the capture"
+    assert_no_console_errors
+  ensure
+    page.execute_script("document.documentElement.dataset.theme = 'light'")
+  end
+
+  # THE OPEN VIEWER'S BAR AT 375px (design-system.md rule 11). shell_test.rb's phone sweep launches
+  # the Gerber viewer but not this one, and "Use this view as preview" took the open bar's buttons
+  # to 435px: unwrapped, the page scrolled sideways to 464. The viewport is set through CDP for the
+  # reason that sweep records (headless Chrome will not resize a window below 500px).
+  #
+  # MUTATION (§15; run for real, output in the PR, then reverted): dropping `flex-wrap: wrap` from
+  # pages/preview.css's `.mv-actions` reds it with scrollWidth 464.
+  test "the open viewer's bar wraps at phone width instead of pushing the page sideways" do
+    node = write_model!(name: "bracket.stl", body: binary_stl)
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
+    view_in_3d!(node)
+    assert_rendered(MeshFixture::STL_DIMS)
+    assert_selector ".mv-actions button", text: "Use this view as preview"
+    assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
+           "the open 3D viewer scrolls sideways at 375px (scrollWidth " \
+           "#{page.evaluate_script('document.documentElement.scrollWidth')})"
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+  end
+
   # ---- 3MF: the slicer's colours and the declared unit, which the importer cannot read ----------
 
   # THE ONE CLAIM ONLY A BROWSER CAN SETTLE. Everything about the manifest itself is a unit test
@@ -309,6 +406,228 @@ class O3dvTest < ApplicationSystemTestCase
     assert_equal false, result["success"],
                  "a STEP file with an empty DATA section should parse to nothing, not to a solid"
 
+    assert_no_console_errors
+  end
+
+  # ---- the viewer's lifecycle: a Turbo Back, a switch mid-import, an engine released mid-import --
+  #
+  # THREE STATES THE CONTROLLER USED TO GET WRONG, EACH DRIVEN HERE RATHER THAN READ OFF THE ENGINE
+  # (audit 2026-10-19, F-S22-1). Each test below was run against the code before the fix and went
+  # red there; the comment above each one records how. The vendored engine (o3dv.js) has two rules
+  # that make all three possible, and they are worth knowing before touching any of this:
+  #
+  #   1. `EmbeddedViewer` runs ONE import at a time. A load asked for while one is running is
+  #      DROPPED, silently (`ThreeModelLoader.LoadModel` opens with `this.inProgress || …`). Before
+  #      dropping it, `LoadModelFromInputFiles` throws away the RUNNING import's progress element,
+  #      and that import's next callback then writes to `null`.
+  #   2. `Destroy()` does not stop a running import. It finishes on the destroyed engine and calls
+  #      back whatever callback that engine was built with.
+  #
+  # THE ENGINE FETCHES WITH XMLHttpRequest (o3dv.js `Lf`), NOT `fetch`, so gerber_test.rb's fetch
+  # stub would never see a model request. This gate holds the XHR for any URL that names one of
+  # `needles` until the test releases it. That turns "while a model is importing" into a state a
+  # test can stand in, instead of a race it hopes to win. Every other request goes out as usual.
+  XHR_GATE_JS = <<~JS
+    (function (needles) {
+      const open = XMLHttpRequest.prototype.open
+      const send = XMLHttpRequest.prototype.send
+      window.__heldXhr = []
+      XMLHttpRequest.prototype.open = function (method, url) {
+        this.__url = String(url)
+        return open.apply(this, arguments)
+      }
+      XMLHttpRequest.prototype.send = function () {
+        const args = arguments
+        if (!needles.some((n) => this.__url.includes(n))) return send.apply(this, args)
+        window.__heldXhr.push({ url: this.__url, go: () => send.apply(this, args) })
+      }
+      window.__releaseXhr = function (needle) {
+        const i = window.__heldXhr.findIndex((h) => h.url.includes(needle))
+        if (i < 0) return false
+        window.__heldXhr.splice(i, 1)[0].go()
+        return true
+      }
+    })(arguments[0])
+  JS
+
+  # A MODEL PAGE WITH ONE SWITCHER OPTION PER NODE, the first one selected (the page's default is
+  # the cover, else the first attachment).
+  def switcher_model!(*nodes)
+    model = @user.maker_models.create!(title: "Switcher")
+    nodes.each_with_index do |node, i|
+      model.file_attachments.create!(user: @user, node_id: node.node_id,
+                                     role: Maker::FileAttachment.role_for(node.name), position: i)
+    end
+    model
+  end
+
+  def gate_xhr!(*needles) = page.execute_script(XHR_GATE_JS, needles)
+
+  # Waits until the engine's request for `needle` is being held, which is the moment an import is
+  # provably RUNNING: the engine has been built and has asked for the bytes.
+  def wait_until_held(needle)
+    wait_until(message: "the engine never asked for #{needle}, so nothing is importing yet") do
+      page.evaluate_script("window.__heldXhr.some((h) => h.url.includes(#{needle.to_json}))")
+    end
+  end
+
+  def release_xhr(needle)
+    assert page.evaluate_script("window.__releaseXhr(#{needle.to_json})"), "#{needle} was not being held"
+  end
+
+  # BACK TO A FILE PAGE WHOSE VIEWER WAS OPEN. Turbo restores its snapshot of the page, which carries
+  # `--ready`, the state attribute, the dims line and a blank CLONED <canvas>, and connects a fresh
+  # controller that has no engine. Before the fix the launch button stayed hidden under `--ready`,
+  # Reset was a no-op and Fullscreen enlarged an empty box. `connect()` now rests the element, which
+  # is gerber_controller.js's rule.
+  #
+  # THE CANVASES ARE THE SECOND HALF. A rest that dropped the class and kept the cloned canvas would
+  # pass every assertion here except the two about canvases, because the stage is display:none at
+  # rest. The next launch would then append a second canvas below the clone. Hence
+  # `visible: :all` on both canvas assertions: one right after the Back, one counting after the
+  # relaunch.
+  #
+  # RED BEFORE THE FIX, on the first viewer assertion: `--ready` came back with the snapshot.
+  # MUTATIONS (§15; run for real, output in the PR, then reverted): dropping `this.rest()` from
+  # `connect()` reds the `--ready` assertion. Dropping the stage's `replaceChildren()` from
+  # `release()` reds the canvas assertion right after the Back ("expected not to find css
+  # .model-viewer-stage canvas, found 1 match"): the snapshot's clone survives.
+  test "Back to a file page whose 3D viewer was open rests at the poster" do
+    node = write_model!(name: "bracket.stl", body: binary_stl)
+    view_in_3d!(node)
+    assert_rendered(MeshFixture::STL_DIMS)
+
+    back_through_turbo_cache
+
+    assert_no_selector ".model-viewer.model-viewer--ready"
+    assert_no_selector ".model-viewer[data-modelviewer-state]"
+    assert_no_selector ".model-viewer-stage canvas", visible: :all
+    assert_equal "", find(".model-viewer-dims", visible: :all).text(:all)
+    assert_selector ".mv-launch button", text: "View in 3D"
+
+    click_on "View in 3D"
+
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+    assert_selector ".model-viewer-stage canvas", count: 1, visible: :all
+    assert_selector ".model-viewer-dims", text: MeshFixture::STL_DIMS
+    assert_no_console_errors
+  end
+
+  # A SWITCH WHILE A MODEL IS IMPORTING SHOWS THE LATEST CHOICE. The STL's request is held, so its
+  # import is provably running when the switcher moves to the PLY and then to the GLB. That is what
+  # arrowing through a closed <select> does, and the controller's own comment has long claimed it
+  # was handled. Under the engine's rule 1 (header above) it was not. Both switches were dropped,
+  # the running import's progress element was thrown away, the import threw `Cannot set properties
+  # of null` when its bytes arrived, and the engine ignored every later load until ✕ Image. The
+  # page sat at `loading` for good.
+  #
+  # The fix makes a load wait for the engine's running import before asking for another. The STL
+  # finishes, both superseded switches see they are stale, and only the GLB is loaded.
+  #
+  # RED BEFORE THE FIX, on the `ready` wait. The page never left `loading`, and the console held
+  # "Uncaught TypeError: Cannot set properties of null (setting 'innerHTML')" from inside o3dv.js.
+  # MUTATION (§15; run for real, output in the PR, then reverted): dropping load()'s
+  # `await engine.importing?.catch(() => {})` reds it on the same wait.
+  test "a switch while a model is importing shows the latest choice" do
+    stl = write_model!(name: "body.stl", body: binary_stl)
+    ply = write_model!(name: "shell.ply", body: MeshFixture::PLY)
+    scene = write_model!(name: "scene.glb", body: glb)
+    visit model_path(switcher_model!(stl, ply, scene))
+    gate_xhr!("body.stl")
+
+    click_on "View in 3D"
+    wait_until_held("body.stl")
+    switcher = find("select.model-viewer-source")
+    switcher.select("shell.ply")
+    switcher.select("scene.glb")
+    release_xhr("body.stl")
+
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+    assert_selector ".model-viewer-dims", text: MeshFixture::GLB_DIMS
+    assert_selector ".model-viewer-stage canvas", count: 1, visible: :all
+    assert_no_console_errors
+  end
+
+  # A PREVIEW IS TAKEN ONLY OF A MODEL THAT IS SHOWING (2026-10-20). A switch points the preview door
+  # at the NEW file before its import has run, so while the PLY's bytes are held the stage holds
+  # anything but the PLY and the door already names it. "Use this view as preview" must do nothing
+  # there. The status is read straight after the click because usePreview writes "Saving preview…"
+  # before its first await, so a save that started cannot hide from it.
+  #
+  # MUTATION (§15; run for real, output in the PR, then reverted): dropping usePreview's
+  # `data-modelviewer-state !== "ready"` arm reds it on the status assertion.
+  test "a switch mid-import saves no preview until the new model is showing" do
+    stl = write_model!(name: "body.stl", body: binary_stl)
+    ply = write_model!(name: "shell.ply", body: MeshFixture::PLY)
+    visit model_path(switcher_model!(stl, ply))
+    click_on "View in 3D"
+    assert_selector ".model-viewer-dims", text: MeshFixture::STL_DIMS
+
+    gate_xhr!("shell.ply")
+    find("select.model-viewer-source").select("shell.ply")
+    wait_until_held("shell.ply")
+    click_on "Use this view as preview"
+    assert_equal "", find(".mv-status", visible: :all).text(:all)
+
+    release_xhr("shell.ply")
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+    assert_selector ".model-viewer-dims", text: MeshFixture::PLY_DIMS
+    click_on "Use this view as preview"
+    assert_selector ".mv-status", text: "Saved as the preview."
+    assert_equal [ ply.node_id ], @user.maker_previews.where(source: "viewer").pluck(:node_id)
+    assert_no_console_errors
+  end
+
+  # AN ENGINE RELEASED MID-IMPORT CANNOT FAIL THE MODEL LOADED AFTER IT. ✕ Image while a corrupt
+  # file's request is held releases engine A, but A's import is still running (rule 2). Then the
+  # page loads the PLY on a new engine B, and A's import fails while B's is still running. A's
+  # callbacks used to route through controller fields that the next load reassigned
+  # (`this.modelFailed`), so A's failure failed B. B's engine was torn down mid-import, the page
+  # read `failed`, and B's own import then threw NotFoundError into the console when it finished
+  # on the torn-down stage.
+  #
+  # A's failure is WAITED FOR rather than raced. Engine A is captured while it is live, and its
+  # failure callback is wrapped to raise a flag, so the test knows the failure arrived before it
+  # releases B. B is held until then, because a B that had already settled
+  # would make a misrouted failure a no-op in some designs. That is also why both mutations below
+  # go red.
+  #
+  # RED BEFORE THE FIX, on the `ready` wait: the page read `failed`. The console blamed the PLY
+  # ("[modelviewer] ply: keeping thumbnail fallback: Error: the importer could not read this file")
+  # and then held B's "Uncaught DOMException: Failed to execute 'removeChild' on 'Node'".
+  # MUTATIONS (§15; run for real, output in the PR, then reverted): routing construct()'s failure
+  # callback through the controller (`this.fail(this.generation, …)`, the shape the old per-load
+  # field had) reds it on the `ready` wait. So does routing it through the CURRENT engine
+  # (`this.engine?.settle?.reject(…)`).
+  test "an engine released mid-import cannot fail the model loaded after it" do
+    broken = write_model!(name: "broken.stl", body: "this is not an STL at all\n" * 4)
+    ply = write_model!(name: "shell.ply", body: MeshFixture::PLY)
+    visit model_path(switcher_model!(broken, ply))
+    gate_xhr!("broken.stl", "shell.ply")
+
+    click_on "View in 3D"
+    wait_until_held("broken.stl")
+    page.execute_script(<<~JS)
+      const el = document.querySelector(".model-viewer")
+      const first = window.Stimulus.getControllerForElementAndIdentifier(el, "modelviewer").viewer
+      const failed = first.parameters.onModelLoadFailed
+      first.parameters.onModelLoadFailed = () => { window.__firstFailed = true; failed() }
+    JS
+    click_on "✕ Image"
+    assert_no_selector ".model-viewer.model-viewer--ready"
+
+    find("select.model-viewer-source").select("shell.ply")
+    click_on "View in 3D"
+    wait_until_held("shell.ply")
+    release_xhr("broken.stl")
+    wait_until(message: "the released engine never reported the corrupt file's failure") do
+      page.evaluate_script("window.__firstFailed === true")
+    end
+    release_xhr("shell.ply")
+
+    assert_selector ".model-viewer[data-modelviewer-state='ready']"
+    assert_selector ".model-viewer-dims", text: MeshFixture::PLY_DIMS
+    assert_selector ".model-viewer-stage canvas", count: 1, visible: :all
     assert_no_console_errors
   end
 end

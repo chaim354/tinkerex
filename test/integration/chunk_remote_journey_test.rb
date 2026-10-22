@@ -377,6 +377,50 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
                      "the mirror has the node, but the rendered page does not show it"
   end
 
+  # THE /v1/tree REPLY, APPLIED AS THE REAL SERVER SENDS IT -- the one wire shape nothing else here
+  # reaches. A resync is how a mirror whose cursor fell below a pruned changelog repairs itself
+  # (ChangelogSync#full_resync), and its unit tests' fakes once nested a `version` object no tree has
+  # ever carried, agreeing with the applier's identical misreading (CLAUDE.md §14e): every resync
+  # kept stale content and nothing went red. This is what keeps the next fake honest.
+  #
+  # ONE ANSWER IS CHANGED, AND ONLY THE GAP SIGNAL: nothing schedules tinkerex-sync's
+  # `prune_changelog` yet, so no real server can be made to report a gap. `oldest_seq` reads as
+  # `head_seq + 1`, which is what a server whose changelog was pruned empty reports (sync-protocol.md
+  # §8.3). Every node the resync then applies is the server's own reply, read off the real wire.
+  test "a resync applies the real /v1/tree reply: a file the mirror never saw comes back readable" do
+    skip_unless_remote_server
+    user = sign_in
+    bytes = "solid #{journey_prefix} resync\nendsolid\n".b
+    node_id = upload_through_ui("#{journey_prefix}-resync.stl", bytes)
+    version_id = user.nodes.find_by!(node_id:).current_version_id
+
+    # THE MIRROR MISSED IT -- no row and no manifest, as for a file created while it was behind.
+    user.nodes.where(node_id:).delete_all
+    RemoteManifestChunk.where(user:, version_id:).delete_all
+
+    # `reload` IS LOAD-BEARING: the upload provisioned this user's token and advanced its cursor on
+    # the controller's own instance, and the cursor ChangelogSync reads is THIS object's. A stale 0
+    # is "a first sync", never a gap, and lands the file through /v1/changes instead -- the arm this
+    # test is not about. (Checked: with a stale cursor the `resynced` assertion goes red.)
+    real = FileLayer::ChunkRemote::Transport.new(base_url: ENV.fetch("CHUNK_REMOTE_URL"),
+                                                 token: user.reload.sync_device_token)
+    pruned = Class.new do
+      def initialize(real) = @real = real
+      def get(path, params = {})
+        body = @real.get(path, params)
+        path == "/v1/changes" ? body.merge("oldest_seq" => body["head_seq"].to_i + 1) : body
+      end
+    end.new(real)
+
+    assert FileLayer::ChunkRemote::ChangelogSync.new(user, transport: pruned).call.resynced,
+           "the pruned-gap signal did not trigger a resync, so nothing here read /v1/tree"
+    node = user.nodes.present.find_by(node_id:)
+    assert_equal [ version_id, bytes.bytesize ], [ node&.current_version_id, node&.size ],
+                 "the resync applied the server's /v1/tree node without its version and size"
+    assert_equal bytes, FileLayer.current.read(user, node_id:),
+                 "the resynced file is not readable -- its manifest did not come off the tree reply"
+  end
+
   # GAP (b). port_writable is false on chunk_remote, so Maker::Addons::LibraryOutput#write takes
   # #write_chunk, which calls Sync::Storage::ChunkStore.current.put (library_output.rb:143) -- a
   # constant that does not exist in this process. Arc B's fix is a `put_chunk` port verb.
@@ -393,6 +437,33 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
     end
     assert user.nodes.present.exists?(name: "#{journey_prefix}-out.svg"),
            "the addon's output never reached the library"
+  end
+
+  # NEITHER UPLOAD DOOR MINTS A `devices` ROW (F-X-1, 2026-10-19). Both did -- a "web-session" row per
+  # uploading user, an "addons" row per saving one -- to have a value for a `device:` keyword no
+  # adapter read; each a row in the table §8 calls the API's ONLY credential, its plaintext token
+  # discarded at birth. A Device row now comes only from enrolment. HERE, not in a file of their own,
+  # for the reason the sync-grant test below gives: the gate runs this file alone and fails on a skip.
+  test "a web upload mints no devices row" do
+    skip_unless_remote_server
+    sign_in
+    assert_no_difference -> { Device.count }, "a web upload minted a Device row" do
+      upload_through_ui("#{journey_prefix}-nodevice.stl", "no device #{journey_prefix}".b)
+    end
+  end
+
+  test "an addon save mints no devices row" do
+    skip_unless_remote_server
+    user = sign_in
+    state = Maker::AddonState.create!(user:, addon_key: "journey", name: "j", data: {})
+    files = [ { name: "#{journey_prefix}-nodevice.svg", bytes: "<svg>#{journey_prefix}</svg>".b,
+                content_type: "image/svg+xml", role: "output" } ]
+
+    assert_no_difference -> { Device.count }, "an addon save minted a Device row" do
+      Maker::Addons::LibraryOutput.write(user:, state:, parent_node_id: nil, files:)
+    end
+    assert user.nodes.present.exists?(name: "#{journey_prefix}-nodevice.svg"),
+           "the save must have landed, or the count above proves nothing"
   end
 
   # GAP (c). LibraryBroadcast.batch degrades to a bare `yield` without the engine

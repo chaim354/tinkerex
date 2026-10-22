@@ -21,7 +21,8 @@ ever created. No test spanned the two layers; each table looked right alone.
 `Maker::ProjectFolders.folder_for(user, name)` no longer answers straight out of `ROLE_BY_EXT` +
 `ROLE_FOLDERS` — it reads `Maker::FilingRules.for(user)`, a per-user table seeded ONCE from those
 two (`ROLE_BY_EXT`'s extension → role → `ROLE_FOLDERS`'s role → folder) on a user's first read, then
-edited at `/settings/filing`. That does not loosen this file's own rule: an extension still needs a
+edited on the Shelves page (`/settings/shelves`; Filing until 2026-10-20). That does not loosen
+this file's own rule: an extension still needs a
 `ROLE_BY_EXT` entry to be SEEDED with any folder at all (an extension nobody has wired stays
 answerable only as `"other"`, the fallback every per-user row lookup shares), so "add an extension
 in `ROLE_BY_EXT` only" is still where a new extension's file-type identity is decided — it is only
@@ -65,7 +66,7 @@ badge — a deliberate behaviour change for `.pdf`. `FilesController#preview_kin
 browser's own viewer, which a browser handed a file named `.ai` downloads instead of rendering. The
 ROLE stays `vector` — where a file lives and what picture we can make of it remain two questions.
 
-Two consequences of the one table:
+Three consequences of the one table:
 
 - Every extension must satisfy `FilesController::EXT_RE` (`/\A[a-z0-9]{1,8}\z/`) or it renders a
   filter chip that links and **silently does nothing**. `markdown` is the bound, at exactly 8.
@@ -73,6 +74,23 @@ Two consequences of the one table:
   `Models::AttachmentsController` dispatches `ExtractPdfMetadataJob` on `instructions`, so `pdf`
   must stay `instructions`. A third copy in `importer_controller.js`'s `roleFor` has drifted; it is
   browser-only and the server re-derives authoritatively.
+- **STORED ROLES FOLLOW THE TABLE BY ONE RULE, NOT BY A MIGRATION PER WIDENING** (F-S33-1,
+  2026-10-19). `role` is written with the row, so a row attached before `ROLE_BY_EXT` learned its
+  extension says `other`. `Maker::FileAttachment.classify_unclassified!(user)` re-reads a user's
+  `other` rows against TODAY's table and rewrites the ones it now names: daily for every user
+  (`Maker::ClassifyAttachmentRolesJob`, `config/recurring.yml`) and on demand with
+  `rake maker:classify_roles`, the moment a widening deploy lands. So the ROLE half of a widening is
+  the table edit and nothing else: no re-derive migration, and no test of an old migration to touch.
+  Seven widenings carried that half by hand-copied migration (eight migrations rewrite stored roles;
+  the eighth is the one re-classification, `lbrn2` vector → laser) and two never got one
+  (`nc`/`tap`/`ngc` on 2026-07-31; the Gerber extensions on 2026-09-06, whose `SeedPcbFilingRules`
+  seeds filing rules only), which left an electronics project's hero on a photo instead of its
+  board. **`other` is the only value it rewrites**: it means "nothing classified this name when the
+  row was written", and every other value is a decision (a photo door's `image`, a v1 client's post)
+  that is never rewritten. Its limits, by construction: a RE-classification (the `lbrn2` vector →
+  laser move) and an extension removed from the table still need a migration, and the per-user
+  FILING map above is a separate store whose existing users still need a top-up migration per
+  widening (`Maker::FilingRules.seed!`'s `exists?` guard).
 
 ## `:kicanvas` is a preview kind with NO `ROLE_BY_EXT` entry behind it, on purpose
 
@@ -122,6 +140,28 @@ that message (`WebHelpers::KICANVAS_PLACEHOLDER_FETCH`) and nothing wider. The f
 `bin/build-kicanvas` (a `Literal` around the href) or upstream; do not route the placeholder to a
 204 to hide it, and do not widen the ignore.
 
+**KiCanvas calls no third party, and `bin/build-kicanvas` is what keeps that true (2026-10-22).**
+Upstream's `kicanvas-embed.ts` appends a Google Fonts `<link>` when the module loads (Material
+Symbols Outlined for the icons, Nunito for the labels). So every viewer page sent the visitor's
+browser to Google and broke the CSP on `style-src-elem` and `font-src`: 22 reports in one phone
+sweep, about 49 on the Linux runners, past `CspReportsController`'s 30-a-minute cap, and the 429s
+failed the sweep's console check at random. The build now deletes the `<link>` and sets the embed's
+`:host` font to `inherit`, so the labels use `--font-ui`. The icon font is `@material-symbols/font-400`
+at a pinned version, shipped whole and declared by an `@font-face` in `application.css`. It is not
+subset because a subset that missed one ligature would draw that icon's name as a word. Three things
+not to undo:
+
+- **The fix is never a wider CSP or a higher report cap.** Both hide the call from the very log the
+  "collect, then enforce" plan reads (`config/initializers/content_security_policy.rb`).
+- **The build refuses an artifact that still names `fonts.googleapis.com`, `fonts.gstatic.com` or
+  Nunito, or that no longer asks for `"Material Symbols Outlined"`.** If upstream renamed the family,
+  every icon would be spelled out as a word, with nothing red anywhere.
+- **`kicanvas_test.rb` records `securitypolicyviolation` events from the first byte**, through a
+  listener installed over CDP (one added after `visit` would race the module). It asserts that none
+  fire, that nothing is fetched cross-origin, that the icon font comes from `/assets/`, and that
+  every font icon is exactly 1em wide (without the font, an icon's name is drawn at 1.22em to
+  3.94em).
+
 ## `:gerber` is `:kicanvas`'s MIRROR IMAGE — same shape, opposite answer on one question
 
 `FilesController::GERBER_EXTS` is **derived** from `Maker::FileAttachment::ROLE_BY_EXT`'s `pcb`
@@ -168,12 +208,18 @@ board over as a `.zip` (Fusion's "CAM outputs", Altium, KiCad's fabrication plug
 a board where it lies — nobody has to unzip it into the library, which is the report this came
 from. **ONE bounded port read per archive, judged on the catalog's own `size` column FIRST**
 (`GerberArchive::READ_LIMIT`, 16 MB — past it the zip is something else and is never opened), and
-the answer is cached in `Rails.cache` by `(node_id, content token)` with **nil cached too**, so a
-zip of firmware stays known-not-a-board until its content changes. The token is `content_hash` or
-`current_version_id` — the port's own `content_token`, read off the catalog's two columns rather
-than through a second `stat` call (`Maker::Previews::MissingBackfill` gets the same value from the
-port's bulk `stat_all`; this is the one reader of the pair off the catalog). An unknown `size`
-(NULL) is refused, never read: the bound has to hold before any read, and `nil.to_i` would pass it.
+the answer is cached in `Rails.cache` by `(node_id, content token)` with **a nil from the BYTES
+cached too**, so a zip of firmware stays known-not-a-board until its content changes — **and a nil
+from the PORT never**. The port's `FetchError`/`NotFound` are rescued OUTSIDE the fetch, because
+activesupport writes a nil block result unless `skip_nil`: rescued inside it, an unmounted share
+was cached as "not a board" for the cache's 30 days under a key that does not move when the share
+comes back (both file pages lost the board, and `ProjectIntake` filed the zip as source). The
+namespace is `-v2` since that fix (2026-10-19), which is what retired the nils already written.
+The token is `content_hash` or `current_version_id` — the port's own `content_token`, read off the
+catalog's two columns rather than through a second `stat` call (`Maker::Previews::MissingBackfill`
+gets the same value from the port's bulk `stat_all`; this is the one reader of the pair off the
+catalog). An unknown `size` (NULL) is refused, never read: the bound has to hold before any read,
+and `nil.to_i` would pass it.
 
 **rubyzip LISTS and never extracts; JSZip in the BROWSER does** (§15 — Rails serving extracted
 layers would put bytes through the control plane on every backend, and the browser must fetch the
@@ -188,8 +234,8 @@ layers beside it**: an export is complete by construction, so a zip beside a loo
 folder is TWO boards.
 
 The zip's **own file page IS the board** (a stackup, with Top and Bottom, like a `.gbrjob`'s).
-`preview_kind` stays **NAME-ONLY** — the zip branch is decided in `FilesController#show` by a READ,
-the one preview kind that is, beside the `.gbrjob` read that already lives there. **Filing reads the
+`preview_kind` stays **NAME-ONLY** — `FilePreview#viewer_for` decides the zip branch by a READ,
+the one preview kind that is, beside the `.gbrjob` read that lives there too. **Filing reads the
 zip, and the vocabulary does not** (stage 4, S4-2; story 2.8): `zip` stays role `source_archive` —
 right for a Printables download, and what `preview_kind`, the badge and `ROLE_BY_EXT` still answer —
 but `Maker::ProjectIntake#place` asks `Maker::GerberArchive.for` about a `.zip` loose at a project's
@@ -198,7 +244,12 @@ source folder. It is the ONE filing decision in that class that reads bytes, and
 bounded, cached reader this page does, so the sweep and the file page cannot disagree about what a
 board is. A zip already in a subfolder is still never moved — root = inbox is unchanged. The rule is stated beside the code in three places that must sweep together:
 `Maker::GerberArchive`'s header, `FilesHelper#gerber_archive_entry` (the ONE wire shape, built by
-`FilesController#show`), and `gerber_controller.js`'s `filesFor`.
+`FilePreview#viewer_for` for both file pages), and `gerber_controller.js`'s `filesFor`.
+
+**`viewer_for` IS ONE ANSWER, ASKED BY BOTH FILE PAGES** (F-S10-2): the kind, the layer list and
+the single-or-stackup choice, with only the user and the URL builder the caller's. Each controller
+spelled that assembly out line for line until then, and the visitor's copy of the zip branch had no
+test, so a change landing in one controller could not be noticed in the other.
 
 **A GERBER IS A FILE LIKE ANY OTHER ON THE PROJECT PAGES, AND THE BOARD RENDERS ONLY ON ITS OWN
 FILE PAGE** (2026-09-06, at the user's request). The private and public project pages' Fabrication
@@ -216,15 +267,20 @@ viewer on" — true of the pages that existed, false of the pages that exist, an
 a rule's *condition* rather than its conclusion.
 
 **A `.gbrjob`'s SIBLING WALK IS ONE ANSWER AND THE URL IS THE CALLING PAGE'S.**
-`FilePreview#gerber_layers_for` takes a `url:` lambda, so the two pages cannot disagree about which
-layers a board HAS — only about how to address one. The private lambda never refuses; the public one
-is `Maker::PublicProject#layer_url_for`, which asks the same `permits?` that `deliverable!` asks and
-answers **nil** for a sibling this project does not publish. **BOTH arms drop the refusal** — the
-job arm `filter_map`s, the single-layer arm `.compact`s — so a board renders WITHOUT an unpublished
-layer instead of pointing a visitor at a URL the byte route would refuse, and **a board built
-entirely of unpublished layers is no board**, not board chrome drawn around a null layer. The
-single-layer arm shipped returning `[nil]`, which is not empty; a refusal must reach the viewer as
-an absent layer on both arms or on neither.
+`FilePreview#viewer_for` takes a `url:` lambda and hands it to every arm, `gerber_layers_for`'s
+sibling walk among them, so the two pages cannot disagree about which layers a board HAS — only
+about how to address one. The private lambda never refuses; the public one is
+`Maker::PublicProject#layer_url_for`, which asks the same `permits?` that `deliverable!` asks and
+answers **nil** for a node this project does not publish. **ALL THREE arms drop the refusal** — the
+job arm `filter_map`s, the single-layer arm and the zip's archive arm `.compact` — so a board
+renders WITHOUT an unpublished layer instead of pointing a visitor at a URL the byte route would
+refuse, and **a board built entirely of unpublished layers is no board**, not board chrome drawn
+around a null layer. The single-layer arm shipped returning `[nil]`, which is not empty; a refusal
+must reach the viewer as an absent layer on every arm or on none. The archive arm is the third
+since F-S10-2: each page used to build its byte URL there itself, past the lambda, so the rule could
+not even be asked of it. A refusal of the zip's own URL is unreachable after `deliverable!`, but
+the rule is about the shape, and `public_file_view_test.rb` asserts both halves on all three arms,
+with the public builder made to refuse.
 
 **THE STAGE'S PAN, ZOOM AND FIT ARE `app/javascript/lib/svg_pan_zoom.js`, SHARED WITH THE MEASURE
 VIEW — never a second copy.** The maths was `measure_controller.js`'s (the wheel-zoom-about-the-
@@ -416,8 +472,9 @@ broken, not one per page.
 
 **THE EIGHT VIEWER PARTIALS ARE SHARED BY A SESSION-AUTHED PAGE AND A SESSIONLESS ONE, SO EVERY URL
 AND EVERY USER-SCOPED OBJECT ARRIVES AS A STRICT LOCAL** (`app/views/files/viewers/_image _pdf
-_kicanvas _gerber _code _model3d _measure _static`, rendered by `files/show.html.erb` and by
-`public/files/view.html.erb`; the branch that picks one is `FilePreview#preview_kind`, a CONCERN
+_kicanvas _gerber _code _model3d _measure _static`, rendered by the maker's chain
+`files/_viewer.html.erb` — which `files/show.html.erb` renders, fed by `FileViewer#viewer_state_for`
+— and by `public/files/view.html.erb`; the branch that picks one is `FilePreview#preview_kind`, a CONCERN
 rather than a shared superclass because the two controllers deliberately have none — §14d). **No
 route helper and no `current_user`/`capabilities` call is permitted inside one.** A partial must not
 be able to tell which page it is on; that is the whole reason one copy can serve both, and it is
@@ -441,15 +498,18 @@ carries `ActiveStorage.service_urls_expire_in` (5 minutes). It needs `include
 ActiveStorage::SetCurrent` — a public controller stands on `ActionController::Base` (§14d) so it
 inherits nothing of Active Storage's own, and `blob.url` raises without `Current.url_options`. A
 global `urls_expire_in` was the alternative and is worse: it breaks a `loading="lazy"` image a
-visitor scrolls to after the window, and still checks nothing about the project. **Every non-ready
-state and every unpermitted node is the same 404**, because an `<img>` cannot use a status and
-because a stranger must not be able to tell the two apart.
+visitor scrolls to after the window, and still checks nothing about the project. **Every row with
+nothing to serve and every unpermitted node is the same 404**, because an `<img>` cannot use a
+status and because a stranger must not be able to tell the two apart. "Nothing to serve" is the
+row's own predicate, split by kind: a thumbnail is served while `showable?` (an older build's
+picture stays up through its rebuild, as the page that names the URL renders it), the Measure
+payload only as `current_build?` (F-S08-2).
 
 **THE SHARED PARTIALS THEREFORE BUILD NO ASSET URL EITHER.** `files/_thumb.html.erb` — fourteen
 render sites, eleven private and three under `app/views/public/projects/` — and the four viewer
 partials that poster a thumbnail (`_static`, `_model3d`, `_measure`, `_gerber`) take it as a strict
 local (`url:`, `thumbnail_url:`), built by the maker's page with `ApplicationHelper#preview_src`
-(the one private spelling, nil for any non-ready row) and by a visitor's with
+(the one private spelling, nil for any row that is not `showable?`) and by a visitor's with
 `Maker::PublicProject#preview_url_for`, which carries `link_params` so an unlisted project's hero
 keeps its `k`. **A THIRD ARM of the Public seam guard** refuses `\burl_for\b` AND `\bpreview_src\b`
 outside ERB comments in those nine files and in EVERY PUBLIC TEMPLATE, and it exists precisely
@@ -487,15 +547,18 @@ own embedded thumbnail. Both directions are asserted in `registry_test.rb`.
 **A ROLE IS WHERE A FILE FILES, NOT WHETHER IT RENDERS**, and the 2026-09-06 widening is where that
 is easiest to get wrong. `ROLE_BY_EXT` gained the mesh formats as `model`, but `.fcstd` is viewable
 and stays `cad_source` (it is a FreeCAD project you go back and edit; making it a `model` would MOVE
-it out of `cad/` on the user's NAS) and `.svg` stays `vector`. **The widening reaches existing users
-ONCE, by a data migration, never by a re-seed on read**
+it out of `cad/` on the user's NAS) and `.svg` stays `vector`. **The widening's FILING rules reach
+existing users ONCE, by a data migration, never by a re-seed on read**
 (`db/migrate/20260906140000_rederive_model_roles_and_seed_filing_rules.rb`, the shape
 `SeedPcbFilingRules` set): `Maker::FilingRules.seed!` stays guarded by `exists?` because
-`/settings/filing` promises a removed rule files into `other`, so the migration tops up only users
-who already hold rules (a user with none is seeded in full on their first read) and re-derives only
-`other` attachment roles on the thirteen extensions, ghost nodes skipped. Its `down` takes only those
-extensions on both doors — the folder column is free-form, and a hand-made rule filing something
-else into `models` must survive a rollback.
+the Shelves page promises a removed rule files into `other`, so the migration tops up only users
+who already hold rules (a user with none is seeded in full on their first read). It also re-derived
+`other` attachment roles on the thirteen extensions, ghost nodes skipped, and its `down` takes only
+those extensions on both doors — the folder column is free-form, and a hand-made rule filing
+something else into `models` must survive a rollback. **That ROLE half is no longer a migration's
+job** (F-S33-1, 2026-10-19): `Maker::FileAttachment.classify_unclassified!`, run daily, applies the
+same `other`-only rule to every extension the table names (the third consequence of the one table,
+above), so the next widening's migration carries the filing top-up alone.
 
 **THE ENGINE NORMALISES UP-AXIS AT IMPORT, SO THE CONTROLLER MUST NOT.** Each importer declares its
 format's up direction and `ThreeModelLoader` rotates the three object by -90° about X wherever that
@@ -515,12 +578,12 @@ already converted by their importer" was FALSE and is corrected. And it cannot s
 **filament colours**: Bambu Studio and PrusaSlicer keep the palette and the per-object extruder in
 their own `Metadata/*.config`, so every part of a Bambu project rendered in the viewer's default
 grey. `Maker::ThreeMfManifest` reads both — **one bounded port read, judged on the catalog's `size`
-column first and cached in `Rails.cache` by content token with nil cached, `Maker::GerberArchive`'s
-shape exactly** — and `FilesController#show` / `ModelsController#show` hand it over as data
-attributes (per `<option>` on the model page: the manifest is a fact about one FILE and the switcher
-swaps files). Since slice 5 the model page renders only for a model with no folder strip to land on;
-the Library's model strip carries no viewer, so in a model folder the manifest reaches the viewer
-through the file page.
+column first and cached in `Rails.cache` by content token with the bytes' nil cached and a port
+failure never, `Maker::GerberArchive`'s shape exactly** — and `FilesController#show` /
+`ModelsController#show` hand it over as data attributes (per `<option>` on the model page: the
+manifest is a fact about one FILE and the switcher swaps files). Every model renders its own page
+(2026-10-21); a file opened in its pane goes through `files/_viewer`, the file page's own chain, so
+the manifest reaches the viewer the same way on both.
 
 **The colours are applied BY THE ENGINE'S MESH INDEX, and three rules keep that safe.** The match is
 `userData.originalMeshInstance.id.meshIndex`, never a name — a Bambu `<object>` carries no `name`
@@ -545,6 +608,46 @@ until that class lands, so the class must be added BEFORE the engine is construc
 `failed`) instead, which is also what the system test drives. The failure contract is unchanged from
 the Three.js viewer: any error puts the server-rendered thumbnail poster back.
 
+**THE 3D VIEWER'S LIFECYCLE IS THE BOARD'S, PLUS ONE RULE THE ENGINE ADDS** (F-S22-1, 2026-10-19).
+Four rules, each driven by `test/system/o3dv_test.rb`:
+
+- **Connect rests the element.** A Turbo-restored snapshot of an open viewer is reset to the
+  poster, as the board's is (the `:gerber` section above). The clone carries `--ready`, the state
+  and the dims over a blank cloned canvas, and the fresh controller has no engine.
+- **One staleness token.** `generation` is set in `initialize` and bumped by ✕ Image and by a
+  disconnect, and only the latest load may act.
+- **The engine is ONE record.** Its callbacks close over that record, never over a controller
+  field. `Destroy()` does not stop a running import, so a callback routed through the controller
+  let a released engine's late failure fail the next load.
+- **One import per engine.** A load asked for while one runs is silently dropped
+  (`ThreeModelLoader.LoadModel`'s `inProgress`). Before dropping it, `LoadModelFromInputFiles` has
+  thrown away the running import's progress element, so that import throws and the engine is
+  wedged until ✕ Image. A source switch therefore waits for the running import before asking for
+  the next one. "`LoadModelFromUrlList` clears the viewer itself" holds only for an IDLE engine.
+
+**ONE KNOWN COST REMAINS: AN ORPHANED IMPORT LOGS ONE CONSOLE ERROR.** Leave the page or press
+✕ Image while a VALID file is still importing, and that import finishes on the destroyed engine.
+It then tries to remove a progress element `release()` already took out of the stage, which logs
+"Uncaught DOMException: Failed to execute 'removeChild' on 'Node'". This is cosmetic, and a failing
+import does not reach it. The fix is a per-engine mount `<div>`. It needs a CSS rule beside the
+addon-shared `.model-viewer-stage > div` and was left out of F-S22-1. A test that trips
+`assert_no_console_errors` on this message has met this case.
+
+**THE RESTORE IS PINNED FOR ALL THREE LAUNCHABLE VIEWERS** (the board, this one and the Measure view)
+by one helper, `WebHelpers#back_through_turbo_cache`. It proves the page came out of Turbo's cache
+before anything is asserted about it, because a Back that re-fetched the page would pass every
+"rests at the poster" assertion against a page that was never open.
+
+**BOTH CODE VIEWERS REST TOO (2026-10-21).** `codeview_controller.js` and `editor_controller.js` each
+remove their fallback `<pre>` in `mount` once CodeMirror is up, so a snapshot Turbo restores has no
+`fallback` target: connect threw "Missing target element" and the code area stayed blank after Back
+(measured: no `.cm-content`), and the editor's Save bar — appended outside CodeMirror — survived as a
+button wired to nothing. Each `#rest` clears what is left and puts a fresh fallback back before the
+load. Found through Back across the model page's pane (`model_page_test.rb`); both were reachable by
+Back to a text file's own page before that. `code_viewer_test.rb` drives both through
+`back_through_turbo_cache`, and the editor's case saves afterwards, so a remounted editor that is not
+the live one, or a second Save bar, goes red.
+
 **ON S3 A VIEWER'S FETCH LEAVES THE ORIGIN, AND BOTH HALVES OF LETTING IT ARE STATED ONCE.** The
 blob route answers a presigned redirect to the bucket, so the 3D viewer, KiCanvas, the Gerber viewer
 and the public bundle all fetch cross-origin. The browser reads that response only if (1) the
@@ -558,6 +661,65 @@ literal would have named it just as faithfully. S3-2 through S3-6 recorded this 
 blocks the fetch"; the policy is report-only, so it never did — the bucket had no CORS rule and,
 latterly, no reachable endpoint. Pinned per leg by `content_security_policy_test.rb` and, for the
 port's answer, by the shared adapter contract.
+
+## The workbook viewer: an `.xlsx` is a grid, and a save is operations on its XML
+
+`:spreadsheet` (2026-10-21; `files/viewers/_spreadsheet`, `spreadsheet_controller.js`,
+`Files::SpreadsheetsController`, `Maker::Xlsx`; plan `docs/superpowers/plans/2026-10-21-xlsx-view-and-edit.md`).
+The file page shows each worksheet as a tab of the values Excel last stored; a maker edits cells
+and adds or deletes rows; Save rewrites the same node.
+
+**`spreadsheet` IS ITS OWN ROLE BECAUSE `document` IS A TEXT ROLE.** Every reader of `TEXT_ROLES` —
+`preview_kind`'s `:text` branch and the TextThumb registration — would have treated a zip as source
+text. It files into `docs/` like `document`, sits in `Maker::ModelIntake::EXCLUDED_ROLES`, and
+`FilePreview::SPREADSHEET_EXTS` is derived from it, so a new workbook extension is a `ROLE_BY_EXT`
+line — once `Maker::Xlsx` can actually read that format (`xlsm`/`xls`/`ods` cannot be read today).
+
+**EDITED AS OOXML; EVERY PART NO OPERATION REACHED IS COPIED VERBATIM.** Never route a save through
+a library that loads the workbook into objects and writes it back: rubyXL 3.4.38, measured on the
+test fixture, dropped every `x14ac:dyDescent` and the workbook's `mc:Ignorable` and rewrote
+`styles.xml` after a one-cell edit. `edit_test.rb` asserts untouched parts byte-for-byte and the
+edited sheet's other cells node-for-node, so a re-serialising writer goes red. The two stated
+exceptions: workbook.xml gains `fullCalcOnLoad` (nothing here evaluates a formula), and the
+calcChain goes with its relationship and content type (it goes stale the moment a formula cell is
+overwritten, and Excel repairs a stale one).
+
+**A SAVE SENDS OPERATIONS, NEVER THE GRID.** Row inserts and deletes are logged as they happen;
+cell values are diffed at Save against what was loaded, through each grid row's original index.
+A cell nobody touched is never rewritten, which is what makes a cut sheet (only the first 1,000
+rows shown) safe to edit. **Undo and redo are OFF** (`ignoreHistory = true`): jspreadsheet replays
+history with its events suppressed, so an undone insert would leave a logged insert the grid no
+longer shows. **Spare rows to type into exist only where the sheet really ends** — past a cut sheet
+they would be the file's own hidden rows. `test/system/spreadsheet_test.rb` mutation-checks the log,
+the diff, the row identities and the history switch.
+
+**ROW OPERATIONS ONLY WHERE EVERY ROW-ADDRESSED THING IS ONE `Edit` MOVES**: cells, merges, the
+dimension, and every formula in the workbook that points at the sheet (`Maker::Xlsx::FormulaRefs`,
+Excel's grow/shrink/`#REF!` rules; a shared formula is written out longhand first). Everything else
+— conditional formatting, validation, hyperlinks, filters, drawings, comments, tables, page breaks,
+an `extLst`, array formulas, a defined name mentioning the sheet, a chart or pivot table anywhere,
+a structured or external reference — switches them off for that sheet, with the reason on the page;
+cell edits still work. Both lists (`Workbook::ROW_SAFE_PARTS`, `ROW_SAFE_ELEMENTS`) are ALLOWLISTS:
+the structure a denylist forgets is the one left pointing at the wrong row. **Widening is teaching
+`Edit` to move the thing, then listing it — never listing it alone.** A protected sheet is
+read-only; a cell inside an array or data-table formula is locked.
+
+**THE SAVE IS `Maker::TextSave`** (git-editing.md, "a fourth door"), and the door checks the token
+BEFORE it reads, so a stale save costs no read (pinned).
+
+**BOUNDED TWICE, GerberZip's rule**: the declared sizes are the pre-check (refused before a part is
+inflated, pinned) and the capped read the bound; plus the catalog's size before any read, an entry
+count, and a whole-workbook cell budget for the payload.
+
+**THE GRID LIBRARY IS INJECTED, AND ITS STYLESHEETS GO IN BEFORE `vendor-overrides.css`.** jsuites
+and jspreadsheet are UMD bundles loaded as classic scripts by the controller, once per document;
+their two stylesheets are unlayered, so one inserted after the overrides would beat the token skin
+there (`.spreadsheet-grid`, both themes — the project Sheets page keeps its light island). They carry
+`data-turbo-track="dynamic"` so Turbo drops them on a page without a grid. **A restored snapshot is
+rebuilt, never reconnected over** (`back_through_turbo_cache` in the system test).
+
+**A VISITOR'S PAGE SHOWS AN `.xlsx` AS THE DOWNLOAD FALLBACK**: the payload door is session-authed,
+and the model page's pane shows the grid read-only (`save: false`).
 
 ## Extensionless text is a SEPARATE AXIS, and it must not move files
 
@@ -600,24 +762,35 @@ Collapsing them trades a hung spinner for a **wrong** one, which is worse becaus
 reachable even if the endpoint is wrong.
 
 **NO PUBLIC SURFACE POLLS, BECAUSE THIS ENDPOINT IS SESSION-AUTHED** — so a visitor's poster is
-whatever is READY at render time, and every public page says so honestly: the ready thumbs, and for
-the rest either `files/_thumb`'s spinner markup with its animation stopped (`pages/public.css`) or
+whatever is SHOWABLE at render time (`Maker::Preview#showable?`: the current build, or an older
+build's picture of this content while it rebuilds), and every public page says so honestly: those
+thumbs, and for the rest either `files/_thumb`'s spinner markup standing still or
 `files/viewers/_static`'s "Generating preview…", **a statement a reload resolves rather than a
-promise the page can keep**. What makes that statement true is the RENDER, not a poll:
+promise the page can keep**.
+What makes that statement true is the RENDER, not a poll:
 `Maker::Previews::ThumbnailMap.for` backfills on an anonymous GET — the public project page has done
 that since S3-4, and the public file page does it for its one node. Do not answer a missing public
 poster by opening the poll to visitors; the write-on-render is the sanctioned mechanism and it is
-bounded per `(node, content token, renderer build)`.
+bounded per `(node, content token, renderer build)`, plus one re-enqueue per
+`Enqueue::STALLED_AFTER` for a row whose job was lost (`Enqueue.needs_job?`, restamped as it heals).
+
+**A SPINNER TURNS ONLY INSIDE A POLL CELL.** components.css keys its animation on
+`[data-thumbs-target~="cell"]`, the poll's own markup, so a surface with no cell, public or not, shows a
+still ring and needs no rule of its own. F-S34-1 deleted `pages/public.css`'s hand-kept list of
+non-polling containers, which had missed two of the six public render sites
+(`test/system/thumb_spinner_test.rb`).
 
 **S4-5 ADDED ONE ASYMMETRY DELIBERATELY: `FilesController#geometry` ENQUEUES AND
 `Public::FilesController#geometry` NEVER WRITES.** The visitor's enqueue moved to the page render
-(`#view`, once, guarded by `Maker::Previews::Enqueue.current_preview`) because `Enqueue.call` resets
-a `failed` row to `pending` and re-enqueues on EVERY call (§14h): on a door a stranger can issue,
-an unguarded poll is a doomed render every two seconds for as long as a tab is open. The guard is
-load-bearing, not politeness — dropping it leaves the suite green, since `Enqueue.call` is already
-self-idempotent for a `pending` row and only a `failed` one shows the cost. This is
-`ThumbnailMap`'s required `backfill:` flag drawn a second time: the render self-heals, the polled
-door must not write.
+(`#view`, once, through `Enqueue.call(…, retry_failed: false)`) because `Enqueue.call`'s DEFAULT
+resets a `failed` row to `pending` and re-enqueues on EVERY call (§14h): on a door a stranger can
+issue, an unguarded poll is a doomed render every two seconds for as long as a tab is open. The
+flag is load-bearing, not politeness — dropping it reddens exactly one test, the failed-render
+reload in `public_file_view_test.rb`, since `Enqueue.call` is already self-idempotent for a
+`pending` row and only a `failed` one shows the cost. (It replaced a `current_preview` guard on
+2026-10-19 that refused the failed row just as well but also skipped a row whose job was lost, so a
+visitor's Measure view could spin with nothing coming.) This is `ThumbnailMap`'s required
+`backfill:` flag drawn a second time: the render self-heals, the polled door must not write.
 
 **THE MEASURE BAR'S SAVE CONTROLS EXIST ONLY WHERE THERE IS A LIBRARY TO SAVE INTO.**
 `files/viewers/_measure.html.erb` takes a required `save:` local; the public page passes **false**
@@ -697,19 +870,27 @@ selected file: a Turbo Frame body rendered **without the layout**, built from `f
   `files/inspector_gone` with 404. **Never fold `FetchError` into that rescue**: an unmounted share is
   "couldn't reach", not "gone" (§14a), so if an adapter's `stat` ever starts raising it, it gets its
   own frame with a 503. No adapter's `stat` raises it today (it is a database read of the node).
-- **The tiles stay links.** Selection (`selection_controller.js`) intercepts only a plain click; every
-  tile keeps `href=file_path`, which the file menu's Open, a modifier click, Enter and no-JavaScript
-  all rely on. **The model strip above a model folder's files (`files/_model_strip`, slice 5) is not
-  a selection item**: nothing in it goes through `with_selection`, because a model is not a file in
-  the listing, so it never opens this frame (`model_strip_test.rb` asserts no `data-selection-target`
-  inside it). **Recent and the project hub have no inspector (slice 6), so their file tiles are
-  never selection items either**: neither page mounts a `selection` controller, so nothing there goes
-  through `with_selection`. Each tile links `FilesHelper#library_file_path`, the file's folder in the
-  Library with `?selected=` naming it (a root file's link is `/files?selected=…`, since Rails drops
-  the nil `folder`), and this frame then answers "what is this" and its Open reaches the file page.
-  **The Library's own tiles keep `file_path`**, which selection intercepts: `library_file_path` there
-  would send the file menu's Open, a modifier click and Enter back to the Library instead of the
-  file. On the hub, Photos, Schematics and the hero keep `file_path` too.
+- **The tiles stay links.** A click opens the file and a double-click opens it in a new tab
+  (`fileopen_controller.js`, 2026-10-21); the panel opens from the file menu's Details
+  (`filemenu:details` → `selection_controller.js#details`) or a `?selected=` page. Every tile keeps
+  `href=file_path`, which a single click, the file menu's Open, a modifier click, Enter and
+  no-JavaScript all rely on. **The model strip above a model folder's files (`files/_model_strip`,
+  slice 5) is not a selection item**: nothing in it goes through `with_selection`, because a model is
+  not a file in the listing, so it never opens this frame (`model_strip_test.rb` asserts no
+  `data-selection-target` inside it). **Recent and the project hub have no inspector (slice 6), so
+  their file tiles are never selection items either**: neither page mounts a `selection` controller,
+  so nothing there goes through `with_selection`. **Their tiles and list rows link `file_path` and
+  open the file on a click, and in a new tab on a double-click.** They linked the file's folder in
+  the Library with `?selected=` until 2026-10-20, when the owner asked for a click to just open the
+  file; do not route them back through the Library. Their file menu's Details is the one door there:
+  nothing on those pages cancels `filemenu:details`, so the entry follows `file_menu_data`'s
+  `details_url`, the file's own folder with `?selected=` (a root file's carries no folder).
+  **Every link to a file page on a signed-in page opts in through `FilesHelper#file_open_data`** —
+  tiles, list names, photos, the hero, an image block, BOM part names, search results, the
+  connections panel, the repo browser (`lib/file_chooser.js`) — **except rendered Markdown and a
+  `.btn` action**, and that is the whole exclusion list. `template_hygiene_test.rb`'s fileopen sweep
+  goes red on any other file-page link in `pages` that lacks it; never widen its two exclusions. It
+  reads server HTML, so the repo browser's JS-built rows are pinned in `repo_browser_test.rb`.
 
 **`PHOTO_EXTS` is a DISPLAY subset of the image role, not a second vocabulary.** `jpg jpeg heic heif`
 — what a camera writes — get `.thumb.photo` (cropped to fill, on `--photo-stage`); PNG, GIF, WebP,

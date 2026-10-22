@@ -14,11 +14,10 @@
   .landing { display: grid; gap: var(--space-8); }
   .landing h2, .landing h3, .landing p { margin: 0; }
 
-  /* NAV. The rail's `.brand`, reused: the ≤1099px rail rules hide `.brand-name` and centre `.brand`,
-     so this restores both, the one-line override the public header makes. */
+  /* NAV. The rail's `.brand`, reused, flush with the page's edge. Nothing to restore: the icon rail
+     is a container query on `.rail` (shell.css), which no `.brand` outside the rail can match. */
   .landing-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); }
-  .landing-nav .brand { justify-content: flex-start; padding: 0; }
-  .landing-nav .brand-name { display: inline; }
+  .landing-nav .brand { padding: 0; }
   .landing-nav-links { display: flex; gap: var(--space-5); font-size: 14px; }
   .landing-nav-links a, .landing-footer a { color: var(--fg-muted); }
   .landing-nav-links a:hover, .landing-footer a:hover { color: var(--fg); }
@@ -44,8 +43,10 @@
   .landing-wall-figure figcaption { margin-top: var(--space-3); font-size: 13px; line-height: 18px; color: var(--fg-muted); }
   .landing-wall { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); grid-template-columns: repeat(3, minmax(0, 1fr)); }
   @media (min-width: 900px) { .landing-wall { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); } }
-  .landing-tile { position: relative; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--thumb-stage); }
-  .landing-tile img { display: block; width: 100%; height: 100%; object-fit: contain; padding: var(--space-2) var(--space-2) var(--space-5); }
+  /* The wall's tiles are the app's own renders, so they are ink on paper like every tile
+     (design-system.md rule 5): isolated, and multiplied onto the card. */
+  .landing-tile { position: relative; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--thumb-stage); isolation: isolate; }
+  .landing-tile img { display: block; width: 100%; height: 100%; object-fit: contain; padding: var(--space-2) var(--space-2) var(--space-5); mix-blend-mode: multiply; }
   .landing-tile-ext { position: absolute; left: 6px; bottom: 6px; padding: 0 4px; border-radius: var(--radius-control); background: var(--thumb-stage); color: var(--thumb-ink); font-family: var(--font-mono); font-size: 11px; line-height: 16px; }
 
   .landing .landing-section-title { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: var(--space-5); }

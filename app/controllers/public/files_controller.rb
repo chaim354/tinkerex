@@ -43,34 +43,24 @@ module Public
       @node = @pub.deliverable!(params[:id])
       owner = @pub.owner
       @info = FileLayer.current.stat(owner, node_id: @node.node_id)
-      @kind = preview_kind(@node.name)
-      # ONE MAP FOR ONE NODE, not the project page's whole listing: `Maker::PublicProject#thumbs`
-      # covers `listing.node_ids + page_nodes.keys`, and loading `page_nodes` here would pull the
-      # build log, the BOM and every release onto a page that shows one file. `.for` backfills, which
-      # is what makes a poster appear on a file nobody has opened before — the same write-on-GET the
-      # public project page already does.
+      # WHICH VIEWER, AND THE BOARD IF THIS IS ONE: FilePreview#viewer_for, the ONE answer the
+      # maker's page asks too (F-S10-2), in the OWNER's name — only the URL builder is public.
+      # `layer_url_for` answers nil for a node this project does not permit, and every Gerber arm
+      # drops a nil, so a board renders without a layer the byte route would refuse rather than
+      # linking a visitor at a 404. For the zip's OWN entry it asks the `permits?` `deliverable!`
+      # just answered: one more query on a zip's page, constant, and the price of one builder.
+      @kind, @gerber_layers, @gerber_single =
+        viewer_for(user: owner, node: @node, url: ->(n) { @pub.layer_url_for(n) })
+      # ONE MAP FOR ONE NODE, not the project page's: `Maker::PublicProject#thumbs` covers everything
+      # that page paints, entry photos and image blocks out of `page_nodes` included, and loading
+      # `page_nodes` here would pull the build log, the BOM and every release onto a page that shows
+      # one file. `.for` backfills, which is what makes a poster appear on a file nobody has opened
+      # before — the same write-on-GET the public project page already does.
       @thumbnail = Maker::Previews::ThumbnailMap.for(owner, [ @node.node_id ]).thumb(@node.node_id)
-      # A ZIP IS A BOARD WHEN ITS CONTENTS SAY SO, and a 3MF's colours/unit come from its manifest —
-      # both are ONE bounded port read in the OWNER's name, judged on the catalog's `size` column
-      # BEFORE any read and cached by content token, nil included. That bound is what makes them safe
-      # on a route a stranger can issue.
-      @gerber_archive = Maker::GerberArchive.archive?(@node.name) &&
-                        Maker::GerberArchive.for(user: owner, node: @node)
-      @kind = :gerber if @gerber_archive
+      # A ZIP'S LISTING (in `viewer_for`) AND A 3MF's MANIFEST ARE EACH ONE BOUNDED PORT READ in the
+      # OWNER's name, judged on the catalog's `size` column BEFORE any read and cached by content
+      # token, nil included. That bound is what makes them safe on a route a stranger can issue.
       @viewer_manifest = Maker::ThreeMfManifest.for(user: owner, node: @node)
-      # THE LAYER LIST IS THE SHARED WALK'S, AND ONLY THE URL BUILDER IS PUBLIC. `layer_url_for`
-      # answers nil for a sibling this project does not permit, which `gerber_layers_for`'s
-      # `filter_map` drops — so a board renders without a layer the byte route would refuse rather
-      # than linking a visitor at a 404.
-      @gerber_layers =
-        if @gerber_archive
-          [ helpers.gerber_archive_entry(name: @node.name,
-                                         url: @pub.file_url_for(@node.node_id, filename: @node.name),
-                                         members: @gerber_archive.stacked) ]
-        elsif @kind == :gerber
-          gerber_layers_for(user: owner, node: @node, url: ->(n) { @pub.layer_url_for(n) })
-        end
-      @gerber_single = @kind == :gerber && !gerber_job?(@node.name) && !@gerber_archive
       enqueue_geometry(owner) if @kind == :measure
     end
 
@@ -84,9 +74,16 @@ module Public
     # nothing about the project.
     #
     # `current_preview` IS THE SAME "current content, current renderer build" RULE THE PAGE RENDERED
-    # FROM, so this route cannot serve a picture of content the file no longer holds. A row that is
-    # not ready is a 404 exactly as an unpermitted node is, because an <img> cannot use a status —
-    # and because the two must be indistinguishable to a stranger for #deliverable!'s reason.
+    # FROM, so this route cannot serve a picture of content the file no longer holds. A row with
+    # nothing to serve is a 404 exactly as an unpermitted node is, because an <img> cannot use a
+    # status — and because the two must be indistinguishable to a stranger for #deliverable!'s reason.
+    #
+    # ONE DOOR, TWO KINDS, TWO QUESTIONS — the split the maker's side draws across two doors, asked
+    # as `servable?`. A thumbnail is a PICTURE, served while `showable?` (an older build's picture of
+    # this content stays up through its rebuild, as the page that names this URL renders it); the
+    # Measure payload is DATA, served only as `current_build?`, because an older build's is wrong
+    # (§14h). The v1 API answers `ready` whenever this predicate holds, so the two doors cannot
+    # disagree about a row either of them can serve.
     def preview
       pub = public_project!
       node = pub.deliverable!(params[:id])
@@ -94,27 +91,38 @@ module Public
       row = token && Maker::Previews::Enqueue.current_preview(user: pub.owner, node_id: node.node_id,
                                                               name: node.name, version_id: token,
                                                               kind: params[:kind])
-      raise ActiveRecord::RecordNotFound unless row&.status == "ready" && row.asset.attached?
+      raise ActiveRecord::RecordNotFound unless row&.servable?
 
-      # ONE MINUTE OF PRIVATE CACHE ON THE REDIRECT (tinkerex#291). Each image request costs the byte
-      # route's whole permission path plus three queries, and a page of sixty covers is sixty of them
-      # per view; a browser that may keep the 302 for a minute skips all of that on a reload. The
-      # bound is what makes it safe: the target URL itself expires in `service_urls_expire_in` (five
-      # minutes), so a cached redirect can never outlive the URL it names — the test below pins that
-      # ordering — and a project that goes private is stale in a browser for at most a minute, the
-      # same window the target already allowed. `private`, not `public`: nothing here is per-visitor,
-      # but no shared cache on the deployment needs it and a CDN keeping redirects is a decision to
-      # make deliberately, not by default.
-      expires_in 1.minute
+      # ONE MINUTE OF PRIVATE CACHE ON A THUMBNAIL'S REDIRECT (tinkerex#291). Each image request costs
+      # the byte route's whole permission path plus three queries, and a page of sixty covers is sixty
+      # of them per view; a browser that may keep the 302 for a minute skips all of that on a reload.
+      # The bound is what makes it safe: the target URL itself expires in `service_urls_expire_in`
+      # (five minutes), so a cached redirect can never outlive the URL it names — the test below pins
+      # that ordering — and a project that goes private is stale in a browser for at most a minute,
+      # the same window the target already allowed. `private`, not `public`: nothing here is
+      # per-visitor, but no shared cache on the deployment needs it and a CDN keeping redirects is a
+      # decision to make deliberately, not by default.
+      #
+      # AND NONE ON THE MEASURE PAYLOAD'S (F-S08-2). This URL is the same for every build of the file,
+      # so a kept 302 answers the next Measure open after a rebuild — or a re-save — with the OLDER
+      # payload, for up to the cache's minute after `current_build?` above began refusing it; and an
+      # older build's payload is wrong, not merely old (§14h). A thumbnail may show an older build of
+      # this content (that is `showable?`), so it keeps its minute. The payload is fetched once per
+      # Measure open, not sixty times a page, so `no-store` costs one permission check where the cache
+      # saved next to nothing; the signed URL it redirects to names one blob, so it keeps its own
+      # expiry and cannot outlive its build. Keying the poll's URL on the build was the alternative:
+      # a parameter this route must then ignore or check, for a cache that buys almost nothing here.
+      row.measured? ? no_store : expires_in(1.minute)
       redirect_to row.asset.url, allow_other_host: true
     end
 
-    # THE POLL, AND IT NEVER WRITES. FilesController#geometry enqueues when it finds no current row,
-    # which is right for a door only the file's owner can open and wrong for one anybody can: a
-    # `failed` row is re-enqueued by `Enqueue.call` on EVERY call (§14h), so a stranger reloading a
-    # broken file would enqueue a doomed render per poll. The enqueue lives on the page render above
-    # instead, guarded by `current_preview` so it fires once per (content, renderer build) — the same
-    # split `Maker::Previews::ThumbnailMap`'s required `backfill:` flag draws between `#index`
+    # THE POLL, AND IT NEVER WRITES. FilesController#geometry enqueues when it finds no current row
+    # (or one whose job was lost), which is right for a door only the file's owner can open and wrong
+    # for one anybody can: a `failed` row is re-enqueued by `Enqueue.call`'s default on EVERY call
+    # (§14h), so a stranger reloading a broken file would enqueue a doomed render per poll. The
+    # enqueue lives on the page render above instead, with `retry_failed: false` so it fires once per
+    # (content, renderer build) and once per STALLED_AFTER for a lost job — the same split
+    # `Maker::Previews::ThumbnailMap`'s required `backfill:` flag draws between `#index`
     # (self-heals) and `#thumbnails` (polled every 2 s, must not write).
     #
     # `head :not_found` RATHER THAN THE PAGE'S 404, and rescued LOCALLY for FilesController#geometry's
@@ -131,15 +139,17 @@ module Public
       # NO ROW YET IS `pending`, TRUTHFULLY: the page render that sent this poller here enqueued one.
       return render json: { status: "pending" } if preview.nil?
 
+      # THE PUBLIC PREVIEW ROUTE, NOT `url_for(preview.asset)` (hardening, 2026-09-08;
+      # tinkerex#278). The URL this poller hands measure_controller.js outlives the response, so a
+      # blob URL here is the same never-expiring, permission-free link the thumbnails were — and
+      # this one is the whole Measure payload. #preview re-asks `deliverable!` when it is fetched,
+      # which is what makes a payload stop answering when its project stops being public.
+      # `current_build?` for FilesController#geometry's reason: this is data, not a picture.
+      if preview.current_build?
+        return render json: { status: "ready", url: pub.preview_url_for(node.node_id, kind: "geometry") }
+      end
+
       case preview.status
-      when "ready"
-        # THE PUBLIC PREVIEW ROUTE, NOT `url_for(preview.asset)` (hardening, 2026-09-08;
-        # tinkerex#278). The URL this poller hands measure_controller.js outlives the response, so
-        # a blob URL here is the same never-expiring, permission-free link the thumbnails were —
-        # and this one is the whole Measure payload. #preview re-asks `deliverable!` when it is
-        # fetched, which is what makes a payload stop answering when its project stops being public.
-        render json: { status: "ready",
-                       url: (pub.preview_url_for(node.node_id, kind: "geometry") if preview.asset.attached?) }
       when "failed", "unsupported"
         render json: { status: preview.status, error: preview.error }
       else
@@ -151,19 +161,21 @@ module Public
 
     private
 
-    # ONE JOB PER (node, content token, renderer build), and the `current_preview` guard is what
-    # makes that true rather than "one job per page view": `Enqueue.call` resets a `failed` row to
-    # pending and re-enqueues whenever it is called. `FilesController#current_thumbnail` is this
-    # method's shape, with kind "thumbnail".
+    # ONE JOB PER (node, content token, renderer build), plus at most one per STALLED_AFTER window
+    # for a row whose job was lost — and `retry_failed: false` is what makes that true rather than
+    # "one job per page view": `Enqueue.call`'s default resets a `failed` row to pending and
+    # re-enqueues whenever it is called, which on a door a stranger can issue is a doomed render per
+    # reload. ONE CALL, because this door does nothing with the row: `call` asks `needs_job?` of it,
+    # so a current row costs the same single query the `current_preview` guard that stood here did.
+    # That guard returned on ANY current row, which is why a visitor's Measure view could spin over
+    # a lost job for good. `FilesController#current_thumbnail` keeps the two-step because it
+    # RETURNS the row, including one for a name no renderer claims, where `call` answers nil.
     def enqueue_geometry(owner)
       token = @info&.content_token
       return if token.blank?
-      return if Maker::Previews::Enqueue.current_preview(user: owner, node_id: @node.node_id,
-                                                         name: @node.name, version_id: token,
-                                                         kind: "geometry")
 
       Maker::Previews::Enqueue.call(user: owner, node_id: @node.node_id, name: @node.name,
-                                    version_id: token, kind: "geometry")
+                                    version_id: token, kind: "geometry", retry_failed: false)
     rescue FileLayer::NotFound, FileLayer::FetchError
       nil
     end

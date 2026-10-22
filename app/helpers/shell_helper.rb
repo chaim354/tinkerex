@@ -16,7 +16,7 @@ module ShellHelper
     "inventory" => %w[inventory_items suppliers locations],
     "tools" => %w[tools],
     "trash" => %w[trash],
-    # The hub and its own children (settings/tags, settings/filing_rules, settings/shelves) light the
+    # The hub and its own children (settings/tags, settings/shelves, settings/library) light the
     # rail FOOT's Settings link, not a rail item — through this one entry, because the key is the
     # controller path's first segment and every one of them is `settings/…`.
     #
@@ -25,10 +25,8 @@ module ShellHelper
     # Inventory, so clicking Settings landed a maker on a page where Settings went dark and something
     # else was highlighted: `/inventory/suppliers` and `/inventory/locations` now read like what they
     # are, and the old paths 301 (config/routes.rb) and must keep doing so.
-    # SHELVES MADE THE SAME MOVE TO /models/shelves AND MADE IT BACK in slice 5, the other way to
-    # make URL and light agree: Models stopped being a section, so the rule for what counts as a
-    # model has no section to serve but Settings. That is why `shelves` left the "models" entry —
-    # a top-level `shelves` controller no longer exists for it to name.
+    # /settings/shelves is the Shelves page (2026-10-20: the folders filed into inside each
+    # project), a setting like its siblings, so `shelves` names no section of its own.
     "settings" => %w[settings],
     # /help lights the rail foot's Help, as the hub lights Settings: a page the rail links to must
     # not render with nothing lit (design-system.md rule 8).
@@ -58,7 +56,11 @@ module ShellHelper
     help: "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2z M6.4 5.9a1.6 1.6 0 1 1 2.73 1.13c-.4.4-1.13.72-1.13 1.27v.35 M8 11.35v.01",
     # A page with a folded corner and two lines: a file's note-count badge (slice 7), which drew
     # the last emoji in the interface (test/no_emoji_test.rb). The count and its title stay.
-    note: "M3 2h7l3 3v9H3z M5 7h6 M5 10h6"
+    note: "M3 2h7l3 3v9H3z M5 7h6 M5 10h6",
+    # A calculator: the body, its display, and two rows of keys drawn as dots (.01 segments, the help
+    # icon's trick for a dot that draws in every engine). The rail's pinned Calculator link and the
+    # Tools card (2026-10-21).
+    calculator: "M4 1.5h8v13H4z M6 4h4v2.5H6z M6.25 9.5v.01 M8 9.5v.01 M9.75 9.5v.01 M6.25 12v.01 M8 12v.01 M9.75 12v.01"
   }.freeze
 
   # An unknown or absent cookie is the default, LIGHT ("Paper") since the 2026-10-08 redesign: the
@@ -96,9 +98,12 @@ module ShellHelper
     respond_to?(:user_signed_in?) && user_signed_in?
   end
 
-  # `rail--collapsed` only inside the shell: its rules are descendant selectors (`.rail--collapsed
-  # .brand-name`), and the auth card renders a `.brand` too — a user who collapsed the rail and
-  # signed out landed on a sign-in card with its wordmark hidden (found in review, 2026-09-04).
+  # `rail--collapsed` only inside the shell, where it sets the rail's grid TRACK and nothing else
+  # (`body.app-shell.rail--collapsed`, shell.css). The icon rail itself is a container query on
+  # `.rail`, so no rule keyed on this class reaches the `.brand` the auth card renders. Until F-S20-1
+  # its rules were descendant selectors (`.rail--collapsed .brand-name`), and a user who collapsed
+  # the rail and signed out landed on a sign-in card with its wordmark hidden (found in review,
+  # 2026-09-04).
   #
   # READS `shell_signed_in?`, NOT `user_signed_in?`, FOR THE SAME REASON THE LAYOUT DOES.
   # `body.app-shell` is a two-column grid whose first column is the rail's width (shell.css); a

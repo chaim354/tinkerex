@@ -10,7 +10,7 @@ module Web
     setup do
       @user = User.create!(email: "home-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     def file(name, at:, parent: nil)
@@ -58,19 +58,18 @@ module Web
       assert_select ".home-files .panel-head a[href=?]", files_path, text: "Library"
     end
 
-    # A TILE OPENS ITS FOLDER IN THE LIBRARY WITH THE FILE SELECTED (§7), where the inspector says
-    # what it is and its Open reaches the file page — never the file page directly. A root file has
-    # no folder, and the link says so by carrying `selected` alone. A link, never a selection item:
-    # this page has no selection controller to answer one.
-    test "a tile opens its folder in the Library with the file selected" do
+    # A TILE OPENS THE FILE — its file page, never a detour through the Library with the file
+    # selected, which is where it went until the owner asked for it to just open (2026-10-20). Both
+    # a nested and a root file, because the old Library link was shaped differently for each. A
+    # link, never a selection item: this page has no selection controller to answer one.
+    test "a tile opens the file" do
       @user.nodes.create!(node_id: "d-jigs", name: "jigs", kind: "dir", mtime: 1, size: 0)
       nested = file("plate.dxf", at: 1.hour.ago, parent: "d-jigs")
       root = file("notes.txt", at: 2.hours.ago)
       get root_path
-      assert_select ".home-files .recent-grid a.grid-card[href=?]",
-                    files_path(folder: "d-jigs", selected: nested.node_id), text: /plate\.dxf/
-      assert_select ".home-files .recent-grid a.grid-card[href=?]", files_path(selected: root.node_id), text: /notes\.txt/
-      assert_select ".home-files a[href=?]", file_path(nested.node_id), count: 0
+      assert_select ".home-files .recent-grid a.grid-card[href=?]", file_path(nested.node_id), text: /plate\.dxf/
+      assert_select ".home-files .recent-grid a.grid-card[href=?]", file_path(root.node_id), text: /notes\.txt/
+      assert_select ".home-files .recent-grid a[href*='selected=']", count: 0
       assert_select ".home-files [data-selection-target]", count: 0
     end
 

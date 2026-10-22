@@ -25,12 +25,13 @@ module Web
       FileUtils.remove_entry(@root) if @root&.exist?
     end
 
-    # A MODEL WITH A LIVE, UNCLAIMED FOLDER NO LONGER RENDERS THIS PAGE (slice 5): /models/:id 302s to
-    # the folder, whose strip carries what the page did (models_redirects_test.rb). The page survives
-    # for every model with no strip to land on, and the ONE of those that still has a live folder —
-    # the only kind whose Files panel draws the folder's SHAPE — is a model whose folder a project
-    # claims. So the file-tree tests claim it; the hero, switcher and gallery tests use a folderless
-    # model, the ordinary page (a one-file model, an import whose folder was never made).
+    # THE FILE-TREE TESTS CLAIM THEIR FOLDER FOR A PROJECT, A FIXTURE THAT OUTLIVED ITS REASON. From
+    # slice 5 until 2026-10-21 /models/:id sent a model with a live, unclaimed folder to that folder,
+    # so a project's claim was the one way a folder model — the only kind whose Files panel draws the
+    # folder's SHAPE — kept this page. Every model renders it now (models_redirects_test.rb), and the
+    # claim changes nothing the panel draws, so it stays rather than churning two tests. The hero,
+    # switcher and gallery tests use a folderless model (a one-file model, an import whose folder was
+    # never made).
     def claim_for_a_project!(user, folder)
       user.maker_projects.create!(name: "Claims #{folder.name}").update_column(:folder_node_id, folder.node_id)
     end
@@ -38,8 +39,7 @@ module Web
     def sign_in(email = "maker@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email:, password: PASSWORD } }
-      user
+      sign_in_web!(user, password: PASSWORD)
     end
 
     test "requires login" do
@@ -57,7 +57,6 @@ module Web
       user.maker_models.create!(title: "Dragon", print_status: "printed")
       get files_models_path
       assert_select ".model-card .model-name", text: "Dragon"
-      assert_select ".model-card .badge.mstatus-printed"
     end
 
     test "index shows only the current user's models" do

@@ -1,10 +1,12 @@
 import { Controller } from "@hotwired/stimulus"
-import JSZip from "jszip"
 import { uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
+import { isZip, readZipBundle } from "lib/zip_bundle"
 
-// Import a downloaded model bundle from ONE selection. Unzips any .zip in the browser, classifies
-// entries by extension, then creates the Model (+ folder map) and uploads every file through the
-// existing per-backend flow, attaching each. No zip bytes ever reach Rails; §15/§10 untouched.
+// Import a downloaded model bundle from ONE selection. Unzips any .zip in the browser through
+// lib/zip_bundle.js — the reader the top bar's Upload shares, so the two cannot disagree about what
+// a zip holds (clutter, a wrapper folder, duplicates) — classifies entries by extension, then
+// creates the Model (+ folder map) and uploads every entry through the existing per-backend flow,
+// attaching each. No zip bytes ever reach Rails; §15/§10 untouched.
 const IMAGE_EXT = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "tif", "tiff"]
 const MODEL_EXT = ["stl", "3mf", "obj", "step", "stp"]
 const roleFor = (name) => {
@@ -31,16 +33,8 @@ export default class extends Controller {
     try {
       this.files = []
       for (const f of this.inputTarget.files) {
-        if (f.name.toLowerCase().endsWith(".zip")) {
-          const zip = await JSZip.loadAsync(f)
-          for (const entry of Object.values(zip.files)) {
-            if (entry.dir) continue
-            const blob = await entry.async("blob")
-            const parts = entry.name.split("/")
-            const name = parts.pop()
-            if (!name || name.startsWith(".")) continue
-            this.files.push({ name, dir: parts.join("/"), blob: new File([blob], name), role: roleFor(name) })
-          }
+        if (isZip(f)) {
+          for (const entry of await readZipBundle(f)) this.files.push({ ...entry, role: roleFor(entry.name) })
         } else {
           this.files.push({ name: f.name, dir: "", blob: f, role: roleFor(f.name) })
         }
@@ -74,7 +68,7 @@ export default class extends Controller {
   // Title from the .zip's name if one was selected, else the first MODEL file's name — never an
   // image or PDF (that's how a dropped "resize-img-5848.webp" used to become the title).
   deriveTitle() {
-    const zip = [...this.inputTarget.files].find((f) => f.name.toLowerCase().endsWith(".zip"))
+    const zip = [...this.inputTarget.files].find(isZip)
     const model = this.files.find((f) => f.role === "model")
     const src = (zip && zip.name) || (model && model.name) ||
                 (this.inputTarget.files[0] && this.inputTarget.files[0].name) || ""

@@ -1,6 +1,7 @@
 module Maker
   # Make the catalog agree with what is in a project's library folder: attach every file under it,
-  # and file whatever is loose at its root into a category subfolder.
+  # and file whatever is loose at its root into a category subfolder — plus whatever sits in its
+  # `other/` that the user's filing rules now send somewhere else (.resortable?).
   #
   # WHY A SWEEP RATHER THAN A HOOK ON EVERY WRITE. A file can reach `Projects/<slug>/` seven ways —
   # FilesController#create (share/s3), #finalize_upload (chunk), Library::Reconciler (the scan),
@@ -18,34 +19,53 @@ module Maker
   # §10 BOUNDARY: maker-layer policy. It reaches bytes only through those two services, and nothing
   # here touches Sync::*, the changelog, conflicts, locks or the mounts.
   class ProjectIntake
-    # What one project's intake did. `plan` is [name, folder] pairs, one per file #file_all moved
-    # or would move — so the rake task can print source -> destination without a second
-    # traversal. IT IS POPULATED IDENTICALLY ON A REAL RUN AND A DRY RUN, NOT GATED ON @dry_run
-    # (an earlier version of this comment claimed otherwise — corrected 2026-07-30, false as
-    # written: #place returns the destination string on both paths, before the move on a dry run
-    # and after it succeeds on a real one, so #file_all fills `plan` the same way either time). A
-    # REAL run's entries are moves that ALREADY HAPPENED; a DRY run's are moves that WOULD
-    # happen — same shape, different tense, and the caller has to already know which run it asked
-    # for to read them correctly. `skips` is the SAME shape for the other outcome — [name,
-    # reason] pairs, one per file #file_all did not move — so Task 12's rake task can say which
-    # files and why, not just how many.
-    Result = Data.define(:attached, :moved, :skipped, :skips, :plan, :status, :conflict_folders) do
-      # `conflict_folders` MAPS A SKIPPED FILE'S NAME TO THE FOLDER #place TRIED, and it exists so a
-      # flash can name that folder without re-deriving it (stage 4, S4-2). ProjectFolderIntake used
-      # to recompute it from the user's rules, which was right for every file whose destination
-      # comes from its NAME and wrong for the one whose destination comes from its CONTENT — a
-      # board zip collides in `pcb/` and the sentence said `archives/`.
-      #
-      # NOT NAMED `conflicts`, AND THAT IS NOT A STYLE CHOICE — DO NOT SHORTEN IT BACK.
-      # `conflicts` is one of the seven ENGINE_ASSOCIATIONS in test/architecture_invariants_test.rb,
-      # matched as a BARE :on_ident token anywhere under `app/`, so a member by that name puts this
-      # file on the "reaching into Sync::" offender list — which is a guard that asserts ZERO with
-      # NO ALLOWLIST (§14d) and must stay that way. Found by running it, not by predicting it.
-      #
-      # A DEFAULT, so the three construction sites in this file and the three in
-      # project_scan_button_test.rb did not have to change — and so a future Result built without
-      # it reads as "no conflicts recorded" rather than raising.
-      def initialize(conflict_folders: {}, **) = super
+    # WHAT HAPPENED TO ONE INBOX FILE — one row for every file #file_all was handed, the ones a
+    # FetchError abort never reached included. `skip` is why the file stayed where it was — the
+    # project root, or `other/` for a re-sort (a Symbol) — nil when it was filed. `folder` is the
+    # destination #place decided on: where the file
+    # now is, where a DRY run says it WOULD go, or the folder a failed move tried (for a
+    # `:conflict`, the occupied one the flash names). It is nil for a refusal, and on every row the
+    # abort writes — the file that raised included, whatever #place had picked for it.
+    #
+    # THE FOLDER RIDES ON THE ROW, NEVER IN A MAP BESIDE IT (F-S06-1). A collision's folder once
+    # lived in a name-keyed hash next to the skips, and ProjectFolderIntake re-derived it from the
+    # file's NAME whenever the hash lacked it — the derivation 521bfb30 found wrong for a board zip,
+    # which collides in `pcb/` while its name says `archives/`. One row records the skip and the
+    # folder in one write, so there is nothing to fall out of step and nothing left to guess.
+    #
+    # `skip:` DEFAULTS TO nil, so a filed row is spelled with its folder alone. `folder:` has no
+    # default on purpose: every construction site states it, and the flash depends on it.
+    Filing = Data.define(:name, :folder, :skip) do
+      def initialize(name:, folder:, skip: nil) = super
+
+      def filed? = skip.nil?
+    end
+
+    # What one project's intake did: how many files it attached, and one Filing per inbox file.
+    #
+    # `plan`, `skips`, `moved` AND `skipped` ARE READ OFF `filings`, NEVER STORED BESIDE THEM, so
+    # no count can disagree with its list and no hand-built Result has to keep them in step. Their
+    # shapes are unchanged for their readers (the rake task, ProjectIntakeJob's log, the scan
+    # door): `plan` is [name, folder] pairs for the files filed, `skips` [name, reason] pairs for
+    # the files left. A REAL run's plan is moves that ALREADY HAPPENED, a DRY run's moves that
+    # WOULD — the same rows in a different tense, and the caller knows which run it asked for.
+    #
+    # NOTHING HERE MAY BE NAMED `conflicts`, AND THAT IS NOT A STYLE CHOICE. It is one of the seven
+    # ENGINE_ASSOCIATIONS in test/architecture_invariants_test.rb, matched as a BARE :on_ident token
+    # anywhere under `app/`, so a member or reader by that name puts this file on the "reaching
+    # into Sync::" offender list — a guard that asserts ZERO with NO ALLOWLIST (§14d).
+    Result = Data.define(:attached, :status, :filings) do
+      # Every early return in #call files nothing, which is what the default says.
+      def initialize(attached:, status:, filings: []) = super
+
+      def plan = filings.select(&:filed?).map { |f| [ f.name, f.folder ] }
+      def skips = filings.reject(&:filed?).map { |f| [ f.name, f.skip ] }
+      def moved = filings.count(&:filed?)
+      def skipped = filings.size - moved
+
+      # The folder `name` collided in, or nil if it did not collide. By NAME because a name is all
+      # a door downstream holds (ProjectFolderIntake#left_unfiled_by_conflict? names the limit).
+      def conflict_folder(name) = filings.find { |f| f.skip == :conflict && f.name == name }&.folder
     end
 
     # What one USER's whole intake run did. The cap is a property of the RUN, so its refusal lives
@@ -181,15 +201,16 @@ module Maker
     # per-user filing rules #place's own memoized lookup reads a moment later (#folder_for below),
     # so what this predicts and what the sweep does cannot disagree as long as the user's rules
     # have not changed in between. Not a second copy of the vocabulary (§14d: add an extension in
-    # ROLE_BY_EXT only; stage 3 S3-1: edit a folder at /settings/filing, not here).
+    # ROLE_BY_EXT only; stage 3 S3-1: edit a folder on the Shelves page, not here).
     #
     # IT CANNOT ANSWER THE BOARD-ZIP QUESTION, AND THAT IS A PROPERTY OF WHEN IT RUNS. #place asks
     # `Maker::GerberArchive.for` about a node that EXISTS; this method is asked about a file a save
     # is ABOUT to write, so there are no bytes in the library to read and no node to read them
     # from. The one caller (Tools::AddonsController#resolve_placements) writes addon output — SVG
     # and 3MF — so no bundle in this repo or in chaim354/tinkerex-addons can reach the divergence.
-    # WHAT KEEPS THE USER-FACING SENTENCE TRUE ANYWAY is Result#conflict_folders: the flash reports
-    # the folder #place ACTUALLY tried, recorded as it tried it, never re-derived from a name here.
+    # WHAT KEEPS THE USER-FACING SENTENCE TRUE ANYWAY is the conflict's own Filing: the flash
+    # reports the folder #place ACTUALLY tried, recorded on the row as it tried it, never
+    # re-derived from a name here.
     def self.destination_for(user:, parent_node_id:, name:)
       return nil if parent_node_id.blank?
 
@@ -201,6 +222,33 @@ module Maker
       occupied = folder && user.nodes.present.find_by(parent_node_id: folder.node_id, name:,
                                                       kind: "file")
       Destination.new(project:, folder: folder_name, occupied_by: occupied)
+    end
+
+    # WHETHER A FILE IN A PROJECT'S `other/` IS RE-SORTED: its extension now has a rule naming some
+    # other folder. `other/` is where the sweep puts a file it has no rule for, so a file there that
+    # has a rule since is the app's own earlier "don't know" — `.mage` was filed into `other/` on
+    # 2026-09-06 and given `cnc/` the next day, and sat in `other/` on the share from then on.
+    #
+    # BY NAME ALONE, here and in #call's selection, so the caps below count exactly the set #call
+    # files. A `.zip` is never opened to decide; #place may still send a selected board zip to pcb/.
+    def self.resortable?(rules, name)
+      rules.fetch(Maker::ProjectFolders.ext_of(name), Maker::ProjectFolders::OTHER) !=
+        Maker::ProjectFolders::OTHER
+    end
+
+    # How many files a sweep of these project folders would file: the loose files at their roots
+    # plus the .resortable? ones directly inside their `other/`. .for_user and .for_node take their
+    # caps against this BEFORE the first move. The rules are read only when some `other/` holds a
+    # file, so a library with no `other/` folders pays the root count and one more query.
+    def self.inbox_count(user, folder_node_ids)
+      loose = user.nodes.present.where(kind: "file", parent_node_id: folder_node_ids).count
+      others = user.nodes.present.where(kind: "dir", name: Maker::ProjectFolders::OTHER,
+                                        parent_node_id: folder_node_ids).select(:node_id)
+      names = user.nodes.present.where(kind: "file", parent_node_id: others).pluck(:name)
+      return loose if names.empty?
+
+      rules = Maker::FilingRules.for(user)
+      loose + names.count { |name| resortable?(rules, name) }
     end
 
     def self.for_project(user:, project:, dry_run: false, move: true)
@@ -247,8 +295,10 @@ module Maker
       cap ||= max_moves
       projects = user.maker_projects.where.not(folder_node_id: nil).to_a
 
-      # ONE query for the whole run's inbox, and it is what makes "checked before the first move"
-      # true. An observer cannot decide this per project: the cap is a property of the run.
+      # ONE COUNT for the whole run's inbox (.inbox_count — the roots plus what `other/` no longer
+      # holds, a fixed handful of queries however many projects there are), and it is what makes
+      # "checked before the first move" true. An observer cannot decide this per project: the cap
+      # is a property of the run.
       #
       # THIS IS ALSO THE ONLY RunResult.new CALL IN THE METHOD, DELIBERATELY — an earlier version
       # short-circuited `projects.empty?` with a second, separately-worded construction that
@@ -259,8 +309,7 @@ module Maker
       # situation (nothing to file) but disagreed on `status`, because 0 > cap is true in both yet
       # only one of them ever reached that comparison. One construction site cannot disagree with
       # itself. Pinned by the "zero-projects and zero-loose-files agree" test below.
-      inbox_total = user.nodes.present
-                        .where(kind: "file", parent_node_id: projects.map(&:folder_node_id)).count
+      inbox_total = inbox_count(user, projects.map(&:folder_node_id))
 
       # A dry run never refuses — seeing this number is the entire reason to run one.
       refused = !dry_run && inbox_total > cap
@@ -315,11 +364,11 @@ module Maker
       project = owning_project(user, node)
       return nil unless project
 
-      inbox = user.nodes.present.where(kind: "file", parent_node_id: project.folder_node_id).count
+      inbox = inbox_count(user, [ project.folder_node_id ])
       cap = eager_max_moves
       if inbox > cap
         Rails.logger.warn("Maker::ProjectIntake: attaching but NOT filing #{project.slug} — " \
-                          "#{inbox} loose files is over the #{cap}-file eager cap. The periodic " \
+                          "#{inbox} files to file is over the #{cap}-file eager cap. The periodic " \
                           "sweep will file the rest on its own schedule; raise " \
                           "PROJECT_ORGANIZE_EAGER_MAX_MOVES to file more inline.")
       end
@@ -425,7 +474,7 @@ module Maker
 
     def call
       folder = live_folder
-      return Result.new(attached: 0, moved: 0, skipped: 0, skips: [], plan: [], status: :no_folder) unless folder
+      return Result.new(attached: 0, status: :no_folder) unless folder
 
       files = subtree_files(folder)
       # ATTACH FIRST, AND THE ORDER IS LOAD-BEARING. It inherits Maker::AttachToProject's rule that
@@ -438,7 +487,7 @@ module Maker
       # the periodic run, so recording "swept, moved 0" here would overwrite a real "filed 3 files"
       # with a zero every time an upload landed in a busy project. #record_sweep! therefore sits
       # BELOW this line, not above it — see the two calls further down.
-      return Result.new(attached:, moved: 0, skipped: 0, skips: [], plan: [], status: :ok) unless @move
+      return Result.new(attached:, status: :ok) unless @move
 
       # THE PER-PROJECT OPT-OUT (stage 4, S4-2; story 4.3). ATTACH STILL RUNS, and the asymmetry is
       # the whole design: the attach writes a row and moves no bytes, so "don't file my folder" is
@@ -452,14 +501,17 @@ module Maker
       # not to, which is a sweep with an answer of zero rather than a pass that never asked.
       unless @project.autofile?
         record_sweep!(0)
-        return Result.new(attached:, moved: 0, skipped: 0, skips: [], plan: [], status: :ok)
+        return Result.new(attached:, status: :ok)
       end
 
-      # THE INBOX IS THE ROOT, AND ONLY THE ROOT. Anything already in a subfolder is the user's
-      # filing — including filing we would disagree with — and position is what records that, so
-      # there is no state to keep. Re-filing a subfolder would fight the user every 15 minutes, and
-      # on chunk each round of that fight is a changelog entry broadcast to every device.
-      inbox = full_records(files.select { |n| n.parent_node_id == folder.node_id })
+      # THE INBOX IS THE ROOT, PLUS WHAT `other/` NO LONGER HOLDS. Anything in any other subfolder
+      # is the user's filing — including filing we would disagree with — and position is what
+      # records that, so there is no state to keep. Re-filing those would fight the user every 15
+      # minutes, and on chunk each round of that fight is a changelog entry broadcast to every
+      # device. `other/` is the exception because it is the sweep's own answer for "no rule", and
+      # only a file whose extension has a rule now leaves it (#resort?): a re-sorted file is never
+      # selected again, and one that collides stays and is retried, exactly as a root file does.
+      inbox = full_records(files.select { |n| n.parent_node_id == folder.node_id || resort?(n) })
       # ONE NUDGE FOR THE WHOLE RUN, not one per file. Each move is its own Sync::Mutation.apply and
       # each ensure_path! its own folder creation, so filing 25 files broadcast 26 times — against
       # Sync::LibraryChannel's own stated contract ("never per-operation") and, on managed Postgres, 500
@@ -467,10 +519,10 @@ module Maker
       # pull protocol makes one nudge sufficient: a device pulls everything after its own cursor,
       # so the final head_seq subsumes every seq before it. Batches JOIN, so .for_user's loop over
       # projects collapses to a single nudge for the entire sweep rather than one per project.
-      moved, skipped, skips, plan = LibraryBroadcast.batch(@user) { file_all(inbox) }
-      record_sweep!(moved)
-
-      Result.new(attached:, moved:, skipped:, skips:, plan:, conflict_folders:, status: :ok)
+      filings = LibraryBroadcast.batch(@user) { file_all(inbox) }
+      result = Result.new(attached:, status: :ok, filings:)
+      record_sweep!(result.moved)
+      result
     end
 
     private
@@ -512,7 +564,24 @@ module Maker
     # extension out of a name," so this does not duplicate the vocabulary itself, only the one
     # memoized-hash fetch around it.
     def folder_for(name)
-      filing_rules.fetch(Maker::ProjectFolders.ext_of(name), "other")
+      filing_rules.fetch(Maker::ProjectFolders.ext_of(name), Maker::ProjectFolders::OTHER)
+    end
+
+    # The project's own `other/` directly under its folder, or nil. Looked up, never created, and
+    # memoized like #live_folder: #resort? asks once per file of the walk.
+    def other_folder_id
+      return @other_folder_id if defined?(@other_folder_id)
+
+      @other_folder_id = @user.nodes.present
+                              .where(parent_node_id: live_folder.node_id, kind: "dir",
+                                     name: Maker::ProjectFolders::OTHER).pick(:node_id)
+    end
+
+    # A file directly in `other/` (never deeper — a folder inside `other/` is the user's) that the
+    # rules now file elsewhere. The SAME predicate .inbox_count counts with.
+    def resort?(node)
+      node.parent_node_id == other_folder_id && other_folder_id.present? &&
+        self.class.resortable?(filing_rules, node.name)
     end
 
     # A BOARD IN A WRAPPER FILES WITH THE BOARD (stage 4, S4-2; story 2.8). `Maker::GerberArchive
@@ -596,10 +665,13 @@ module Maker
     # library: in steady state (everything already filed) the inbox is empty and this does not query
     # at all, and on the intended first run it is the backlog the caps already bound.
     #
-    # ORDER IS PRESERVED DELIBERATELY. `where(node_id: [...])` returns rows in whatever order the
-    # adapter likes, and the inbox order decides WHICH files get filed when a run hits its cap — so
-    # re-sorting to the walk's order is what keeps a capped sweep deterministic instead of
-    # silently filing a different subset on Postgres than on SQLite.
+    # ORDER FOLLOWS THE WALK, because `where(node_id: [...])` returns rows in whatever order the
+    # adapter likes. The inbox order is the order of `filings`, so it decides which files a
+    # FetchError abort leaves `:unavailable` (the file that raised and every file after it; see
+    # #file_all), and the order `plan` and `skips` list files in — which is which collision the
+    # scan door's flash names when several collide in one sweep (it takes the first). It does NOT
+    # decide which files a capped run files: both caps are all-or-nothing (.for_user withholds the
+    # whole run's filing, .for_node the whole project's).
     def full_records(light_nodes)
       return [] if light_nodes.empty?
 
@@ -678,13 +750,7 @@ module Maker
       rows.size
     end
 
-    # File each loose file, counting outcomes. Returns [moved, skipped, skips, plan].
-    #
-    # #place ANSWERS A STRING (the destination folder) ON SUCCESS OR A SYMBOL (the skip reason) ON
-    # FAILURE — the two never collide, since Maker::ProjectFolders::ROLE_FOLDERS' values are all
-    # folder-name strings and every reason below is a Symbol — so the dispatch here is a plain
-    # `is_a?(Symbol)` rather than a second lookup that could disagree with #place about what
-    # happened.
+    # File each loose file. Answers one Filing per inbox file, in inbox order.
     #
     # FileLayer::FetchError IS RESCUED HERE, AROUND THE WHOLE LOOP — DELIBERATELY NOT INSIDE
     # #place, which says so in its own comment. A FetchError USUALLY means the LIBRARY is
@@ -716,34 +782,23 @@ module Maker
     # the safe direction — the same shape as Share#read's own trade-off (FetchError over NotFound
     # whenever a library looks unmounted).
     #
-    # `processed` counts files #place has already returned an outcome for (moved OR skipped), so
-    # `inbox[processed..]` is exactly "every file #place has not yet had a chance to answer for" —
-    # and that INCLUDES the file that raised, since its outcome was never recorded.
+    # `filings` HOLDS ONE ROW PER FILE #place HAS ANSWERED FOR, so `inbox[filings.size..]` is
+    # exactly "every file #place has not yet had a chance to answer for" — and that INCLUDES the
+    # file that raised, since no row was appended for it. Every row already there is kept: a move
+    # that succeeded before the abort happened, and the result must say so.
     def file_all(inbox)
-      moved = 0
-      skips = []
-      plan = []
-      processed = 0
-      inbox.each do |node|
-        outcome = place(node)
-        if outcome.is_a?(Symbol)
-          skips << [ node.name, outcome ]
-        else
-          moved += 1
-          plan << [ node.name, outcome ]
-        end
-        processed += 1
-      end
-      [ moved, skips.size, skips, plan ]
+      filings = []
+      inbox.each { |node| filings << place(node) }
+      filings
     rescue FileLayer::FetchError => e
-      unreached = inbox[processed..]
-      unreached.each { |node| skips << [ node.name, :unavailable ] }
+      unreached = inbox[filings.size..]
+      moved = filings.count(&:filed?)
       Rails.logger.warn(
         "Maker::ProjectIntake: aborting sweep for #{@project.slug} — library unreachable " \
         "(#{e.class}: #{e.message}) — #{moved} #{'file'.pluralize(moved)} filed before it " \
         "stopped, #{unreached.size} left unavailable#{unreached_note(unreached)}"
       )
-      [ moved, skips.size, skips, plan ]
+      filings + unreached.map { |node| Filing.new(name: node.name, folder: nil, skip: :unavailable) }
     end
 
     # A refusal should diagnose itself — Library::Reconciler#unreadable_note is the precedent this
@@ -755,8 +810,9 @@ module Maker
       " (#{unreached.first(3).map { |n| n.name.inspect }.join(', ')}#{'...' if unreached.size > 3})"
     end
 
-    # Move one file into its category folder. Answers the folder name, or the skip reason (a
-    # Symbol) if it stayed put — see #file_all for why those two shapes never collide.
+    # Move one file into its category folder, and answer the Filing that says what happened — filed
+    # into `dest`, or left at the root with its reason. One row type on every path, so #file_all
+    # appends without asking which.
     #
     # IT ASKS Maker::AttachToProject#refusal_for FIRST, and that is this method's most important
     # line. Those three rules (:not_a_file, :model_bundle, :attached_elsewhere) are policy about
@@ -811,9 +867,16 @@ module Maker
       # of. Left unscoped, a file any second project also claimed sat at the root through every
       # sweep forever, silently.
       refusal = attach_policy.refusal_for(node, within_own_folder: true)
-      return refusal if refusal
+      return Filing.new(name: node.name, folder: nil, skip: refusal) if refusal
 
       dest = board_folder_for(node) || folder_for(node.name)
+      # A BOARD ZIP SELECTED OUT OF `other/` BY ITS NAME, WHOSE GERBER-LAYER RULE SENDS IT STRAIGHT
+      # BACK THERE (a maker who pointed `gbr` at `other`), STAYS PUT. Without this the "move" would be
+      # onto its own parent: a no-op reported as a filing, on every sweep.
+      if dest == Maker::ProjectFolders::OTHER && node.parent_node_id != live_folder.node_id
+        return Filing.new(name: node.name, folder: dest, skip: :already_filed)
+      end
+
       # Before create_child! and Maker::MoveNode.call, so a dry run creates no folder and writes
       # nothing — the reason it is a `dry run` and not a `report`.
       #
@@ -823,7 +886,7 @@ module Maker
       # destination folder already holds a same-named file. Detecting that requires attempting
       # the move, and attempting the move is precisely what a dry run exists to refuse to do —
       # this is not a gap to close, it is what "writes nothing" costs.
-      return dest if @dry_run
+      return Filing.new(name: node.name, folder: dest) if @dry_run
 
       # UNDER THE PROJECT'S OWN FOLDER NODE, NEVER A PATH REBUILT FROM THE SLUG. The two agree only
       # while #ensure_library_folder! is the sole writer of folder_node_id and the slug has never
@@ -837,27 +900,26 @@ module Maker
       target = Maker::LibraryFolder.create_child!(@user, parent_node_id: live_folder.node_id,
                                                   name: dest)
       Maker::MoveNode.call(@user, node:, new_parent_node_id: target.node_id)
-      dest
+      Filing.new(name: node.name, folder: dest)
     rescue Maker::MoveNode::Collision => e
       # :conflict, matching Maker::AttachToProject#move — one file away, rescuing the same
       # exception for the same reason. Two names for one condition in sibling classes is
       # exactly the drift this codebase works to avoid.
-      #
-      # THE FOLDER IS RECORDED AS IT COLLIDES, never re-derived downstream: `dest` is what this
-      # sweep ACTUALLY tried, and for a board zip that is not what a name-keyed lookup would answer
-      # (see #board_folder_for). ProjectFolderIntake#conflict_folder reads this map.
-      conflict_folders[node.name] = dest
-      skip(node, :conflict, e)
+      skip(node, :conflict, e, folder: dest)
     rescue FileLayer::NotFound => e
-      skip(node, :not_found, e)
+      skip(node, :not_found, e, folder: dest)
     rescue FileLayer::UnsupportedOperation => e
-      skip(node, :unsupported, e)
+      skip(node, :unsupported, e, folder: dest)
     rescue Maker::MoveNode::InvalidName => e
-      skip(node, :bad_name, e)
+      skip(node, :bad_name, e, folder: dest)
     end
 
-    # Log one skipped file and answer the reason, so #place can end every rescue clause with a
-    # single expression. WARN, not info: every other per-item skip in the library-scan family warns
+    # Log one skipped file and answer its Filing, so #place can end every rescue clause with a
+    # single expression. `folder:` is the destination #place had decided on when the move failed —
+    # for a :conflict the occupied folder, which is the one the flash names; nil if it failed
+    # before deciding one.
+    #
+    # WARN, not info: every other per-item skip in the library-scan family warns
     # for exactly this shape — an ordinary, individually-unsurprising thing that recurs forever —
     # Library::Scanner for an unreadable dir/file or an invalid-encoding name, S3Observer for a
     # permanently un-indexable key, Reconciler when it cannot hash. There is no precedent in this
@@ -865,17 +927,13 @@ module Maker
     # would justify one. e.message is included, not just e.class: FileLayer::NotFound alone is
     # raised with several different messages for different causes (AttachToProject#log_failure
     # includes it for the same reason), and the class name alone cannot tell them apart later.
-    def skip(node, reason, error)
-      Rails.logger.warn("Maker::ProjectIntake: left #{node.name.inspect} at the root of " \
+    def skip(node, reason, error, folder:)
+      at_root = node.parent_node_id == live_folder.node_id
+      where = at_root ? "at the root" : "in #{Maker::ProjectFolders::OTHER}/"
+      Rails.logger.warn("Maker::ProjectIntake: left #{node.name.inspect} #{where} of " \
                         "#{@project.slug} — #{error.class}: #{error.message}")
-      reason
+      Filing.new(name: node.name, folder:, skip: reason)
     end
-
-    # The name => folder pairs #place recorded as it collided, built lazily because most sweeps
-    # never collide at all. Keyed by NAME for the same reason Result#skips is (see
-    # ProjectFolderIntake#left_unfiled_by_conflict?): a name is all a caller downstream has. See
-    # Result for why this is not spelled `conflicts`.
-    def conflict_folders = @conflict_folders ||= {}
 
     # WHAT THE LAST SWEEP DID, WRITTEN IN ONE PLACE (stage 4, S4-2; stories 1.5, 4.1). Every path
     # into this class ends in #call, so ONE writer covers the eager nudge, the recurring job, the

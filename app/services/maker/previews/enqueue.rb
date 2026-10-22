@@ -1,8 +1,9 @@
 module Maker
   module Previews
-    # THE ONE idempotent entry point the "bytes landed" seams call (web upload, API commit, scan).
-    # Finds-or-creates the (node, kind: thumbnail) Preview and enqueues GeneratePreviewJob when it
-    # is new, when the content has MOVED, or when it previously `failed`. Returns the Preview, or
+    # THE ONE idempotent entry point the "bytes landed" seams call (web upload, scan).
+    # Finds-or-creates the (node, kind: thumbnail) Preview and enqueues GeneratePreviewJob when
+    # `needs_job?` says the row needs one: it is new, its content or its renderer has MOVED, it
+    # previously `failed`, or it claims a job that has STALLED. Returns the Preview, or
     # nil when nothing to do (no renderer for this name -> don't litter the table with rows that
     # will only ever be `unsupported`; that judgement is cheap and local here, and keeps the grid's
     # preview map clean).
@@ -16,11 +17,12 @@ module Maker
     #
     # `status = "pending"` ON A CONTENT REPOINT is deliberate and is what keeps the page honest: the
     # row still holds the PREVIOUS render until the job finishes, and `_thumb.html.erb` shows an
-    # image only when `ready`, so the user sees a spinner rather than the old picture labelled as
-    # the new content. Same thing they saw before, when the superseded row simply was not found.
+    # image only for a `showable?` row, so the user sees a spinner rather than the old picture
+    # labelled as the new content. Same thing they saw before, when the superseded row simply was
+    # not found.
     #
-    # A RENDERER REPOINT DELIBERATELY DOES NOT — see the branch in `call`. The artifact still
-    # depicts this exact file; only the code that built it moved on.
+    # A RENDERER REPOINT DELIBERATELY DOES NOT — it writes `rebuilding`; see the branch in `call`.
+    # The artifact still depicts this exact file; only the code that built it moved on.
     #
     # THE NON-RENDERABLE BRANCH IS THE ONLY POLICY V1::Maker::PreviewsController#create DOES NOT
     # SHARE, and it is now a `skip_unrenderable:` kwarg rather than a second implementation. That
@@ -40,21 +42,35 @@ module Maker
       # renderer only invalidates its cache by bumping PAST this — silence changes nothing.
       BASE_REVISION = 1
 
-      # HOW LONG A `pending`/`processing` ROW IS BELIEVED WHEN IT CLAIMS A JOB IS COMING.
+      # HOW LONG AN IN-FLIGHT ROW IS BELIEVED WHEN IT CLAIMS A JOB IS COMING.
       #
-      # Those two statuses are ASSERTIONS about work that exists elsewhere, and nothing verified
-      # them. When the assertion was false the row became unrecoverable: every branch of the guard
-      # in `call` returned early, so the 15-minute scan, `backfill_thumbnails`, `#show` and the
-      # addon door all no-op'd on it forever while the grid spun until its poll gave up. `failed`
-      # re-enqueues, `ready` is done and `unsupported` is terminal by design — these two were the
-      # only statuses with no way back. Three rows were wedged this way on the live share library,
-      # the oldest for over a week (the record, CLAUDE.md §11).
+      # `pending`, `processing` and `rebuilding` (`Maker::Preview::IN_FLIGHT`) are ASSERTIONS about
+      # work that exists elsewhere, and nothing verified them. When the assertion was false the row
+      # became unrecoverable: every branch of the guard in `call` returned early, so a lost job
+      # wedged its row while the grid spun until its poll gave up. `failed` re-enqueues, `ready` is
+      # done and `unsupported` is terminal by design — the in-flight statuses were the only ones with
+      # no way back. (`rebuilding` joined them on 2026-10-20: a lost rebuild used to sit at `ready`,
+      # showing the older build for good with nothing owed a newer one.)
+      # Three rows were wedged this way on the live share library, the oldest for over a week (the
+      # record, CLAUDE.md §11).
       #
-      # A WINDOW, NOT A BARE "pending → re-enqueue", because `backfill_thumbnails` calls this once
-      # per row on every Files page render: without one, every spinner on screen would enqueue a
+      # THE HEAL IS REACHED ONLY THROUGH `needs_job?`, AND UNTIL 2026-10-19 ALMOST NOTHING A USER
+      # OPENS REACHED IT. This comment said the 15-minute scan, the Files page's backfill, `#show`
+      # and the addon door all got here; none did. Each door asked "is this row CURRENT?" first
+      # (`current_preview`, status-blind on purpose) and never called `call` for a row that was,
+      # and the scan reaches `call` only for a file it creates, revives or sees change — an
+      # unchanged file is skipped before anything is enqueued. The API's preview POST was the one
+      # door that healed a stalled row. Every door that already holds a row now asks `needs_job?`
+      # itself: `ThumbnailMap`'s backfill (every Files, Models and Projects render),
+      # `FilesController#current_thumbnail` (the file page and the inspector), `#geometry`'s poll
+      # and `MissingBackfill`; `Public::FilesController#enqueue_geometry` (a visitor's render) asks
+      # through `call`. The scan still does not, and does not need to.
+      #
+      # A WINDOW, NOT A BARE "in flight → re-enqueue", because `ThumbnailMap`'s backfill asks this of
+      # every row on every Files page render: without one, every spinner on screen would enqueue a
       # duplicate job on every load. 15 minutes is far beyond any render (the deployed box runs one
-      # in ~70-90 ms) plus any realistic queue wait, and it matches `library_scan`'s interval, so a
-      # wedged row self-heals on the next scan at the latest.
+      # in ~70-90 ms) plus any realistic queue wait, so a wedged row heals on the first render that
+      # shows it after the window, or the next `rake previews:backfill_missing`.
       #
       # A DUPLICATE ENQUEUE IS SAFE, WHICH IS WHY A WINDOW CAN BE A HEURISTIC HERE: the job is
       # idempotent and `commit_if_current` compares both staleness axes before writing anything.
@@ -62,41 +78,43 @@ module Maker
       # nothing in the system will ever resolve.
       STALLED_AFTER = 15.minutes
 
-      # `skip_unrenderable:` DEFAULTS TRUE SO EVERY EAGER CALLER IS BYTE-IDENTICAL — nine of them
-      # (three in `FilesController`, `V1::CommitsController`, `Projects::UploadsController`,
-      # `Library::Reconciler`, `Addons::LibraryOutput`, `ThumbnailMap`, `MissingBackfill`) and none
-      # passes it. It is the ONE branch the comment above calls a deliberately different policy from
-      # `V1::Maker::PreviewsController#create`, which is now the one caller that passes `false`: an
-      # API client polls, so it needs a row to poll even for a name no renderer handles. Everything
-      # BELOW this line is shared, which is the point — the four staleness axes had drifted into a
-      # second, two-axis copy in that controller.
+      # BOTH POLICY KWARGS DEFAULT SO EVERY EAGER CALLER IS BYTE-IDENTICAL, and there are eight
+      # callers: two in `FilesController` (`#current_thumbnail`, `#geometry`), `Library::Reconciler`,
+      # `Addons::LibraryOutput` (whose `.enqueue_preview` every upload door has called since
+      # F-S21-2, in place of a private copy per controller), `ThumbnailMap` and `MissingBackfill`
+      # pass neither; `Public::FilesController#enqueue_geometry` passes `retry_failed: false` (a read
+      # door holding no row); `V1::Maker::PreviewsController#create` passes `skip_unrenderable: false`.
+      #
+      # `skip_unrenderable:` is the ONE branch the comment above calls a deliberately different
+      # policy from `V1::Maker::PreviewsController#create`: an API client polls, so it needs a row
+      # to poll even for a name no renderer handles. Everything BELOW this line is shared, which is
+      # the point — the four staleness axes had drifted into a second, two-axis copy in that
+      # controller.
+      #
+      # `retry_failed:` is the read doors' policy, `needs_job?`'s own parameter passed through: an
+      # eager seam retries a `failed` render (the bytes just landed, so a retry can succeed), a door
+      # a user opens again and again never does (files-preview.md: the S4-5 asymmetry).
       #
       # WITH A NIL RENDERER THE ROW IS STILL COHERENT: `revision_for(nil, kind)` answers
       # BASE_REVISION (nil does not respond to `payload_revision`), which is exactly the column
       # default, so nothing is stamped that a later reader could judge stale. The job is still
       # enqueued and writes the terminal `unsupported` itself — the only place that can tell "no
       # renderer for this type" from "toolchain missing on this box".
-      def call(user:, node_id:, name:, version_id:, kind: "thumbnail", skip_unrenderable: true)
+      def call(user:, node_id:, name:, version_id:, kind: "thumbnail", skip_unrenderable: true,
+               retry_failed: true)
         renderer = Maker::Previews::Registry.for_filename(name)
         return nil if renderer.nil? && skip_unrenderable
 
         revision = revision_for(renderer, kind)
         preview  = user.maker_previews.find_or_initialize_by(node_id:, kind:)
-        # TWO INDEPENDENT REASONS A STORED ARTIFACT IS OUT OF DATE, and they are not the same
-        # question. `version_id` asks "was this made from the file's CURRENT CONTENT?";
-        # `renderer_revision` asks "was it made by the CURRENT CODE?". Only the first was checked
-        # until a thinning fix shipped for the .lbrn2 Measure view and every already-measured file
-        # kept serving output from the old algorithm, because its content had not changed and
-        # nothing else was being compared.
-        content_moved = preview.version_id != version_id
-        rebuilt       = preview.renderer_revision != revision
-        # THE FOURTH REASON, and the only one that is not about the artifact being out of date: the
-        # row says work is in flight and it no longer is. See STALLED_AFTER.
-        stalled = preview.persisted? && %w[pending processing].include?(preview.status) &&
-                  preview.updated_at < STALLED_AFTER.ago
-        return preview unless preview.new_record? || content_moved || rebuilt ||
-                              preview.status == "failed" || stalled
+        return preview unless needs_job?(preview, version_id:, revision:, retry_failed:)
 
+        content_moved = preview.version_id != version_id
+        # A viewer preview of content that has moved on is a picture of geometry that no longer
+        # exists, so the row goes back to the renderer with the content.
+        preview.source = "renderer" if content_moved
+        rebuilt       = preview.renderer_revision != revision
+        stalled       = stalled?(preview)
         preview.version_id = version_id
         preview.renderer_revision = revision
         # BLANKED ONLY WHEN THE CONTENT MOVED — the two staleness axes deserve different answers.
@@ -110,11 +128,24 @@ module Maker
         # correct, for the whole render, on every renderer bump. Shipped that way briefly (before the
         # poll existed) and it read as "generating preview is broken", which is fair.
         #
-        # Leaving `ready` alone means the old artifact stays visible until the job swaps it. The
-        # job is safe either way: `commit_if_current` compares BOTH axes against what it captured,
-        # and both are written here before it is enqueued, so a run that started under an older
-        # revision still cannot stamp its output onto this row.
-        preview.status = "pending" if preview.new_record? || content_moved || preview.status == "failed"
+        # A RENDERER BUMP ON A ROW WITH A PICTURE IS `rebuilding` (F-S08-2), NOT A `ready` LEFT
+        # ALONE. Leaving it `ready` kept the picture up, but it also said "this asset is the build
+        # these coordinates name" the moment the new revision was stamped — false until the job
+        # ran — and the Measure poll, which must refuse an older build, served one as current.
+        # `rebuilding` says both true things: `showable?` (the picture stays up through the queue
+        # wait AND the render, since the job's start moves only `pending`), and not
+        # `current_build?` (every surface that measures waits). It is in `IN_FLIGHT`, so a lost
+        # rebuild heals. A row with NO picture to keep — `unsupported`, `processing`, a `ready`
+        # whose asset is gone — has nothing on screen worth protecting and goes `pending`.
+        #
+        # The job is safe either way: `commit_if_current` compares BOTH axes against what it
+        # captured, and both are written here before it is enqueued, so a run that started under an
+        # older revision still cannot stamp its output onto this row.
+        if preview.new_record? || content_moved || preview.failed?
+          preview.status = "pending"
+        elsif rebuilt
+          preview.status = preview.showable? ? "rebuilding" : "pending"
+        end
         # RESTAMP A HEALED ROW, OR THE HEAL REPEATS ON EVERY CALLER FOREVER. Re-enqueueing a
         # stalled row changes no other attribute, and `save!` on an unchanged record is a NO-OP
         # that leaves `updated_at` where it was — so the row would still read as stalled to the
@@ -125,6 +156,60 @@ module Maker
         preview.save!
         Maker::GeneratePreviewJob.perform_later(preview.id, filename: name)
         preview
+      end
+
+      # DOES THIS ROW NEED A JOB? THE ONE TRANSITION TABLE — `call` answers by it, and so does every
+      # door that already holds a row (`ThumbnailMap`'s backfill, `MissingBackfill`,
+      # `FilesController#current_thumbnail` and `#geometry`), instead of the coordinates-only copy
+      # each used to keep and the stalled arm each lost with it:
+      #
+      #   no row, or one never saved                       -> true  (there is nothing to show)
+      #   a `viewer` row, asked with NO content token      -> false (nothing says it is stale)
+      #   CONTENT moved since it was built                 -> true  (whatever its status says)
+      #   a `viewer` row at the current content            -> false (the maker's choice stands)
+      #   RENDERER moved since it was built                -> true  (whatever its status says)
+      #   `failed` at current coordinates                  -> `retry_failed`
+      #   in flight (`IN_FLIGHT`) for over STALLED_AFTER   -> true  (its job is not coming)
+      #   anything else                                    -> false
+      #
+      # THE TWO COORDINATES ARE INDEPENDENT REASONS A STORED ARTIFACT IS OUT OF DATE. `version_id`
+      # asks "was this made from the file's CURRENT CONTENT?", `renderer_revision` "was it made by
+      # the CURRENT CODE?". Only the first was checked until a thinning fix shipped for the .lbrn2
+      # Measure view and every already-measured file kept serving the old algorithm's output,
+      # because its content had not changed and nothing else was being compared. A `viewer` row
+      # (`Maker::Preview::SOURCES`) answers only the first: no renderer built it, so a renderer
+      # upgrade has nothing to improve on a picture the maker chose.
+      #
+      # `retry_failed:` IS REQUIRED HERE, NOT DEFAULTED, because the two answers are both right for
+      # someone and both silent when wrong: an eager seam must retry (`call`'s default), and a door a
+      # user opens again and again must not, or a broken render is re-queued on every view. A door
+      # that forgets to choose raises instead of picking one by accident.
+      #
+      # NOT `current_preview?` WITH A STATUS FOLDED IN: that predicate answers WHICH ROW IS CURRENT
+      # and stays status-blind (the comment above it says why, and §14h forbids the fold). This one
+      # answers what a caller holding a row must DO about it, which is a different question that
+      # happens to start with the same two coordinates.
+      def needs_job?(preview, version_id:, revision:, retry_failed:)
+        return true if preview.nil? || preview.new_record?
+        # A CALLER THAT NAMES NO CONTENT CANNOT CALL A VIEWER ROW STALE (2026-10-20, found in
+        # review). The v1 previews API takes a POST with no `version_id` -- tinkerex-client sends
+        # none when it has none -- and nil reads as a content change on the next line, which handed
+        # the picture the maker chose back to the renderer, repointed at nil, for good. A caller
+        # that DOES name a different token is a content claim and still repoints.
+        return false if preview.viewer? && version_id.blank?
+        return true if preview.version_id != version_id
+        # THE MAKER'S CHOICE OUTRANKS A RENDERER UPGRADE (2026-10-20): same content, so no job.
+        return false if preview.viewer?
+        return true if preview.renderer_revision != revision
+        return retry_failed if preview.failed?
+
+        stalled?(preview)
+      end
+
+      # A saved row that has claimed a job for longer than STALLED_AFTER. `persisted?` first: an
+      # unsaved row has no `updated_at` to compare.
+      def stalled?(preview)
+        preview.persisted? && preview.in_flight? && preview.updated_at < STALLED_AFTER.ago
       end
 
       # The revision a renderer claims for one kind, or BASE_REVISION when it claims none.
@@ -181,17 +266,21 @@ module Maker
       #
       # DO NOT FOLD `status` INTO EITHER OF THESE. It is the obvious next thought — "current" sounds
       # like it should mean servable — and it is wrong in both directions at once: `#current_thumbnail`
-      # deliberately serves a `ready` artifact straight through a renderer rebuild (the picture is
-      # still of this file), while `#geometry` deliberately never reads `status` here at all and
-      # answers `pending` on any miss (an older build's payload is DATA that is wrong, not merely
+      # deliberately serves a `rebuilding` artifact straight through a renderer rebuild (`showable?`:
+      # the picture is still of this file), while `#geometry` serves only `current_build?` and
+      # answers `pending` otherwise (an older build's payload is DATA that is wrong, not merely
       # old). §14h states the rule outright — "Same mechanism, opposite right answers; do not unify
       # them." What is shared is only WHICH ROW IS CURRENT; what each door does with the answer is
-      # each door's own business and must stay there.
+      # each door's own business, asked of the row's own predicates.
+      #
+      # THE REVISION HALF IS ASKED IN RUBY (`revision_current?`), NOT IN THE `find_by`, because a
+      # `viewer` row the maker chose is current at ANY revision; the key is still (user, node, kind),
+      # so the lookup returns one row at most either way.
       def current_preview(user:, node_id:, name:, version_id:, kind:)
         return nil if name.blank? || version_id.blank?
 
-        user.maker_previews.find_by(node_id:, kind:, version_id:,
-                                    renderer_revision: revision_for_name(name, kind))
+        row = user.maker_previews.find_by(node_id:, kind:, version_id:)
+        row if row && revision_current?(row, name)
       end
 
       # The same rule against a row already in memory. `kind` comes off the row itself, which is
@@ -212,11 +301,18 @@ module Maker
       # reachable from either of today's callers (`ThumbnailMap` scopes its query to the nodes the
       # port answered for; `Node` validates `name` for presence), WHICH IS PRECISELY WHY it can be
       # deleted without a test going red. Leave it.
+      #
+      # The revision half is `revision_current?`, shared with `current_preview` above, so a `viewer`
+      # row is current at any revision in both shapes or in neither.
       def current_preview?(preview, name:, version_id:)
         return false if name.blank? || version_id.blank?
 
-        preview.version_id == version_id &&
-          preview.renderer_revision == revision_for_name(name, preview.kind)
+        preview.version_id == version_id && revision_current?(preview, name)
+      end
+
+      # A viewer row is current at ANY renderer revision; a rendered one only at this build's.
+      def revision_current?(preview, name)
+        preview.viewer? || preview.renderer_revision == revision_for_name(name, preview.kind)
       end
     end
   end

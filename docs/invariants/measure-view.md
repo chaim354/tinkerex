@@ -280,15 +280,34 @@
   honestly replaces. A renderer bump is not that case: the stored artifact still depicts this exact
   file, only the code that built it moved on. Blanking it swapped a correct picture for a spinner
   for the whole render — and before stage 4, S4-3 the page did not poll, so it stayed a spinner
-  until someone reloaded — and read as "generating preview is broken". The page now polls a
-  `pending`/`processing` row and reloads once (`thumbs_controller.js`'s reload mode); the decision
-  stands on the first half alone.
-- **A CONSUMER THAT CANNOT TOLERATE AN OLDER BUILD'S OUTPUT SAYS SO ITSELF.**
-  `FilesController#geometry` answers `pending` whenever it had to enqueue, **without reading the
-  row's status** — geometry is DATA the client measures from (an older build's payload is wrong,
-  not merely old) and its client polls, so pending resolves itself. The thumbnail is a picture whose
-  `ready` row renders no poll cell at all (S4-3 polls only `pending`/`processing`). Same mechanism,
-  opposite right answers; do not unify them.
+  until someone reloaded — and read as "generating preview is broken". The page now polls an
+  in-flight row with nothing to show and reloads once (`thumbs_controller.js`'s reload mode); the
+  decision stands on the first half alone.
+  - **THE REBUILD HAS ITS OWN STATUS, `rebuilding`, AND IT IS NOT `ready` (F-S08-2, 2026-10-20).**
+    `Enqueue` used to stamp the new revision and leave the row `ready`, which said "this asset IS
+    the build these coordinates name" the moment the stamp landed — false until the job ran. The
+    picture surfaces were right to keep showing it; the Measure poll was wrong to serve it, and
+    could not tell the two apart. And the job's start wrote `processing` over the row anyway, so
+    the picture this rule protects went dark for the whole render regardless. Now a renderer bump
+    on a row with a picture writes `rebuilding` (a row with none goes `pending`), the job's start
+    moves `pending → processing` and nothing else, compare-and-set like its other writes, and a
+    lost rebuild heals through `STALLED_AFTER` because `rebuilding` is in `IN_FLIGHT`.
+- **A CONSUMER THAT CANNOT TOLERATE AN OLDER BUILD'S OUTPUT SAYS SO ITSELF, BY ASKING THE ROW.** The
+  classes are named once on `Maker::Preview`: a surface that SHOWS an artifact asks `showable?`
+  (`ready`, or `rebuilding` with its old asset — a picture of this content, any build); a surface
+  that MEASURES from one asks `current_build?` (`ready` only). `FilesController#geometry` and the
+  public poll ask `current_build?`, so they answer `pending` through a rebuild — geometry is DATA,
+  an older build's payload is wrong rather than merely old, and its client polls, so pending
+  resolves itself. The thumbnail is a picture: a showable row renders no poll cell at all, and
+  `/files/thumbnails` answers `ready` for one. Same mechanism, opposite right answers; do not unify
+  them. The two doors that hand out EITHER kind — the public payload route and the v1 API — ask
+  `servable?`, which is that split by kind (`MEASURED_KINDS`), so the payload route 404s and v1
+  says `pending` with no url for geometry mid-rebuild while both keep serving the picture.
+  Outside the model, never compare `status` to `ready` or `rebuilding`, nor re-spell the in-flight
+  set. `architecture_invariants_test.rb` refuses them in their `==`/`!=`/`when`/`%w[]` spellings; a
+  pattern cannot see every spelling (`where(status: "ready")`, `status.in?([...])`, `.eql?` pass it),
+  so the rule binds where the guard is blind. A literal that means one thing is not policed — the
+  job's start reads `pending`, the geometry polls' terminal arm `failed` and `unsupported`.
 - **A REVISION CHECK IN `Enqueue` IS USELESS UNLESS THE READ PATH ASKS FOR IT — and for thumbnails
   it did not.** `Enqueue` compared revisions correctly from the day it shipped, but only something
   that CALLS it can act on that, and the caller skips any node the read reports a row for. That
@@ -317,18 +336,30 @@
   came back GREEN under mutation, while `budget -= 1` runs unconditionally, so a wall of `.gcode`
   ahead of the models would spend the whole budget on files that can never have a thumbnail and the
   backlog would never drain.
-- **`pending` AND `processing` ARE ASSERTIONS THAT A JOB EXISTS, AND `Enqueue::STALLED_AFTER` IS THE
-  ONLY THING THAT EVER VERIFIES THEM.** `failed` re-enqueues, `ready` is done, `unsupported` is
-  terminal by design — those two were the only statuses with **no way back**, so a lost job wedged
-  the row FOREVER: `Enqueue`'s early return fires for every caller, so the 15-minute scan,
-  `ThumbnailMap`'s backfill, `#current_thumbnail` and the addon door all no-op'd on it, and
-  `MissingBackfill` looks only for content with NO row. Three rows sat wedged on the live share
-  library, the oldest over a week, spinning. **The window is what keeps the escape from becoming a
-  stampede** (the backfill calls `Enqueue` per row on every Files render), and **the
-  explicit `updated_at` restamp is what keeps the heal from repeating** — healing changes no other
-  attribute and `save!` on an unchanged record is a NO-OP that leaves the timestamp alone, so
-  without it every scan and page load adds another duplicate job. All three halves are
-  mutation-checked; dropping `|| stalled` must produce **two** failures, not one.
+- **`pending`, `processing` AND `rebuilding` (`Maker::Preview::IN_FLIGHT`) ARE ASSERTIONS THAT A JOB
+  EXISTS, AND `Enqueue::STALLED_AFTER` IS THE ONLY THING THAT EVER VERIFIES THEM.** `failed`
+  re-enqueues, `ready` is done, `unsupported` is terminal by design — the in-flight statuses were
+  the only ones with **no way back**, so a lost job wedged the row FOREVER (a lost rebuild sat at
+  `ready`, showing the older build for good). Three rows sat wedged on the live share library,
+  the oldest over a week, spinning. **THE HEAL IS `Enqueue.needs_job?`, AND EVERY DOOR THAT HOLDS A
+  ROW MUST ASK IT.** This bullet said the scan, `ThumbnailMap`'s backfill, `#current_thumbnail` and
+  the addon door reached the heal through `call`; until 2026-10-19 none did. Each door asked "is
+  this row current?" first (`current_preview`, status-blind on purpose) and never called `call` for
+  a row that was, `MissingBackfill` compared a status-blind triple, and the scan enqueues nothing
+  for an unchanged file — so every stall test passed by calling `call` directly while nothing a user
+  opens reached it. Now `ThumbnailMap`'s backfill, `#current_thumbnail` (file page and inspector),
+  `#geometry`'s poll and `MissingBackfill` ask the predicate of the row they hold, and
+  `Public::FilesController#enqueue_geometry` asks it through `call` — every one with `retry_failed:
+  false`, the read doors' policy, which `needs_job?` REQUIRES rather than defaults (a door that
+  forgets to choose raises). The scan still does not ask, and does not need to. **The window is what
+  keeps the escape from becoming a stampede** (the backfill asks per row on every Files render, and
+  `#geometry` is polled every 2 s), and **the explicit `updated_at` restamp is what keeps the heal
+  from repeating** — healing changes no other attribute and `save!` on an unchanged record is a
+  NO-OP that leaves the timestamp alone, so without it every page load adds another duplicate job.
+  All three halves are mutation-checked AT THE DOORS (`maker_page_thumbnails_test.rb`,
+  `lbrn_geometry_test.rb`, `public_file_view_test.rb`, `missing_backfill_test.rb`), not only through
+  `call`: deleting the stall arm of `needs_job?` reddens 10 tests in 7 files, the v1 API's own
+  stall test among them.
 - **A JOB WHOSE ARGUMENT IS A PRIMARY-DB ROW ID MUST SET `enqueue_after_transaction_commit`, BECAUSE
   THE JOB LIVES IN A DIFFERENT DATABASE FROM THE ROW.** Rails 8.1 defaults it to **false**, so
   `perform_later` commits to the QUEUE database on its own connection **immediately** while the row
@@ -346,6 +377,12 @@
   a finished design's content never changes — so the .lbrn2 thinning fix deployed and four
   already-measured files kept serving mangled curves until they were destroyed by hand, on the one
   backend of three that had them. **Change a payload → bump the renderer's `PAYLOAD_REVISION`.**
+  - **A THUMBNAIL THE MAKER CHOSE IN THE 3D VIEWER IS STALE ON THE FIRST AXIS ONLY (2026-10-20).**
+    A `source: "viewer"` row was built by no renderer, so a revision bump has nothing to improve:
+    `Enqueue.needs_job?` enqueues nothing for it, `Enqueue.revision_current?` (behind both
+    `current_preview` shapes) calls it current at any revision, and `GeneratePreviewJob`'s
+    compare-and-set never writes over it. A CONTENT change still repoints it and resets `source` to
+    `renderer` — the chosen angle is a picture of geometry that no longer exists.
   - **Revisions are PER KIND** (`Lbrn2.payload_revision(kind)`): one renderer emits both a
     thumbnail and a geometry payload, and bumping geometry must not rebuild ~1400 thumbnails as a
     side effect of an unrelated fix.
@@ -366,6 +403,15 @@
     BEHIND IT.** `tools/stl-thumbnailer` has no idea a `maker_previews` row exists. Rebuilding the
     binary without bumping `Stl::THUMBNAIL_REVISION` re-renders nothing; bumping without rebuilding
     re-renders everything with the old binary. **Ship both or neither.**
+  - **THE THUMBNAILERS' COLOURS ARE THE DESIGN SYSTEM'S, SPELLED FOUR TIMES AND HELD EQUAL
+    STATICALLY** (2026-10-21, ink on paper). `Maker::Previews::Palette` (PAPER/INK/MATERIAL) is
+    what `Mesh`, `TextThumb` and `SvgRasterizer` paint; the crate's `BG`/`MATERIAL` mirror it, as
+    do the CSS `--model-material` and Paper's `--fg`. `palette_test.rb` PARSES all of them rather
+    than rendering, because the CI runner image bakes `stl-thumbnailer` at image build — a Ruby test
+    asserting STL pixels would be testing that image's binary, not this checkout's crate (the
+    crate's own `tests/render.rs` asserts the pixels). Every renderer of ours paints an exactly
+    white ground: the browser multiplies it onto the themed card. A palette change is a revision
+    bump in every renderer that paints it — `Stl` and `ThreeMf` together, `Mesh`, `TextThumb`.
 - **THE STL/3MF WORLD IS Z-UP, IN BOTH RENDERERS, AND NO EXISTING TEST COULD SEE IT WHEN IT WAS NOT.**
   The formats declare no orientation, but every producer and consumer in 3D printing treats +Z as up
   (the 3MF core spec puts the build plate in the XY plane). `auto_frame` orbited **Y** and the Three.js
@@ -384,7 +430,10 @@
   at upload time, wrong for a poll. Unconditional, it makes the action's own `"failed"` branch
   **dead code** and re-enqueues a doomed render on every poll of a broken file. Accepted: a `failed`
   geometry preview is terminal until the content changes, which is honest because a transient
-  byte-store failure is a `FetchError` that leaves the row `processing` and self-heals.
+  byte-store failure is a `FetchError` that leaves the row in flight and self-heals — through
+  `Enqueue.needs_job?`, which the poll asks of the row it read once that row is past
+  `STALLED_AFTER` (the `IN_FLIGHT` bullet above). Until 2026-10-19 the poll enqueued only on a
+  MISSING row, so nothing healed it and this sentence was false.
 - **`#geometry` RESCUES `RecordNotFound` LOCALLY**, because the class-level `rescue_from` branches
   on format and answers a plain `get` — html, the default with no Accept header — with a **302 to
   `files_path`**. Right for `#show`/`#blob`, which render a page; wrong for a JSON poller, which
@@ -472,6 +521,26 @@
   background click and Reset — mean "start again", and one state must not have two sentences
   depending on how it was reached. The empty arm is still reachable where it is honest: unpicking
   the LAST part leaves its size on screen beside "nothing selected".
+
+- **THE CONTROLLER OWNS THE STAGE, AND `--ready` IS ONLY ITS PROJECTION (F-S09-1, 2026-10-19).**
+  `draw()` alone adds `measure-view--ready`, and `rest()` alone removes it. `rest()` runs from
+  `connect()` and from ✕ Image, and it drops the shapes, the SVG and the selection with the class.
+  So the class always means "this controller drew what is on the stage". Before, it could mean
+  something else. A Turbo Back restored a drawn, marked stage over a fresh controller that held no
+  shapes, which left Print promising a part and Reset throwing. Four comments had argued
+  correctness from "the button is display:none". Two rules keep this true, and
+  `measure_print_test.rb` drives both:
+  - **One load generation.** A load paints only while its number is the latest, and its error
+    reaches the readout on the same condition.
+  - **One shared in-flight fetch.** The launch button stays clickable until the stage is drawn, so
+    a second click joins the first fetch and the view is drawn once.
+
+  `rest()` is the ONE LIFECYCLE reset of the selection, and `draw()` does not repeat it. A drawing
+  can start only from a rest, so a second copy of that reset in `draw()` would be a guard no
+  gesture can reach. It is NOT the only place the set is emptied. `clearMarks()` empties it too,
+  on Reset and on a click on empty space. The two must stay separate: `clearMarks()` drops the
+  marks and keeps the drawing, while `rest()` takes the drawing down with them. Routing a Reset
+  through `rest()` would wipe the stage.
 
 - **`pick` COMPOSES `contourLabel` WITH `selectionStatus()`, WHICH IS WHAT SAVED THE ⌥ HINT.**
   `"part of a 2-contour object (⌥ for 30 × 10 mm)"` is the ONLY place the app says alt-click

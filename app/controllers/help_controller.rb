@@ -5,5 +5,9 @@
 # backend asks `capabilities`, never an adapter class or LIBRARY_BACKEND, so the view needs nothing
 # from this action.
 class HelpController < ApplicationController
+  # Reachable before the library folder is confirmed (K): the first-run screen links here, and an
+  # explanation of what a library is must not bounce back to the question it explains.
+  skip_before_action :require_library_folder!
+
   def show; end
 end

@@ -136,10 +136,10 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
 
   # A ZIP REACHES `:thumbnail` BY NAME, AND THE BOARD BRANCH IS A READ. `Maker::Previews::GerberZip`
   # claims `zip`, so `preview_kind` — which is NAME-ONLY for the whole vocabulary — now answers
-  # `:thumbnail` for every zip. That is not the page a Gerber export gets: `FilesController#show`
-  # overrides `@kind` to `:gerber` after `Maker::GerberArchive` has actually looked inside, which is
-  # the one preview kind decided by content. A zip of firmware keeps the name-only answer, and its
-  # preview row terminates `unsupported` after one bounded read.
+  # `:thumbnail` for every zip. That is not the page a Gerber export gets: `FilePreview#viewer_for`
+  # answers `:gerber` for both file pages after `Maker::GerberArchive` has actually looked inside,
+  # which is the one preview kind decided by content. A zip of firmware keeps the name-only answer,
+  # and its preview row terminates `unsupported` after one bounded read.
   test "a zip previews as :thumbnail by name, and only a read makes it a board" do
     assert_equal :thumbnail, kind("firmware.zip")
     assert_equal :thumbnail, kind("Gerber_board.zip")
@@ -154,6 +154,15 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
   test "an unknown extension is still :other" do
     assert_equal :other, kind("mystery.qqq")
     assert_equal :other, kind("firmware")
+  end
+
+  # THE WORKBOOK VIEWER (2026-10-21). Whatever the case of the name, and only for the format the
+  # editor reads: a macro workbook, the pre-2007 binary and OpenDocument are other formats.
+  test "an xlsx previews as :spreadsheet and its sibling formats do not" do
+    assert_equal :spreadsheet, kind("bom.xlsx")
+    assert_equal :spreadsheet, kind("BOM.XLSX")
+    %w[macros.xlsm old.xls calc.ods].each { |name| assert_equal :other, kind(name), name }
+    assert_equal :text, kind("bom.csv"), "a CSV keeps its text page"
   end
 
   # STORY 2.3: `.ai` said "No inline preview for this file type." because nothing claimed it. It

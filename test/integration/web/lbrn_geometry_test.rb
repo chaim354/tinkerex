@@ -26,8 +26,7 @@ module Web
     def sign_in(email = "web@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email:, password: PASSWORD } }
-      user
+      sign_in_web!(user, password: PASSWORD)
     end
 
     def file_fixture_bytes(name) = File.binread(Rails.root.join("test/fixtures/files", name))
@@ -142,6 +141,33 @@ module Web
       assert_equal current_revision, stale.reload.renderer_revision
     end
 
+    # THE SECOND POLL, WHICH THE TEST ABOVE NEVER ASKS — the defect `rebuilding` exists for
+    # (F-S08-2). The first poll after a renderer bump enqueues and says "pending"; but `Enqueue` had
+    # already stamped the new revision onto the row and left it `ready`, so the NEXT poll found a
+    # "current" row and served the older build's payload as this file's geometry, for as long as the
+    # rebuild sat in the queue. measure_controller.js polls again 250 ms later, so on any backlog
+    # that was the answer the Measure view drew. MUTATION: drop Enqueue's `rebuilding` write.
+    test "a renderer rebuild answers pending until it lands, never the older build's payload" do
+      stale = preview_for(@node_id, revision: current_revision - 1)
+      stale.update!(status: "ready")
+      stale.asset.attach(io: StringIO.new('{"v":1,"shapes":[]}'), filename: "old.json",
+                         content_type: "application/json")
+
+      get geometry_file_path(@node_id)
+      assert_equal "pending", response.parsed_body["status"]
+
+      get geometry_file_path(@node_id) # the rebuild has not run
+      assert_equal "pending", response.parsed_body["status"],
+                   "the poll served an older build's payload as this file's geometry"
+      assert_nil response.parsed_body["url"]
+
+      perform_enqueued_jobs(only: Maker::GeneratePreviewJob)
+      get geometry_file_path(@node_id)
+      assert_equal "ready", response.parsed_body["status"], "the rebuild never landed"
+      assert_equal 4, JSON.parse(stale.reload.asset.download)["shapes"].length,
+                   "the payload served is the new build's, not the one it replaced"
+    end
+
     # THE OTHER STALENESS AXIS AT THE SAME DOOR, AND IT WAS COMPLETELY UNGUARDED. `version_id`
     # asks "was this payload made from the file's CURRENT CONTENT?" and `renderer_revision` asks
     # "was it made by the CURRENT CODE?" — two independent questions (Enqueue says so in those
@@ -163,6 +189,31 @@ module Web
                    "a payload of DIFFERENT content must be re-rendered, not served"
       assert_equal FileLayer.current.stat(@user, node_id: @node_id).content_token,
                    stale.reload.version_id, "the row must be repointed at the current content"
+    end
+
+    # A ROW WHOSE JOB WAS LOST IS RE-ENQUEUED BY THE POLL — ONCE PER WINDOW, AND NEVER BEFORE IT.
+    # This door enqueued only when it found NO current row, so a `processing` row from a lost job
+    # answered "pending" on every poll for good and the Measure view spun with nothing coming —
+    # while measure-view.md said a FetchError's `processing` row "self-heals". It asks
+    # `Enqueue.needs_job?` now, with `retry_failed: false`, so a `failed` row stays the terminal
+    # answer the test above reads. The window is half the assertion: this endpoint is POLLED, so a
+    # row that only just went in flight must be believed, or every tick would enqueue a duplicate.
+    # MUTATION: delete the stall line from `needs_job?` and the heal never comes.
+    test "the poll believes a fresh processing row and heals one whose job was lost" do
+      row = preview_for(@node_id)
+      row.update!(status: "processing")
+      clear_enqueued_jobs
+      assert_no_enqueued_jobs(only: Maker::GeneratePreviewJob) { get geometry_file_path(@node_id) }
+      assert_equal "pending", response.parsed_body["status"]
+
+      row.update_columns(updated_at: 3.days.ago)
+      get geometry_file_path(@node_id)
+      assert_equal "pending", response.parsed_body["status"]
+      assert_equal [ row.id ], enqueued_jobs.select { |j| j[:job] == Maker::GeneratePreviewJob }.map { |j| j[:args].first },
+                   "the poll left a wedged geometry row wedged"
+
+      clear_enqueued_jobs
+      assert_no_enqueued_jobs(only: Maker::GeneratePreviewJob) { get geometry_file_path(@node_id) }
     end
 
     # THE PANEL LABELS A LAYER BY COLOUR, BUT ONLY WHEN LIGHTBURN NAMED IT AFTER ITS INDEX.
@@ -201,6 +252,7 @@ module Web
     test "opening a file page re-enqueues a thumbnail left by an older build" do
       current = current_thumbnail_revision
       stale = thumbnail_at(current - 1)
+      stale.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
 
       assert_enqueued_with(job: Maker::GeneratePreviewJob) { get file_path(@node_id) }
 
@@ -212,8 +264,11 @@ module Web
       # replace a correct image with a spinner for the whole render (the page polls a pending row
       # and reloads since S4-3, but a spinner over a correct picture is still the wrong trade). Only a CONTENT change
       # earns the spinner. Shipping it the other way read as "generating preview is broken".
-      assert_equal "ready", stale.status,
-                   "a renderer rebuild must not blank an artifact that is still of this file"
+      # `rebuilding` since F-S08-2: still a picture to show, no longer the current build.
+      assert_equal "rebuilding", stale.status
+      assert_select ".measure-fallback img.preview-image[src*=?]", stale.asset.blob.signed_id,
+                    { count: 1 }, "a renderer rebuild must not blank an artifact that is still of this file"
+      assert_select "[data-thumbs-pending]", { count: 0 }, "a page showing its picture must not poll"
     end
 
     test "a CONTENT change still blanks the artifact rather than showing the wrong picture" do

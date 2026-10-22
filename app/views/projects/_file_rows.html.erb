@@ -15,8 +15,9 @@
   to lose Note, Download and "Edit in <Addon>" silently; filemenu_controller.js#open reads `href`
   off the cell or its first `<a>`, so Open lands where the name links with no controller change.
 
-  THE NAME OPENS THE LIBRARY WITH THE FILE SELECTED (library_file_path; slice 6), the same target
-  as _file_tile.html.erb's link, so Tiles and List agree about where a file opens from the hub.
+  THE NAME OPENS THE FILE (file_path), the same target as _file_tile.html.erb's link, so Tiles and
+  List agree about where a file opens from the hub — and how: a click opens it, a double-click
+  opens it in a new tab (FilesHelper#file_open_data, on the link; the menu stays on the `<tr>`).
 
   ORIGIN READS @addon_origins, THE SAME HASH EVERY TILE ON THIS PAGE ALREADY READS FOR ITS
   right-click menu (AddonOrigins#addon_origins_for, one Registry lookup for the whole page) — never
@@ -40,8 +41,8 @@
     <% rows.each do |row| %>
       <% node = row.node %>
       <% origin = @addon_origins[row.node_id] %>
-      <%= tag.tr(data: file_menu_data(row.node_id, node.name, origin)) do %>
-        <td class="col-name"><%= link_to node.name, library_file_path(node) %></td>
+      <%= tag.tr(data: file_menu_data(node, origin)) do %>
+        <td class="col-name"><%= link_to node.name, file_path(row.node_id), data: file_open_data %></td>
         <td class="muted col-section"><%= row.section.presence || "Loose" %></td>
         <td class="num muted col-size"><%= node.size ? number_to_human_size(node.size) : "—" %></td>
         <td class="muted col-modified">

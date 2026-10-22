@@ -12,7 +12,7 @@ module Web
     setup do
       @user = User.create!(email: "tabs-#{SecureRandom.hex(4)}@example.com", password: PASSWORD, confirmed_at: Time.current,
                            handle: "tabs#{SecureRandom.hex(3)}")
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @project = @user.maker_projects.create!(name: "Desk Lamp", description: "A lamp.", visibility: "public")
       @folder = project_folder_rows!(@user, @project)
       @project.tasks.create!(user: @user, title: "Print the shade")
@@ -69,6 +69,12 @@ module Web
     # ?add= brings the tab back with it for that visit.
     test "a tab holding only empty on-demand panels has no pane and no bar link until ?add= opens one" do
       tabbed!
+      # MODELS IS NAMED IN THE TOP GROUP (2026-10-21). It always renders ("No models yet." beside
+      # Add model), and a stored order that does not name a panel puts it in the preset tail — the
+      # LAST tab, Parts here, which would then never be empty. Named, Parts holds only on-demand
+      # panels again, which is this test's premise.
+      @project.update!(panels: @project.panels.merge("order" => [ "attachments", "photos", "models", tk(TAB_A),
+                                                                  "build_log", "tasks", tk(TAB_B), "bom", "publish" ]))
       @project.build_log_entries.create!(user: @user, body: "Glued the base.", logged_at: Time.current)
 
       get project_path(@project)
@@ -174,10 +180,14 @@ module Web
         { key: tk(TAB_B), kind: "tab", name: "Parts" },
         { key: "bom", hidden: false, width: "half" },
         { key: "tasks", hidden: false, width: "half" },
+        # The Models panel (2026-10-21) is a slot the editor holds, so the draft names it too.
+        { key: "models", hidden: false, width: "half" },
         { key: "schematics", hidden: false, width: "full" },
         { key: "wiring", hidden: false, width: "full" },
         { key: "releases", hidden: false, width: "half" },
         { key: "sheets", hidden: false, width: "half" },
+        # The Calculations panel (2026-10-21) is a slot the editor holds too.
+        { key: "calculations", hidden: false, width: "half" },
         { key: "publish", hidden: false, width: "half" } ] }
       patch project_panels_path(@project), params: { layout: draft.to_json }
       assert_redirected_to project_path(@project)
@@ -186,8 +196,8 @@ module Web
       minted = panels["order"][2]
       assert_match(/\Atab:[0-9a-f]{12}\z/, minted)
       assert_equal "Notes", panels["titles"][minted]
-      assert_equal [ "attachments", "photos", minted, "build_log", tk(TAB_B), "bom", "tasks",
-                     "schematics", "wiring", "releases", "sheets", "publish" ], panels["order"]
+      assert_equal [ "attachments", "photos", minted, "build_log", tk(TAB_B), "bom", "tasks", "models",
+                     "schematics", "wiring", "releases", "sheets", "calculations", "publish" ], panels["order"]
       refute_includes panels["order"], tk(TAB_A), "a tab absent from the posted draft is removed"
       refute panels["titles"].key?(tk(TAB_A))
       refute panels["widths"].key?(minted)

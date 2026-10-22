@@ -81,11 +81,62 @@ module Maker
         assert_match(/cannot export GLB/, err.message)
       end
 
+      # WHAT F3D IS TOLD TO PAINT, ASSERTED ON THE ARGV — DELIBERATELY WITHOUT F3D, so it runs on
+      # every box including the CI runners, which ship no f3d and would SKIP every render test above.
+      # F3D's packaged config draws a grid, an axis gizmo and a filename banner (the job's tempfile
+      # path) over a #333333 ground; these flags are the only thing standing between that and the
+      # library (see Mesh::PNG_FLAGS for the measurement).
+      test "a render tells f3d to paint ink on paper and to draw no grid, axes or filename banner" do
+        argv = captured_f3d_argv { Maker::Previews::Mesh.render(@obj, size: 64, ext: "obj") }
+
+        assert_equal Maker::Previews::Mesh::F3D, argv.first, "the fake must have captured the f3d call"
+        assert_includes argv, "--background-color=#{Maker::Previews::Palette::PAPER}"
+        assert_includes argv, "--color=#{Maker::Previews::Palette::MATERIAL}"
+        %w[--grid=false --axis=false --filename=false --metadata=false].each do |flag|
+          assert_includes argv, flag
+        end
+        # THE `=` FORM IS THE FIX, NOT A STYLE: F3D reads `--grid false` as `--grid` (on) plus a
+        # second input file named "false", so a bare value anywhere in the argv is that bug back.
+        assert_not_includes argv, "false", "a boolean flag lost its `=` and became an input file"
+        # `--no-config` would also drop the packaged Z-up iso camera and render a STEP from above.
+        assert_not_includes argv, "--no-config"
+      end
+
       test "raises RenderError when f3d cannot process the input" do
         skip "f3d not installed" unless Maker::Previews::Mesh.available?
         assert_raises(Maker::Previews::Mesh::RenderError) do
           Maker::Previews::Mesh.render("not a mesh".b, ext: "stl")
         end
+      end
+
+      private
+
+      FakeStatus = Struct.new(:success?, :exitstatus)
+
+      # The argv `Mesh` hands `Open3.capture3`, with no f3d involved: the fake writes a stand-in PNG
+      # where `--output` says so, so `to_output` reads it back and returns exactly as it would.
+      def captured_f3d_argv(&)
+        argv = nil
+        fake = lambda do |*args, **|
+          argv = args
+          File.binwrite(args[args.index("--output") + 1], "\x89PNG\r\n\x1A\n".b)
+          [ "", "", FakeStatus.new(true, 0) ]
+        end
+        replacing(Open3, :capture3, fake, &)
+        assert_not_nil argv, "Mesh.render never called Open3.capture3"
+        argv
+      end
+
+      # The house replacement helper (Minitest 6 has no `Object#stub`): swap one singleton method for
+      # the block's duration, restoring — or removing, if it was inherited — afterwards.
+      def replacing(owner, name, replacement)
+        mod = owner.singleton_class
+        own = mod.instance_methods(false).include?(name)
+        original = mod.instance_method(name)
+        mod.define_method(name, &replacement)
+        yield
+      ensure
+        own ? mod.define_method(name, original) : mod.remove_method(name)
       end
     end
   end

@@ -45,6 +45,16 @@ require Dir[Rails.root.join("db/migrate/*_create_maker_addon_state_revisions.rb"
 class CreateMakerAddonStateRevisionsMigrationTest < ActiveSupport::TestCase
   setup { @user = User.create!(email: "addon-state-revisions-migration@example.com") }
 
+  # AND ONCE MORE AFTER THE TEST, BECAUSE THE ROLLBACK RESTORES THE SCHEMA BUT NOT THE CONNECTION'S
+  # PREPARED STATEMENTS — the brackets above do not cover that. `up` recreates the revisions table in
+  # the migration's column order and re-adds `maker_addon_states.revision` at the end, where
+  # db/schema.rb's load ordered both differently. A statement prepared in between keeps the column
+  # names it first reported, so the next identical query in this process read SHIFTED values:
+  # probed, a later `state.revisions.sole` answered revision 2026 (the `created_at` text) on seeds 2,
+  # 6 and 7. `reset_column_information` clears the connection's statement cache, and a teardown runs
+  # BEFORE the fixture rollback.
+  teardown { reset_column_caches }
+
   test "backfills a revision-1 row carrying the state's own data and created_at" do
     # THE HALF MOST LIKELY TO REGRESS TO `now()`, and the reason this is `travel_to`'d three days
     # into the past rather than left at "whenever setup happened to run": a state created and a

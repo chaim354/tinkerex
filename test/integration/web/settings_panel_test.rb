@@ -24,8 +24,7 @@ module Web
     def sign_in(email = "panel@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email:, password: PASSWORD } }
-      user
+      sign_in_web!(user, password: PASSWORD)
     end
 
     # A node + a ready thumbnail carrying `metadata`. The panel reads ONLY the metadata, so the

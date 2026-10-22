@@ -141,6 +141,39 @@ module Library
       end
     end
 
+    # THE PAUSE (K §3): a fresh share install -- no `library.root` row -- schedules nothing until its
+    # owner has said which folder is the library. One assertion per method, so deleting either gate is
+    # its own red; the confirmed half proves the no-op is the gate and not the methods doing nothing.
+    test "while a share library's folder is unconfirmed, scan_all! and enqueue_first_for enqueue nothing" do
+      Dir.mktmpdir do |dir|
+        user = user!
+        with_env("LIBRARY_BACKEND" => "share", "LIBRARY_PATH" => dir) do
+          Setting.forget(Tinkerex::LibraryRoot::KEY)
+          assert_no_enqueued_jobs(only: Library::ScanJob) { Library::ScanJob.scan_all! }
+          assert_no_enqueued_jobs(only: Library::ScanJob) { Library::ScanJob.enqueue_first_for(user) }
+
+          Setting.put(Tinkerex::LibraryRoot::KEY, "")
+          assert_enqueued_jobs(1, only: Library::ScanJob) { Library::ScanJob.scan_all! }
+          assert_enqueued_with(job: Library::ScanJob, args: [ { user_id: user.id, root: File.expand_path(dir) } ]) do
+            Library::ScanJob.enqueue_first_for(user)
+          end
+        end
+      end
+    end
+
+    # THE FOLDER IS A SHARE FACT. An s3 library has a prefix, not a folder to confirm, so a missing
+    # row must not pause its scans -- the regression would be the Phase 3 trap below in a new costume.
+    test "an s3 deployment with no folder setting still schedules its scans" do
+      user = user!
+      with_env(S3_ENV) do
+        Setting.forget(Tinkerex::LibraryRoot::KEY)
+        assert_enqueued_jobs(1, only: Library::ScanJob) { Library::ScanJob.scan_all! }
+        assert_enqueued_with(job: Library::ScanJob, args: [ { user_id: user.id } ]) do
+          Library::ScanJob.enqueue_first_for(user)
+        end
+      end
+    end
+
     # THE PHASE 3 TRAP, PINNED. Until this test existed the gate was `is_a?(FileLayer::Share)` —
     # correct while Share was the only scanned backend, and silently wrong the moment FileLayer::S3
     # landed: scan_all! answered false, enqueued nothing, raised nothing, and an s3 library was
@@ -235,7 +268,96 @@ module Library
       assert_nil user.reload.library_scanned_at
     end
 
+    # THE REFUSAL IS WRITTEN DOWN WHERE THE PAGE CAN READ IT (K §5), and the next scan that works
+    # takes it back: /settings/library shows `library_scan_refusal` with its next step, so a stale one
+    # would go on telling the owner their folder was refused after it had scanned.
+    test "a refused scan records why, and the next scan that succeeds clears it" do
+      Dir.mktmpdir do |dir|
+        user = user!
+
+        assert_raises(Library::Scanner::UnsafeScan) do
+          Library::ScanJob.perform_now(user_id: user.id, root: "/nonexistent-#{SecureRandom.hex(4)}")
+        end
+        assert_match(/is missing/, user.reload.library_scan_refusal)
+
+        Library::ScanJob.perform_now(user_id: user.id, root: dir)
+        assert_nil user.reload.library_scan_refusal
+      end
+    end
+
+    # --- a scan queued before the library folder changed (K §5) ----------------------------------
+    #
+    # The adapter is over the NEW folder and old.stl exists only in the OLD one, so a scan that
+    # indexes it ran on the folder the library left. A DAY separates the setting's write from the
+    # enqueue on purpose: two stamps a moment apart pass whichever way the comparison runs (§15).
+    # perform_enqueued_jobs, not perform_now, because only a job that went through the queue carries
+    # an `enqueued_at`.
+    test "a scan queued before the library folder changed is discarded, not run on the old folder" do
+      with_moved_library do |old_root, _new_root|
+        user = user!
+        travel_to(2.days.ago) { Library::ScanJob.perform_later(user_id: user.id, root: old_root) }
+        travel_to(1.day.ago) { Setting.put(Tinkerex::LibraryRoot::KEY, "new-root") }
+
+        log = capture_log { perform_enqueued_jobs(only: Library::ScanJob) }
+
+        assert_nil user.nodes.find_by(storage_path: "old.stl"), "the queued scan ran on the folder the library left"
+        assert_match(/discarding a scan of #{Regexp.escape(old_root)} queued before/, log,
+                     "the discard must say which root it dropped")
+      end
+    end
+
+    test "a scan queued after the library folder changed runs on the root it names" do
+      with_moved_library do |old_root, _new_root|
+        user = user!
+        travel_to(1.day.ago) { Setting.put(Tinkerex::LibraryRoot::KEY, "new-root") }
+        Library::ScanJob.perform_later(user_id: user.id, root: old_root)
+
+        perform_enqueued_jobs(only: Library::ScanJob)
+
+        assert user.nodes.find_by(storage_path: "old.stl"),
+               "a job queued after the change was judged stale: the enqueued_at comparison is gone"
+      end
+    end
+
+    # The same folder written twice (a confirm clicked again) moves the timestamp and not the root.
+    test "a scan queued before a write that left the root in place still runs" do
+      with_moved_library do |_old_root, new_root|
+        File.binwrite(File.join(new_root, "new.stl"), "n")
+        user = user!
+        travel_to(2.days.ago) { Library::ScanJob.perform_later(user_id: user.id, root: new_root) }
+        travel_to(1.day.ago) { Setting.put(Tinkerex::LibraryRoot::KEY, "new-root") }
+
+        perform_enqueued_jobs(only: Library::ScanJob)
+
+        assert user.nodes.find_by(storage_path: "new.stl"), "a queued scan of the CURRENT root was discarded"
+      end
+    end
+
+    # The command contract (#perform's header) survives the change: perform_now has no enqueued_at.
+    test "perform_now still scans the root it names after the library folder changed" do
+      with_moved_library do |old_root, _new_root|
+        user = user!
+        travel_to(1.day.ago) { Setting.put(Tinkerex::LibraryRoot::KEY, "new-root") }
+
+        Library::ScanJob.perform_now(user_id: user.id, root: old_root)
+
+        assert user.nodes.find_by(storage_path: "old.stl"), "an explicitly commanded scan was discarded"
+      end
+    end
+
     private
+
+    # Two folders and a Share adapter over the second, which is the library's folder after a change.
+    def with_moved_library
+      old_root = Dir.mktmpdir("old-root")
+      new_root = Dir.mktmpdir("new-root")
+      File.binwrite(File.join(old_root, "old.stl"), "o")
+      FileLayer.current = FileLayer::Share.new(root: new_root)
+      yield old_root, new_root
+    ensure
+      FileLayer.reset!
+      [ old_root, new_root ].each { |d| FileUtils.remove_entry(d) if d && File.exist?(d) }
+    end
 
     # FileLayer.current= rather than ENV, because the fake CLIENT has to be injected and the
     # ENV-based idioms rebuild from ENV (FileLayer.build constructs a real client). Prior art:
@@ -376,35 +498,35 @@ module Library
     end
 
     # THE MODEL CATALOG RUNS TOO, AND AFTER THE PROJECT INTAKE — proved by EFFECT, like the test
-    # above, because what the swap changes is the ANSWER and not merely the timing.
+    # above.
     #
     # `bracket.stl` exists only on disk, so a model keyed on it at all is proof the reconcile ran
-    # first. WHICH model it is proves the rest: a file loose at `Projects/desk-lamp/` has no shelf
-    # nearer than the library root (one of Maker::Shelf::SEEDS), so the nearest-shelf rule makes
-    # the whole `Projects` FOLDER its model, titled "Projects". The project intake then files it
-    # into `Projects/desk-lamp/models/`, under the seeded `Projects/*/models` shelf, where it is
-    # its own model titled "bracket". Run the catalog first and the sweep mints "Projects" in the
-    # same job that is about to make that false — and nothing later removes it, because an auto
-    # model is only ever created, never reaped.
+    # first. WHICH model it is proves the rest: loose at `Projects/desk-lamp/`, the built-in `*`
+    # shelf makes the project's own folder its key; the intake then files it into
+    # `Projects/desk-lamp/models/`, under the built-in `Projects/*/models` shelf, where it is its
+    # own model titled "bracket" (Maker::ModelIntake::SHELVES).
     #
     # MUTATION-CHECKED: moving intake_models(user) above intake_project_folders(user) in
-    # Library::ScanJob#perform turns this RED with ["desk-lamp"].
+    # Library::ScanJob#perform turns this RED with [] — re-measured 2026-10-19 (F-S07-1).
     #
-    # THAT VALUE USED TO BE ["Projects"], AND THE COMMENT WENT ON SAYING SO AFTER IT STOPPED BEING
-    # TRUE — re-measured 2026-08-26. `Maker::Shelf::SEEDS` gained `"*"` (every top-level folder is
-    # a shelf), which moves the swallowed-model boundary one level DOWN: `Projects` is now itself a
-    # shelf, so the folder that gets swallowed is the project's own `desk-lamp`, not `Projects`.
-    # The hazard is unchanged and the test still pins it; only the name it comes back under moved.
+    # THAT VALUE HAS MOVED THREE TIMES, AND THIS COMMENT TRAILED EVERY MOVE. ["Projects"] until
+    # the shelves (now `Maker::ModelIntake::SHELVES`) gained `"*"` (re-measured 2026-08-26); then
+    # ["desk-lamp"], the project's whole folder as one model nothing reaps, until the catalog began
+    # dropping a folder a project claims (2026-09-02). Since then the key it would mint is CLAIMED,
+    # so the swap catalogues nothing at the old path and the model arrives a scan late: under
+    # `Projects/` this ordering changes the TIMING, not the answer — and a folder discovery has not
+    # adopted yet is claimed by position too (F-S07-1). It still changes the ANSWER where a
+    # project's root is itself a shelf; Library::ScanJob#intake_models has that case, which this
+    # test does not reach.
     test "cataloguing runs after the project intake, so a filed file is its own model" do
       File.binwrite(File.join(@root, @folder.storage_path, "bracket.stl"), "solid")
 
       Library::ScanJob.perform_now(user_id: @user.id, root: @root)
 
       assert_equal [ "bracket" ], @user.maker_models.pluck(:title),
-                   "a model titled after the PROJECT FOLDER (desk-lamp) rather than the file " \
-                   "means the catalog ran BEFORE the intake moved it: the file was still loose " \
-                   "at the project root, whose nearest shelf is `Projects` itself, so the whole " \
-                   "folder became one model"
+                   "no model, or one not titled after the file, means the catalog ran BEFORE the " \
+                   "intake moved bracket.stl: still loose at the project root, it keyed to the " \
+                   "project's claimed folder, so it was left for a later scan"
       model = @user.maker_models.sole
       node = @user.nodes.find_by!(node_id: model.auto_node_id)
       assert_equal "models", @user.nodes.find_by(node_id: node.parent_node_id).name
@@ -588,9 +710,12 @@ module Library
     end
   end
 
-  # DISCOVERY RUNS AFTER THE RECONCILE AND BEFORE THE FILING SWEEP, and both orderings change the
-  # ANSWER rather than the timing. This drives the whole feature end to end through the only door a
-  # share deployment has: someone makes Projects/Desk Lamp/ in Finder and drops a file in it.
+  # DISCOVERY RUNS AFTER THE RECONCILE AND BEFORE THE FILING SWEEP, so ONE perform adopts a folder,
+  # files its loose files and catalogues what it filed. This drives the whole feature end to end
+  # through the only door a share deployment has: someone makes Projects/Desk Lamp/ in Finder and
+  # drops a file in it. SINCE F-S07-1 (2026-10-19) NO ORDERING CAN MAKE A FOLDER ONE MODEL: the
+  # catalog counts a folder discovery owns by position as claimed, so the order decides what one
+  # pass achieves, and the last test pins the not-swallowed half against discovery's cap instead.
   class DiscoveryOrderTest < ActiveSupport::TestCase
     setup do
       @root = Dir.mktmpdir
@@ -626,8 +751,8 @@ module Library
                    "this goes red earlier, at `project.file_attachments.sole` above: with no " \
                    "project row yet when the intake runs, it has nothing to sweep, so panel.svg " \
                    "is never attached or filed at all. (`panel.svg` is role \"vector\", never " \
-                   "MODEL-role, so it cannot show the whole-folder-becomes-one-model hazard the " \
-                   "ordering comment also names — see the model-role test below for that one.)"
+                   "MODEL-role, so it says nothing about the model catalog — the two model-role " \
+                   "tests below do.)"
     end
 
     # THE CATEGORY FOLDER GOES UNDER THE FOLDER THE USER MADE, not a second `Projects/desk-lamp/`
@@ -640,46 +765,75 @@ module Library
              "no second Projects/<slug> tree may be minted"
     end
 
-    # THE HAZARD #discover_projects' OWN COMMENT NAMES, DRIVEN FOR REAL. `panel.svg` above cannot
-    # exercise it: role "vector" is never MODEL-role, so Maker::ModelIntake.classify never looks at
-    # it regardless of which order the two calls run in — the two tests above only pin the
-    # PROJECT-INTAKE half of the ordering, not the model-catalog half. This adds a model-role file
-    # (.stl) so the nearest-shelf rule in #classify is actually exercised: `Projects/` is a shelf
-    # (the seeded `*`), `Desk Lamp` is not, so a file loose there when the catalog looks makes the
-    # WHOLE `Desk Lamp` FOLDER the nearest-shelf model, titled after the folder — permanently,
-    # because an auto model is only ever created, never reaped.
+    # A DISCOVERED PROJECT'S MESH IS FILED AND CATALOGUED IN THE SAME PERFORM. `panel.svg` above is
+    # role "vector", so Maker::ModelIntake.classify never looks at it; `bracket.stl` it does.
+    # `Projects/` is a shelf (the built-in `*`) and `Desk Lamp` is not, so while bracket.stl is
+    # loose at the folder's root its key is the folder; one intake later it sits under the built-in
+    # `Projects/*/models` shelf and is its own model, titled "bracket".
     #
-    # THE HAZARD CHECK RUNS BEFORE THE "FILED CORRECTLY" ASSERTIONS BELOW IT, DELIBERATELY. A
-    # failed assertion halts the rest of the test method, and EITHER of #perform's two mutations —
-    # discover_projects swapped with intake_project_folders, or discover_projects moved ahead of
-    # observer.call — ALSO leaves bracket.stl unfiled, the identical symptom the test above already
-    # pins. Asserting "filed correctly" first would hide this hazard's own evidence behind that
-    # earlier, already-covered failure. Checked here first and by itself, so a red run reports what
-    # actually happened: verified against BOTH mutations (driven directly, not assumed) to name a
-    # model titled "Desk Lamp" whose auto_node_id AND folder_node_id both equal the Desk Lamp
-    # folder's own node_id — a real folder swallowed, not merely an absent file.
-    test "the model catalog never swallows the discovered folder as one model" do
+    # THE ORDER NOW DECIDES WHEN, NOT WHETHER (F-S07-1, 2026-10-19). This test used to assert first
+    # that the WHOLE `Desk Lamp` folder never became one model — what a catalog reaching an
+    # unadopted folder left behind, permanently — and its comment said that assertion was "verified
+    # against BOTH" #perform mutations below. That stopped being true when the catalog began
+    # dropping a folder a project claims (2026-09-02): measured on the code just before this change,
+    # the discover/intake swap left it green and only the reconcile mutation reached it. Since the
+    # catalog also counts a folder discovery owns BY POSITION, NO ordering reaches it — measured,
+    # all four below left it green — and a guard that cannot fail is §15's vacuous shape. So it
+    # moved to the next test, where discovery's cap still puts an unadopted folder in front of the
+    # catalog. These two assertions are what every ordering mutation of #perform now fails, each
+    # measured:
+    #   discover_projects swapped with intake_project_folders -> the path (nothing filed);
+    #   discover_projects moved above observer.call          -> the path (nothing adopted);
+    #   intake_models moved above discovery, or above the intake -> the titles, with [] — nothing
+    #     catalogued at the old path, because its key is a claimed folder; the next scan would.
+    test "one perform files the discovered project's mesh AND catalogues it as its own model" do
       File.binwrite(File.join(@root, "Projects", "Desk Lamp", "bracket.stl"), "solid")
 
       Library::ScanJob.perform_now(user_id: @user.id, root: @root)
 
-      folder = @user.nodes.present.find_by!(name: "Desk Lamp", kind: "dir")
-      swallowed = @user.maker_models.find_by(auto_node_id: folder.node_id) ||
-                  @user.maker_models.find_by(folder_node_id: folder.node_id)
-      # NAMES THE PRIMARY CAUSE THIS CLASS EXISTS TO CATCH, NOT THE ONLY ONE THAT CAN REACH HERE.
-      # Any ordering that leaves bracket.stl loose at the Desk Lamp folder root by the time
-      # #intake_models runs reaches this same wrong state — driven and confirmed for both #perform
-      # mutations, not merely this one.
-      assert_nil swallowed,
-                 "the whole Desk Lamp FOLDER became a model — title #{swallowed&.title.inspect}, " \
-                 "auto_node_id #{swallowed&.auto_node_id.inspect} — instead of the file getting " \
-                 "its own. bracket.stl was still loose at the project root when the model catalog " \
-                 "ran (most directly: discover_projects swapped with intake_project_folders in " \
-                 "ScanJob#perform, so the intake had no project yet to file it into)."
-
       assert_path_exists File.join(@root, "Projects", "Desk Lamp", "models", "bracket.stl"),
                           "discovery ran before the intake, so the intake had a project folder to file this into"
-      assert_equal [ "bracket" ], @user.maker_models.pluck(:title)
+      assert_equal [ "bracket" ], @user.maker_models.pluck(:title),
+                   "the catalog ran before the intake filed bracket.stl, so it is catalogued a scan late"
+    end
+
+    # THE SWALLOW ASSERTION, RE-POINTED (F-S07-1) from the test above, where no ordering of #perform
+    # can fail it any more. Discovery's CAP binds inside this job's own sequence, so with
+    # PROJECT_DISCOVERY_MAX=1 one of these two folders is necessarily still unadopted — its mesh
+    # loose at its root — when #intake_models runs: the state the old assertion guarded, reached the
+    # one way that is left. Which folder depends on the node_ids the reconcile mints, so the test
+    # finds it rather than naming it, and asserts that precondition before the claim: without a
+    # folder left waiting, "nothing was swallowed" proves nothing (§14e). RED when Maker::ModelIntake
+    # stops asking Maker::ProjectDiscovery.positional_claims, or when that reader is capped.
+    test "a folder past discovery's cap is never swallowed as one model" do
+      File.binwrite(File.join(@root, "Projects", "Desk Lamp", "bracket.stl"), "solid")
+      FileUtils.mkdir_p(File.join(@root, "Projects", "Rack"))
+      File.binwrite(File.join(@root, "Projects", "Rack", "rail.stl"), "solid rail")
+      prior = ENV["PROJECT_DISCOVERY_MAX"]
+      ENV["PROJECT_DISCOVERY_MAX"] = "1"
+      begin
+        Library::ScanJob.perform_now(user_id: @user.id, root: @root)
+      ensure
+        ENV["PROJECT_DISCOVERY_MAX"] = prior
+      end
+
+      folders = @user.nodes.present.where(parent_node_id: @user.nodes.present
+                                            .find_by!(name: "Projects", parent_node_id: nil).node_id,
+                                          kind: "dir").to_a
+      adopted = @user.maker_projects.pluck(:folder_node_id)
+      waiting = folders.reject { |f| adopted.include?(f.node_id) }
+      assert_equal [ 2, 1, 1 ], [ folders.size, adopted.size, waiting.size ],
+                   "precondition: the cap must leave exactly one of the two folders unadopted"
+      assert(@user.nodes.present.where(parent_node_id: waiting.sole.node_id, kind: "file")
+                  .pluck(:name).any? { |name| Maker::FileAttachment.role_for(name) == "model" },
+             "precondition: the unadopted folder still holds a mesh at its root")
+
+      ids = folders.map(&:node_id)
+      swallowed = @user.maker_models.where(auto_node_id: ids)
+                       .or(@user.maker_models.where(folder_node_id: ids)).pluck(:title)
+      assert_empty swallowed,
+                   "#{waiting.sole.name.inspect}, past discovery's cap, became one model: the catalog " \
+                   "no longer counts a folder discovery owns by position as claimed"
     end
   end
 
@@ -710,6 +864,53 @@ module Library
       assert_enqueued_with(job: Library::ScanJob, args: [ { user_id: @user.id } ]) do
         Library::ScanJob.enqueue_for(@user)
       end
+    end
+  end
+
+  # ONE SCAN, ONE LIBRARY FOLDER (K, 2026-10-20; found in review). The walk uses the `root:` the job
+  # was queued with, while the intake after it writes through FileLayer.current, whose share root is
+  # read per job (FileLayer::Share#root). Unpinned, the job's FIRST read of the setting came after the
+  # walk, so a folder chosen in the web process mid-walk sent the intake into the NEW folder: it
+  # minted `Workshop/Projects/Desk Lamp/design` there and then failed the move. The write is made
+  # behind this process's back right after the walk, and Current is cleared first, as the executor
+  # does before a real job. Pinned through the real factory (LIBRARY_BACKEND=share), so it runs the
+  # same on every leg. Mutation-checked: delete the pin in #perform and both assertions go red.
+  class FolderChangeMidScanTest < ActiveSupport::TestCase
+    setup do
+      @mount = Pathname.new(Dir.mktmpdir("mid-scan")).expand_path
+      @prior = ENV.to_h.slice("LIBRARY_PATH", "LIBRARY_BACKEND")
+      ENV["LIBRARY_PATH"] = @mount.to_s
+      ENV["LIBRARY_BACKEND"] = "share"
+      FileLayer.reset!
+      @user = User.create!(email: "mid-#{SecureRandom.hex(6)}@example.com")
+      FileUtils.mkdir_p(@mount.join("Projects", "Desk Lamp"))
+      File.binwrite(@mount.join("Projects", "Desk Lamp", "panel.svg"), "<svg/>")
+      FileUtils.mkdir_p(@mount.join("Workshop"))
+    end
+
+    teardown do
+      %w[LIBRARY_PATH LIBRARY_BACKEND].each { |k| @prior.key?(k) ? ENV[k] = @prior[k] : ENV.delete(k) }
+      FileLayer.reset!
+      FileUtils.remove_entry(@mount) if @mount&.exist?
+    end
+
+    test "a folder chosen while a scan walks is the next job's, never this scan's intake" do
+      original = Library::Scanner.instance_method(:call)
+      begin
+        Library::Scanner.define_method(:call) do
+          result = original.bind(self).call
+          Setting.where(key: Tinkerex::LibraryRoot::KEY).update_all(value: "Workshop")
+          result
+        end
+        Current.reset
+        Library::ScanJob.perform_now(user_id: @user.id, root: @mount.to_s)
+      ensure
+        Library::Scanner.define_method(:call, original)
+      end
+
+      assert_not @mount.join("Workshop", "Projects").exist?,
+                 "the intake filed into the folder the library moved to while the scan walked"
+      assert_path_exists @mount.join("Projects", "Desk Lamp", "design", "panel.svg")
     end
   end
 end

@@ -116,7 +116,7 @@ module Maker
         end
       end
 
-      # THE SWEEP AND THE READ PATH MUST RESOLVE ON THE SAME TRIPLE. Asserted as an AGREEMENT
+      # THE SWEEP AND THE READ PATH MUST GIVE THE SAME ANSWER. Asserted as an AGREEMENT
       # rather than by restating the columns, so the two cannot be "fixed" apart: whatever
       # `Enqueue` considers current is what this sweep must consider covered.
       test "what the sweep considers covered is exactly what Enqueue would not re-enqueue" do
@@ -132,6 +132,34 @@ module Maker
         end
         # ...and so does the sweep.
         assert_equal 0, Maker::Previews::MissingBackfill.call
+      end
+
+      # A ROW WHOSE JOB WAS LOST IS NOT COVERED, AND THE SWEEP ASKS THE PREDICATE THE READ DOORS ASK.
+      # It compared a plucked (node_id, version_id, renderer_revision) triple, which a row wedged at
+      # `processing` on current content matches exactly — so `rake previews:backfill_missing`
+      # reported 0 over every wedged spinner. It now loads the batch's rows and asks
+      # `Enqueue.needs_job?` with the read doors' policy: a stalled row is counted, one that only
+      # just went in flight is believed, and a `failed` render is not retried from here either.
+      # MUTATION: delete the stall line from `needs_job?` and the first count is 0.
+      test "counts and heals a row whose job was lost, believes a fresh one, and leaves a failure alone" do
+        lost  = node!("lost.stl", "tok-cur")
+        fresh = node!("fresh.stl", "tok-cur")
+        broke = node!("broke.stl", "tok-cur")
+        row = travel_to(3.days.ago) do
+          Maker::Preview.create!(user:, node_id: lost.node_id, version_id: token_for(lost), kind: "thumbnail",
+                                 status: "processing", renderer_revision: current_revision("lost.stl"))
+        end
+        Maker::Preview.create!(user:, node_id: fresh.node_id, version_id: token_for(fresh), kind: "thumbnail",
+                               status: "processing", renderer_revision: current_revision("fresh.stl"))
+        Maker::Preview.create!(user:, node_id: broke.node_id, version_id: token_for(broke), kind: "thumbnail",
+                               status: "failed", renderer_revision: current_revision("broke.stl"))
+
+        assert_equal 1, Maker::Previews::MissingBackfill.call(dry_run: true)
+        assert_enqueued_jobs 1, only: Maker::GeneratePreviewJob do
+          assert_equal 1, Maker::Previews::MissingBackfill.call
+        end
+        assert_equal row.id, enqueued_jobs.last[:args].first, "the sweep healed the wrong row"
+        assert_equal 0, Maker::Previews::MissingBackfill.call, "the heal did not restamp, so it repeats"
       end
 
       # `dry_run` COUNTS EXACTLY WHAT A REAL RUN WOULD DO, and both halves are asserted: a report
@@ -176,10 +204,16 @@ module Maker
       # An `unsupported` row IS a row for the current content, so this sweep leaves it alone —
       # deliberately. Clearing those is the separate, still-open F3D sweep (the record, CLAUDE.md §11); doing
       # it here would silently merge two migrations with different correctness arguments.
+      #
+      # AT THE CURRENT REVISION, stated rather than defaulted: this is a claim about the CONTENT
+      # axis, and the column default (1) silently stopped being current the day Mesh declared a
+      # revision (2 — ink on paper, 2026-10-21). An `unsupported` row an older build wrote IS stale
+      # on the code axis and re-enqueues, by design — that is how F3D's re-render reaches them.
       test "leaves an unsupported row for the current content alone" do
         n = node!("part.step", "tok-cur")
         Maker::Preview.create!(user:, node_id: n.node_id, version_id: token_for(n),
-                               kind: "thumbnail", status: "unsupported")
+                               kind: "thumbnail", status: "unsupported",
+                               renderer_revision: current_revision("part.step"))
 
         assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
           assert_equal 0, Maker::Previews::MissingBackfill.call

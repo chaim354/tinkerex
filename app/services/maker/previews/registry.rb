@@ -6,8 +6,7 @@ module Maker
     #   - available? → Boolean   (is the underlying toolchain present on this box?)
     #   - render(bytes, size:) → { bytes:, content_type:, width:, height: }
     #
-    # Phase 1 registers ONLY the SVG renderer (no native dep). Future formats register the
-    # exact same way behind their own `available?` capability check — see the TODO block.
+    # Every format registers the same way, behind its own `available?` capability check.
     module Registry
       module_function
 

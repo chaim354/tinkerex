@@ -24,7 +24,7 @@ module Web
       @root = use_fresh_share_library!
       @user = User.create!(email: "new-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
                            confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @dir = create_node!(@user, node_id: "dir-laser", name: "laser", kind: "dir")
     end
 

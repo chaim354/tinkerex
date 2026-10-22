@@ -28,9 +28,7 @@ class RepoCommitWedgeTest < ActionDispatch::IntegrationTest
     sign_in_as(@user)
   end
 
-  def sign_in_as(user)
-    post user_session_path, params: { user: { email: user.email, password: PASSWORD } }
-  end
+  def sign_in_as(user) = sign_in_web!(user, password: PASSWORD)
 
   # THE SKIP IS RIGHT HERE, AND IT IS THE ONE PLACE IN THIS FEATURE THAT IT IS — §14e's rule is
   # that a guard which skips on the thing it asserts is vacuous, so it is worth being explicit

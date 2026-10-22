@@ -221,8 +221,7 @@ module Web
     # --- the project pages ----------------------------------------------------------
 
     # NO BOARD ON A PROJECT PAGE (2026-09-06, at the user's request): a folder's Gerbers and a zipped
-    # export are ordinary file tiles there, opening the Library with the file selected (slice 6),
-    # whose inspector's Open reaches the file page where the board renders. The
+    # export are ordinary file tiles there, opening the file page where the board renders. The
     # Fabrication panel that grouped them into inline viewers is gone, and this is the test that
     # says so — a panel quietly re-added under any name mounts `data-controller="gerber"`.
     test "the project page mounts no board viewer and lists a folder's Gerbers as files" do
@@ -236,8 +235,8 @@ module Web
       assert_response :success
       assert_select "[data-controller=?]", "gerber", 0
       assert_select ".fabrication-panel", 0
-      assert_select "a[href=?]", files_path(folder: dir.node_id, selected: set[:gtl].node_id)
-      assert_select "a[href=?]", files_path(folder: dir.node_id, selected: zip.node_id)
+      assert_select "a[href=?]", file_path(set[:gtl].node_id)
+      assert_select "a[href=?]", file_path(zip.node_id)
     end
 
     # THE PROJECT PAGE MOUNTS NO BOARD RENDER, and since stage 4, S4-5 that is because the render

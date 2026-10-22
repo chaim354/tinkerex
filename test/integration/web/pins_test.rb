@@ -7,7 +7,7 @@ module Web
     setup do
       @user = User.create!(email: "pins-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
                            confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @dir = @user.nodes.create!(node_id: "dir-laser", name: "laser", kind: "dir")
     end
 

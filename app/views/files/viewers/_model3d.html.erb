@@ -1,4 +1,4 @@
-<%# locals: (named_url:, format:, colors:, unit_factor:, thumbnail:, thumbnail_url:, download_url:, name:) %>
+<%# locals: (named_url:, format:, colors:, unit_factor:, thumbnail:, thumbnail_url:, download_url:, name:, preview_url: nil, viewer_preview: false) %>
 <%# Interactive client-side 3D viewer (Online3DViewer), see modelviewer_controller.js. `lazy`
     gates the byte fetch AND the ~1 MB engine download behind the "View in 3D" button, so
     nothing heavy loads unless the user asks. The fallback (thumbnail poster + download) is the
@@ -8,7 +8,11 @@
     Online3DViewer chooses an importer from the URL'S OWN trailing extension, never from the bytes
     or a Content-Type, so a path with no extension in it reaches no importer at all
     (docs/invariants/files-preview.md). `named_url` is the caller's, because the maker's page names
-    /files/:id/blob/:name and a visitor's /u/:handle/:slug/files/:id/:name (stage 4, S4-5). %>
+    /files/:id/blob/:name and a visitor's /u/:handle/:slug/files/:id/:name (stage 4, S4-5).
+
+    "USE THIS VIEW AS PREVIEW" EXISTS ONLY WHEN THE CALLER PASSES `preview_url` (2026-10-20), the
+    maker's own Files::PreviewsController door, so a visitor's page, which passes none, never offers
+    it. `viewer_preview` says the current thumbnail is the maker's choice and adds the way back. %>
 <div class="model-viewer"
      data-controller="modelviewer"
      data-modelviewer-lazy-value="true"
@@ -19,7 +23,8 @@
          unit (three's 3MFLoader ignores it, so an Onshape part in metres measures 1000x short).
          Empty and 1 for every other format, which is the no-op the controller checks for. %>
      data-modelviewer-colors-value="<%= colors.to_json %>"
-     data-modelviewer-unit-factor-value="<%= unit_factor %>">
+     data-modelviewer-unit-factor-value="<%= unit_factor %>"
+     <% if preview_url %>data-modelviewer-preview-url-value="<%= preview_url %>"<% end %>>
   <div class="model-viewer-stage" data-modelviewer-target="canvas"></div>
   <div class="model-viewer-bar">
     <span class="model-viewer-dims" data-modelviewer-target="dims"></span>
@@ -29,17 +34,24 @@
     <span class="mv-actions">
       <button type="button" class="btn small ghost" data-action="modelviewer#reset">Reset view</button>
       <button type="button" class="btn small ghost" data-action="modelviewer#fullscreen">Fullscreen</button>
+      <% if preview_url %>
+        <button type="button" class="btn small ghost" data-action="modelviewer#usePreview">Use this view as preview</button>
+      <% end %>
       <button type="button" class="btn small ghost" aria-label="Return to image" data-action="modelviewer#showPoster">✕ Image</button>
     </span>
+    <span class="mv-status muted" data-modelviewer-target="status" role="status"></span>
   </div>
   <div class="model-viewer-fallback" data-modelviewer-target="fallback">
     <%# THE POSTER'S URL IS A STRICT LOCAL TOO (hardening, 2026-09-08; tinkerex#278), for
         `named_url`'s reason one comment up plus one of its own: `url_for(thumbnail.asset)` is a blob
         URL with no expiry, so a visitor's poster kept answering after the project went private. %>
-    <% if thumbnail&.status == "ready" && thumbnail.asset.attached? %>
-      <img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image">
+    <% if thumbnail&.showable? %>
+      <div class="render-card"><img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image" data-modelviewer-target="poster"></div>
     <% end %>
     <p class="muted">Click <strong>View in 3D</strong> to load an interactive preview, or download the file.</p>
     <%= link_to "Download #{name}", download_url, class: "btn" %>
+    <% if preview_url && viewer_preview %>
+      <%= button_to "Back to automatic preview", preview_url, method: :delete, class: "linkbtn small" %>
+    <% end %>
   </div>
 </div>

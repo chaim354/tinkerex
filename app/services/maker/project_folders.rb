@@ -4,7 +4,7 @@ module Maker
   # STAGE 3, S3-1: THE MAP IS NOW PER USER, AND ROLE_FOLDERS IS ITS SEED, NOT ITS ANSWER.
   # `folder_for(user, name)` reads `Maker::FilingRules.for(user)` — the user's own rows, seeded
   # once from ROLE_FOLDERS over `Maker::FileAttachment::ROLE_BY_EXT` and edited from then on at
-  # /settings/filing (spec §5). `default_folder_for(name)` is the OLD pure function, kept for the
+  # /settings/shelves (spec §5). `default_folder_for(name)` is the OLD pure function, kept for the
   # one caller that still needs an answer with no user in hand: the seed itself, which cannot ask
   # `Maker::FilingRules.for` the very map it is about to build. A hand-written ext => folder hash
   # beside ROLE_BY_EXT is the exact drift `FilesHelper::EXT_FAMILIES` was rewritten to end
@@ -13,8 +13,12 @@ module Maker
   # it into one row per EXTENSION.
   #
   # THE ANSWER COMES FROM THE FILENAME, NEVER FROM A STORED `role` COLUMN. An attachment row's role
-  # is a snapshot taken when the row was written; a file can be swept before any row exists, and a
-  # stale row would misfile it. `role_for` is pure and current, and so is `ext_of` below.
+  # is written with the row, and a row stored `other` catches up with a later widening of
+  # ROLE_BY_EXT only when `Maker::FileAttachment.classify_unclassified!`'s daily sweep reaches it —
+  # the ONE mechanism that keeps stored roles following the vocabulary, so a widening needs no
+  # role re-derive migration (F-S33-1). Filing still cannot read the column: a file can be swept
+  # before any row exists, and a row can trail the table by up to a day. `role_for` is pure and
+  # current, and so is `ext_of` below.
   #
   # `default_folder_for`'S `fetch` WITH NO DEFAULT IS THE GUARD ROLE_FOLDERS STILL NEEDS. It is
   # LOUD if ever reached — an unmapped role raises KeyError, not a swallowed default. What makes
@@ -76,7 +80,7 @@ module Maker
       # THE SAME FOLDER AS `gcode`, DELIBERATELY — two roles, one directory, exactly as
       # `instructions` and `document` both name `docs`. A maker's CNC work is one place on the NAS:
       # the MillMage project and the toolpath it exports belong side by side. `ROLE_FOLDERS.values
-      # .uniq` is what /settings/filing renders a card per, so this adds no card.
+      # .uniq` is the seed's shelf list (one card each on /settings/shelves), so this adds no card.
       "cnc_design"     => "cnc",
       "laser"          => "laser",
       "vector"         => "design",
@@ -85,6 +89,9 @@ module Maker
       "code"           => "code",
       "instructions"   => "docs",
       "document"       => "docs",
+      # A workbook files beside the documents and the CSVs it usually sits next to — a third role
+      # in `docs`, for the reason `instructions` is the second (2026-10-21).
+      "spreadsheet"    => "docs",
       "image"          => "images",
       "source_archive" => "archives",
       # The board's fabrication set — Gerber layers, drill files and the `.gbrjob` that names them
@@ -94,6 +101,12 @@ module Maker
       "pcb"            => "pcb",
       "other"          => "other"
     }.freeze
+
+    # WHERE A FILE GOES WHEN THE USER'S RULES NAME NOTHING FOR ITS EXTENSION — and so the one
+    # subfolder the intake sweep looks back into. A file sitting in `other/` whose extension HAS a
+    # rule now is the app's own earlier "no rule for this", not the user's filing, so it is re-sorted
+    # (Maker::ProjectIntake.resortable?; docs/invariants/project-intake.md, "ROOT = INBOX").
+    OTHER = ROLE_FOLDERS.fetch("other")
 
     # TODAY'S PURE FUNCTION, WITH NO USER IN HAND. Used by `Maker::FilingRules.seed!` to build the
     # per-extension seed rows (ROLE_BY_EXT's extension -> role -> this), and available to any
@@ -113,10 +126,11 @@ module Maker
     # using it inside #file_all's per-file loop would be a query pair per file across a run bounded
     # at MAX_MOVES (500). #place keeps its own memoized rules hash instead and re-derives this same
     # two-line lookup locally. This method is for callers OUTSIDE a large loop —
-    # ProjectIntake.destination_for (one call per addon-output file, never hundreds) and
-    # ProjectFolderIntake#project_intake_sentence (one call per flash message).
+    # ProjectIntake.destination_for (one call per addon-output file, never hundreds). The flash
+    # (ProjectFolderIntake) no longer calls it: a collision's folder comes off the sweep's own
+    # Filing, because re-deriving it from the name is wrong for a board zip (F-S06-1).
     def folder_for(user, name)
-      Maker::FilingRules.for(user).fetch(ext_of(name), "other")
+      Maker::FilingRules.for(user).fetch(ext_of(name), OTHER)
     end
 
     # `File.extname(...).downcase.delete(".")` — THE SAME EXTRACTION Maker::FileAttachment.role_for

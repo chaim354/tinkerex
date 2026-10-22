@@ -56,13 +56,23 @@ module Library
     # lie rather than the user's intent.
     DEFAULT_MAX_DELETE_PCT = 20
 
-    # One row of #live. A Struct rather than the bare Array this used to destructure, because the
-    # row grew from five values to eight and a mis-ordered destructure of eight is silent — and
-    # MUTABLE rather than a Data, because the write sites below re-stamp the fields they just
-    # wrote (see #live's invariant). It costs one object per live node over the Array the pluck
-    # block allocated anyway.
-    LiveRow = Struct.new(:id, :node_id, :kind, :name, :mtime, :size, :content_hash,
-                         :parent_node_id, keyword_init: true)
+    # One row of #live. Named fields rather than the bare Array this used to destructure, because
+    # the row grew from five values to eight and a mis-ordered destructure of eight is silent.
+    #
+    # IMMUTABLE, and that is what makes #live's invariant a property of the code rather than a
+    # promise in a comment: a row is REPLACED, by #write! or #tombstone!, never re-stamped where it
+    # sits, so there is no third way for a pass to change what #live says. It was a mutable
+    # keyword_init Struct while the write sites re-stamped fields by hand, and that form also let a
+    # constructor that forgot a key default it to nil silently; a Data refuses a missing one.
+    # `.from` is the one constructor a write uses; the pluck in #live builds its rows directly. It
+    # costs one object per live node over the Array the pluck block allocated anyway.
+    LiveRow = Data.define(:id, :node_id, :kind, :name, :mtime, :size, :content_hash,
+                          :parent_node_id) do
+      def self.from(node)
+        new(id: node.id, node_id: node.node_id, kind: node.kind, name: node.name, mtime: node.mtime,
+            size: node.size, content_hash: node.content_hash, parent_node_id: node.parent_node_id)
+      end
+    end
 
     # `root` is where a rel_path resolves to real bytes; `reader` replaces reading them at all
     # (tests inject it, so the algorithm needs no filesystem). One of the two is required.
@@ -95,7 +105,6 @@ module Library
       @max_delete_pct = max_delete_pct
       @root = root && Pathname.new(root).expand_path
       @reader = reader
-      @dir_ids = {} # rel_path => node_id, filled by ensure_dirs as it walks shallowest-first
     end
 
     # The live file nodes these observations do not account for — the set this pass would
@@ -147,21 +156,8 @@ module Library
       guard_mass_deletion!(doomed.size, observable_count)
 
       apply_moves!(moves)                                      # 2 (apply)
-      # `live.delete` is what keeps #live's stated invariant UNCONDITIONAL. This is the FIFTH
-      # site that tombstones, and the one a review found the invariant's own comment omitting.
-      # Harmless today by luck, not by design: the only readers after this line are #parent_id_for
-      # (keyed on DIRECTORY paths, and #ensure_dirs has already evicted any file row sitting at
-      # one) and #tombstone_vanished_dirs (filters kind == "dir"), so a stale FILE key is never
-      # consulted. That is an argument about today's call order, and #create_or_revive!'s own
-      # comment says why not to rely on one — a claim with an exception a future reader has to
-      # find is worse than a claim that is simply true. One line makes it true.
-      #
-      # Probed both ways: without the delete, a doomed "d/b.stl" stays in #live while `present`
-      # has dropped it. With it, the two sets are identical.
-      doomed.each do |node|
-        node.update!(deleted: true)
-        live.delete(node.storage_path)
-      end
+      # Each doomed node is already loaded, and is handed over so tombstoning it costs no SELECT.
+      doomed.each { |node| tombstone!(node.storage_path, node) }
       leftovers.each do |o, hash|                                # 3 & 4
         enqueue_thumbnail(create_or_revive!(o, hash), hash)
       end
@@ -244,9 +240,9 @@ module Library
     # MEMOIZED so the guard's numerator and denominator are literally one snapshot rather than
     # two independent plucks that merely happen to agree (there is no transaction — see the class
     # header — so 2b's write path could otherwise slip between them). A Reconciler is already
-    # single-use: @dir_ids accumulates across #call, so caching the pre-write tree here is
-    # consistent with what the object already is. It also halves the pluck of the whole live-file
-    # path set.
+    # single-use: #live accumulates this pass's writes across #call, so caching the pre-write tree
+    # here is consistent with what the object already is. It also halves the pluck of the whole
+    # live-file path set.
     def observable_live_paths
       @observable_live_paths ||=
         @unreadable_dirs.empty? ? live_file_paths : live_file_paths.reject { |p| unobserved?(p) }
@@ -307,8 +303,7 @@ module Library
           # The path used to be a directory (or a symlink) and is now a file. Reusing the row
           # would silently change a node's kind under everything that points at it; a clean
           # break is the honest answer.
-          @user.nodes.find(row.id).update!(deleted: true)
-          live.delete(o.rel_path)
+          tombstone!(o.rel_path)
           next false # ...and the observation still needs a node: hand it to step 2.
         end
 
@@ -325,11 +320,7 @@ module Library
         # so nothing below can tombstone it. The next pass picks it up when the blip clears.
         # The row is loaded only once `hash` proves there is something to write.
         if hash
-          node = @user.nodes.find(row.id)
-          node.update!(size: o.size, mtime: o.mtime, content_hash: hash)
-          row.size = o.size
-          row.mtime = o.mtime
-          row.content_hash = hash
+          node = write!(@user.nodes.find(row.id), size: o.size, mtime: o.mtime, content_hash: hash)
           # THIS IS THE SAVE PATH, and the enqueue is not optional here. Reaching this line means
           # the bytes under a path the catalog already knew have CHANGED — a file re-saved in
           # place, which for a share library is the single most ordinary thing that happens to
@@ -437,20 +428,14 @@ module Library
       [ moves, doomed, candidates.reject { |p| claimed.key?(p) } ]
     end
 
-    # Step 2, APPLY. Re-keys the moved node in #live for that index's stated invariant — a move
-    # is the one write here that changes a row's KEY rather than its columns, so a stale entry
-    # would leave the old path claimed by a node that no longer sits there.
+    # Step 2, APPLY. A move is the one write that changes a row's KEY rather than its columns, and
+    # #write! re-keys it in #live — a stale entry would leave the old path claimed by a node that
+    # no longer sits there.
     def apply_moves!(moves)
       moves.each do |node, o, hash|
-        was = node.storage_path
-        node.update!(storage_path: o.rel_path, name: File.basename(o.rel_path),
+        write!(node, storage_path: o.rel_path, name: File.basename(o.rel_path),
                      parent_node_id: parent_id_for(o.rel_path),
                      mtime: o.mtime, size: o.size, content_hash: hash)
-        live.delete(was)
-        live[o.rel_path] = LiveRow.new(id: node.id, node_id: node.node_id, kind: node.kind,
-                                       name: node.name, mtime: node.mtime, size: node.size,
-                                       content_hash: node.content_hash,
-                                       parent_node_id: node.parent_node_id)
       end
     end
 
@@ -532,28 +517,15 @@ module Library
     # Trade-off: if the user deliberately put DIFFERENT content at that path, the attachment now
     # points at it. That is the same trade already accepted for an edit-in-place, which likewise
     # keeps its node_id when the bytes change.
+    #
+    # Returns the node — revived or new — because the caller enqueues an eager thumbnail for it.
     def create_or_revive!(o, hash)
       tomb = @user.nodes.where(storage_path: o.rel_path, deleted: true, kind: "file")
                   .order(id: :desc).first
-      attrs = { name: File.basename(o.rel_path), kind: "file", deleted: false,
-                storage_path: o.rel_path, parent_node_id: parent_id_for(o.rel_path),
-                size: o.size, mtime: o.mtime, content_hash: hash }
-      # Return the NODE in both branches (update! returns true, so we can't return it directly) —
-      # the caller enqueues an eager thumbnail for the file the scan just brought in.
-      node = if tomb
-        tomb.update!(**attrs)
-        tomb
-      else
-        @user.nodes.create!(node_id: SecureRandom.uuid, **attrs)
-      end
-      # #live's invariant — it mirrors `present`, and this path is how a row BECOMES present.
-      # No later reader in #call consults a file row, so this is the cheap half of keeping the
-      # claim unconditional rather than one with an exception a future reader has to find.
-      live[o.rel_path] = LiveRow.new(id: node.id, node_id: node.node_id, kind: "file",
-                                     name: node.name, mtime: node.mtime, size: node.size,
-                                     content_hash: node.content_hash,
-                                     parent_node_id: node.parent_node_id)
-      node
+      write!(tomb || @user.nodes.new(node_id: SecureRandom.uuid),
+             name: File.basename(o.rel_path), kind: "file", deleted: false,
+             storage_path: o.rel_path, parent_node_id: parent_id_for(o.rel_path),
+             size: o.size, mtime: o.mtime, content_hash: hash)
     end
 
     def common_prefix_len(a, b)
@@ -567,19 +539,18 @@ module Library
     # Directory nodes are synthesized from paths so parent_node_id still forms the tree — that
     # is what keeps browse/search/tags working unmodified across backends.
     #
-    # Shallowest-first is STRUCTURAL, not defensive: each directory records its node_id in
-    # @dir_ids as it goes, and its children then read the parent straight out of that map. A
-    # parent is therefore always in the map before any child asks for it — and that is also what
-    # kills the per-file parent lookup. (The Scanner already emits parent-before-child, which
-    # reconciler_test pins; this sort means the Reconciler does not depend on it.)
+    # Shallowest-first is STRUCTURAL, not defensive: a directory's row is in #live before any of
+    # its children asks #parent_id_for for it — #write! records it, or it was there all along and
+    # the skip below leaves it — so children read the parent straight out of that index, which is
+    # also what kills the per-file parent lookup. (The Scanner already emits parent-before-child,
+    # which reconciler_test pins; this sort means the Reconciler does not depend on it.)
     def ensure_dirs(dirs)
       dirs.sort_by { |o| o.rel_path.count("/") }.each do |o|
         row = live[o.rel_path]
         if row && row.kind != "dir"
           # The path used to be a file and is now a directory. Same reasoning as the inverse
           # case above: break cleanly rather than mutate a node's kind under its references.
-          @user.nodes.find(row.id).update!(deleted: true)
-          live.delete(o.rel_path)
+          tombstone!(o.rel_path)
           row = nil
         end
 
@@ -587,14 +558,9 @@ module Library
         # is unchanged in every other column, and that is the case the naive skip drops.
         parent_node_id = parent_id_for(o.rel_path)
 
-        if row && unchanged_dir?(row, o, parent_node_id)
-          # THE `@dir_ids` STAMP IS NOT OPTIONAL ON THE SKIP PATH. Children read their parent out
-          # of this map (see the shallowest-first note above); skipping without filling it makes
-          # every file under an unchanged directory resolve its parent through #parent_id_for's
-          # DB fallback at best, and to nil at worst — the tree, silently flattened.
-          @dir_ids[o.rel_path] = row.node_id
-          next
-        end
+        # Nothing to record on the skip: `row` IS #live's entry for this path, and that entry is
+        # what this directory's children read their parent from.
+        next if row && unchanged_dir?(row, o, parent_node_id)
 
         node = row && @user.nodes.find(row.id)
         # Reviving a tombstoned directory is right for the same reason it is right for a file,
@@ -602,23 +568,28 @@ module Library
         # `deleted` and pick an arbitrary row when both a tombstone and a live node exist. It
         # stays a LIVE query — #live holds `present` rows only and a tombstone is exactly what it
         # cannot answer for.
-        node ||= @user.nodes.where(storage_path: o.rel_path, kind: "dir").order(id: :desc).first
-        node ||= @user.nodes.new(node_id: SecureRandom.uuid)
-        node.update!(name: File.basename(o.rel_path), kind: "dir", deleted: false,
-                     storage_path: o.rel_path, parent_node_id:, mtime: o.mtime)
-        @dir_ids[o.rel_path] = node.node_id
-        # THE WRITE-BACK, AND IT IS THE ONE LINE THAT MAKES THE MEMOIZED INDEX SAFE. #live is
-        # plucked before any write; #match_live_paths reads the SAME index afterwards. Without
-        # this, a path that has just become a directory still reads as the old FILE row there, a
-        # file observation for it falls through to #create_or_revive!, and that create hits
-        # `index_nodes_on_user_id_and_storage_path` (unique, WHERE deleted = false, KIND-AGNOSTIC,
-        # and unvalidated in the model) — a raw ActiveRecord::RecordNotUnique that kills this scan
-        # and every scan after it. The old code survived that case only by accident, because
-        # `match_live_paths` re-plucked AFTER this method ran.
-        live[o.rel_path] = LiveRow.new(id: node.id, node_id: node.node_id, kind: "dir",
-                                       name: node.name, mtime: node.mtime, size: node.size,
-                                       content_hash: node.content_hash,
-                                       parent_node_id: node.parent_node_id)
+        #
+        # `deleted: true` SAYS WHAT REACHING THIS LINE ALREADY MEANS — no present row holds this path
+        # (`row` was nil, or was the file tombstoned just above) — and it is what lets the planner
+        # use `index_nodes_on_user_id_and_storage_path_tombstones`. Without it this read every node
+        # the user owns, once per directory a pass writes (reconciler_test pins the plan). The one
+        # input it changes: a web mkdir landing at this exact path AFTER #live was plucked used to be
+        # adopted here; now the insert below meets the live-row unique index and fails this pass,
+        # and the next pass finds that row in #live.
+        node ||= @user.nodes.where(storage_path: o.rel_path, kind: "dir", deleted: true)
+                            .order(id: :desc).first
+        # THE WRITE-BACK INTO #live IS WHAT MAKES THE MEMOIZED INDEX SAFE, which is why this is a
+        # #write! and never a bare `update!`. #live is plucked before any write; #match_live_paths
+        # reads the SAME index afterwards. Without the write-back, a path that has just become a
+        # directory still reads as the old FILE row there, a file observation for it falls through
+        # to #create_or_revive!, and that create hits `index_nodes_on_user_id_and_storage_path`
+        # (unique, WHERE deleted = false, KIND-AGNOSTIC, and unvalidated in the model) — a raw
+        # ActiveRecord::RecordNotUnique that kills this scan and every scan after it. The old code
+        # survived that case only by accident, because `match_live_paths` re-plucked AFTER this
+        # method ran.
+        write!(node || @user.nodes.new(node_id: SecureRandom.uuid),
+               name: File.basename(o.rel_path), kind: "dir", deleted: false,
+               storage_path: o.rel_path, parent_node_id:, mtime: o.mtime)
       end
     end
 
@@ -667,23 +638,19 @@ module Library
       live.filter_map { |path, row|
         path if row.kind == "dir" && !observed.include?(path) && !unobserved?(path)
       }.sort_by { |path| [ -path.count("/"), path ] }
-        .each do |path|
-          @user.nodes.find(live[path].id).update!(deleted: true)
-          live.delete(path)
-        end
+        .each { |path| tombstone!(path) }
     end
 
-    # A hash hit for any directory this scan observed (ensure_dirs filled the map before any
-    # file could ask). The DB fallback covers a parent that is NOT among the observations — a
-    # partial scan, or a caller passing files without their dirs.
-    # The fallback reads #live — the SAME index #tombstone_vanished_dirs and #ensure_dirs read.
-    # Two readings of the tree taken at two points in one pass is what this change exists to end,
-    # and re-querying here would reintroduce exactly that: a parent resolved against a snapshot
-    # newer than the one the rest of the pass decided from.
+    # A hash hit in #live for any directory this scan observed — #ensure_dirs has put each one
+    # there before any file can ask — and the same index answers for a parent that is NOT among
+    # the observations (a partial scan, or a caller passing files without their dirs).
+    # Re-querying instead would reintroduce what #live exists to end — two readings of the tree
+    # taken at two points in one pass: a parent resolved against a snapshot newer than the one the
+    # rest of the pass decided from.
     def parent_id_for(rel)
       dir = File.dirname(rel)
       return nil if dir == "."
-      @dir_ids[dir] || live[dir]&.node_id
+      live[dir]&.node_id
     end
 
     # ONE READ OF THE LIVE TREE PER PASS — `storage_path => LiveRow`, over `present` rows only.
@@ -714,13 +681,20 @@ module Library
     # #observable_live_paths' "literally one snapshot rather than two independent plucks that
     # merely happen to agree"). The dir half never got it. This is that.
     #
-    # THE INVARIANT: this mirrors `present`. Every site that tombstones, revives or re-stamps a
-    # node maintains it — FIVE of them: #ensure_dirs, #match_live_paths, #apply_moves!,
-    # #tombstone_vanished_dirs, and #call's own `doomed.each`. (That last one was missing, and
-    # an earlier version of this very comment enumerated only four while claiming "every" —
-    # probed in review, one stale key. Count them against the code, not against this sentence.) That is not tidiness in one of those cases: see
-    # #ensure_dirs, where dropping the write-back is a RecordNotUnique that kills every scan
-    # forever.
+    # THE INVARIANT: this mirrors `present`, and it holds because #write! and #tombstone! are the
+    # ONLY ways a pass writes `nodes` — each keeps this index in step with the row it just wrote.
+    # It used to be kept by hand at every write site, and a site was missed: this comment once
+    # counted four while claiming "every", #call's doomed loop was a fifth, and review found its
+    # stale key (0a160454). A write that goes around the two helpers and leaves a key stale fails
+    # reconciler_test, which compares this index with a fresh read of `present` after passes that
+    # reach every write site. Mutation-checked site by site, with ONE recorded blind spot: a bypass
+    # at either kind-collision tombstone is invisible. At #ensure_dirs the same key is rewritten in
+    # the same iteration, before anything reads it; at #match_live_paths it is rewritten by
+    # #create_or_revive! or #apply_moves!, or — for an unreadable new file, whose observation
+    # #plan_moves drops — removed by #tombstone_vanished_dirs re-tombstoning the already-deleted
+    # row, the same end state either way. The helper is what keeps those two right; the call
+    # order only hides it when they are not. Not tidiness: see #ensure_dirs, where a directory
+    # missing from here is a RecordNotUnique that kills every scan forever.
     #
     # PLUCKED BEFORE THE FIRST WRITE, and #call is what guarantees it — its first statement is
     # `vanished_paths`, which reads #live_file_paths, which forces this. Lazily memoized rather
@@ -730,6 +704,9 @@ module Library
     # #ensure_dirs both query for TOMBSTONES by path, and those stay live queries. §14a's two
     # tombstone kinds must not be collapsed, and an index that held both could not tell them
     # apart by path alone.
+    # Keeping those lookups live costs one seek each, not a read of every node the user owns:
+    # `index_nodes_on_user_id_and_storage_path_tombstones` (partial, `deleted = true`) is the
+    # database's index over the tombstones this one leaves out.
     def live
       @live ||= @user.nodes.present.where.not(storage_path: nil)
                     .pluck(:storage_path, :id, :node_id, :kind, :name, :mtime, :size,
@@ -738,6 +715,29 @@ module Library
                       [ path, LiveRow.new(id:, node_id:, kind:, name:, mtime:, size:,
                                           content_hash: hash, parent_node_id: parent) ]
                     }
+    end
+
+    # THE ONLY TWO WAYS A PASS WRITES `nodes` (see #live's invariant). Each writes the row first and
+    # then puts #live in step with it.
+    #
+    # #write! is every write that leaves a node PRESENT — create, revive, move, re-stamp. A move is
+    # the one that changes the row's KEY, so the path the node left is evicted before the path it
+    # now holds is recorded. Returns the node.
+    def write!(node, **attrs)
+      was = node.storage_path
+      node.update!(**attrs)
+      live.delete(was) if was && was != node.storage_path
+      live[node.storage_path] = LiveRow.from(node)
+      node
+    end
+
+    # #tombstone! is every write that takes a node OUT of `present` — a kind collision, a doomed
+    # file, a vanished directory. A caller already holding the node passes it, which is what keeps
+    # the doomed loop at no SELECT; otherwise the row #live names at `path` is loaded. `fetch`, not
+    # `[]`: a path #live does not hold is a bug in the caller, and it should say so here.
+    def tombstone!(path, node = nil)
+      (node || @user.nodes.find(live.fetch(path).id)).update!(deleted: true)
+      live.delete(path)
     end
 
     # THE `kind: "file"` FILTER MOVED OUT OF SQL AND INTO RUBY HERE, and forgetting it is a

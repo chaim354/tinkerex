@@ -92,9 +92,16 @@ export default class extends Controller {
   static targets = ["stage", "dims", "fallback", "paper", "printButton", "svgButton",
                     "savePrintButton", "saveSvgButton", "unitButton"]
 
+  // ONE LOAD GENERATION FOR THE LIFE OF THIS CONTROLLER, and the one owner of the stage: a load
+  // paints only while its own number is the latest. Set in `initialize`, never in `connect`,
+  // because Stimulus hands a re-attached element the SAME controller. A count restarted on
+  // reconnect would hand a new load the number a load from before the disconnect already holds,
+  // and the older one could then paint.
+  initialize() {
+    this.generation = 0
+  }
+
   connect() {
-    this.aborted = false
-    this.hovered = null
     // READ HERE, NOT IN draw(), because sizeLabel() has callers that never go through draw():
     // measure_print_test.rb drives print() on a hand-built `allShapes`, and an undefined unit there
     // is a TypeError out of the print. `storedUnit` cannot throw, so this is safe where
@@ -104,6 +111,66 @@ export default class extends Controller {
     // THE READOUT ON SCREEN, AS THE FUNCTION THAT WROTE IT — or null for a line with no length in
     // it. Flipping the unit re-runs it, so "60 × 40 mm" cannot sit beside a toggle reading "in".
     this.readout = null
+    // AT REST, WHATEVER THE MARKUP SAYS — gerber_controller.js's rule, and the reason
+    // `measure-view--ready` can be trusted. A Turbo Drive Back restores the page from a snapshot
+    // taken WITH the view open: the class, the drawn SVG, the `--marked` contours, "Print 1 part"
+    // and the readout. It then connects this fresh controller, which holds none of the shapes, the
+    // SVG or the pan handle behind them. Left alone, that stage was dead while it looked live:
+    // pan, zoom and clicks did nothing, Print promised a part it no longer held, and Reset threw
+    // out of restingStatus(). Resting puts the poster back, and the drawing is one click away as
+    // it was. measure_print_test.rb drives the Back.
+    this.rest()
+  }
+
+  // A PAGE THAT GOES AWAY OWNS NOTHING, so the bump is the whole of this. The poll is NOT cancelled
+  // here. A cleared timer would leave the shared fetch pending forever, and a re-attached
+  // controller would then join a promise that never settles. The poll notices the element left
+  // the document and stops itself (fetchPayload).
+  disconnect() {
+    this.generation++
+  }
+
+  // "Measure". ONE IN-FLIGHT FETCH, SHARED, AND A DRAW ONLY FOR THE LOAD THAT STILL OWNS THE STAGE:
+  // gerber_controller.js's pair, for the same two hazards. The launch button stays clickable until
+  // draw() reveals the stage, so a second click while the payload is on its way is an ordinary
+  // gesture. It used to start a second poll and a second download (up to 1.3 MB gzipped, §14h), and
+  // to draw twice. The later draw replaced the SVG the user was already selecting on, and the
+  // selection survived in `marked`, so the bar read "Print 1 part" over a stage with nothing
+  // highlighted. Now the second click joins the first fetch. The first load sees it no longer owns
+  // the stage and paints nothing, so the view is drawn once.
+  //
+  // A SUPERSEDED LOAD REPORTS NOTHING EITHER. With the fetch shared, its rejection reaches every
+  // load that joined it, and only the one that owns the stage may put the reason on screen.
+  async load() {
+    const gen = ++this.generation
+    this.setStatus("Loading geometry…")
+    try {
+      this.pending ||= this.fetchPayload().finally(() => { this.pending = null })
+      const payload = await this.pending
+      if (gen !== this.generation || !payload) return
+      this.draw(payload)
+    } catch (e) {
+      if (gen !== this.generation) return
+      console.warn("[measure] keeping the thumbnail:", e)
+      this.setStatus(e.message || "Could not load geometry.")
+    }
+  }
+
+  // "✕ Image". `generation++` so nothing still in flight can draw after the dismissal and reopen
+  // the view.
+  showPoster() {
+    this.generation++
+    this.rest()
+  }
+
+  // THE ONE WAY BACK TO THE POSTER: `connect()` and ✕ Image both come through here. It drops
+  // everything a drawing owns, so the controller holds shapes exactly while a drawing is on the
+  // stage. `--ready` comes off, and only draw() puts it back.
+  rest() {
+    this.element.classList.remove("measure-view--ready")
+    this.stageTarget.replaceChildren()
+    this.setStatus("")
+    this.hovered = this.svg = this.allShapes = null
     // THE SELECTION, AND SINCE 2026-09-03 THE ONLY SELECTION STATE THERE IS. Membership is by
     // IDENTITY on the payload's own shape objects, reached through node.__shape — so nothing about
     // the wire format has to change to give a contour an id.
@@ -113,42 +180,26 @@ export default class extends Controller {
     // could only be added to while a "Select parts" MODE was on. There is no mode now — every
     // click marks — and one colour answers the one question, which is why `selecting`, `selected`
     // and the toggle target are absent rather than merely unused. See §14h.
+    //
+    // EMPTIED HERE, AND draw() DOES NOT EMPTY IT AGAIN. A drawing always starts from the empty set
+    // this leaves. The launch button is the one way to a load, and it shows only while `--ready`
+    // is off, which is from here until the next draw(). So a second drawing has to come through
+    // ✕ Image, and therefore through here. A double click on the button still draws once, because
+    // the generation in load() lets only the latest load paint. With nothing drawn there is
+    // nothing to click, so nothing can be selected in between. A leak here would be silent: a set
+    // left populated goes on being promised by the print button, and printed, over shapes that
+    // are no longer marked, no longer drawn, and no longer even the objects the next payload will
+    // hand out.
     this.marked = new Set()
     this.nodeByShape = new Map()
-  }
-
-  disconnect() {
-    this.aborted = true
-    clearTimeout(this.pollTimer)
-  }
-
-  async load() {
-    this.setStatus("Loading geometry…")
-    try {
-      const payload = await this.fetchPayload()
-      if (this.aborted || !payload) return
-      this.draw(payload)
-    } catch (e) {
-      console.warn("[measure] keeping the thumbnail:", e)
-      this.setStatus(e.message || "Could not load geometry.")
-    }
-  }
-
-  showPoster() {
-    this.element.classList.remove("measure-view--ready")
-    this.stageTarget.replaceChildren()
-    this.setStatus("")
-    this.hovered = this.svg = null
-    // AND THE SELECTION WITH IT. Every leak here is silent, because the poster hides the whole
-    // actions bar: a set left populated goes on being promised by the print button — and printed
-    // — over shapes that are no longer marked, no longer drawn, and no longer even the objects
-    // the next payload will hand out.
-    this.marked.clear()
-    this.nodeByShape.clear()
     this.refreshPrintBar()
   }
 
   // Poll the endpoint until it reports ready, then fetch the payload from the blob URL it names.
+  //
+  // ONE POLL AT A TIME, because load() shares it. It stops itself once the view has left the
+  // document. Resolving with null there settles the shared fetch, so a controller re-attached
+  // later starts a fresh one rather than joining a poll nobody is running.
   async fetchPayload() {
     for (let attempt = 0; attempt <= POLL_DELAYS_MS.length; attempt++) {
       const res = await fetch(this.urlValue, { headers: { Accept: "application/json" } })
@@ -170,13 +221,13 @@ export default class extends Controller {
       if (attempt === POLL_DELAYS_MS.length) break
       this.setStatus("Generating geometry…")
       await this.sleep(POLL_DELAYS_MS[attempt])
-      if (this.aborted) return null
+      if (!this.element.isConnected) return null
     }
     throw new Error("Still generating — reload to check.")
   }
 
   sleep(ms) {
-    return new Promise((resolve) => { this.pollTimer = setTimeout(resolve, ms) })
+    return new Promise((resolve) => { setTimeout(resolve, ms) })
   }
 
   draw(payload) {
@@ -241,14 +292,15 @@ export default class extends Controller {
     // no hover, click, pan or zoom, from a preference-remembering nicety. Binding first means the
     // worst case costs the paper picker, not measuring. Neither call needs the listeners.
     this.populatePaper()
-    // AND THE PRINT BAR, WHICH IS WHY THE ERB'S LITERALS CANNOT DRIFT. Dropping this line alone is
-    // GREEN — probed, not assumed — because the partial happens to render exactly what
-    // refreshPrintBar() would write ("Print all", Clear `hidden`), and the launch button is
-    // display:none once --ready, so draw() cannot run twice without showPoster() (which refreshes
-    // the bar itself). That agreement is not a coincidence to rely on, it is what this call
-    // GUARANTEES: with the partial's label changed to "Print" the whole file stays green with this
-    // line and goes red in five places without it. It is what makes the controller, not the
-    // template, the one definition of the bar at rest.
+    // AND THE PRINT BAR, LAST, written from the selection this drawing starts with. Since
+    // 2026-10-19 (F-S09-1) that is the empty set rest() leaves (see there), so this writes the
+    // words rest() already wrote. What keeps the ERB's at-rest literals from drifting is rest() on
+    // connect(), not this line: the controller rewrites the bar the moment it connects, so the
+    // controller, not the template, is the one definition of the bar at rest. Until then this call
+    // was the only controller write of that bar. A partial reading "Print" stayed green with it
+    // and went red in five places without it, and the argument that draw() could not run twice
+    // without ✕ Image rested on the launch button being display:none. A double click ran it
+    // twice. The generation in load() is what makes that argument true now.
     this.refreshPrintBar()
   }
 
@@ -337,12 +389,14 @@ export default class extends Controller {
 
   print() {
     const shapes = this.targetShapes()
-    // NOT DEAD, BUT ONLY REACHABLE BY DRIVING THIS METHOD DIRECTLY. `allShapes` is undefined
-    // between connect() and the first successful draw(), and in that window the button is
-    // display:none (`.measure-actions` without --ready), so no click can get here. What the guard
-    // buys is the difference between doing nothing and putting a raw TypeError from buildSheets
-    // into the readout as the answer to a button press. Pinned by a test that calls print()
-    // directly, because nothing else can.
+    // NOT DEAD, BUT ONLY REACHABLE BY DRIVING THIS METHOD DIRECTLY. `allShapes` is null whenever
+    // no drawing is on the stage: rest() clears it, and draw() sets it before it adds --ready, the
+    // class that reveals this button. rest() also runs on connect, so a page restored from Turbo's
+    // snapshot cannot arrive with the class and no shapes behind it. It could until 2026-10-19,
+    // and then "the button is display:none" was not enough. What the guard buys is the difference
+    // between doing nothing and putting a raw TypeError from buildSheets into the readout as the
+    // answer to a button press. Pinned by a test that calls print() directly, because nothing else
+    // can.
     if (!shapes || !shapes.length) return
     try {
       // BOTH ARGUMENTS ARE METHODS, NOT LITERALS, SINCE STAGE 4 S4-3. `savePrint()` renders the
@@ -373,8 +427,8 @@ export default class extends Controller {
   // it is what lets the export be asserted as a string in a test rather than as a file on disk.
   downloadSvg() {
     const shapes = this.targetShapes()
-    // The same guard, and the same window, as print()'s: `allShapes` is undefined between
-    // connect() and the first successful draw(), and the button is display:none throughout it.
+    // The same guard as print()'s, for the same state: `allShapes` is null whenever nothing is
+    // drawn, and only a drawing reveals this button.
     if (!shapes || !shapes.length) return
 
     let url
@@ -739,11 +793,14 @@ export default class extends Controller {
   // on how you reached it. The empty arm is still reachable, and only where it is the honest
   // answer: unpicking the LAST part leaves its size on screen beside "nothing selected".
   //
-  // NO `allShapes` GUARD AROUND `restingStatus()`, DELIBERATELY. Both callers exist only after a
-  // successful draw() — `pick` needs a drawn SVG to have been clicked, and Reset lives in
-  // `.measure-actions`, which is `display: none` without --ready — so the same argument
-  // refreshPrintBar() makes about its targets applies: a guard that cannot fail asserts a
-  // condition that does not exist.
+  // NO `allShapes` GUARD AROUND `restingStatus()`, DELIBERATELY. Both callers act on a drawing
+  // THIS controller made. `pick` is bound to the SVG that draw() built, and Reset is in the bar
+  // that --ready reveals. Only draw() adds that class, after recording `allShapes`. rest() takes
+  // it off as it clears them, and runs on connect, so a Turbo-restored snapshot cannot keep the
+  // class over a controller with no shapes. Until 2026-10-19 one could: this argument then rested
+  // on "Reset is display:none", and Reset threw here after a Back. A guard that cannot fail
+  // asserts a condition that does not exist, which is refreshPrintBar()'s argument about its
+  // targets.
   clearMarks() {
     for (const shape of this.marked) {
       this.nodeByShape.get(shape)?.classList.remove("measure-contour--marked")
@@ -821,20 +878,19 @@ export default class extends Controller {
   // page rendered this partial. `files/viewers/_measure.html.erb` takes a `save:` local and a
   // VISITOR's public file page passes false — there is no library for an export to land in and no
   // session to write it with — so those two targets are genuinely absent there, and an unguarded
-  // `this.saveSvgButtonTarget` here throws "Missing target element" out of draw(), which would break
-  // Measure on that page entirely. Measured against the partial, not reasoned: this method runs off
-  // draw(), toggleMarks, clearMarks and showPoster, and draw() is the launch button's own path.
+  // `this.saveSvgButtonTarget` here throws "Missing target element", which would break Measure on
+  // that page entirely. That was measured against the partial, not reasoned, when the throw came
+  // out of draw(). Since rest() calls this method, the same line now throws out of connect(). The
+  // callers are draw(), toggleMarks, clearMarks and rest().
   //
-  // THERE ARE FOUR CALLERS NOW, NOT THREE, AND THE FOURTH RETIRED HALF OF THIS ARGUMENT. The
-  // original three — toggleMarks, clearMarks, showPoster — are each reachable only once the view
-  // is drawn (toggleMarks and clearMarks through a click on the SVG, showPoster off a button in
-  // that same span). `draw()` is not: it runs off the LAUNCH button, which lives in a different
-  // span, so
-  // the clause this comment used to end on — "in the one future it was written for, a partial that
-  // omits the bar, nothing reaches this method at all" — is now FALSE and is deleted rather than
-  // left to be relied on. Such a partial would break draw() itself, and `populatePaper` and
-  // `print()` with it; the answer then is that the partial declares the controls, not that four
-  // methods each grow a guard.
+  // AND SINCE 2026-10-19 IT RUNS ON EVERY CONNECT, through rest() (F-S09-1). That settles what this
+  // comment used to argue in two halves. toggleMarks and clearMarks need a drawing, and draw()
+  // runs off the launch button, so the old version could not say that nothing reaches this
+  // method without a click. Now something always does: every page that renders the partial calls
+  // it before anything is drawn. The clause "in the one future it was written for, a partial that
+  // omits the bar, nothing reaches this method at all" was deleted rather than relied on, and
+  // stays deleted: such a partial breaks connect() itself. The answer then is that the partial
+  // declares the controls, not that four methods each grow a guard.
   // THE LABEL ALWAYS NAMES THE TARGET IN FORCE, and it can no longer do otherwise: the noun comes
   // from `targetNoun()` and the shapes `print()` acts on from `targetShapes()`, so the two halves
   // of the claim are one definition rather than two spellings kept in step by a comment. Two
@@ -932,7 +988,7 @@ export default class extends Controller {
   //
   // `this.view` WENT WITH THEM: every reader of it was one of those six methods, so keeping a
   // mirror here would be state written on every wheel tick and read by nothing. `this.home` stays
-  // because the install needs it, and `this.svg` because `showPoster` still clears it and
+  // because the install needs it, and `this.svg` because `rest` still clears it and
   // measure_print_test.rb's Reset case reads the element's viewBox back through it. The handle is
   // `this.panZoom` — `reset`, `didPan`, `panning`, and `set`/`view` for a caller that ever needs
   // the numbers.

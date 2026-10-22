@@ -240,6 +240,9 @@ module Library
     def self.purge_all!
       adapter = FileLayer.current
       return unless adapter.capabilities.scannable?
+      # NOT WHILE THE LIBRARY FOLDER IS UNCONFIRMED (K §3), the pause Library::ScanJob.scan_all!
+      # takes: nothing has been chosen, so there is no library whose trash this would be.
+      return if Tinkerex::LibraryRoot.pending?
 
       # Share names its root (a path is safe in the queue's database and useful in a failed-jobs
       # row; .to_s because ActiveJob cannot serialize a Pathname). S3 names nothing — its target is

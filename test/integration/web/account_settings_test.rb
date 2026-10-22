@@ -16,7 +16,7 @@ module Web
     setup do
       @user = User.create!(email: "owner@example.com", password: PASSWORD,
                            confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     # --- edit ------------------------------------------------------------------
@@ -109,6 +109,51 @@ module Web
         assert_select "input[name=?][value=?]", "_method", "delete", { count: 1 },
                       "this must be the DELETE form, not the update form"
       end
+    end
+
+    # --- the last admin (2026-10-21) -------------------------------------------
+
+    test "the only admin cannot delete their account while other accounts exist" do
+      @user.update!(admin: true)
+      User.create!(email: "other@example.com", password: PASSWORD, confirmed_at: Time.current)
+
+      assert_no_difference "User.count" do
+        delete user_registration_path, params: { user: { current_password: PASSWORD } }
+      end
+      assert_response :unprocessable_entity
+      assert_match(/only admin/, response.body)
+    end
+
+    test "an admin may delete their account when another admin remains" do
+      @user.update!(admin: true)
+      User.create!(email: "other@example.com", password: PASSWORD, confirmed_at: Time.current, admin: true)
+
+      delete user_registration_path, params: { user: { current_password: PASSWORD } }
+
+      assert_not User.exists?(@user.id)
+    end
+
+    # Found in review: the demo can never be made an admin, so an owner whose only neighbour is the
+    # demo (OVH) must not be held to "make another account an admin".
+    test "the only admin may delete their account when the only other account is the demo" do
+      prior = ENV["DEMO_ACCOUNT_EMAIL"]
+      ENV["DEMO_ACCOUNT_EMAIL"] = "demo@example.com"
+      @user.update!(admin: true)
+      User.create!(email: "demo@example.com", password: PASSWORD, confirmed_at: Time.current)
+
+      delete user_registration_path, params: { user: { current_password: PASSWORD } }
+
+      assert_not User.exists?(@user.id)
+    ensure
+      prior ? ENV["DEMO_ACCOUNT_EMAIL"] = prior : ENV.delete("DEMO_ACCOUNT_EMAIL")
+    end
+
+    test "the only account on a server may delete itself, admin or not" do
+      @user.update!(admin: true)
+
+      delete user_registration_path, params: { user: { current_password: PASSWORD } }
+
+      assert_not User.exists?(@user.id)
     end
 
     test "deleting an account leaves other users untouched" do

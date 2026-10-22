@@ -1,6 +1,15 @@
 require "test_helper"
 
 module Web
+  # Projects::UploadsController: a build-log entry's inline photo upload on share/s3. One multipart
+  # POST writes the bytes to the port at the library root and attaches each file to the entry as an
+  # image.
+  #
+  # ONE TARGET SINCE F-S21-1 (2026-10-19). This file also pinned a project-level route
+  # (POST /projects/:slug/uploads) until it was retired. Redesign slice 4 had moved the hub's Upload
+  # into the top bar, so the route had no caller in the app. Everything it did for a project
+  # (attach, file, name the folder in the flash, a second copy of a name) is pinned through the top
+  # bar's door, FilesController#create, in project_folder_intake_test.rb.
   class ProjectUploadAttachTest < ActionDispatch::IntegrationTest
     include ActiveJob::TestHelper
     PASSWORD = "correct horse battery staple".freeze
@@ -8,188 +17,144 @@ module Web
     # share: one multipart POST writes the bytes to the port AND attaches.
     class ShareTest < ProjectUploadAttachTest
       setup do
-        @root = Pathname.new(Dir.mktmpdir("proj-upload"))
+        @root = use_fresh_share_library!
         @user = User.create!(email: "ups-#{SecureRandom.hex(4)}@example.com",
                              password: PASSWORD, confirmed_at: Time.current)
-        FileLayer.current = FileLayer::Share.new(root: @root.to_s)
-        post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
-      end
-      teardown do
-        FileLayer.reset!
-        FileUtils.remove_entry(@root) if @root&.exist?
+        sign_in_web!(@user, password: PASSWORD)
+        @project = @user.maker_projects.create!(name: "Lamp")
+        @entry = @project.build_log_entries.create!(user: @user, body: "glued the base")
       end
 
-      test "multipart upload writes the file and attaches it" do
-        project = @user.maker_projects.create!(name: "Lamp")
-        file = Rack::Test::UploadedFile.new(StringIO.new("solid cube".b),
-                                            "application/octet-stream", original_filename: "cube.stl")
-        assert_difference "project.file_attachments.count", 1 do
-          post project_uploads_path(project), params: { file: }
+      def photo(name, body = "\x89PNG-#{name}")
+        Rack::Test::UploadedFile.new(StringIO.new(body.b), "image/png", original_filename: name)
+      end
+
+      def entry_photo_names = @entry.file_attachments.reload.map { |a| @user.nodes.find_by!(node_id: a.node_id).name }
+
+      test "multipart photo upload writes and attaches to the entry as image" do
+        assert_difference "@entry.file_attachments.count", 1 do
+          post build_log_entry_uploads_path(@entry), params: { file: photo("p.png") }
         end
-        att = project.file_attachments.last
-        assert_equal "model", att.role
-        assert FileLayer.current.stat(@user, node_id: att.node_id).present?, "bytes must land in the share"
-        assert_redirected_to project_path(project)
-        assert_equal "Uploaded cube.stl. Filed cube.stl into models/.", flash[:notice],
-                     "the sweep filed it and the flash says where (stage 4, S4-2)"
+        assert_equal "image", @entry.file_attachments.last.role
+        assert_path_exists @root.join("p.png"), "a build-log photo lands at the library root"
+        assert_redirected_to project_path(@project)
+        assert_equal "Uploaded p.png.", flash[:notice]
       end
 
       # --- A BATCH THROUGH THIS DOOR (slice 0, 2026-09-10) --------------------------------
       #
-      # This is the door with the extra step: every file must be ATTACHED as well as written, and
-      # the attach has to keep its position relative to the write and the intake sweep (the
-      # ordering the controller's own comment is about). So the batch is pinned here, not only on
-      # the Files page.
+      # This door has an extra step: every file must be ATTACHED as well as written. So the batch is
+      # pinned here, not only on the Files page.
 
-      test "a selection attaches every file, not just the first" do
-        project = @user.maker_projects.create!(name: "Stool")
-        files = [ [ "seat.dxf", "0\nSECTION" ], [ "cap.stl", "solid" ], [ "notes.md", "# hi" ] ].map do |name, body|
-          Rack::Test::UploadedFile.new(StringIO.new(body.b), "application/octet-stream",
-                                       original_filename: name)
+      test "a selection attaches every photo to the entry, not just the first" do
+        assert_difference "@entry.file_attachments.count", 3 do
+          post build_log_entry_uploads_path(@entry),
+               params: { file: [ photo("front.png"), photo("side.jpg"), photo("detail.jpeg") ] }
         end
-
-        assert_difference "project.file_attachments.count", 3 do
-          post project_uploads_path(project), params: { file: files }
-        end
-        assert_equal %w[cap.stl notes.md seat.dxf],
-                     project.file_attachments.map { |a| @user.nodes.find_by(node_id: a.node_id).name }.sort
-        assert_match(/Uploaded 3 files/, flash[:notice].to_s)
+        assert_equal %w[detail.jpeg front.png side.jpg], entry_photo_names.sort
+        assert_equal %w[image], @entry.file_attachments.map(&:role).uniq
+        assert_equal "Uploaded 3 files.", flash[:notice]
       end
 
-      # THE COLLISION HAS TO HAPPEN INSIDE ONE BATCH. Uploading the name twice in two separate
-      # requests does NOT collide: the intake sweep files the first one into models/ between them,
-      # which frees the project root again — measured, the second upload succeeded and all three
-      # attached. Two files of the same name in ONE selection is the case that genuinely refuses,
-      # and it is also the one a maker hits (two folders on disk, both holding `part.stl`).
+      # The repeated name collides at the library root, where this door writes and where no intake
+      # sweep moves the first copy away.
       test "a name repeated inside one selection refuses the second and keeps the rest" do
-        project = @user.maker_projects.create!(name: "Stool")
-        batch = [ "before.stl", "dupe.stl", "dupe.stl", "after.stl" ].map do |name|
-          Rack::Test::UploadedFile.new(StringIO.new("x".b), "application/octet-stream",
-                                       original_filename: name)
-        end
+        batch = %w[before.png dupe.png dupe.png after.png].map { |name| photo(name) }
 
-        assert_difference "project.file_attachments.count", 3 do
-          post project_uploads_path(project), params: { file: batch }
+        assert_difference "@entry.file_attachments.count", 3 do
+          post build_log_entry_uploads_path(@entry), params: { file: batch }
         end
-        names = project.file_attachments.map { |a| @user.nodes.find_by(node_id: a.node_id).name }
-        assert_includes names, "after.stl", "a file AFTER the refusal must still attach"
-        assert_equal 1, names.count("dupe.stl"), "the repeated name must not attach twice"
-        assert_match(/not uploaded: dupe\.stl/, flash[:notice].to_s)
+        names = entry_photo_names
+        assert_includes names, "after.png", "a file AFTER the refusal must still attach"
+        assert_equal 1, names.count("dupe.png"), "the repeated name must not attach twice"
+        assert_match(/not uploaded: dupe\.png \(a file of that name already exists\)/, flash[:notice].to_s)
       end
 
-      test "multipart photo upload writes and attaches to the entry as image" do
-        project = @user.maker_projects.create!(name: "Lamp")
-        entry = project.build_log_entries.create!(user: @user, body: "x")
-        file = Rack::Test::UploadedFile.new(StringIO.new("\x89PNG".b), "image/png", original_filename: "p.png")
-        assert_difference "entry.file_attachments.count", 1 do
-          post build_log_entry_uploads_path(entry), params: { file: }
-        end
-        assert_equal "image", entry.file_attachments.last.role
-      end
+      # --- WHAT THE PORT REFUSES BY NAME (F-S21-2) -------------------------------------------
+      #
+      # Both writable adapters raise FileLayer::NotFound for a condition that belongs to ONE file:
+      # a name the library reserves (`._x`, `.DS_Store`, `.git`), a name that is not a leaf, or a
+      # file over FileLayer::MAX_BYTES. The batch caught only UnsupportedOperation and FetchError,
+      # and this door had no NotFound arm, so each of the two tests below was a 500, the first one
+      # after the earlier photos had already been written and attached.
 
-      # TASK 11's EAGER NUDGE NARROWED THIS GUARANTEE, AND THAT WAS A KNOWN, DELIBERATE TRADE-OFF —
-      # not silently dropped, not a crash, but genuinely weaker than before. FOR A WHILE, THOUGH, IT
-      # WAS ALSO A REGRESSION THIS TEST DID NOT CATCH: the mechanism below is unchanged (still worth
-      # recording precisely, since the fix does not touch it) but the FEEDBACK it left behind briefly
-      # went missing, and this test's old `assert_nil flash[:alert]` for the second upload could not
-      # tell "no error, and the user was told what happened" apart from "no error, and the user was
-      # told NOTHING unusual happened" — both make that assertion pass.
-      #
-      # BEFORE Task 11: the SECOND same-named upload collided with the FIRST at the exact path
-      # FileLayer::Share#write checks (the project folder ROOT), and was refused with a flash.
-      #
-      # AFTER Task 11, BEFORE THIS FIX: the first upload's eager nudge FILES it into "models/" within
-      # the SAME request, which VACATES the root before the second upload's write ever runs its own
-      # clobber check — so the second upload's WRITE now succeeds too. Its own eager nudge then tries
-      # to file IT into "models/" as well, collides with the first file already sitting there
-      # (Maker::MoveNode::Collision), and leaves it un-filed at the project root instead — the SAME
-      # :conflict outcome a later periodic sweep already produces for any other same-named collision
-      # (Maker::ProjectIntake#place), just reached one upload sooner than before. NEITHER upload was
-      # ever silently lost or corrupted: two distinct nodes exist, with distinct bytes, both attached
-      # to the project — one filed, one not. What WAS genuinely gone was the immediate "that name is
-      # taken" flash this test used to pin: Projects::UploadsController called
-      # Maker::ProjectIntake.for_node (via #intake_project_folder) purely for its side effect and
-      # threw away what it answered, so the user saw a bare "Uploaded dup.stl." and had no sign two
-      # files now shared a name until they went looking.
-      #
-      # THIS FIX RESTORES THE FEEDBACK WITHOUT TOUCHING ANY OF THE MECHANISM ABOVE. No project-wide
-      # pre-write duplicate check was added; FileLayer#write, Maker::MoveNode and
-      # Maker::ProjectIntake#place are all untouched; the second upload still succeeds and both nodes
-      # still exist. ProjectFolderIntake#left_unfiled_by_conflict? reads the SAME
-      # Maker::ProjectIntake::Result#skips the service already produced and matches this upload's own
-      # filename against a `:conflict` entry; #project_intake_notice turns a true match into a flash
-      # that says what actually happened instead of staying silent about it. Whether a project-scoped
-      # upload should duplicate-check across the WHOLE project rather than just the immediate write
-      # path is still a real product question, and still not decided here — only the feedback gap is
-      # closed.
-      test "a duplicate filename is no longer refused, and the flash now says where the second copy landed" do
-        project = @user.maker_projects.create!(name: "Lamp")
-        make = -> { Rack::Test::UploadedFile.new(StringIO.new(SecureRandom.hex.b),
-                                                 "application/octet-stream", original_filename: "dup.stl") }
-        post project_uploads_path(project), params: { file: make.call }
-        assert_response :redirect
+      test "a reserved name in the middle of a selection refuses only that file, and the photos around it attach" do
+        assert_difference "@entry.file_attachments.count", 2 do
+          post build_log_entry_uploads_path(@entry),
+               params: { file: [ photo("before.png"), photo("._before.png"), photo("after.png") ] }
+        end
+        assert_equal %w[after.png before.png], entry_photo_names.sort
+        assert_not @user.nodes.exists?(name: "._before.png"), "the refused file has no node"
+        assert_not @root.join("._before.png").exist?, "and no bytes"
+        assert_redirected_to project_path(@project)
         assert_nil flash[:alert]
-        assert_equal "Uploaded dup.stl. Filed dup.stl into models/.", flash[:notice],
-                     "the ordinary, non-colliding case now names the folder the sweep used"
-        assert_equal 1, project.file_attachments.count
-
-        post project_uploads_path(project), params: { file: make.call }  # same name -> NOT refused now
-        assert_response :redirect                                       # still never a 500
-        assert_nil flash[:alert],
-                   "this is not an error — the upload succeeded and the file IS attached"
-        assert_equal "Uploaded dup.stl, but a file of that name is already in models/, " \
-                     "so this one stayed at the project root.", flash[:notice],
-                     "the restored feedback: what happened, not just that nothing crashed"
-        assert_equal 2, project.file_attachments.count, "two distinct files, not a clobber"
-
-        nodes = project.file_attachments.reload.map { |a| @user.nodes.find_by!(node_id: a.node_id) }
-        assert_equal [ "dup.stl", "dup.stl" ], nodes.map(&:name).sort
-        assert_equal 2, nodes.map(&:node_id).uniq.size, "distinct nodes, no bytes overwritten"
-        filed, stuck = nodes.partition { |n| n.storage_path == "Projects/lamp/models/dup.stl" }
-        assert_equal 1, filed.size, "the first upload's eager nudge files it"
-        assert_equal 1, stuck.size, "the second collides at the destination and stays at the project root"
-        assert_equal "Projects/lamp/dup.stl", stuck.first.storage_path
+        assert_equal "Uploaded 2 files. This one was not uploaded: ._before.png (the library cannot store it).",
+                     flash[:notice]
       end
 
-      # UPDATED FOR TASK 11's EAGER NUDGE, matching the identical rename on the chunk side above: a
-      # share/s3 upload straight into a project folder no longer stays loose at the root — it lands
-      # one hop deeper, in its category subfolder, in the SAME request.
-      test "a project-view share upload is filed under Projects/<slug>/<category>" do
-        project = @user.maker_projects.create!(name: "Lamp")
-        file = Rack::Test::UploadedFile.new(StringIO.new("cube".b), "application/octet-stream", original_filename: "cube.stl")
-        post project_uploads_path(project), params: { file: }
-        node = @user.nodes.find_by!(node_id: project.file_attachments.last.node_id)
-        assert_equal "Projects/lamp/models/cube.stl", node.storage_path
+      test "a single photo the port refuses answers an alert, never a 500" do
+        assert_no_difference "@entry.file_attachments.count" do
+          post build_log_entry_uploads_path(@entry), params: { file: photo("._photo.png") }
+        end
+        assert_response :redirect
+        assert_equal "Couldn't upload that file — the library cannot store a file with that name or size.",
+                     flash[:alert]
+        assert_not @root.join("._photo.png").exist?
+      end
+
+      # UNCHANGED BY F-S21-2, and pinned because the refusal now passes through the batch's loop: a
+      # single file still re-raises so this controller's own `rescue_from` answers it in its own
+      # words, rather than in the batch's sentence.
+      test "a second upload of the same name is still the clobber refusal" do
+        post build_log_entry_uploads_path(@entry), params: { file: photo("p.png", "first") }
+        follow_redirect!
+
+        post build_log_entry_uploads_path(@entry), params: { file: photo("p.png", "second") }
+
+        assert_response :redirect
+        assert_equal "Couldn't upload that file — a file with the same name may already exist.", flash[:alert]
+        assert_equal 1, @entry.file_attachments.count, "the refused copy attaches nothing"
+        assert_equal "first", @root.join("p.png").binread, "the original bytes survive the refusal"
       end
 
       # --- WHERE THE BROWSER LANDS (Projects::UploadsController#after_upload_url) --------------
       #
-      # The chunk branch honors data-uploader-redirect-url-value in uploader_controller.js; the
+      # The chunk branch honors data-uploader-redirect-url-value in uploader_controller.js. The
       # multipart branch must reach the same place, so a hidden redirect_url is followed instead of
-      # the project page. (Moved here from the retired current-project Files uploader's test, whose
-      # only caller of a non-project redirect_url went with it in slice 4.)
+      # the project page.
       test "an upload carrying a redirect_url lands there, not on the project page" do
-        project = @user.maker_projects.create!(name: "Desk Lamp")
-        folder = project.ensure_library_folder!(@user)
-        file = Rack::Test::UploadedFile.new(StringIO.new("solid cube".b),
-                                            "application/octet-stream", original_filename: "cube.stl")
-        assert_difference "project.file_attachments.count", 1 do
-          post project_uploads_path(project),
-               params: { file:, redirect_url: files_path(folder: folder.node_id) }
+        assert_difference "@entry.file_attachments.count", 1 do
+          post build_log_entry_uploads_path(@entry), params: { file: photo("p.png"), redirect_url: files_path }
         end
-        assert_redirected_to files_path(folder: folder.node_id)
+        assert_redirected_to files_path
       end
 
       # An open-redirect guard: a tampered redirect_url pointing off-site must never send the user
       # away from this app. url_from returns nil for anything non-relative, so the controller falls
       # back to the project page. (The upload itself still succeeds.)
       test "an off-site redirect_url is refused — the upload falls back to the project page" do
-        project = @user.maker_projects.create!(name: "Desk Lamp")
-        file = Rack::Test::UploadedFile.new(StringIO.new("cube".b),
-                                            "application/octet-stream", original_filename: "cube.stl")
-        post project_uploads_path(project),
-             params: { file:, redirect_url: "https://evil.example.com/phish" }
-        assert_redirected_to project_path(project)
+        post build_log_entry_uploads_path(@entry),
+             params: { file: photo("p.png"), redirect_url: "https://evil.example.com/phish" }
+        assert_redirected_to project_path(@project)
+        assert_equal 1, @entry.file_attachments.count
+      end
+
+      # THE PROJECT-LEVEL ROUTE IS GONE (F-S21-1): a hand-made POST to it is a 404 that writes
+      # nothing. The body carries a REAL build_log_entry_id on purpose. This controller finds its
+      # entry from that param, so if the route were restored, the request would reach a controller
+      # that writes. The 404 can then only come from the route table, never from an entry lookup
+      # that happened to miss.
+      test "POST /projects/:slug/uploads is not routed and writes nothing" do
+        before = @user.nodes.count
+
+        post "/projects/#{@project.slug}/uploads",
+             params: { file: photo("cube.png"), build_log_entry_id: @entry.id }
+
+        assert_response :not_found
+        assert_equal before, @user.nodes.count, "no file was written"
+        assert_not @root.join("cube.png").exist?
+        assert_empty @entry.file_attachments
+        assert_empty @project.file_attachments
       end
     end
   end

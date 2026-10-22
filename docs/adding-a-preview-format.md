@@ -13,6 +13,13 @@ and can also be measured.
      do) — do **not** emit `image/svg+xml`, the web layer will not inline it (SVG can carry script).
    - Raise a renderer-specific error (e.g. `RenderError`) on bad input, never a bare crash — the
      job classifies a known "no renderable content" condition as `unsupported`/`failed`.
+   - **Paint ink on paper**: an opaque ground of exactly `Maker::Previews::Palette::PAPER` (white),
+     drawn in the file's own colours, or the palette's `INK` / `MATERIAL` where it has none. The
+     browser multiplies every thumbnail onto a themed card, so white becomes the card and a ground a
+     shade off white shows as a tinted square in both themes. `SvgRasterizer` already paints the
+     ground. A later change to what a renderer paints needs a `THUMBNAIL_REVISION` +
+     `payload_revision` bump (and its row in `thumbnail_revision_test.rb` moved with it), or the
+     library keeps the old pictures (`docs/invariants/measure-view.md`).
 
 2. **Register it** — one line in `app/services/maker/previews/registry.rb` (`"<ext>" => Renderer`).
 
@@ -53,8 +60,8 @@ and can also be measured.
    traversal.
 
 Thumbnails generate eagerly: `Maker::Previews::Enqueue.call(user:, node_id:, name:, version_id:)`
-fires from the upload, API-commit, and scan seams (see `FilesController#enqueue_preview`,
-`V1::CommitsController#finalize`, `Library::Reconciler`), so no extra wiring is needed once the
+fires from the upload and scan seams (see `Maker::Addons::LibraryOutput.enqueue_preview`, which
+every upload door calls, and `Library::Reconciler`), so no extra wiring is needed once the
 renderer is registered — a newly registered extension is picked up automatically.
 
 **Licensing:** permissive only (CLAUDE.md §9) — no GPL/AGPL toolchains in shipped artifacts. The

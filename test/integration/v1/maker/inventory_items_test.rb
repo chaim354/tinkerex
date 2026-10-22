@@ -45,6 +45,57 @@ module V1
         assert_response :unprocessable_entity
       end
 
+      # WHAT A POSTABLE ROW IS BELONGS TO Maker::InventoryTransaction, SO THIS DOOR REFUSES WITH NO
+      # LINE OF ITS OWN (V1::BaseController maps RecordInvalid to 422). It once lived in the web
+      # controller alone, and here "1e400" and "0" answered 201: an Infinity row the immutable ledger
+      # can never take back, and a row that records nothing. A JSON NUMBER 1e400 decodes to
+      # Float::INFINITY and posted too. "Infinity"/"-Infinity"/"NaN" as strings were already refused
+      # as not-a-number; they stay so the whole family is pinned at this door. The message is asserted
+      # because the 422 must be the delta VALIDATION: none of these inputs raises ArgumentError on this
+      # path, and since F-S18-1 V1::BaseController maps none, so one that did would be a 500.
+      test "adjust answers 422 for a zero, non-finite or out-of-column delta and posts nothing" do
+        id = create_item
+        post "/v1/maker/inventory_items/#{id}/adjust", params: { delta: 12, reason: "initial" },
+             as: :json, headers: auth(@token)
+        assert_response :created
+
+        # The delta exactly as it crosses the wire: five JSON strings, then two JSON numbers.
+        [ '"Infinity"', '"-Infinity"', '"NaN"', '"1e400"', '"0"', "1e400", "-1e400" ].each do |wire|
+          assert_no_difference -> { ::Maker::InventoryTransaction.count }, "delta #{wire} reached the ledger" do
+            post "/v1/maker/inventory_items/#{id}/adjust", params: %({"delta": #{wire}, "reason": "restocked"}),
+                 headers: auth(@token).merge("CONTENT_TYPE" => "application/json")
+          end
+          assert_response :unprocessable_entity, "delta #{wire}"
+          assert_match(/\AValidation failed: Delta /, JSON.parse(response.body)["error"], "delta #{wire}")
+        end
+        assert_equal 12, ::Maker::InventoryItem.find(id).quantity_cached
+      end
+
+      # A PROJECT THAT IS NOT THE ITEM OWNER'S IS DROPPED, NOT REFUSED, AT THIS DOOR TOO. It was
+      # stored as sent, and the poster's own ledger page then rendered that tenant's private project
+      # name and linked its slug, so walking ids listed every tenant's projects. 200 is asserted
+      # FIRST: a page that failed to render, or a sign-in that never took, is free of the name too.
+      test "adjust drops another user's project, and the poster's ledger never names it" do
+        poster = User.create!(email: "poster-#{SecureRandom.hex(4)}@example.com", password: WEB_PASSWORD,
+                              confirmed_at: Time.current)
+        token = register(poster.email)
+        theirs = User.create!(email: "theirs-#{SecureRandom.hex(4)}@example.com", confirmed_at: Time.current,
+                              omniauth_signup: true)
+        foreign = theirs.maker_projects.create!(name: "Their Secret Lamp")
+        id = create_item({}, token:)
+
+        post "/v1/maker/inventory_items/#{id}/adjust",
+             params: { delta: 5, reason: "restocked", project_id: foreign.id }, as: :json, headers: auth(token)
+        assert_response :created
+        assert_nil ::Maker::InventoryTransaction.where(inventory_item_id: id).sole.project_id
+
+        sign_in_web!(poster)
+        get inventory_item_path(id)
+        assert_response :success
+        assert_not_includes response.body, foreign.name
+        assert_not_includes response.body, project_path(foreign)
+      end
+
       test "transactions lists the ledger newest-first" do
         id = create_item
         post "/v1/maker/inventory_items/#{id}/adjust", params: { delta: 10, reason: "initial" },

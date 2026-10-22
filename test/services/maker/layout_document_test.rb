@@ -66,7 +66,9 @@ module Maker
       text = d.to_yaml(project_name: "Lamp")
 
       assert_includes text, "- folder: firmware\n"
-      refute_includes text, "models"
+      # THE FOLDER ENTRY, NOT THE WORD: since 2026-10-21 `models` is also a fixed PANEL key
+      # (`- panel: models`), so a bare "models" substring no longer says anything about this folder.
+      refute_includes text, "folder: models"
       refute_includes text, MODELS
       assert d.parse(text).ok?, "what it exports it can read back"
     end

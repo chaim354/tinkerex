@@ -41,13 +41,34 @@
     --shadow-float: 0 8px 24px rgba(27, 28, 25, .14), 0 1px 2px rgba(27, 28, 25, .10);
     --shadow-toggle: 0 1px 2px rgba(27, 28, 25, .12);
     --scrim: rgba(27, 28, 25, .45);
-    /* A user's PHOTO is not a render: it sits on a neutral matte, never on the white stage. */
+    /* A user's PHOTO is not a render: it sits on a neutral matte, never on the paper card. */
     --photo-stage: #ebe8e1;
-    /* Rendered drawings (thumbnails, generator previews, cut sheets) are opaque white PNGs, so
-       their stage stays paper-white in both themes; a dark stage would frame a white square.
-       Anything painted ON the stage uses --thumb-ink, which does not flip either. */
-    --thumb-stage: #ffffff;
+    /* EVERY THUMBNAIL IS INK ON PAPER (design-system.md rule 5, 2026-10-21). A render keeps a
+       pure-white ground (ours, LightBurn's own, a PDF page) and is MULTIPLIED onto this card, so
+       white becomes the card and ink stays ink. The card is light in BOTH themes because the ink is
+       often the FILE's own colour (a black or blue laser layer), which reads on no dark ground; in
+       Graphite it is a dimmed paper rather than a white square. --thumb-ink is what the app paints
+       on the card itself (the type label, the spinner, the failed mark) and flips with it. The
+       Measure stage is this card too: it draws the same file colours. */
+    --thumb-stage: #fcfbf8;
     --thumb-ink: #5b5c55;
+    /* ONE MESH MATERIAL for the STL and F3D thumbnailers (Maker::Previews::Palette::MATERIAL, which
+       test/services/maker/previews/palette_test.rb holds equal to this) and the 3D viewer's
+       default colour. Deliberately NOT redefined per theme: it clears 3:1 on the viewer's --raised
+       in Paper (3.44) and Graphite (3.61) and on the card in both (4.18, 3.58), so a live theme
+       switch has only the viewer's background to repaint. */
+    --model-material: #7f7b73;
+    /* Syntax colours for the code viewers (lib/codemirror_theme.js's HighlightStyle). Every one
+       clears 4.5:1 on --surface in its theme; --code-comment is the lowest, 5.13:1 in both. */
+    --code-keyword: #9a3412;
+    --code-string: #2f6b2a;
+    --code-number: #8a5300;
+    --code-comment: #6b6c64;
+    --code-function: #1c5d99;
+    --code-type: #6d3fa0;
+    --code-property: #7c4a12;
+    --code-meta: #5b5c55;
+    --code-invalid: #b42318;
     /* Aliases for rules migrated from the pre-2026-09 sheets. New rules use the names above. */
     --muted: var(--fg-muted);
     --soft: var(--raised);
@@ -100,6 +121,19 @@
     --shadow-toggle: 0 1px 2px rgba(0, 0, 0, .5);
     --scrim: rgba(0, 0, 0, .6);
     --photo-stage: #0e0f0c;
+    /* The dimmed paper (rule 5): 9.6:1 against Graphite's page where white was ~19:1, so a grid
+       of tiles no longer out-shines the text; black ink 11:1, a LightBurn blue layer 6.7:1 on it. */
+    --thumb-stage: #bfbbb2;
+    --thumb-ink: #3d3e38;
+    --code-keyword: #ff9a66;
+    --code-string: #93c97c;
+    --code-number: #e3b45a;
+    --code-comment: #8e8d85;
+    --code-function: #82b9ee;
+    --code-type: #c4a5ee;
+    --code-property: #dfb98c;
+    --code-meta: #a3a299;
+    --code-invalid: #f36c5c;
   }
   @media (prefers-color-scheme: dark) {
     :root[data-theme="system"] {
@@ -127,6 +161,19 @@
       --shadow-toggle: 0 1px 2px rgba(0, 0, 0, .5);
       --scrim: rgba(0, 0, 0, .6);
       --photo-stage: #0e0f0c;
+      /* The dimmed paper (rule 5): 9.6:1 against Graphite's page where white was ~19:1, so a grid
+         of tiles no longer out-shines the text; black ink 11:1, a LightBurn blue layer 6.7:1 on it. */
+      --thumb-stage: #bfbbb2;
+      --thumb-ink: #3d3e38;
+      --code-keyword: #ff9a66;
+      --code-string: #93c97c;
+      --code-number: #e3b45a;
+      --code-comment: #8e8d85;
+      --code-function: #82b9ee;
+      --code-type: #c4a5ee;
+      --code-property: #dfb98c;
+      --code-meta: #a3a299;
+      --code-invalid: #f36c5c;
     }
   }
 }
@@ -150,8 +197,27 @@
     font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap;
     src: url("ibm-plex-mono-500.woff2") format("woff2");
   }
+  /* KiCanvas's icon font (Apache-2.0, LICENSE-material-symbols.txt), written by bin/build-kicanvas,
+     which also deletes the Google Fonts <link> upstream injected; its labels inherit --font-ui. This
+     document-level rule reaches the viewer's shadow DOM, and nothing else names the family, so the
+     492 KB file is fetched only on a page where a KiCanvas icon renders. `block`, not `swap`: an icon
+     is a ligature, so a fallback face would spell its NAME ("zoom_in") until the font arrived.
+     Rename the family and every icon reads as a word: the build checks the bundle still asks for it. */
+  @font-face {
+    font-family: "Material Symbols Outlined"; font-style: normal; font-weight: 400; font-display: block;
+    src: url("material-symbols-outlined.woff2") format("woff2");
+  }
 
   *, *::before, *::after { box-sizing: border-box; }
+  /* THE `hidden` ATTRIBUTE IS AUTHORITATIVE, HERE AND ONCE (F-S34-2). Any author `display` outranks
+     the user agent's `[hidden] { display: none }`, so a component that hid with the attribute had to
+     restate it: seven restatements in three sheets, each added after a shipped bug, and the page
+     editor's YAML drawer, which had none, rendered while hidden. `!important` in this EARLY layer is
+     the cascade's own tool for it: important declarations reverse the layer order, so this beats
+     every component, shell, page and unlayered vendor rule, and no component restates `[hidden]`.
+     `until-found` keeps the user agent's behaviour, which find-in-page reveals. css_hygiene_test.rb
+     refuses a `[hidden]` rule anywhere else; shell_test.rb probes it in a browser. */
+  [hidden]:not([hidden="until-found"]) { display: none !important; }
   html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--fg);

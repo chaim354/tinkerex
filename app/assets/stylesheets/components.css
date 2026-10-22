@@ -212,12 +212,6 @@
   .tab-link:hover { color: var(--fg); text-decoration: none; }
   .tab-link.is-active, .tab-link[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
   .tab-pane { display: grid; gap: 12px; }
-  /* AN AUTHOR `display` BEATS THE USER AGENT'S `[hidden] { display: none }`, so the rule above would
-     otherwise leave every pane on screen while tabs_controller dutifully set `hidden` on all but
-     one — the tabs feature silently absent, with the DOM saying it was working. Measured here: all
-     three panes visible with `tabs-ready` on the element. Any component given a `display` must
-     restate this if anything ever hides it with the attribute. */
-  .tab-pane[hidden] { display: none; }
   .tab-heading { margin: 0; }
   .tabs.tabs-ready .tab-heading { display: none; }
 
@@ -306,31 +300,55 @@
 
   /* --- Tiles and thumbnails (the markup is files/_thumb.html.erb; thumbs_controller swaps its
      children, so every state below keeps its class) --- */
+  /* INK ON PAPER (design-system.md rule 5). Every render keeps a pure-white ground, and MULTIPLY
+     makes that white the card while ink stays ink, so our renders, LightBurn's own embedded
+     thumbnails and a PDF's page 1 all land on one ground in both themes without a stored pixel
+     being edited. `isolation` keeps the blend inside the tile: without it the image multiplies
+     with whatever is behind the tile, not with the card. A photo opts out below. */
   .thumb {
     position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden;
     border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--thumb-stage); color: var(--thumb-ink);
+    isolation: isolate;
   }
-  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; mix-blend-mode: multiply; }
   .thumb-icon { font: 500 11px/1 var(--font-mono); letter-spacing: .06em; color: var(--thumb-ink); }
   .thumb-spinner {
     width: 14px; height: 14px; border: 2px solid transparent; border-top-color: var(--thumb-ink); border-right-color: var(--thumb-ink);
-    border-radius: 50%; animation: thumb-spin .8s linear infinite;
+    border-radius: 50%;
   }
+  /* A SPINNER TURNS ONLY WHERE THE POLL WILL ANSWER IT: inside a cell thumbs_controller.js reads
+     (`cellTargets`, where "a cell holding a spinner" IS its pending predicate). Anywhere else, on
+     every public surface (/files/thumbnails is session-authed) and under any mount with no cell,
+     nothing will replace it, so it is a still ring: the render is queued, it will not arrive in this
+     tab. Keyed on the poll's own markup, so no page sheet lists the containers that do not poll —
+     pages/public.css kept that list and missed two (F-S34-1). test/system/thumb_spinner_test.rb. */
+  [data-thumbs-target~="cell"] .thumb-spinner { animation: thumb-spin .8s linear infinite; }
   @keyframes thumb-spin { to { transform: rotate(360deg); } }
   table.files .thumb { width: 32px; height: 32px; flex: 0 0 32px; }
   .folder-thumb, .generic-thumb { background: var(--raised); color: var(--fg-muted); }
   .folder-thumb .folder-glyph { width: 40%; height: 40%; }
   .generic-thumb { font: 500 12px/1 var(--font-mono); letter-spacing: .08em; }
-  /* A user's PHOTO on a tile: the neutral matte and a crop, never letterboxed in white. */
+  /* A user's PHOTO on a tile: the neutral matte and a crop, never letterboxed on the card. NOT
+     multiplied: a photo is not ink on paper, and Graphite's matte is near-black, so a multiplied
+     photo would be a black square. */
   .thumb.photo { background: var(--photo-stage); }
-  .thumb.photo img { object-fit: cover; }
+  .thumb.photo img { object-fit: cover; mix-blend-mode: normal; }
+  /* THE SAME CARD AT A VIEWER'S SIZE: a file page's poster, the public hero's render. The `.thumb`
+     rule above, for an image that is not a tile. Spans its column and centres the picture, so a
+     poster occupies the footprint its viewer opens into. */
+  .render-card {
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--thumb-stage);
+    isolation: isolate;
+  }
+  .render-card img { display: block; max-width: 100%; height: auto; mix-blend-mode: multiply; }
   /* A FAILED RENDER KEEPS ITS TYPE ICON AND GAINS A MARK, so "no preview for this type" and "the
      render failed" stop looking identical (F onboarding). thumbs_controller.js adds the class, with
      the icon's title, when the poll answers `failed`; an unsupported file gets neither. A STATE OF
      THE COMPONENT, so it lives here and not in a page sheet: the poll runs on Recent, Projects, the
      project page and the model pages as well as the Library. The mark is a glyph, not colour alone
      (design-system.md rule 13), painted in the stage's own pair, `--thumb-ink` and `--thumb-stage`,
-     which do not flip (rule 5), so it reads the same in both themes. The second `content` hides the
+     which flip together (rule 5), so it keeps its contrast on the card in both themes. The second `content` hides the
      glyph from a screen reader where the alt syntax is understood; the title carries the words. */
   .thumb.thumb-failed::after {
     content: "!"; content: "!" / "";
@@ -447,10 +465,6 @@
   .flash.flash-notice::before { content: "Done"; color: var(--ok); }
   .flash-alert { border-color: var(--danger); background: var(--danger-soft); }
   .flash.flash-alert::before { content: "Problem"; color: var(--danger); }
-  /* `.flash { display: flex }` outranks the UA's `[hidden] { display: none }`, so a flash rendered
-     hidden (the openscad addon bundle ships `p.flash.flash-alert[hidden]` as a notice slot) showed
-     as an empty PROBLEM box on every load. Same shape as `.tab-pane[hidden]`. */
-  .flash[hidden] { display: none; }
   .flash-text { flex: 1; }
   .flash-close { background: none; border: 0; padding: 0 2px; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; opacity: .7; }
   .flash-close:hover { opacity: 1; }
@@ -550,12 +564,6 @@
      `.repo-browser` component would have been a second definition of all of them. */
   .filechooser--inline { position: static; width: 100%; max-height: none; height: 320px; border: 1px solid var(--line); border-radius: var(--radius-panel); }
   .filechooser-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
-  /* BACK IS HIDDEN AT THE ROOT BY `el.hidden` (file_chooser.js#render), and `.btn`'s author
-     `display: inline-flex` beats the user agent's `[hidden] { display: none }` — the trap
-     `.tab-pane[hidden]` above already records, met a second time. Without this line the control
-     goes on rendering, focusable and styled as available, while the DOM says it is hidden: the
-     mutation-check for the JS change reddens on exactly that. Pinned by repo_browser_test.rb. */
-  .filechooser-back[hidden] { display: none; }
   /* The crumbs keep their font and take the rest of the bar; the bar already draws the divider, so
      the crumbs' own bottom border would double it. */
   .filechooser-bar .filechooser-crumbs { flex: 1; min-width: 0; padding: 0; border-bottom: 0; }
@@ -616,6 +624,55 @@
     margin: 0 0 var(--space-4); padding: 10px 12px; border: 1px solid var(--info); border-radius: var(--radius-panel);
     background: var(--info-soft); color: var(--fg); font-size: 14px; overflow-wrap: anywhere;
   }
+/* --- The calculator (layouts/_calculator.html.erb, calculator_controller.js; 2026-10-21). A
+   native <dialog> opened with showModal(), so it sits in the top layer above every page and its
+   ::backdrop is the scrim; the UA's own dialog border, padding and colours are reset here. At
+   phone width it takes the whole width less the gutter and scrolls inside itself, so nothing on
+   a 375px screen scrolls sideways (design-system.md rule 11). --- */
+dialog.calculator {
+  width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow-y: auto;
+  border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
+  background: var(--surface); color: var(--fg); font: 400 14px/1.4 var(--font-ui);
+}
+dialog.calculator::backdrop { background: var(--scrim); }
+.calculator-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.calculator-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
+.calculator-close { min-width: var(--control-height-small); min-height: var(--control-height-small); background: none; border: 0; border-radius: var(--radius-control); color: var(--fg-muted); font-size: 20px; line-height: 1; cursor: pointer; }
+.calculator-close:hover { background: var(--raised); color: var(--fg); }
+.calculator-entry { padding: 14px 16px 0; }
+.calculator-input-label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--fg-muted); }
+.calculator-input-row { display: flex; gap: var(--space-2); }
+.calculator-input-row .calculator-input { flex: 1; min-width: 0; font: 400 16px/22px var(--font-mono); }
+.calculator-equals { min-width: 44px; font-size: 18px; }
+.calculator-answer { padding: 10px 16px 4px; min-height: 52px; overflow-wrap: anywhere; }
+.calculator-result { display: block; font: 600 22px/1.3 var(--font-mono); color: var(--fg); }
+.calculator-result.stale { color: var(--fg-muted); }
+.calculator-result-alt { display: block; font: 400 13px/1.4 var(--font-mono); }
+.calculator-error { margin: 0; padding: 6px 10px; border-radius: var(--radius-control); background: var(--danger-soft); color: var(--danger); font-size: 13px; }
+.calculator-fraction { display: flex; align-items: center; gap: var(--space-2); padding: 4px 16px 10px; font-size: 12px; }
+.calculator-section { margin: 0 16px; border-top: 1px solid var(--line); }
+.calculator-section > summary { padding: 10px 0; font-weight: 500; cursor: pointer; }
+.calculator-section[open] > summary { padding-bottom: 6px; }
+.calculator-section[open] { padding-bottom: 12px; }
+.calculator-history { list-style: none; margin: 0 0 8px; padding: 0; max-height: 180px; overflow-y: auto; }
+.calculator-history-item { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--radius-control); background: none; color: var(--fg); font: 400 13px/1.4 var(--font-mono); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.calculator-history-item:hover { background: var(--raised); }
+.calculator-history-item code { font: inherit; }
+.calculator-history-result { color: var(--fg-muted); }
+.calculator-save-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--space-2); }
+.calculator-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; font-size: 12px; color: var(--fg-muted); }
+.calculator-field select, .calculator-field input { width: 100%; min-width: 0; box-sizing: border-box; }
+.calculator-save-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin-top: var(--space-2); }
+.calculator-save-what { font: 400 12px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+.calculator-saved { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: var(--radius-control); background: var(--ok-soft); color: var(--fg); font-size: 13px; }
+.calculator-save-error { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: var(--radius-control); background: var(--danger-soft); color: var(--danger); font-size: 13px; }
+.calculator-save-hint { margin: 0 0 var(--space-2); font-size: 13px; }
+.calculator-help { margin: 0; padding: 10px 16px 14px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; }
+.calculator-help code { font: 400 12px/1 var(--font-mono); white-space: nowrap; }
+@media (max-width: 480px) {
+  .calculator-save-fields { grid-template-columns: minmax(0, 1fr); }
+}
+
   /* The demo's door on the sign-in card (users/sessions/new): its button and one sentence, set off
      from the form below by the hairline the card's links use above them. */
   .demo-entry { margin: 0 0 var(--space-4); padding: 0 0 var(--space-4); border-bottom: 1px solid var(--line); }

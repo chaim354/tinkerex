@@ -8,6 +8,9 @@
   .build-log-panel .panel-head > details.composer[open] { flex-basis: 100%; }
   /* --- Index --- */
   .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
+  /* THE MODELS PANEL (2026-10-21): a model card with its Detach under it, centred. */
+  .models-panel .project-model { display: flex; flex-direction: column; gap: 6px; }
+  .models-panel .project-model > form { align-self: center; }
   /* Deliberately NOT `align-items: center` here: `.project-card` is a flex item of `.project-tile`
      with no explicit width, so `align-items: center` sizes it to shrink-to-fit (its content's own
      width) instead of stretching it — which starves `.project-card .thumb`'s `width: 100%` down to
@@ -48,13 +51,17 @@
   .project-hero { display: flex; flex-direction: column; gap: 6px; margin: 0 0 20px; }
   .project-hero-img { display: block; width: 100%; max-height: 50vh; object-fit: contain;
                       border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--thumb-stage); }
+  /* The public page's RENDERED cover sits on `.render-card` (components.css), which owns the card,
+     the border and the multiply, so the picture inside drops its own: an image painting the card
+     colour itself would be multiplied by the card a second time and read darker. */
+  .project-hero-render .project-hero-img { border: 0; border-radius: 0; background: none; }
   .project-hero-thumb { display: block; width: min(100%, 480px); }
   .project-hero-thumb .thumb { width: 100%; height: 240px; }
   .project-hero-name { font-size: 12px; }
   /* THE COVER IN THE HEAD (slice 6). The hero partial is unchanged; it is placed and sized here. A
      photo sits on `--photo-stage`, cropped to fill (design-system.md rule 5: a user's photo is not a
-     render); a poll cell keeps its `.thumb`'s own white stage, because a render is an opaque white
-     PNG, and is stretched to the same square. The name below the picture is the old full-width
+     render); a poll cell keeps its `.thumb`'s own card, where a render is multiplied (rule 5), and
+     is stretched to the same square. The name below the picture is the old full-width
      hero's caption, and the head already says what the picture is of. */
   .project-head .project-hero { flex: none; width: 96px; height: 96px; margin: 0; gap: 0; overflow: hidden;
                                 background: var(--photo-stage); border-radius: var(--radius-control); }
@@ -82,6 +89,10 @@
      ::Layout#width_for) rather than this sheet naming three panel classes. `.panel` stays in the
      rule for the public page's repo cards, which render outside a slot. */
   .project-panels > .panel, .project-panels > .panel-slot { min-width: 0; }
+  /* A SHELF GROUP'S HEADING (2026-10-20, ProjectsHelper#panels_with_group_heads) spans the grid
+     above its panels, on one column and two. It is `.group-head`, the component, qualified by its
+     place in the grid; masonry_controller.js spans it like any other child. */
+  .project-panels > .shelf-group-head { grid-column: 1 / -1; margin: 8px 0 0; }
   @media (min-width: 900px) {
     .project-panels { grid-template-columns: 1fr 1fr; }
     .project-panels > .panel-slot.panel--full { grid-column: 1 / -1; }
@@ -115,6 +126,9 @@
   /* Quiet (S4-1): the heading, the badge and one sentence on one line. `.panel--quiet` already
      zeroes the head's margin and hides the `.mono.muted` count; the sentence needs its own. */
   .folder-panel.panel--quiet > p { margin: 0; }
+  /* Quiet (2026-10-21), as Tasks is: an empty Models panel is its heading, Add model and "No models
+     yet." on one line, so its sentence needs the same reset. */
+  .models-panel.panel--quiet > p { margin: 0; }
 
   /* --- Files panel: 96px tiles, Detach in the corner on hover --- */
   .attachments-panel .panel-path { font-size: 12px; margin-left: 8px; }
@@ -292,6 +306,29 @@
   .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
   .sheets-panel .sheet-row:last-child { border-bottom: 0; }
   .sheets-panel .sheet-row .muted { font: 11px/1.4 var(--font-mono); }
+  /* Saved calculations (projects/_calculations, 2026-10-21): label and answer on one line, the
+     expression under them in mono (it is data), the three acts after. Long expressions wrap
+     rather than widen the panel. */
+  /* A FULL LINE OF ITS OWN, because the rows can arrive inside a QUIET panel: "+ Add panel" opens
+     it empty (`.panel--quiet` is a flex row of heading and control), and a save from the modal
+     replaces only the rows (CalculationsController#create's stream), so until the next visit the
+     list is a flex item there. Inert in the panel's ordinary block layout. */
+  .calculations-panel .calculation-rows { flex-basis: 100%; min-width: 0; }
+  .calculations-panel .calculation-list { list-style: none; margin: 0; padding: 0; }
+  .calculations-panel .calculation-row { display: grid; gap: 4px; padding: 8px 0; border-bottom: 1px solid var(--line); }
+  .calculations-panel .calculation-row:last-child { border-bottom: 0; }
+  .calculations-panel .calculation-main { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 12px; }
+  .calculations-panel .calculation-label { font-weight: 500; overflow-wrap: anywhere; }
+  .calculations-panel .calculation-result { font: 600 14px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+  .calculations-panel .calculation-expression { font: 400 12px/1.4 var(--font-mono); color: var(--fg-muted); overflow-wrap: anywhere; }
+  .calculations-panel .calculation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+  .calculations-panel .calculation-actions form { display: inline; }
+  .calculations-panel .calculation-rename > summary { list-style: none; cursor: pointer; }
+  .calculations-panel .calculation-rename > summary::-webkit-details-marker { display: none; }
+  .calculations-panel .calculation-rename[open] { flex-basis: 100%; order: 1; }
+  .calculations-panel .calculation-rename-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  .calculations-panel .calculation-rename-form input[type="text"] { flex: 1; min-width: 0; }
+  .calculations-panel .calculations-empty { margin: 0; font-size: 13px; }
   .sheet-new-form { display: flex; gap: 6px; align-items: center; }
   .picker-search { display: flex; gap: 8px; margin-bottom: 16px; }
   .picker-search input { flex: 1; max-width: 480px; }

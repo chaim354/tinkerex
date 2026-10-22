@@ -6,7 +6,7 @@
   Locals:
     name:         hidden input name (e.g. "parent_node_id")   [required]
     children_url: GET endpoint for a folder's children        [required]
-    create_url:   POST endpoint to create a folder            [required]
+    create_url:   POST endpoint to create a folder            [optional: omitted, the modal offers no New Folder]
     mode:         "folder" (default) or "file"
     value:        initial node_id (default nil)
     label:        initial button text (default root_label)
@@ -16,7 +16,7 @@
 <%
   name         = local_assigns.fetch(:name)
   children_url = local_assigns.fetch(:children_url)
-  create_url   = local_assigns.fetch(:create_url)
+  create_url   = local_assigns.fetch(:create_url, nil)
   mode         = local_assigns.fetch(:mode, "folder")
   value        = local_assigns.fetch(:value, nil)
   root_label   = local_assigns.fetch(:root_label, "/ (library root)")

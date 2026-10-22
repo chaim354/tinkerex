@@ -176,6 +176,35 @@ class Maker::Git::LocalRepoTest < ActiveSupport::TestCase
     assert_operator s.truncated_count, :>=, 1
   end
 
+  # BINARY IS A CONTENT FACT ON THE ROW, decided while #row_for has the bytes in hand: git's own
+  # rule, a NUL within the first BINARY_SNIFF_BYTES (git-editing.md, "Binary is decided by
+  # CONTENT"). It used to be a second pass in RepoCommitsController that re-opened every listed file
+  # for an 8 kB sniff right after this class had read it in full (F-S13-1).
+  #
+  # THE WINDOW IS PINNED AT BOTH EDGES. A NUL on the last byte sniffed is binary and one byte past it
+  # is text, so sniffing the whole file, sniffing one byte short and never sniffing each turn this
+  # red. The `.gitignore`d row is here because its branch returns BEFORE the full read and sniffs on
+  # its own: the one row the shared read cannot answer for.
+  test "a NUL in the first 8 kB marks a row binary; text, and a NUL after 8 kB, do not" do
+    window = Maker::Git::LocalRepo::BINARY_SNIFF_BYTES
+    root = make_repo!(files: { "a.txt" => "one\n" }, gitignore: "*.log\n")
+    dir = File.join(library_root, "demo")
+    File.binwrite(File.join(dir, "first.bin"), "\x00rest".b)
+    File.binwrite(File.join(dir, "edge.bin"), ("x" * (window - 1)) + "\x00")
+    File.binwrite(File.join(dir, "late.txt"), ("x" * window) + "\x00")
+    File.write(File.join(dir, "plain.txt"), "just text\n")
+    File.binwrite(File.join(dir, "a.txt"), "one\n\x00".b)
+    File.binwrite(File.join(dir, "noise.log"), "\x00log".b)
+
+    rows = Maker::Git::LocalRepo.open(@user, root)
+                                .status_for(%w[first.bin edge.bin late.txt plain.txt a.txt noise.log])
+
+    # NON-VACUITY: a tracked file and an ignored one, so both branches that decide `binary` ran.
+    assert_equal :modified, rows.fetch("a.txt").state
+    assert_equal :ignored, rows.fetch("noise.log").state
+    assert_equal %w[a.txt edge.bin first.bin noise.log], rows.values.select(&:binary).map(&:path).sort
+  end
+
   # STAGE 3, S3-2: git facts for a repository CARD. `head_summary`/`tags_at_head` read rugged
   # only — no port write, no CommitPaths — so they are tested against the SAME fixture shape as
   # everything else here, `make_repo!`'s single seeded commit.

@@ -971,6 +971,36 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                  "Gate on the capability before the call instead — see LibraryCapabilities."
   end
 
+  # A BARE ArgumentError IS A PROGRAMMING ERROR, SO NO CONTROLLER ANSWERS ONE (F-S18-1, 2026-10-19):
+  # V1::BaseController's `rescue_from ArgumentError` turned arity drift and misconfiguration into a
+  # 422 carrying the interpreter's message. READ OFF EACH CLASS'S rescue_handlers, NOT ITS FILE, so a
+  # multi-line, quoted or inherited declaration cannot hide. The probes pin BOTH directions: the bare
+  # class is seen, and a NAMED SUBCLASS (Maker::MoveNode::InvalidName, the shape a client-input case
+  # takes) is not -- a check widened to subclasses would pass today only because none is rescued yet.
+  test "no controller rescue_froms a bare ArgumentError" do
+    bare = ->(klass) { klass.rescue_handlers.map(&:first).select { |name| name.safe_constantize == ArgumentError } }
+    probe = ->(error) { Class.new { include ActiveSupport::Rescuable; rescue_from(error) { } } }
+    assert_equal [ "ArgumentError" ], bare.(probe.(ArgumentError)), "the check must see the bare class"
+    assert_empty bare.(probe.(Maker::MoveNode::InvalidName)), "a named subclass is the sanctioned shape"
+
+    # AN ANONYMOUS CONTROLLER HAS NO NAME, and const_source_location raises on one (NameError for "",
+    # TypeError for nil) in whichever test order first builds it. Skipped before the lookup; probed here.
+    Rails.application.eager_load!
+    anonymous = Class.new(ActionController::API)
+    scanned = [ ActionController::Base, ActionController::API ].flat_map(&:descendants)
+    assert_includes scanned, anonymous, "the probe must be in the set the scan walks"
+    controllers = scanned.select do |klass|
+      next false unless klass.name
+      Object.const_source_location(klass.name)&.first.to_s.start_with?(ROOT.join("app/controllers/").to_s)
+    end
+    assert_includes controllers, V1::BaseController, "the scan must reach the class it was written for (§14e)"
+
+    offenders = controllers.flat_map { |klass| bare.(klass).map { |name| "#{klass.name}: rescue_from #{name}" } }
+    assert_empty offenders, "a bare ArgumentError must 500 with its backtrace (F-S18-1), but these answer " \
+                            "it:\n  #{offenders.join("\n  ")}\nRescue a NAMED subclass instead " \
+                            "(Maker::MoveNode::InvalidName is the precedent)"
+  end
+
   test "every ApplicationController descendant requires a signed-in session" do
     # CLAUDE.md §14d: the web app is session-authed, and "every server-rendered page requires a
     # session" was stated sixteen times — once per controller — and enforced nowhere. A NEW
@@ -1090,7 +1120,14 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
              # STAGE 4, S4-5: THE VISITOR'S HEADER lives under layouts/ because the layout's anonymous
              # branch renders it, and a public controller's view context DOES resolve `current_user`
              # (probed in review) — so a session read there would render silently, not raise.
-             Dir.glob(ROOT.join("app", "views", "layouts", "_public_header.html.erb"))).sort
+             Dir.glob(ROOT.join("app", "views", "layouts", "_public_header.html.erb")) +
+             # F-S10-2 (2026-10-20): THE VIEWER AND DELIVERY CONCERNS ARE SHARED TOO. Both file
+             # pages now ask `FilePreview#viewer_for` for their viewer, so a visitor's page runs
+             # that concern's code — and `current_user` RESOLVES on Public::FilesController (Devise's
+             # helper is on ActionController::Base; probed in review), so a session read planted in
+             # the concern rendered for a visitor with this guard green. Mutation-checked: `_who =
+             # current_user` inside `viewer_for` goes red here and nowhere else.
+             Dir.glob(ROOT.join("app", "controllers", "concerns", "file_{preview,delivery}.rb"))).sort
     assert_operator files.size, :>=, 18,
                     "the Public scan matched #{files.size} file(s), below the plausibility floor " \
                     "of 18 — so `assert_empty` below cannot fail for the reason it exists " \
@@ -1286,10 +1323,14 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
         indexes.filter_map do |wide|
           next if wide.name == narrow.name
           next unless wide.where.nil?
-          # STRICT, so two indexes on EXACTLY the same columns slip through — equally redundant,
-          # and this guard says nothing about them. Zero such pairs exist today (checked at review),
-          # so it is a recorded limit rather than a defect; widening it means deciding WHICH of an
-          # identical pair to name, which a `>` comparison never has to.
+          # STRICT, so two indexes on EXACTLY the same columns slip through, and this guard says
+          # nothing about them. One such pair exists, and it is NOT a redundancy: `nodes` carries
+          # `(user_id, storage_path)` twice, `WHERE deleted = false` (unique, the live rows) and
+          # `WHERE deleted = true` (the tombstones Library::Reconciler revives by path). Their
+          # predicates are disjoint, so neither holds a row the other does. Widening this check to
+          # identical column lists would have to compare predicates too or it would flag that pair,
+          # and for a truly identical pair it would have to decide WHICH to name, which a `>`
+          # comparison never has to.
           next unless wide.columns.length > narrow.columns.length
           next unless wide.columns.first(narrow.columns.length) == narrow.columns
           next if PREFIX_INDEX_EXEMPTIONS[table] == narrow.name
@@ -1324,5 +1365,74 @@ class ArchitectureInvariantsTest < ActiveSupport::TestCase
                   "passes assert_equal and drifts on the next edit"
     end
     assert_same FileDelivery::SAFE_INLINE_TYPES, FilesController::SAFE_INLINE_TYPES
+  end
+
+  # A PREVIEW'S `ready` AND `rebuilding` ARE ASKED OF Maker::Preview, NEVER COMPARED AT THE CONSUMER,
+  # AND NOTHING RE-SPELLS THE IN-FLIGHT SET (F-S08-2, 2026-10-20). `rebuilding` split `ready` in two —
+  # "a picture of this content" and "the build these coordinates name" — and a reader still
+  # comparing `status == "ready"` picks one meaning by accident: a picture surface blanks a correct
+  # picture for a whole rebuild, and a re-spelled `%w[pending processing]` silently leaves
+  # `rebuilding` out of what it calls in flight. The predicates (`in_flight?`, `showable?`,
+  # `current_build?`, `servable?`, `failed?`) are the vocabulary, defined in the one file this sweep
+  # exempts.
+  #
+  # THOSE TWO WORDS AND THAT ONE SET, IN THEIR `==`/`!=`/`when`/`%w[]` SPELLINGS. A pattern cannot
+  # see every spelling — `where(status: "ready")`, `status.in?([...])` and `.eql?` all pass it — so
+  # the rule binds where this guard is blind. A literal that means one thing is not policed: the
+  # job's start asks `status == "pending"`, and the geometry polls' terminal arm is `when "failed",
+  # "unsupported"`. COMPARISONS ONLY: a wire answer that SAYS "ready" (`render json: { status:
+  # "ready" }`) and the job's writes (`update!(status: "ready")`) are not readers and do not match.
+  # Whole-line Ruby comments and ERB comments are skipped: several partials describe the old
+  # spelling in prose.
+  PREVIEW_STATUS_COMPARISON = /
+    (?:[!=]=|\bwhen\b[^\n]*?)\s*["'](?:ready|rebuilding)["']   # status == "ready", when "ready"
+    | ["'](?:ready|rebuilding)["']\s*[!=]=                       # "ready" == status
+    | %w[\[(][^\])]*\b(?:ready|rebuilding)\b                     # %w[ready rebuilding].include?
+    | %w[\[(](?=[^\])]*\bpending\b)(?=[^\])]*\bprocessing\b)    # the in-flight set, re-spelled
+  /x
+
+  test "no consumer compares a preview's status to ready or rebuilding, or re-spells the in-flight set" do
+    # THE PATTERN ITSELF, ASKED FIRST. A regex that stopped matching would sweep every file below and
+    # find nothing, which `assert_empty` reads as success — §14e's vacuous guard, one level in. One
+    # sample per ALTERNATIVE, each matched by that alternative alone, so breaking any one of the four
+    # goes red here instead of leaving the sweep blind to that spelling.
+    samples = [
+      'thumb&.status == "ready"',          # 1: a comparison
+      'when "rebuilding"',                 # 1: a case arm
+      '"ready" == s',                      # 2: the reversed comparison
+      "%w[ready rebuilding].include?(s)",  # 3: a %w list naming either word
+      "%w[pending processing].include?(s)" # 4: the in-flight set, re-spelled
+    ]
+    samples.each do |offender|
+      assert_match PREVIEW_STATUS_COMPARISON, offender, "the pattern no longer catches #{offender}"
+    end
+    [ 'render json: { status: "ready", url: u }', 'update!(status: "ready")', 'status == "pending"' ].each do |fine|
+      assert_no_match PREVIEW_STATUS_COMPARISON, fine, "the pattern now refuses #{fine}"
+    end
+
+    model = ROOT.join("app/models/maker/preview.rb").to_s
+    files = Dir.glob(ROOT.join("app", "**", "*.{rb,erb}").to_s).sort - [ model ]
+    # NON-EMPTY ON BOTH HALVES (§14e): the readers are mostly templates, so an ERB glob that stopped
+    # matching would retire most of this guard while the Ruby half kept it looking alive.
+    assert_operator files.size, :>=, 300, "app/**/*.{rb,erb} matched only #{files.size} files"
+    assert_operator files.count { |f| f.end_with?(".erb") }, :>=, 100, "the ERB half matched too few files"
+
+    offenders = files.flat_map do |file|
+      text = File.read(file)
+      text = text.gsub(/<%#.*?%>/m) { |comment| "\n" * comment.count("\n") } if file.end_with?(".erb")
+      text.lines.each_with_index.filter_map do |line, idx|
+        next if file.end_with?(".rb") && line.lstrip.start_with?("#")
+        next unless line.match?(PREVIEW_STATUS_COMPARISON)
+
+        "#{Pathname.new(file).relative_path_from(ROOT)}:#{idx + 1}: #{line.strip}"
+      end
+    end
+
+    assert_empty offenders,
+                 "A preview's status compared to ready or rebuilding, or the in-flight set re-spelled, " \
+                 "outside Maker::Preview:\n  " \
+                 "#{offenders.join("\n  ")}\nAsk the row: `showable?` to SHOW its asset (ready, or an " \
+                 "older build while it rebuilds), `current_build?` to MEASURE from it, `in_flight?` " \
+                 "for a job believed coming, `failed?` for the retryable terminal state."
   end
 end

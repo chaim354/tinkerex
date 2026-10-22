@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_21_230100) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -66,6 +66,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
     t.datetime "created_at", null: false
     t.string "node_id", null: false
     t.integer "position", default: 0, null: false
+    t.integer "revision", default: 1, null: false
     t.string "role", null: false
     t.datetime "updated_at", null: false
     t.index ["addon_state_id", "node_id"], name: "index_maker_addon_files_on_addon_state_id_and_node_id", unique: true
@@ -129,6 +130,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.index ["user_id", "project_id", "logged_at"], name: "index_maker_build_log_entries_on_project_logged_at"
+  end
+
+  create_table "maker_calculations", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.text "expression", null: false
+    t.integer "inch_fraction"
+    t.string "label", null: false
+    t.integer "project_id", null: false
+    t.float "result", null: false
+    t.string "unit", default: "", null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["user_id", "project_id", "created_at"], name: "index_maker_calculations_on_project_created_at"
   end
 
   create_table "maker_collection_items", force: :cascade do |t|
@@ -309,6 +323,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
     t.json "metadata"
     t.string "node_id", null: false
     t.integer "renderer_revision", default: 1, null: false
+    t.string "source", default: "renderer", null: false
     t.string "status", default: "pending", null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
@@ -431,12 +446,25 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
     t.index ["user_id", "project_id", "position"], name: "index_maker_sheets_on_project_position"
   end
 
-  create_table "maker_shelves", force: :cascade do |t|
+  create_table "maker_shelf_groups", force: :cascade do |t|
     t.datetime "created_at", null: false
-    t.string "path", default: "", null: false
+    t.string "name", null: false
+    t.integer "position", default: 0, null: false
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
-    t.index ["user_id", "path"], name: "index_maker_shelves_on_user_id_and_path", unique: true
+    t.index ["user_id", "name"], name: "index_maker_shelf_groups_on_user_id_and_name", unique: true
+  end
+
+  create_table "maker_shelves", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "default_view"
+    t.string "name", null: false
+    t.integer "position", default: 0, null: false
+    t.integer "shelf_group_id"
+    t.datetime "updated_at", null: false
+    t.integer "user_id", null: false
+    t.index ["shelf_group_id"], name: "index_maker_shelves_on_shelf_group_id"
+    t.index ["user_id", "name"], name: "index_maker_shelves_on_user_id_and_name", unique: true
   end
 
   create_table "maker_suppliers", force: :cascade do |t|
@@ -498,6 +526,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
     t.bigint "size"
     t.string "storage_path"
     t.binary "symlink_target"
+    t.string "trash_root_node_id"
     t.datetime "updated_at", null: false
     t.bigint "updated_seq", default: 0, null: false
     t.integer "user_id", null: false
@@ -505,6 +534,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
     t.index ["user_id", "node_id"], name: "index_nodes_on_user_id_and_node_id", unique: true
     t.index ["user_id", "parent_node_id"], name: "index_nodes_on_user_id_and_parent_node_id"
     t.index ["user_id", "storage_path"], name: "index_nodes_on_user_id_and_storage_path", unique: true, where: "deleted = false"
+    t.index ["user_id", "storage_path"], name: "index_nodes_on_user_id_and_storage_path_tombstones", where: "deleted = true"
+    t.index ["user_id", "trash_root_node_id"], name: "index_nodes_on_user_id_and_trash_root_node_id", where: "trash_root_node_id IS NOT NULL"
     t.index ["user_id", "updated_seq"], name: "index_nodes_on_user_id_and_updated_seq"
     t.index ["user_id"], name: "index_nodes_on_user_id"
   end
@@ -521,6 +552,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
     t.index ["user_id", "version_id", "seq"], name: "index_remote_manifest_chunks_on_version_and_seq", unique: true
   end
 
+  create_table "settings", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.string "key", null: false
+    t.datetime "updated_at", null: false
+    t.text "value", default: "", null: false
+    t.index ["key"], name: "index_settings_on_key", unique: true
+  end
+
   create_table "user_identities", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "provider", null: false
@@ -532,6 +571,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
   end
 
   create_table "users", force: :cascade do |t|
+    t.boolean "admin", default: false, null: false
+    t.boolean "calculator_pinned", default: false, null: false
     t.datetime "confirmation_sent_at"
     t.string "confirmation_token"
     t.datetime "confirmed_at"
@@ -545,13 +586,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
     t.bigint "head_seq", default: 0, null: false
     t.datetime "last_sign_in_at"
     t.string "last_sign_in_ip"
+    t.text "library_scan_refusal"
     t.datetime "library_scanned_at"
     t.datetime "locked_at"
     t.datetime "remember_created_at"
     t.bigint "remote_sync_cursor", default: 0, null: false
     t.datetime "reset_password_sent_at"
     t.string "reset_password_token"
-    t.datetime "shelves_seeded_at"
     t.integer "sign_in_count", default: 0, null: false
     t.string "sync_device_token"
     t.string "unconfirmed_email"
@@ -570,6 +611,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_09_120000) do
   add_foreign_key "maker_addon_files", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_state_revisions", "maker_addon_states", column: "addon_state_id"
   add_foreign_key "maker_addon_states", "users"
+  add_foreign_key "maker_calculations", "users"
   add_foreign_key "maker_connections", "users"
   add_foreign_key "maker_filing_rules", "users"
   add_foreign_key "maker_pins", "users"

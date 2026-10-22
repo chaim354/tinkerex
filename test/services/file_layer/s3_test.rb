@@ -2,6 +2,7 @@ require "test_helper"
 require_relative "adapter_contract"
 require_relative "adapter_write_contract"
 require_relative "adapter_mutation_contract"
+require_relative "adapter_trash_entry_contract"
 require_relative "../../support/fake_s3"
 
 module FileLayer
@@ -21,6 +22,7 @@ module FileLayer
     # S3#write put_object straight over the user's file while Share, three feet away, refuses.
     include FileLayerWritableContract
     include FileLayerMutationContract
+    include FileLayerTrashEntryContract
 
     # The hooks FileLayerMutationContract requires. S3's real door for creating a file is the
     # port's own write, which is exactly what the four extracted tests used inline before they
@@ -30,6 +32,18 @@ module FileLayer
     end
 
     def make_dir(name:) = adapter.mkdir(@user, parent_node_id: nil, name:).node_id
+
+    # FileLayerTrashEntryContract's purge hook: Library::TrashPurgeJob reclaiming an aged entry, which
+    # deletes every object under its first segment after `.trash/` and never touches a row.
+    def purge_trash_entry!(node_id)
+      entry = "#{PREFIX}/#{Library::Scanner::TRASH_PREFIX}/#{node_id}/"
+      @fake.objects.delete_if { |key, _| key.start_with?(entry) }
+    end
+
+    # And its other hook: one member's object gone from inside an entry, no row touched.
+    def lose_from_trash_entry!(root_id, path)
+      @fake.objects.delete("#{PREFIX}/#{Library::Scanner::TRASH_PREFIX}/#{root_id}/#{path}")
+    end
 
     PREFIX = "library".freeze
 
@@ -1069,23 +1083,42 @@ module FileLayer
                    "the SOURCE is untouched: only the copy is re-tagged"
     end
 
-    # F-04's three cases below all install this rather than leaning on the fixed do_copy above, and
+    # THE SAME CONTRACT ONE FIELD OVER, pinned rather than trusted for the same reason: the fake
+    # used to answer a copy with its ETag alone, and #move's comment then cited that omission as
+    # evidence that copy_object reports no date. aws-sdk-s3's CopyObjectResult carries
+    # `last_modified` (mapped from <LastModified>), so the fake does too — the COPY's date, which is
+    # its own, never the source's. Drop the field from do_copy's response and this goes red.
+    test "FakeS3: a copy's response carries the copy's own LastModified, as the real wire does" do
+      @fake.seed!("src.stl", "dated", last_modified: Time.at(1_600_000_000))
+
+      res = travel_to(Time.at(1_700_000_000)) do
+        @fake.client.copy_object(bucket: "b", key: "dst.stl", copy_source: "b/src.stl")
+      end
+
+      assert_equal Time.at(1_700_000_000), res.copy_object_result.last_modified,
+                   "the RESPONSE carries the copy's date — the value #move stores as the row's mtime"
+      assert_equal Time.at(1_700_000_000), @fake.objects["dst.stl"].last_modified,
+                   "and the stored copy agrees with what the response claimed"
+    end
+
+    # F-04's two refresh cases below install this rather than leaning on the fixed do_copy above, and
     # the independence is the whole point: if they relied on the fake to produce the re-tag, then
     # reverting do_copy would make them pass vacuously — the false green this pair exists to end.
     # So the re-tag is forced here, by a value the bytes could never produce.
     #
     # It HONORS copy_source_if_match, which is the assertion's entire mechanism: a stub that
     # ignored the precondition would let a stale content_hash through and every test below would
-    # pass with the fix reverted.
+    # pass with the fix reverted. And it answers with the copy's LastModified, as the wire and the
+    # fake's own do_copy do — a re-tag is no reason to model a response with a field missing.
     def retag_copies!(new_etag)
       @fake.client.stub_responses(:copy_object, lambda { |ctx|
         src = URI::DEFAULT_PARSER.unescape(ctx.params[:copy_source].to_s.split("/", 2).last)
         o = @fake.objects[src] or return "NoSuchKey"
         return "PreconditionFailed" if (m = ctx.params[:copy_source_if_match]) && m != o.etag
 
-        @fake.objects[ctx.params[:key]] =
-          o.dup.tap { |c| c.etag = new_etag; c.last_modified = Time.now }
-        { copy_object_result: { etag: new_etag } }
+        copy = o.dup.tap { |c| c.etag = new_etag; c.last_modified = Time.now }
+        @fake.objects[ctx.params[:key]] = copy
+        { copy_object_result: { etag: new_etag, last_modified: copy.last_modified } }
       })
     end
 
@@ -1128,11 +1161,66 @@ module FileLayer
       assert_equal "etag:3c4d5e6f", @user.nodes.find_by!(node_id: id).content_hash
     end
 
-    # THE GUARD, and why it is a presence test rather than a rescue. ObjectIdentity.for RAISES
-    # ArgumentError on a blank ETag (deliberately: the ladder must be total, and a nil identity
-    # means Reconciler#plan_moves drops the object and never indexes it at all). ArgumentError is
-    # not an Aws ServiceError, so #move's rescue would not catch it — and by the line that would
-    # raise, delete_object has ALREADY removed the source.
+    # THE COPY'S DATE, FROM THE SAME RESPONSE AS ITS ETAG. A copy is a new object with its own
+    # Last-Modified, and Reconciler#unchanged? compares the row's mtime with the LISTING's — so a
+    # row left on the SOURCE's date reads as changed on the next scan, which rewrites it and
+    # enqueues a thumbnail for bytes that did not change. The three dates are years apart because
+    # §15's `.to_i` trap is real here: a copy landing in its seed's second would pass with the
+    # refresh gone. Drop the refresh from #move and this goes red on the mtime.
+    test "a move takes the row's mtime from the copy's response, so the next scan rewrites nothing" do
+      @fake.seed!("#{PREFIX}/dated.stl", "when", last_modified: Time.at(1_600_000_000))
+      scan!(max_delete_pct: 100)
+      id = @user.nodes.find_by!(storage_path: "dated.stl").node_id
+
+      travel_to(Time.at(1_700_000_000)) { adapter.move(@user, node_id: id, new_name: "moved.stl") }
+
+      moved = @user.nodes.find_by!(node_id: id)
+      assert_equal 1_700_000_000 * 1_000_000_000, moved.mtime,
+                   "the COPY's date in nanos, not the source's 1_600_000_000"
+
+      travel_to(Time.at(1_800_000_000)) { scan!(max_delete_pct: 100) }
+      assert_equal moved.updated_at, @user.nodes.find_by!(node_id: id).updated_at,
+                   "the listing agrees with the row, so the scan has nothing to rewrite"
+    end
+
+    # --- a store that answers with no usable ETag or date ----------------------------------
+
+    # THE FAKE'S OWN CONTRACT for every blank-ETag test below, asserted on the WIRE field each
+    # response carries — the field the adapter reads, and nothing else — for F-65's reason above: if
+    # `answer_etag!` were inert, every test below would run on the truthful ETag, and the ones that
+    # expect "keep the previous value" would go green over a guard nothing reached. Make `wire`
+    # ignore its overrides and this goes red.
+    test "FakeS3: an operation answers the ETag it was told to, and the object keeps its own" do
+      @fake.seed!("k", "bytes")
+      real = @fake.objects["k"].etag
+
+      FakeS3::BLANK_ETAGS.each do |shape, blank|
+        FakeS3::ETAG_ANSWERS.each { |op| @fake.answer_etag!(op, blank) }
+        answered = {
+          head: @fake.client.head_object(bucket: "b", key: "k").etag,
+          put: @fake.client.put_object(bucket: "b", key: "p", body: "x").etag,
+          copy: @fake.client.copy_object(bucket: "b", key: "c", copy_source: "b/k")
+                     .copy_object_result.etag,
+          list: @fake.client.list_objects_v2(bucket: "b").contents.map(&:etag).uniq
+        }
+        assert_equal({ head: blank, put: blank, copy: blank, list: [ blank ] }, answered, shape)
+        assert_equal real, @fake.objects["k"].etag, "#{shape}: only the ANSWER is blank"
+      end
+
+      @fake.clear_faults!
+      assert_equal real, @fake.client.head_object(bucket: "b", key: "k").etag,
+                   "clear_faults! puts the truthful answer back"
+    end
+
+    # THE GUARD AT #move, and why it keeps the previous value rather than raising. A blank ETag has
+    # no identity — ObjectIdentity RAISES BlankEtag on one, deliberately: the ladder must be total,
+    # and a nil identity means Reconciler#plan_moves drops the object and never indexes it, while a
+    # blank one (`etag: `) is ONE identity shared by every such object, which pairs unrelated files.
+    # BlankEtag is an ArgumentError, not an Aws ServiceError, so #move's rescue would not catch it —
+    # and by the line that would raise, delete_object has ALREADY removed the source.
+    #
+    # ALL FOUR WIRE SHAPES, because only two of them ever failed the `present?` test this site used:
+    # quoted-empty raised past it, and quoted-whitespace minted `etag: ` and stored it.
     #
     # SO THE RAISE IS CAUGHT BY HAND RATHER THAN BY assert_nothing_raised, and "the source is gone"
     # is asserted FIRST and unconditionally. That ordering is the evidence: under the mutation both
@@ -1142,53 +1230,192 @@ module FileLayer
     # A raise in that window leaves the bytes only at the new key with the row still naming the
     # old one: §14a's orphaning landmine, reached by a store merely being unhelpful.
     #
-    # Make the refresh unconditional and this goes red with ArgumentError.
-    test "a copy that reports no ETag leaves the previous identity in place rather than raising" do
-      id = create_file!(name: "quiet.stl", bytes: "hush")
-      before = @user.nodes.find_by!(node_id: id).content_hash
-      retag_copies!("") # a store that answers a copy with no ETag at all
+    # Derive the identity with ObjectIdentity.for here and this goes red with BlankEtag; store the
+    # answer unconditionally and it goes red on a nil content_hash.
+    FakeS3::BLANK_ETAGS.each do |shape, blank|
+      test "a copy that reports a #{shape} ETag leaves the previous identity in place, not raising" do
+        id = create_file!(name: "quiet.stl", bytes: "hush")
+        before = @user.nodes.find_by!(node_id: id).content_hash
+        @fake.answer_etag!(:copy_object, blank)
 
-      raised = nil
-      begin
-        adapter.move(@user, node_id: id, new_name: "quieter.stl")
-      rescue StandardError => e
-        raised = e
+        raised = nil
+        begin
+          adapter.move(@user, node_id: id, new_name: "quieter.stl")
+        rescue StandardError => e
+          raised = e
+        end
+
+        assert_not @fake.objects.key?("#{PREFIX}/quiet.stl"),
+                   "the source is already deleted by the line that derives the new identity"
+        assert_nil raised, "a store that reports no ETag must not blow up a move that landed"
+
+        node = @user.nodes.find_by!(node_id: id)
+        assert_equal "quieter.stl", node.storage_path, "the move itself must still land"
+        assert_equal before, node.content_hash,
+                     "keep the previous value — NEVER nil, which un-indexes the object, nor blank"
       end
-
-      assert_not @fake.objects.key?("#{PREFIX}/quiet.stl"),
-                 "the source is already deleted by the line that derives the new identity"
-      assert_nil raised, "a store that reports no ETag must not blow up a move that landed"
-
-      node = @user.nodes.find_by!(node_id: id)
-      assert_equal "quieter.stl", node.storage_path, "the move itself must still land"
-      assert_equal before, node.content_hash,
-                   "keep the previous value — NEVER nil, which un-indexes the object"
     end
 
-    # THE SAME GUARD, ONE VERB OVER — and it went in unmutated. Removing `if head.etag.present?`
+    # THE SAME GUARD, ONE VERB OVER — and it once went in unmutated: removing `if head.etag.present?`
     # from #restored_stat ALONE left all 286 tests green, so nothing had ever shown that half to
     # work (CLAUDE.md §15: a guard that has never failed has not been shown to work).
     #
     # ITS FAILURE MODE IS WORSE THAN #move'S, which is why it earns its own test rather than an
-    # argument-by-symmetry. #restored_stat's own rescue lists ServiceError/NetworkingError only, so
-    # an ArgumentError from the refresh escapes it AND escapes into #undelete's caller — after the
-    # copy has landed and BEFORE `node.update!(deleted: false, ...)`. That leaves the bytes at BOTH
-    # keys, the node still tombstoned, and the trash copy never swept: the user's file is restored
-    # in the bucket and still in the Trash in the app, and the next undelete hits the
-    # "occupied — undelete must not clobber" refusal against a copy of itself.
+    # argument-by-symmetry — and a FOLDER restore reaches it once per member. #restored_stat's own
+    # rescue lists ServiceError/NetworkingError only, so a BlankEtag from the refresh escapes it AND
+    # escapes into #undelete's caller — after the copy has landed and BEFORE
+    # `node.update!(deleted: false, ...)`. That leaves the bytes at BOTH keys, the node still a trash
+    # tombstone with its path released, and the trash copy never swept: the next scan mints a NEW
+    # node_id for the restored object, orphaning every attachment (§14a), and the next undelete is
+    # refused as "already exists" by a copy of itself. A FetchError raised there would strand the
+    # copy identically, which is why the answer is the previous identity and not a refusal.
     #
-    # Make the refresh unconditional and this goes red with ArgumentError.
-    test "a HEAD that reports no ETag leaves the restore complete rather than raising" do
-      id = create_file!(name: "quietly-restored.stl", bytes: "shade")
-      before = @user.nodes.find_by!(node_id: id).content_hash
-      adapter.delete(@user, node_id: id)
+    # Derive the identity with ObjectIdentity.for here and this goes red with BlankEtag; store the
+    # answer unconditionally and it goes red on a nil content_hash.
+    FakeS3::BLANK_ETAGS.each do |shape, blank|
+      test "a HEAD that reports a #{shape} ETag leaves the restore complete rather than raising" do
+        id = create_file!(name: "quietly-restored.stl", bytes: "shade")
+        before = @user.nodes.find_by!(node_id: id).content_hash
+        adapter.delete(@user, node_id: id)
 
-      # Blank the ETag on HEAD only, delegating everything else to the fake — object_exists? asks
-      # this same verb and must keep answering truthfully, or the test passes for the wrong reason.
-      @fake.client.stub_responses(:head_object, lambda { |ctx|
-        o = @fake.objects[ctx.params[:key]] or return "NotFound"
-        { content_length: o.body.bytesize, etag: "", last_modified: o.last_modified }
-      })
+        # Blank the ETag on HEAD only. object_exists? asks this same verb, and the fake keeps
+        # answering EXISTENCE truthfully — or the test would pass for the wrong reason.
+        @fake.answer_etag!(:head_object, blank)
+
+        raised = nil
+        begin
+          adapter.undelete(@user, node_id: id)
+        rescue StandardError => e
+          raised = e
+        end
+
+        # THE THREE FACTS THAT MUST BE VISIBLE TOGETHER under the mutation, asserted before the
+        # raise so the test cannot pass by proving merely that something raised somewhere.
+        node = @user.nodes.find_by!(node_id: id)
+        assert @fake.objects.key?("#{PREFIX}/quietly-restored.stl"), "the copy back has landed"
+        assert_not node.deleted, "the node must be live again, not stranded mid-restore"
+        assert_nil raised, "a store that reports no ETag must not blow up a restore that landed"
+
+        assert_equal before, node.content_hash,
+                     "keep the previous value — NEVER nil, which un-indexes the object, nor blank"
+      end
+    end
+
+    # WRITE HAS NO PREVIOUS VALUE TO KEEP, so it is the one site that REFUSES. A new row needs the
+    # identity only the store can give it, and a replaced row's identity names bytes the key no
+    # longer holds. FetchError — this adapter's answer for a store that did not answer usefully;
+    # never the bare BlankEtag (an unmapped 500), and never a row with a nil or blank content_hash.
+    # The bytes HAVE landed (a PUT cannot be taken back), so the object sits unindexed until the next
+    # scan lists it truthfully and indexes it: the self-healing case #write's header already
+    # accepts. Never a tombstone, never NotFound.
+    #
+    # Drop the refusal and the write "succeeds", indexing a row whose content_hash is nil: red.
+    FakeS3::BLANK_ETAGS.each do |shape, blank|
+      test "a PUT that answers a #{shape} ETag is refused, indexes nothing, and the next scan does" do
+        @fake.answer_etag!(:put_object, blank)
+
+        assert_raises(FileLayer::FetchError) do
+          adapter.write(@user, parent_node_id: nil, name: "unnamed.stl", io: StringIO.new("bytes"))
+        end
+        assert_nil @user.nodes.find_by(storage_path: "unnamed.stl"),
+                   "no row for an object the store gave no identity — not even one with a nil hash"
+        assert @fake.objects.key?("#{PREFIX}/unnamed.stl"), "the bytes landed: a PUT is not undone"
+
+        scan!(max_delete_pct: 100) # the listing answers truthfully
+        assert_equal "md5:#{Digest::MD5.hexdigest('bytes')}",
+                     @user.nodes.find_by!(storage_path: "unnamed.stl").content_hash
+      end
+
+      test "a replace whose PUT answers a #{shape} ETag is refused and leaves its row as it was" do
+        id = create_file!(name: "kept.stl", bytes: "v1")
+        before = @user.nodes.find_by!(node_id: id).slice(:content_hash, :size, :mtime)
+        @fake.answer_etag!(:put_object, blank)
+
+        assert_raises(FileLayer::FetchError) do
+          adapter.write(@user, parent_node_id: nil, name: "kept.stl", io: StringIO.new("version two"),
+                        replace: true)
+        end
+        assert_equal before, @user.nodes.find_by!(node_id: id).slice(:content_hash, :size, :mtime),
+                     "the row is untouched: no nil or blank hash, and no new size under an old one"
+
+        scan!(max_delete_pct: 100)
+        assert_equal "md5:#{Digest::MD5.hexdigest('version two')}",
+                     @user.nodes.find_by!(node_id: id).content_hash,
+                     "the next scan re-derives it, on the SAME node"
+      end
+    end
+
+    # #store_identity's skip, through all four wire shapes. "We cannot tell" must never read as
+    # "stale": a store whose HEAD answers no usable ETag would then refuse every save that names its
+    # content, forever, with nothing the user can do — which quoted-whitespace did, minting `etag: `
+    # and comparing it with a real token. Derive the identity with ObjectIdentity.for there and this
+    # goes red with BlankEtag.
+    FakeS3::BLANK_ETAGS.each do |shape, blank|
+      test "a replace naming its content saves when the store's HEAD answers a #{shape} ETag" do
+        first = adapter.write(@user, parent_node_id: nil, name: "named.stl", io: StringIO.new("v1"))
+        @fake.answer_etag!(:head_object, blank)
+
+        adapter.write(@user, parent_node_id: nil, name: "named.stl", io: StringIO.new("version two"),
+                      replace: true, expect_token: first.content_token)
+
+        assert_equal "version two", @fake.objects["#{PREFIX}/named.stl"].body
+        assert_equal "md5:#{Digest::MD5.hexdigest('version two')}",
+                     @user.nodes.find_by!(node_id: first.node_id).content_hash
+      end
+    end
+
+    # THE DATE KNOB'S OWN CONTRACT, for the two tests below: a HEAD or a copy told to omit its
+    # Last-Modified answers without one on the WIRE (nil, the field absent) while the object keeps
+    # its own, and a response the adapter never reads a date from cannot be told to. Make
+    # `answer_last_modified!` inert and this goes red.
+    test "FakeS3: a HEAD or a copy can answer with no Last-Modified, and the object keeps its own" do
+      @fake.seed!("k", "bytes", last_modified: Time.at(1_600_000_000))
+      FakeS3::LAST_MODIFIED_ANSWERS.each { |op| @fake.answer_last_modified!(op, nil) }
+
+      assert_nil @fake.client.head_object(bucket: "b", key: "k").last_modified
+      assert_nil @fake.client.copy_object(bucket: "b", key: "c", copy_source: "b/k")
+                      .copy_object_result.last_modified
+      assert_equal Time.at(1_600_000_000), @fake.objects["k"].last_modified, "only the ANSWER omits it"
+      assert_raises(ArgumentError) { @fake.answer_last_modified!(:list_objects_v2, nil) }
+    end
+
+    # THE DATE'S PRESENCE GUARD AT #move, and as load-bearing as the ETag's: nanos(nil) raises
+    # NoMethodError — no ServiceError — and by that line delete_object has ALREADY removed the
+    # source, so a copy result without LastModified would strand the move exactly as a blank ETag
+    # did. Absent a date, the row keeps the one it had for the scan to correct. Store the date
+    # unconditionally and this goes red.
+    test "a copy that reports no LastModified keeps the row's previous mtime, and the move lands" do
+      @fake.seed!("#{PREFIX}/undated.stl", "when", last_modified: Time.at(1_600_000_000))
+      scan!(max_delete_pct: 100)
+      id = @user.nodes.find_by!(storage_path: "undated.stl").node_id
+      @fake.answer_last_modified!(:copy_object, nil)
+
+      raised = nil
+      begin
+        adapter.move(@user, node_id: id, new_name: "still-undated.stl")
+      rescue StandardError => e
+        raised = e
+      end
+
+      assert_not @fake.objects.key?("#{PREFIX}/undated.stl"), "the source is already deleted by then"
+      assert_nil raised, "a store that reports no date must not blow up a move that landed"
+      node = @user.nodes.find_by!(node_id: id)
+      assert_equal "still-undated.stl", node.storage_path, "the move itself must still land"
+      assert_equal 1_600_000_000 * 1_000_000_000, node.mtime, "keep the previous mtime — never nil"
+    end
+
+    # AND AT #restored_stat, where it is the stranding shape this ticket exists for: nanos(nil)
+    # raised after the copy-back and before the revive, leaving the object live behind a trash
+    # tombstone whose path is released — the next scan mints it a NEW node_id, orphaning every
+    # attachment — and a FOLDER restore reaches this once per member. A HEAD with no Last-Modified
+    # keeps the row's previous mtime. Make the mtime unconditional again and this goes red.
+    test "a HEAD that reports no Last-Modified leaves the restore complete with the previous mtime" do
+      @fake.seed!("#{PREFIX}/undated-restore.stl", "shade", last_modified: Time.at(1_600_000_000))
+      scan!(max_delete_pct: 100)
+      id = @user.nodes.find_by!(storage_path: "undated-restore.stl").node_id
+      adapter.delete(@user, node_id: id)
+      # On HEAD only: object_exists? asks the same verb and reads only whether it answered.
+      @fake.answer_last_modified!(:head_object, nil)
 
       raised = nil
       begin
@@ -1197,15 +1424,52 @@ module FileLayer
         raised = e
       end
 
-      # THE THREE FACTS THAT MUST BE VISIBLE TOGETHER under the mutation, asserted before the raise
-      # so the test cannot pass by proving merely that something raised somewhere.
       node = @user.nodes.find_by!(node_id: id)
-      assert @fake.objects.key?("#{PREFIX}/quietly-restored.stl"), "the copy back has landed"
+      assert @fake.objects.key?("#{PREFIX}/undated-restore.stl"), "the copy back has landed"
       assert_not node.deleted, "the node must be live again, not stranded mid-restore"
-      assert_nil raised, "a store that reports no ETag must not blow up a restore that landed"
+      assert_nil raised, "a store that reports no date must not blow up a restore that landed"
+      assert_equal 1_600_000_000 * 1_000_000_000, node.mtime, "keep the previous mtime — never nil"
+    end
 
-      assert_equal before, node.content_hash,
-                   "keep the previous value — NEVER nil, which un-indexes the object"
+    # A WRITE WHOSE HEAD CARRIES NO DATE IS REFUSED, beside its blank-ETag refusal and for its
+    # reason: a FILE row's mtime is a fact the scan compares, there is no previous one to keep, and
+    # Time.now is not a substitute (the next scan would read every written file as changed).
+    # nanos(nil) raised a bare NoMethodError, an unmapped 500, after the object had landed.
+    # FetchError, nothing indexed, and the next scan — which dates the object off the listing —
+    # indexes it. Remove the guard and this goes red with NoMethodError.
+    test "a write whose HEAD reports no Last-Modified is refused, indexes nothing, and a scan does" do
+      @fake.answer_last_modified!(:head_object, nil)
+
+      assert_raises(FileLayer::FetchError) do
+        adapter.write(@user, parent_node_id: nil, name: "undated-write.stl", io: StringIO.new("bytes"))
+      end
+      assert_nil @user.nodes.find_by(storage_path: "undated-write.stl"),
+                 "no row for an object the store gave no date — not even one with a nil mtime"
+      assert @fake.objects.key?("#{PREFIX}/undated-write.stl"), "the bytes landed: a PUT is not undone"
+
+      scan!(max_delete_pct: 100) # the listing carries the date
+      assert_equal "md5:#{Digest::MD5.hexdigest('bytes')}",
+                   @user.nodes.find_by!(storage_path: "undated-write.stl").content_hash
+    end
+
+    # A MKDIR WHOSE HEAD CARRIES NO DATE IS NOT REFUSED, and the difference is the catalog's own: S3
+    # has no directory dates, so S3Observer records every folder with mtime nil and
+    # Reconciler#unchanged_dir? compares on exactly that. The folder is created with that same nil —
+    # the next scan agrees and rewrites nothing — where a refusal would turn "New folder" into "try
+    # again" for a value the scan discards anyway. Put back nanos(head.last_modified) and this goes
+    # red with NoMethodError.
+    test "a mkdir whose HEAD reports no Last-Modified creates the folder with the scan's nil mtime" do
+      @fake.answer_last_modified!(:head_object, nil)
+
+      info = travel_to(Time.at(1_700_000_000)) { adapter.mkdir(@user, parent_node_id: nil, name: "undated") }
+
+      node = @user.nodes.present.find_by!(node_id: info.node_id)
+      assert_equal [ "dir", "undated", nil ], [ node.kind, node.storage_path, node.mtime ]
+      assert @fake.objects.key?("#{PREFIX}/undated/"), "the marker landed"
+
+      travel_to(Time.at(1_800_000_000)) { scan!(max_delete_pct: 100) }
+      assert_equal node.updated_at, @user.nodes.find_by!(node_id: info.node_id).updated_at,
+                   "the scan records a folder with mtime nil too, so it has nothing to rewrite"
     end
 
     # --- the 5GB copy cap -----------------------------------------------------------------
@@ -1772,10 +2036,341 @@ module FileLayer
       assert stored?("parts/b.stl"), "a source was deleted despite the failure"
     end
 
-    test "an empty directory deletes" do
+    # The degenerate walk: the entry is the folder's marker alone. It must come back as the marker too,
+    # or the next scan finds nothing at the prefix and tombstones the folder it just restored.
+    test "an empty directory deletes and restores too" do
+      create_file!(name: "ballast.stl", bytes: "still here")
       dir_id = make_dir(name: "empty")
       adapter.delete(@user, node_id: dir_id)
       assert @user.nodes.find_by!(node_id: dir_id).deleted?
+
+      adapter.undelete(@user, node_id: dir_id)
+
+      assert stored?("empty/"), "the folder's marker did not come back"
+      refute stored?(".trash/#{dir_id}/empty/"), "the entry was not consumed"
+      scan!
+      assert_equal dir_id, @user.nodes.present.find_by(storage_path: "empty", kind: "dir")&.node_id,
+                   "the restored folder did not survive the next scan as itself"
+    end
+
+    # A SCAN TOMBSTONE IS NOT PART OF THE FOLDER. The walk returns tombstones (FileLayer::Subtree)
+    # and a scan tombstone KEEPS its storage_path (§14a's two kinds), so a file removed out of band
+    # used to re-enter the copy set: the copy of an object that no longer exists failed on every
+    # attempt — NoSuchKey here, InvalidArgument on SeaweedFS — and the user was told to try again,
+    # forever. A folder holding one could never be deleted from the app.
+    test "a folder holding a file the scan tombstoned still deletes" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "cad")
+      live_id = adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a")).node_id
+      gone_id = adapter.write(@user, parent_node_id: dir_id, name: "b.stl", io: StringIO.new("b")).node_id
+      @fake.objects.delete("#{PREFIX}/cad/b.stl") # removed with rclone or the console
+      scan!(max_delete_pct: 100)
+      gone = @user.nodes.find_by!(node_id: gone_id)
+      assert gone.deleted?, "precondition: the scan tombstoned it"
+      assert_equal "cad/b.stl", gone.storage_path, "precondition: a SCAN tombstone keeps its path"
+
+      assert_nothing_raised { adapter.delete(@user, node_id: dir_id) }
+
+      assert_equal "a", @fake.objects["#{PREFIX}/.trash/#{dir_id}/cad/a.stl"]&.body
+      refute stored?("cad/a.stl"), "the live file's source survived"
+      [ dir_id, live_id ].each { |id| assert_nil @user.nodes.find_by!(node_id: id).storage_path }
+      assert_equal "cad/b.stl", gone.reload.storage_path,
+                   "the folder delete rewrote a scan tombstone into the trash shape"
+      assert_nil gone.trash_root_node_id, "the folder delete filed a scan tombstone into its entry"
+      assert_not_includes adapter.trashed(@user).map(&:node_id), gone_id
+    end
+
+    # A DIRECTORY MARKER IS AN OBJECT, AND THE CASCADE USED TO LEAVE IT BEHIND. `mkdir` puts one so an
+    # empty folder survives a scan, and S3Observer reads a marker as positive evidence of a directory —
+    # so the marker a delete left made the next scan mint the folder again, empty, under a NEW node_id
+    # (the tombstone's path is NULL, so #ensure_dirs cannot revive it). Every app-made folder — a
+    # project folder, a "New folder" — came back within one scan of being deleted.
+    test "a deleted folder stays deleted across a scan" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "parts")
+      adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a"))
+
+      adapter.delete(@user, node_id: dir_id)
+      scan!
+
+      assert_empty @user.nodes.present.where(storage_path: "parts"), "the deleted folder came back"
+      refute stored?("parts/"), "the folder's marker survived its delete"
+      assert stored?(".trash/#{dir_id}/parts/"), "the marker did not travel into the entry"
+    end
+
+    # THE ENTRY IS ROOT-RELATIVE — `.trash/<root id>/<root name>/<path beneath it>`, Share's shape —
+    # built from NAMES along the parent edge, never from storage_path. Keyed by each file's whole
+    # storage_path, a NESTED folder's entry carried its ancestors while the cascade NULLed the column
+    # that named them. Read off `@fake.objects`, which is the wire (§14e).
+    test "a nested folder's entry is root-relative" do
+      cad_id = make_dir(name: "cad")
+      parts_id = adapter.mkdir(@user, parent_node_id: cad_id, name: "parts").node_id
+      stl_id = adapter.mkdir(@user, parent_node_id: parts_id, name: "stl").node_id
+      adapter.write(@user, parent_node_id: stl_id, name: "a.stl", io: StringIO.new("solid a\n"))
+
+      adapter.delete(@user, node_id: parts_id)
+
+      assert_equal "solid a\n", @fake.objects["#{PREFIX}/.trash/#{parts_id}/parts/stl/a.stl"]&.body,
+                   "the file is not at its root-relative entry key"
+      assert stored?(".trash/#{parts_id}/parts/"), "the root's marker is not at the entry's root"
+      assert stored?(".trash/#{parts_id}/parts/stl/"), "a nested marker is not root-relative"
+      assert_empty @fake.objects.keys.grep(%r{\A#{PREFIX}/\.trash/#{parts_id}/cad/}),
+                   "the entry carries the deleted folder's ancestors"
+      %w[cad/parts/ cad/parts/stl/ cad/parts/stl/a.stl].each do |rel|
+        refute stored?(rel), "#{rel} survived the delete"
+      end
+      assert stored?("cad/"), "the PARENT's marker is not the deleted folder's to take"
+    end
+
+    # A MARKER IS PUT AFRESH IN THE ENTRY, NEVER COPIED, and the reason is the deployed store: SeaweedFS
+    # keeps `<key>/` as the filer DIRECTORY itself, and its CopyObject answers a directory source with
+    # NoSuchKey (s3api_object_handlers_copy.go, classifyCopySourceError — read in its source, not
+    # probed) — so a copied marker would make every folder with one undeletable there. FakeS3 copies a
+    # marker happily, which is why the count below is the guard. A marker carries no bytes the
+    # library shows; that the folder existed is its whole content, and an empty PUT records it.
+    test "a folder delete copies only files; each marker is put afresh in the entry" do
+      dir_id = make_dir(name: "parts")
+      sub_id = adapter.mkdir(@user, parent_node_id: dir_id, name: "stl").node_id
+      adapter.write(@user, parent_node_id: sub_id, name: "a.stl", io: StringIO.new("a"))
+      copies = @fake.calls[:copy_object]
+
+      adapter.delete(@user, node_id: dir_id)
+
+      assert_equal copies + 1, @fake.calls[:copy_object], "a marker was the source of a COPY"
+      assert_equal "", @fake.objects["#{PREFIX}/.trash/#{dir_id}/parts/stl/"]&.body
+    end
+
+    # ONLY A MARKER THAT EXISTS TRAVELS, and existence is asked by HEAD — never inferred from a
+    # failed COPY. A folder the observer synthesized from its keys has no marker, and the entry must
+    # record only what was there: an invented one costs a PUT and a DELETE, and would come back from
+    # the trash as a folder that outlives its contents.
+    test "a folder synthesized from its keys gets no marker in the entry" do
+      create_file!(name: "cad/x/y.stl", bytes: "y")
+      cad_id = @user.nodes.find_by!(storage_path: "cad", kind: "dir").node_id
+
+      adapter.delete(@user, node_id: cad_id)
+
+      assert_equal "y", @fake.objects["#{PREFIX}/.trash/#{cad_id}/cad/x/y.stl"]&.body
+      assert_empty @fake.objects.keys.grep(%r{/\z}), "a marker was invented for a folder that had none"
+    end
+
+    # FILES, THEN MARKERS DEEPEST FIRST, so each folder is empty when its marker goes. Real S3 does not
+    # care; SeaweedFS keeps a marker as the filer directory and removes it only when nothing is left
+    # under it, DEMOTING one with children to a plain directory (s3api_directory_marker.go). The ids
+    # are chosen so the catalog's own order — by id or by node_id — is parent-first, so the order
+    # asserted is the adapter's and not the database's.
+    test "phase 2 deletes the files, then the markers deepest first" do
+      %w[parts parts/stl parts/stl/deep].each_with_index do |rel, i|
+        @user.nodes.create!(node_id: "d#{i}", name: File.basename(rel), kind: "dir", deleted: false,
+                            storage_path: rel, parent_node_id: (i.zero? ? nil : "d#{i - 1}"), mtime: 1)
+        @fake.seed!("#{PREFIX}/#{rel}/", "")
+      end
+      adapter.write(@user, parent_node_id: "d2", name: "a.stl", io: StringIO.new("a"))
+      deleted = []
+      @fake.client.stub_responses(:delete_object, ->(ctx) { deleted << ctx.params[:key]; {} })
+
+      adapter.delete(@user, node_id: "d0")
+
+      assert_equal %W[#{PREFIX}/parts/stl/deep/a.stl #{PREFIX}/parts/stl/deep/ #{PREFIX}/parts/stl/
+                      #{PREFIX}/parts/], deleted
+    end
+
+    # WHAT TRAVELS IS DECIDED ONCE, BEFORE PHASE 1. Nothing serializes a scan against a port write, so
+    # a scan landing mid-phase-2 sees the sources already deleted and scan-tombstones those members,
+    # paths kept. Phase 3 re-reading `present` then skipped them: bytes in the entry, rows that are
+    # not trash — never listed, never restorable. Both members are asserted, because which one the
+    # scan catches depends on the order phase 2 deletes them in.
+    test "a member a scan tombstoned mid-delete still lands in the trash" do
+      create_file!(name: "ballast.stl", bytes: "still here")
+      dir_id = make_dir(name: "parts")
+      ids = %w[a.stl b.stl].map do |name|
+        adapter.write(@user, parent_node_id: dir_id, name:, io: StringIO.new(name)).node_id
+      end
+      scanned = false
+      @fake.client.stub_responses(:delete_object, lambda { |ctx|
+        @fake.objects.delete(ctx.params[:key])
+        unless scanned
+          scanned = true
+          scan!(max_delete_pct: 100) # the periodic scan, landing once the first source is gone
+        end
+        {}
+      })
+
+      adapter.delete(@user, node_id: dir_id)
+
+      ids.each do |id|
+        assert_nil @user.nodes.find_by!(node_id: id).storage_path,
+                   "#{id}'s bytes are in the entry, but it is not a trash tombstone"
+      end
+      assert_equal ids.sort, (adapter.trashed(@user).map(&:node_id) & ids).sort
+    end
+
+    # ONE PRECONDITION FOR EVERY COPY A DELETE MAKES, a folder's members included. The single-file
+    # path always sent the row's ETag as copy_source_if_match; the folder path sent nothing, so a
+    # member another tool had overwritten since the scan was trashed — and then deleted from its key
+    # — with bytes nobody indexed. Refusing until the next scan re-reads the member is the file
+    # path's existing answer, now the folder's too.
+    test "a folder delete refuses when a member changed since the scan, and moves nothing" do
+      dir_id = make_dir(name: "parts")
+      adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a"))
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "b.stl", io: StringIO.new("b")).node_id
+      @fake.seed!("#{PREFIX}/parts/b.stl", "overwritten by someone else")
+
+      assert_raises(FileLayer::FetchError) { adapter.delete(@user, node_id: dir_id) }
+
+      refute @user.nodes.find_by!(node_id: leaf_id).deleted?, "a member was tombstoned anyway"
+      assert_equal "overwritten by someone else", @fake.objects["#{PREFIX}/parts/b.stl"].body
+      assert stored?("parts/a.stl"), "a source was deleted despite the refusal"
+    end
+
+    # ---- Restoring a DIRECTORY (2026-10-20, F-S03-1 step 2) ----------------------------------
+    #
+    # The inverse of the cascade above: read the entry exactly as #delete wrote it, copy every member
+    # back, put each marker back, revive the rows top-down, re-root what did not come back, and only
+    # then sweep the entry. The rows that can come back are the ones `trash_root_node_id` says the
+    # delete moved; which of them do is what came back into the entry.
+
+    test "restoring a directory returns the subtree with the same node ids and the same bytes" do
+      dir_id = make_dir(name: "parts")
+      sub_id = adapter.mkdir(@user, parent_node_id: dir_id, name: "stl").node_id
+      leaf_id = adapter.write(@user, parent_node_id: sub_id, name: "a.stl",
+                              io: StringIO.new("solid a\n")).node_id
+      attachment = attach!(leaf_id)
+
+      adapter.delete(@user, node_id: dir_id)
+      adapter.undelete(@user, node_id: dir_id)
+
+      # THE NODE IDS ARE WHAT EVERY ATTACHMENT, BOM LINE AND TAG IS KEYED ON. A restore that minted
+      # new ones would look perfect — the files are back, the bytes are right — while every project
+      # that referenced them has quietly lost them.
+      [ dir_id, sub_id, leaf_id ].each do |id|
+        assert @user.nodes.present.exists?(node_id: id), "#{id} did not come back as itself"
+      end
+      assert_equal "parts/stl/a.stl", @user.nodes.find_by!(node_id: leaf_id).storage_path
+      assert_equal "solid a\n", adapter.read(@user, node_id: leaf_id)
+      assert_not orphaned?(attachment)
+      %w[parts/ parts/stl/].each { |marker| assert stored?(marker), "#{marker} did not come back" }
+      assert_empty @fake.objects.keys.grep(%r{\A#{PREFIX}/\.trash/#{dir_id}/}), "the entry was not consumed"
+
+      scan!(max_delete_pct: 100)
+      assert_equal leaf_id, @user.nodes.present.find_by(storage_path: "parts/stl/a.stl")&.node_id,
+                   "the next scan minted a new node_id for the restored bytes"
+    end
+
+    # THE RESTORE READS THE ENTRY ROOT-RELATIVE, as the delete wrote it: `.trash/<root id>/<root
+    # name>/<path beneath>`, never the folder's former full path, which the cascade NULLed and which
+    # for a nested folder carries ancestors the entry does not hold.
+    test "a nested folder restores from its root-relative entry, beside its parent's marker" do
+      cad_id = make_dir(name: "cad")
+      parts_id = adapter.mkdir(@user, parent_node_id: cad_id, name: "parts").node_id
+      stl_id = adapter.mkdir(@user, parent_node_id: parts_id, name: "stl").node_id
+      leaf_id = adapter.write(@user, parent_node_id: stl_id, name: "a.stl",
+                              io: StringIO.new("solid a\n")).node_id
+      adapter.delete(@user, node_id: parts_id)
+
+      adapter.undelete(@user, node_id: parts_id)
+
+      assert_equal "solid a\n", @fake.objects["#{PREFIX}/cad/parts/stl/a.stl"]&.body
+      %w[cad/ cad/parts/ cad/parts/stl/].each { |marker| assert stored?(marker), "#{marker} is missing" }
+      assert_empty @fake.objects.keys.grep(%r{\A#{PREFIX}/\.trash/}), "the entry was not consumed"
+      assert_equal "cad/parts/stl/a.stl", @user.nodes.find_by!(node_id: leaf_id).storage_path
+    end
+
+    # A FOLDER'S DESTINATION IS A WHOLE PREFIX. A HEAD on `<key>` and `<key>/` cannot see a folder the
+    # bucket holds only as keys beneath it (no marker, not yet indexed), and restoring into one would
+    # merge the entry into somebody else's files. Refused, with nothing copied and the entry intact.
+    test "a folder restore refuses a prefix something else now holds, and copies nothing" do
+      dir_id = make_dir(name: "parts")
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a")).node_id
+      adapter.delete(@user, node_id: dir_id)
+      @fake.seed!("#{PREFIX}/parts/other.stl", "someone else's") # an unindexed folder, no marker
+      copies = @fake.calls[:copy_object]
+
+      assert_raises(FileLayer::UnsupportedOperation) { adapter.undelete(@user, node_id: dir_id) }
+
+      assert_equal copies, @fake.calls[:copy_object], "a refused restore copied something"
+      refute stored?("parts/a.stl")
+      assert stored?(".trash/#{dir_id}/parts/a.stl"), "the entry did not survive the refusal"
+      assert @user.nodes.find_by!(node_id: leaf_id).deleted?
+    end
+
+    # THE COPY PHASE IS ALL OR NOTHING, BY COMPENSATION. S3 has no multi-key transaction, so a copy
+    # failing on the second member leaves the first copied back at its key with every row still in
+    # the trash — an unclaimed key the next scan indexes under a NEW node_id (§14a's landmine, from
+    # the restore side). So every key the phase wrote is deleted again before the FetchError: the
+    # library is as it was, the entry is intact, and the retry starts clean.
+    test "a folder restore whose copy fails partway revives nothing and leaves no copied-back object" do
+      dir_id = make_dir(name: "parts")
+      ids = %w[a.stl b.stl].map do |name|
+        adapter.write(@user, parent_node_id: dir_id, name:, io: StringIO.new(name)).node_id
+      end
+      adapter.delete(@user, node_id: dir_id)
+      @fake.fault_after!(:copy_object, 1, "InternalError")
+
+      assert_raises(FileLayer::FetchError) { adapter.undelete(@user, node_id: dir_id) }
+
+      @fake.clear_faults!
+      [ dir_id, *ids ].each do |id|
+        assert @user.nodes.find_by!(node_id: id).deleted?, "#{id} was revived by a failed restore"
+      end
+      %w[parts/ parts/a.stl parts/b.stl].each { |rel| refute stored?(rel), "#{rel} was left copied back" }
+      %w[parts/ parts/a.stl parts/b.stl].each do |rel|
+        assert stored?(".trash/#{dir_id}/#{rel}"), "the entry lost #{rel}"
+      end
+      assert_nothing_raised { adapter.undelete(@user, node_id: dir_id) }
+      assert_equal %w[a.stl b.stl], ids.map { |id| adapter.read(@user, node_id: id) }
+    end
+
+    # A FOLDER IS BACK WHEN ANYTHING BENEATH IT CAME BACK, A DEEPER FOLDER'S MARKER INCLUDED. `F` and
+    # `F/sub` exist only as keys here (the observer synthesized both: no markers) and `F/sub/empty` was
+    # made by the app's mkdir (a marker). `sub`'s only file goes on its own, then `F` is deleted and
+    # restored. Counting only FILES beneath left `sub` in the trash while `empty` went live under it:
+    # the next scan minted a new node_id for `F/sub`, and `sub`'s own restore answered NotFound.
+    test "a folder held up only by a deeper folder's marker comes back with it" do
+      @fake.seed!("#{PREFIX}/F/sub/seed.stl", "seed", last_modified: Time.now)
+      scan!(max_delete_pct: 100)
+      f_id = @user.nodes.find_by!(storage_path: "F", kind: "dir").node_id
+      sub_id = @user.nodes.find_by!(storage_path: "F/sub", kind: "dir").node_id
+      empty_id = adapter.mkdir(@user, parent_node_id: sub_id, name: "empty").node_id
+      adapter.delete(@user, node_id: @user.nodes.find_by!(storage_path: "F/sub/seed.stl").node_id)
+      refute stored?("F/") || stored?("F/sub/"), "precondition: F and F/sub carry no marker"
+
+      adapter.delete(@user, node_id: f_id)
+      adapter.undelete(@user, node_id: f_id)
+
+      [ f_id, sub_id, empty_id ].each do |id|
+        assert @user.nodes.present.exists?(node_id: id), "#{id} did not come back as itself"
+      end
+      scan!(max_delete_pct: 100)
+      assert_equal sub_id, @user.nodes.present.find_by(storage_path: "F/sub")&.node_id,
+                   "the next scan minted a new node_id for F/sub"
+      assert_trash_spellings_agree "after restoring a folder held up by a deeper marker"
+    end
+
+    # A RESTORE THAT FAILS BEFORE ITS FOLDER IS BACK RE-ROOTS NOTHING. What a restore leaves behind is
+    # released in `ensure`, but only once the root is live again: here a scan racing the restore indexes
+    # the folder's path between the copy back and the revive (simulated inside the marker's PUT), so the
+    # root's own revive raises RecordNotUnique. Its members must still name it, or a retry once the race
+    # is cleared would bring the folder back without them.
+    test "a folder restore that fails before the folder is back keeps every member in its entry" do
+      dir_id = make_dir(name: "parts")
+      leaf_id = adapter.write(@user, parent_node_id: dir_id, name: "a.stl", io: StringIO.new("a")).node_id
+      adapter.delete(@user, node_id: dir_id)
+      user, fake = @user, @fake
+      @fake.client.stub_responses(:put_object, lambda { |ctx|
+        fake.seed!(ctx.params[:key], "")
+        if ctx.params[:key] == "#{PREFIX}/parts/"
+          user.nodes.create!(node_id: "scanned-#{SecureRandom.hex(4)}", name: "parts", kind: "dir",
+                             storage_path: "parts", deleted: false)
+        end
+        {}
+      })
+
+      assert_raises(ActiveRecord::RecordNotUnique) { adapter.undelete(@user, node_id: dir_id) }
+
+      assert @user.nodes.find_by!(node_id: dir_id).deleted?, "precondition: the folder did not come back"
+      assert_equal dir_id, @user.nodes.find_by!(node_id: leaf_id).trash_root_node_id,
+                   "a restore that never brought its folder back released the folder's members"
     end
   end
 end

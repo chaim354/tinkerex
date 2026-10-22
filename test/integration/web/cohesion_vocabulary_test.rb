@@ -18,8 +18,9 @@ module Web
   #      today). The only previous signal was a `Rails.logger.warn`.
   #
   # MUTATION-CHECKED (§15), each run and restored:
-  #   - `print_status_label` -> `print_status.tr("_", " ")` in models/_card: "the chip and the badge
+  #   - `print_status_label` -> `print_status.tr("_", " ")` in models/show: "the chip and the badge
   #     must say the same word for one state" fails with badge "want to print" against chip "Wanted".
+  #     (It named models/_card until 2026-10-20, when the card lost its badge.)
   #   - Deleting the `@addons.empty?` block from tools/home/index: "/tools says what a tool is when
   #     it has none" fails on the missing `.empty`.
   #   - Reinstating `class="empty muted"` anywhere: the inert-modifier sweep fails naming the file.
@@ -28,20 +29,24 @@ module Web
 
     setup do
       @user = User.create!(email: "vocab@example.com", password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     test "the chip and the badge must say the same word for one state" do
-      @user.maker_models.create!(title: "Dragon", print_status: "want_to_print")
+      dragon = @user.maker_models.create!(title: "Dragon", print_status: "want_to_print")
       get files_models_path
       assert_response :success
 
-      # THE FILTER CHIP AND THE CARD BADGE, ON ONE PAGE, READ OUT OF THE RENDERED HTML rather than
+      # THE FILTER CHIP AND THE MODEL PAGE'S BADGE, READ OUT OF THE RENDERED HTML rather than
       # compared as constants — comparing `PRINT_STATUS_LABELS` to itself would pass with both
       # views still holding their own literals, which is the state this test exists to forbid.
+      # The badge was the CARD's, on the same page as the chip, until 2026-10-20 took it off the
+      # card; the model page is one click from the chip and still carries it.
       chip = css_select(".chips .chip").map { |e| e.text.strip }
+      get model_path(dragon)
+      assert_response :success
       badge = css_select(".badge[class*=mstatus-want_to_print]").map { |e| e.text.strip }
-      refute_empty badge, "no status badge rendered — the fixture is not reaching the card"
+      refute_empty badge, "no status badge rendered — the fixture is not reaching the model page"
       label = Maker::Model::PRINT_STATUS_LABELS.fetch("want_to_print")
       assert_includes chip, label, "the filter chip does not use the one label source"
       assert_equal [ label ], badge, "the badge says something the filter chip does not"

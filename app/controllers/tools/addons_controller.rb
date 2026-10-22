@@ -618,9 +618,9 @@ module Tools
     # that field begins. Four steps, first answer wins:
     #
     #   1. `?in=` naming a live folder of this user's (New ▸ <tool> from a folder sets it).
-    #   2. `?state=` naming one of this tool's saved states: the folder ITS output lives in now. Every
-    #      reopen link ("Edit in Boxes") already carries `state=`, so a revision starts where its file
-    #      is and #resolve_placements' owned arm replaces it in place there.
+    #   2. `?state=` naming one of this tool's saved states: the folder its LATEST save's output lives
+    #      in now. Every reopen link ("Edit in Boxes") already carries `state=`, so a revision starts
+    #      where its file is and #resolve_placements' owned arm replaces it in place there.
     #   3. The folder of this tool's most recent live output, MAPPED UP to its owning project's folder
     #      when it sits inside one. The eager intake nudge files `Projects/<slug>/x.svg` into
     #      `design/`; a same-name save into `design/` is #refuse_taken_names!'s terminal 422, where the
@@ -667,8 +667,11 @@ module Tools
     # ONE STATEMENT. `[user_id, addon_key]` drives the states, `[addon_state_id, node_id]` the files,
     # `[user_id, node_id]` both node lookups. The folder is a LEFT join so an output at the root is
     # still a row, and a dead folder disqualifies its output rather than answering a tombstone's id.
-    # `maker_addon_states.updated_at` orders it because every save touches the state (create, or
-    # `revision + 1`), where `maker_addon_files.updated_at` survives an unchanged upsert.
+    # `maker_addon_states.updated_at` orders the states because every save touches the state (create,
+    # or `revision + 1`). Within a state, `maker_addon_files.revision DESC` takes an output its LATEST
+    # save wrote over a row an earlier revision left behind (Maker::AddonState#files's order, spelled
+    # in SQL). A file row's `updated_at` could not stand in for it: one save writes its rows one after
+    # another, so newest-first would reverse that save's own order.
     def latest_output_folder(states)
       states
         .joins("INNER JOIN maker_addon_files ON maker_addon_files.addon_state_id = maker_addon_states.id")
@@ -679,7 +682,7 @@ module Tools
         .where("outputs.deleted = ? AND outputs.kind = ?", false, "file")
         .where("outputs.parent_node_id IS NULL OR (folders.deleted = ? AND folders.kind = ?)", false, "dir")
         .order(Arel.sql("maker_addon_states.updated_at DESC, maker_addon_states.id DESC, " \
-                        "maker_addon_files.position ASC, maker_addon_files.id ASC"))
+                        "maker_addon_files.revision DESC, maker_addon_files.position ASC, maker_addon_files.id ASC"))
         .limit(1)
         .pluck(Arel.sql("outputs.parent_node_id"))
     end

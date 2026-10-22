@@ -16,7 +16,7 @@ module Web
       @root = use_fresh_share_library!
       @user = User.create!(email: "cover-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @project = @user.maker_projects.create!(name: "Desk Lamp")
       @user.nodes.create!(node_id: "n-photo", name: "hero.png", kind: "file")
       @user.nodes.create!(node_id: "n-part", name: "arm.stl", kind: "file")

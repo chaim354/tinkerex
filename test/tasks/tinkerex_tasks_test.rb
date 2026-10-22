@@ -18,6 +18,7 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     Rails.application.load_tasks unless Rake::Task.task_defined?("tinkerex:owner")
     Rake::Task["tinkerex:owner"].reenable
     Rake::Task["tinkerex:password"].reenable
+    Rake::Task["tinkerex:admin"].reenable
     Rake::Task["tinkerex:demo:setup"].reenable
     Rake::Task["tinkerex:demo:reset"].reenable
     ENV["TINKEREX_PASSWORD"] = PASSWORD
@@ -45,16 +46,43 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     assert u.valid_password?(PASSWORD)
   end
 
-  # The console door matches the sign-up form: the FIRST account on an empty server enqueues the
-  # first library scan (J, 2026-10-15), a later one does not. Enqueued, never performed.
-  test "owner on an empty server enqueues the first library scan, and a second account does not" do
+  # The FIRST account on a fresh server enqueues the first library scan (J, 2026-10-15), a later one
+  # does not. Enqueued, never performed. A FRESH install has no `library.root` row, and on share the
+  # console door writes the whole mount before it asks (K §3): an operator who mounted a folder chose
+  # it, and the console path must scan with no browser. Without that write the share branch below is
+  # red -- the scan would wait for a confirmation nobody at a console can give. s3 and chunk_remote
+  # have no folder to confirm and write nothing.
+  test "owner on a fresh server confirms a share mount and enqueues the first scan; a second account does neither" do
     User.delete_all
+    Setting.forget(Tinkerex::LibraryRoot::KEY)
+    share = FileLayer.current.is_a?(FileLayer::Share)
     if FileLayer.current.capabilities.scannable?
       assert_enqueued_with(job: Library::ScanJob) { invoke!("tinkerex:owner", "first@example.com") }
     else
       assert_no_enqueued_jobs(only: Library::ScanJob) { invoke!("tinkerex:owner", "first@example.com") }
     end
+    if share
+      assert_equal "", Setting.get(Tinkerex::LibraryRoot::KEY), "the console door confirms the whole mount"
+    else
+      assert_nil Setting.get(Tinkerex::LibraryRoot::KEY), "only a share library has a folder to confirm"
+    end
     assert_no_enqueued_jobs(only: Library::ScanJob) { invoke!("tinkerex:owner", "second@example.com") }
+    assert_equal 2, User.count
+  end
+
+  # ONLY THE FIRST ACCOUNT CONFIRMS. An owner who signed up in the browser and has not yet answered
+  # /settings/library is still deciding; a console account added meanwhile must not answer for them
+  # (and start the 15-minute scans of the whole mount). Found in review: the test above cannot see
+  # this, because after its first console account the row is already "" and a second write is
+  # invisible. Mutation-checked: `clear! if pending?` without `first &&` turns this red on share.
+  test "a console account added while the web owner is still choosing confirms nothing" do
+    User.delete_all
+    Setting.forget(Tinkerex::LibraryRoot::KEY)
+    User.create!(email: "web-owner@example.com", password: PASSWORD, confirmed_at: Time.current)
+
+    assert_no_enqueued_jobs(only: Library::ScanJob) { invoke!("tinkerex:owner", "second@example.com") }
+
+    assert_nil Setting.get(Tinkerex::LibraryRoot::KEY), "the folder is still the web owner's to choose"
     assert_equal 2, User.count
   end
 
@@ -73,6 +101,37 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     u.reload
     assert u.confirmed?
     assert u.valid_password?(PASSWORD)
+  end
+
+  # --- Admins (Settings → Users) -------------------------------------------------------------------
+
+  test "owner makes the first account an admin and a later one not" do
+    User.delete_all
+    invoke!("tinkerex:owner", "first@example.com")
+    invoke!("tinkerex:owner", "second@example.com")
+
+    assert User.find_by!(email: "first@example.com").admin?
+    assert_not User.find_by!(email: "second@example.com").admin?
+  end
+
+  test "admin makes an existing account an admin" do
+    u = User.create!(email: "promote@example.com", password: PASSWORD, confirmed_at: Time.current)
+
+    capture_io { invoke!("tinkerex:admin", "promote@example.com") }
+
+    assert u.reload.admin?
+  end
+
+  test "admin refuses a blank address, an unknown one and the demo account" do
+    assert_raises(SystemExit) { capture_io { invoke!("tinkerex:admin") } }
+    assert_raises(SystemExit) { capture_io { invoke!("tinkerex:admin", "nobody@example.com") } }
+
+    ENV["DEMO_ACCOUNT_EMAIL"] = "demo@example.com"
+    demo = User.create!(email: "demo@example.com", password: PASSWORD, confirmed_at: Time.current)
+    err = assert_raises(SystemExit) { capture_io { invoke!("tinkerex:admin", "demo@example.com") } }
+
+    assert_match(/demo/, err.message)
+    assert_not demo.reload.admin?
   end
 
   # --- The demo account (tinkerex:demo:*) ----------------------------------------------------------
@@ -122,11 +181,14 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     # to share so the answer is the same on every CI leg.
     @root = use_fresh_share_library!
     ENV["DEMO_ACCOUNT_EMAIL"] = "Demo@Example.com"
+    # A FRESH share install: the demo, refused the folder choice, must not be left facing it.
+    Setting.forget(Tinkerex::LibraryRoot::KEY)
 
     recording_resets do |resets|
       assert_difference -> { User.count }, 1 do
         capture_io { invoke!("tinkerex:demo:setup") }
       end
+      assert_equal "", Setting.get(Tinkerex::LibraryRoot::KEY), "the console confirms the mount for the demo"
       demo = User.find_by!(email: "demo@example.com")
       assert demo.confirmed?
       assert_equal "demo", demo.handle

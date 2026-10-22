@@ -56,4 +56,21 @@ class ConcurrencyLimitsTest < ActiveSupport::TestCase
     assert_equal Library::ScanJob.new(user_id: @a.id).concurrency_key,
                  Library::ScanJob.new(user_id: @a.id, root: "/mnt/library").concurrency_key
   end
+
+  # A LIBRARY-FOLDER CHANGE HOLDS THE SCAN'S OWN SEMAPHORE (K §5), so the two keys must be EQUAL,
+  # not merely alike. Solid Queue keys are "<group>/<key>" and the default group is the class name,
+  # so without `group: "Library::ScanJob"` this job's key is "Library::RootChangeJob/<id>": present,
+  # per user, and contending with nothing -- a reset running underneath a scan, with every other
+  # assertion in this file still green. :block, not the scan's :discard: a change must happen.
+  test "Library::RootChangeJob shares Library::ScanJob's semaphore, per user, and waits for it" do
+    assert_equal 1, Library::RootChangeJob.concurrency_limit
+    assert_equal :block, Library::RootChangeJob.concurrency_on_conflict
+
+    scan = Library::ScanJob.new(user_id: @a.id, root: "/mnt/library").concurrency_key
+    assert_equal scan, Library::RootChangeJob.new(user_id: @a.id).concurrency_key
+    assert_equal scan, Library::RootChangeJob.new(user_id: @a.id, start_over: true).concurrency_key,
+                 "start_over: must not fragment the key"
+    assert_not_equal scan, Library::RootChangeJob.new(user_id: @b.id).concurrency_key,
+                     "different users must not serialize behind each other"
+  end
 end

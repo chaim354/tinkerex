@@ -2,7 +2,7 @@
 # Install (or refresh) the nightly backup on the Unraid VM. Idempotent — run it again after any
 # change to ops/backup-db.sh and it re-pushes the script and rewrites the crontab entry.
 #
-#   bin/backup-cron-install                       # 03:30 nightly, chunk+share+s3+sync, keep 14
+#   bin/backup-cron-install                       # 03:30 nightly, every destination, keep 14
 #   BACKUP_KEEP=30 bin/backup-cron-install        # keep 30
 #   BACKUP_AT="0 4" bin/backup-cron-install       # 04:00  (crontab "minute hour")
 #   bin/backup-cron-install --uninstall
@@ -36,13 +36,16 @@ SUBDIR="${BACKUP_SUBDIR:-tinkerex-backups}"
 VOLUME="${BACKUP_VOLUME:-tinkerex_backups}"
 KEEP="${BACKUP_KEEP:-14}"
 AT="${BACKUP_AT:-30 3}"
-# `sync` IS THE SYNC SERVER'S DATABASE (the `sync` accessory, config/deploy.yml) AND BELONGS IN
-# THE DEFAULT, not left to an operator to remember. It is a SECOND database on this box, holding
-# the chunk catalog the `remote` deployment resolves every file through; a nightly that backs up
-# the maker databases and not this one produces a restore that brings the app back pointing at
-# nothing. Adding it here rather than documenting it is the §14i rule that these scripts have no
-# gate behind them — the failure mode is that you find out when you need a restore.
-DESTS="${BACKUP_DESTS:-chunk share s3 sync}"
+# THE DEFAULT IS EVERY ROW OF ops/backup-db.sh's DESTINATION TABLE (the copy installed below), read
+# with `--list` and never restated. So a destination added there is in the nightly the next time
+# this runs, and one removed there cannot linger here as a name the installed script would refuse
+# at 03:30. That is also how `sync` (the `sync` accessory's own database, config/deploy.yml) stays
+# in the default instead of being left to an operator to remember. It is a SECOND database on this
+# box, holding the chunk catalog the base deployment resolves every file through, and a nightly
+# that backs up the maker databases and not this one produces a restore that brings the app back
+# pointing at nothing.
+ALL_DESTS=$(bash "$(dirname "$0")/../ops/backup-db.sh" --list | paste -s -d ' ' -)
+DESTS="${BACKUP_DESTS:-$ALL_DESTS}"
 OPS_DIR="tinkerex-ops"
 MARKER="# tinkerex-nightly-backup"
 TZ_EXPECT="${BACKUP_TZ:-America/New_York}"
@@ -191,17 +194,17 @@ ssh "$HOST" "chmod +x $OPS_DIR/backup-db.sh"
 # that is never pinged is indistinguishable from one that was never configured until its heartbeat
 # window lapses. Tokens live only on the box, chmod 600, never in git.
 echo "==> Uptime Kuma push URLs"
-# THIS WRITING HALF IS DERIVED FROM $DESTS, NOT ENUMERATED — BUT THE READING HALF IS NOT, AND
-# CLAIMING OTHERWISE IS WHAT LET THE LAST BUG SIT. This comment used to say ping_kuma's generic
-# `PING_$(upper dest)` made ops/backup-db.sh generalize to a new destination for free. It does not:
-# that script reads ping.env through an ENUMERATED whitelist (ops/backup-db.sh's `case "$_k"`),
-# deliberately, so no value in that file is ever executable shell — and a destination with no arm
-# there simply never has its variable set, so `[ -n "$url" ] || return 0` skips it silently and for
-# ever. `sync` shipped like that: written into ping.env by the loop below, warned about by nothing,
-# and unreadable by the nightly, so its monitor could not be pinged in EITHER direction.
-# A NEW DESTINATION THEREFORE MOVES THREE THINGS BY HAND, and nothing in bin/ci can go red for any
-# of them (§14i): the `case` arm in ops/backup-db.sh, the `chunk|share|s3|sync` argument case above
-# it, and docs/DEPLOY.md §6's list of push monitors an operator must create in Uptime Kuma.
+# BOTH HALVES SPELL THE KEY `PING_<DEST>`, AND THE READING HALF IS THE DESTINATION TABLE. This
+# writing half derives each key from $DESTS. ops/backup-db.sh's ping_url builds the same key from a
+# row of its table and reads that one line of ping.env literally, never sourced, so no value in
+# that file is ever executable shell. It used to read through an ENUMERATED whitelist, one `case`
+# arm per destination, that had to be extended by hand, and `sync` shipped without its arm:
+# written into ping.env by the loop below, warned about by nothing, unreadable by the nightly, so
+# its monitor could not be pinged in EITHER direction. That whitelist is gone; the table is it.
+# A NEW DESTINATION THEREFORE MOVES THREE THINGS: a row in that table (test/ops_backup_table_test.rb
+# holds the rows to the Kamal config and fails while one is missing), bin/backup-status's closed
+# set (the same test holds it to the table), and docs/DEPLOY.md §6's list of push monitors an
+# operator must create in Uptime Kuma, the one step no test can see.
 UPDATES=""
 for d in $DESTS; do
   k="PING_$(printf '%s' "$d" | tr '[:lower:]' '[:upper:]')"

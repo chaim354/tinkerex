@@ -12,7 +12,7 @@ module Web
     setup do
       @user = User.create!(email: "tb-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @user.nodes.create!(node_id: "dir-cad", name: "cad", kind: "dir")
       file("root.stl", nil)
       file("plate.dxf", nil)

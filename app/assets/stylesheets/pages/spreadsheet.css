@@ -1,0 +1,28 @@
+/* The workbook viewer on an .xlsx file page (2026-10-21; files/viewers/_spreadsheet,
+   spreadsheet_controller.js). This sheet lays out what is ours — the tab bar, the status, the notes,
+   the scrolling pane. The grid's own cells are jspreadsheet's markup and are painted in
+   vendor-overrides.css, the one unlayered sheet, because jspreadsheet's stylesheet is unlayered too
+   and would beat any rule in a layer (design-system.md, the cascade). */
+@layer pages {
+  .spreadsheet { display: grid; gap: var(--space-2); min-width: 0; }
+  .spreadsheet .no-history-note { margin: 0; }
+  .spreadsheet-bar { margin: 0; }
+  /* The sheet tabs ARE the tab component, drawn as buttons because a tab here shows a pane rather
+     than following a link; this only takes away what a button brings. The bar scrolls sideways
+     like every tab bar (components.css), so a workbook of thirty sheets keeps one row. */
+  .spreadsheet-tabs { flex: 1 1 16rem; min-width: 0; overflow-y: hidden; }
+  .spreadsheet-tabs .tab-link { background: none; border-top: 0; border-left: 0; border-right: 0;
+                                font: inherit; font-weight: 500; cursor: pointer; }
+  .spreadsheet-status { color: var(--fg-muted); font-size: 13px; }
+  .spreadsheet-status.is-error { color: var(--danger); }
+  .spreadsheet-note { margin: 0; font-size: 13px; }
+  /* The selected cell's address and, for a formula nobody has overwritten, its formula — a QUANTITY
+     line in mono (the 2026-09-10 cohesion decision 5). Never empty in height, so the grid below does
+     not jump the first time a cell is selected. */
+  .spreadsheet-cell { margin: 0; min-height: 18px; font: 400 12px/18px var(--font-mono); color: var(--fg-muted);
+                      white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  /* Wider than the page at 375px, the grid scrolls inside its own pane (design-system.md rule 11). */
+  .spreadsheet-panes, .spreadsheet-pane { min-width: 0; max-width: 100%; overflow-x: auto; }
+  .spreadsheet-error { margin: 0; padding: var(--space-4); border: 1px solid var(--line);
+                       border-radius: var(--radius-panel); background: var(--surface); }
+}

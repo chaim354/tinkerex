@@ -35,7 +35,8 @@
   THE PREVIEW ITSELF IS EIGHT PARTIALS UNDER files/viewers/ (stage 4, S4-5), and this page is one
   of TWO that render them: Public::FilesController#view renders the same eight for a visitor,
   pointed at public URLs. Each takes every URL as a strict local for that reason, so nothing below
-  the branch chain knows which page it is on.
+  the branch chain knows which page it is on. This page reaches them through files/_viewer
+  (2026-10-21), the maker's chain, which the model page's pane renders too.
 %>
 
 <%# The saved addon item this file came out of, or nil. Read ONCE into a local because two places
@@ -93,93 +94,33 @@
   <%# THE POLL SET, DECLARED RATHER THAN INFERRED. Grid cells announce themselves as pending by
       holding a `.thumb-spinner`; there is no spinner here, so this element says so outright and
       the controller clears the flag the moment an answer arrives. Rendered ONLY while a render is
-      genuinely in flight: a name with no renderer has no row and nothing coming, and a ready row
-      has arrived. %>
-  <% if %w[pending processing].include?(@thumbnail&.status) %>
+      genuinely in flight AND there is nothing to show yet: a name with no renderer has no row and
+      nothing coming, a ready row has arrived, and a rebuilding row is already showing its picture
+      of this content. That last one must not poll — /files/thumbnails answers ready for a row with
+      a picture, so the reload would render the same rebuilding row and poll again, in a loop. %>
+  <% if @thumbnail&.in_flight? && !@thumbnail.showable? %>
     <span class="preview-poll" hidden data-thumbs-target="cell"
           data-node-id="<%= @node.node_id %>" data-thumbs-pending="true"></span>
   <% end %>
   <div class="preview">
-  <%# EIGHT BRANCHES, EIGHT PARTIALS UNDER files/viewers/ (stage 4, S4-5). Each takes every URL as
-      a STRICT local, so the same eight render on a visitor's public file page pointed at public
-      routes — a viewer that built its own URLs would be one condition with two answers across two
-      pages, the shape §14a forbids. The chain itself stays here because the branch ORDER is this
-      page's, and so does everything that is a fact about the OWNER rather than about the file: the
-      repo banner below, the recipe panels, History and Notes. %>
-  <% if @info.content_token.nil? %>
-    <p class="muted">No content yet.</p>
-  <% elsif @kind == :image %>
-    <%= render "files/viewers/image", name: @node.name, blob_url: blob_file_path(@node.node_id) %>
-  <% elsif @kind == :pdf %>
-    <%= render "files/viewers/pdf", name: @node.name, blob_url: blob_file_path(@node.node_id) %>
-  <% elsif @kind == :kicanvas %>
-    <%= render "files/viewers/kicanvas", controls: "full",
-               named_url: named_blob_file_path(@node.node_id, filename: @node.name) %>
-  <% elsif @kind == :gerber %>
-    <%= render "files/viewers/gerber", layers: @gerber_layers, single: @gerber_single,
-               thumbnail: @thumbnail, thumbnail_url: preview_src(@thumbnail), name: @node.name,
-               download_url: blob_file_path(@node.node_id, download: 1) %>
-  <% elsif @kind == :text %>
-    <%# THE BANNER IS NOT PART OF THE VIEWER and stays on this page: it is a fact about a
-        REPOSITORY and about who is looking at it (whether this box can commit, how many edits are
-        pending), neither of which a visitor's page has or should have. %>
-    <% if @repo_root %>
-      <div class="repo-banner">
-        <% if @committable_here %>
-          <%= link_to repo_commit_path(@repo_root.node_id), class: "repo-banner-link" do %>
-            <%= @pending_count.positive? ? pluralize(@pending_count, "pending change") : "No pending changes" %>
-            in <%= @repo_root.name %> — review &amp; commit
-          <% end %>
-        <% else %>
-          <span class="muted">Saved changes sync to the machine that holds
-          <%= @repo_root.name %>, where you can commit them with git.</span>
+  <%# THE BANNER IS NOT PART OF THE VIEWER and stays on this page: it is a fact about a
+      REPOSITORY and about who is looking at it (whether this box can commit, how many edits are
+      pending), neither of which a visitor's page or the model pane has or should have. Rendered
+      where the chain's :text branch used to render it, right before the code viewer. %>
+  <% if @info.content_token && @kind == :text && @repo_root %>
+    <div class="repo-banner">
+      <% if @committable_here %>
+        <%= link_to repo_commit_path(@repo_root.node_id), class: "repo-banner-link" do %>
+          <%= @pending_count.positive? ? pluralize(@pending_count, "pending change") : "No pending changes" %>
+          in <%= @repo_root.name %> — review &amp; commit
         <% end %>
-      </div>
-    <% end %>
-
-    <%= render "files/viewers/code", blob_url: blob_file_path(@node.node_id),
-               ext: File.extname(@node.name).downcase.delete("."), editable: @editable,
-               save_url: file_path(@node.node_id), base_token: @info.content_token %>
-  <% elsif @kind == :model3d %>
-    <%= render "files/viewers/model3d", name: @node.name,
-               named_url: named_blob_file_path(@node.node_id, filename: @node.name),
-               format: File.extname(@node.name).downcase.delete("."),
-               colors: (@viewer_manifest&.colors || []),
-               unit_factor: (@viewer_manifest&.unit_factor || 1.0),
-               thumbnail: @thumbnail, thumbnail_url: preview_src(@thumbnail),
-               download_url: blob_file_path(@node.node_id, download: 1) %>
-  <% elsif @kind == :measure %>
-    <%# .lbrn/.lbrn2, .mage, .dxf, .svg — a picture at rest, with a button that swaps in a
-        measurable outline view built from the geometry payload. The four save URLs are the
-        maker's own doors (stage 4, S4-3): an export lands beside the file it came from, through
-        whichever of the two upload flows this deployment uses. `save: true` is what renders those
-        two controls at all — a VISITOR's file page passes false and gets the same bar without them
-        (stage 4, S4-5), because there is no library for an export to land in.
-
-        `source_node_id`/`link_url` ARE WHERE A SAVED EXPORT CAME FROM (stage 4, S4-8): this file,
-        and the door that records the fact. `__ID__` is a template measure_controller.js substitutes
-        once the upload has answered with the new node's id — the partial takes the URL as a strict
-        local rather than building one, like every other URL it needs (a shared viewer must not
-        reach a private route helper; architecture_invariants_test.rb scans that directory). %>
-    <%= render "files/viewers/measure", name: @node.name,
-               geometry_url: geometry_file_path(@node.node_id),
-               blob_url: blob_file_path(@node.node_id), thumbnail: @thumbnail,
-               thumbnail_url: preview_src(@thumbnail),
-               download_url: blob_file_path(@node.node_id, download: 1),
-               save: true,
-               port_writable: capabilities.port_writable?, create_url: files_path,
-               begin_url: begin_upload_files_path, finalize_url: finalize_upload_files_path,
-               parent_node_id: @node.parent_node_id,
-               source_node_id: @node.node_id, link_url: file_links_path("__ID__") %>
-  <% else %>
-    <%# THE TAIL: the ready thumbnail, the "still generating" while its job runs, and the download
-        fallback. THREE elsifs COLLAPSED INTO ONE else, which is behaviour-preserving rather than a
-        simplification — the partial re-tests `kind == :thumbnail` internally and the chain's final
-        arm was already the catch-all. %>
-    <%= render "files/viewers/static", kind: @kind, thumbnail: @thumbnail, name: @node.name,
-               thumbnail_url: preview_src(@thumbnail),
-               download_url: blob_file_path(@node.node_id, download: 1) %>
+      <% else %>
+        <span class="muted">Saved changes sync to the machine that holds
+        <%= @repo_root.name %>, where you can commit them with git.</span>
+      <% end %>
+    </div>
   <% end %>
+  <%= render "files/viewer", viewer: @viewer, editable: @editable, save: true %>
   </div>
   <%# Which recipe panel: MillMage writes "operations" (an endmill, feeds, depths), LightBurn
       writes "layers" (speed/power/passes). Branch on the key rather than on the file extension —

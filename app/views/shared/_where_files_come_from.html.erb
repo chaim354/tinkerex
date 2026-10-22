@@ -11,8 +11,9 @@
   inline (Library::ScanJob#perform), so a scannable library's new folder is a project, and its loose
   files filed, within one scan.
 
-  The share sentence's subject comes from LibraryFolderHelper#library_folder_label: three states by
-  LIBRARY_HOST_PATH (absent, empty, set), display-only.
+  The share sentence's subject comes from LibraryFolderHelper#library_root_label: the mount's three
+  states by LIBRARY_HOST_PATH (absent, empty, set), display-only, plus the folder chosen inside it
+  at /settings/library (K).
 
   THE FILING SENTENCE NAMES ITS EXCEPTIONS because the sweep moves files: a README at a project's
   root is never filed, and nothing inside a git working tree is (Maker::AttachToProject's
@@ -33,7 +34,7 @@
           program or a sync tool puts there appear here within 15 minutes, or right away with
           Rescan library, under More actions (⋯) on the <%= link_to "Library", files_path %> page.</p>
       <% else %>
-        <p><strong><%= library_folder_label %></strong> is your library. Anything put there,
+        <p><strong><%= library_root_label %></strong> is your library. Anything put there,
           over a NAS share, by another program or by a plain copy, appears here within 15 minutes,
           or right away with Rescan library, under More actions (⋯) on the
           <%= link_to "Library", files_path %> page.</p>
@@ -50,5 +51,5 @@
     library, becomes a project within 15 minutes. Files left loose at the top of a project's folder
     are then filed into type folders such as <code>models/</code> and <code>docs/</code>, except a
     README and anything in a git repository; your
-    <%= link_to "Filing", settings_filing_rules_path %> settings decide which type goes where.</p>
+    <%= link_to "Shelves", settings_shelves_path %> settings decide which type goes where.</p>
 <% end %>

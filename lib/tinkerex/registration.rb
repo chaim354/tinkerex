@@ -48,8 +48,8 @@ module Tinkerex
       if env["REGISTRATION"] == "open" && SINGLE_LIBRARY_BACKENDS.include?(backend)
         raise Error, "REGISTRATION=open is refused on LIBRARY_BACKEND=#{backend}: every account " \
                      "indexes the same library there, so an open sign-up hands a stranger the " \
-                     "owner's files. Leave it closed (the first account is the owner; " \
-                     "bin/rails tinkerex:owner adds more) or deploy chunk_remote."
+                     "owner's files. Leave it closed (the first account is the owner and admin, " \
+                     "who adds more under Settings -> Users) or deploy chunk_remote."
       end
       nil
     end

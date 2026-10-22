@@ -35,145 +35,21 @@
   </div>
 </div>
 
-<div class="model-layout">
-  <%# MAIN column: the cover image, then a gallery, then the instructions PDF UNDER the image
-      (Printables-style), then notes. %>
-  <div class="model-main">
-    <% if @viewable_3d.any? %>
-      <%# The hero doubles as the 3D viewer: click "View in 3D" to swap the poster for the live
-          canvas in place; a dropdown switches between the model's 3D files. `lazy` means nothing
-          is fetched until the click. When there's a single file, no dropdown — the url/format
-          are set on the element so load() uses them directly.
-
-          EVERY URL HERE IS THE NAMED BLOB ROUTE (the option data-url attributes too), because
-          Online3DViewer picks its importer from the URL's own trailing extension — see the same
-          note on files/show.html.erb's :model3d branch. %>
-      <div class="model-hero model-viewer"
-           data-controller="modelviewer"
-           data-modelviewer-lazy-value="true"
-           <% if @viewable_3d.one? %>
-           data-modelviewer-url-value="<%= named_blob_file_path(@viewable_3d.first[:node_id], filename: @viewable_3d.first[:name]) %>"
-           data-modelviewer-format-value="<%= @viewable_3d.first[:format] %>"
-           data-modelviewer-colors-value="<%= (@viewable_3d.first[:manifest]&.colors || []).to_json %>"
-           data-modelviewer-unit-factor-value="<%= @viewable_3d.first[:manifest]&.unit_factor || 1.0 %>"
-           <% end %>>
-        <div class="model-viewer-stage" data-modelviewer-target="canvas"></div>
-        <div class="model-viewer-bar">
-          <% if @viewable_3d.many? %>
-            <select class="model-viewer-source" data-modelviewer-target="source"
-                    data-action="change->modelviewer#selectSource" aria-label="Choose a 3D file">
-              <% @viewable_3d.each do |f| %>
-                <%# The slicer colours and the unit factor ride on each OPTION, not on the element:
-                    they are facts about one FILE and the switcher swaps files. load() copies them
-                    into the controller's values beside url/format. %>
-                <option value="<%= f[:node_id] %>"
-                        data-url="<%= named_blob_file_path(f[:node_id], filename: f[:name]) %>"
-                        data-format="<%= f[:format] %>"
-                        data-colors="<%= (f[:manifest]&.colors || []).to_json %>"
-                        data-unit-factor="<%= f[:manifest]&.unit_factor || 1.0 %>"
-                        <%= "selected" if f[:node_id] == @viewable_3d_default[:node_id] %>><%= f[:name] %></option>
-              <% end %>
-            </select>
-          <% end %>
-          <span class="model-viewer-dims" data-modelviewer-target="dims"></span>
-          <span class="mv-launch">
-            <button type="button" class="btn small" data-action="modelviewer#load">View in 3D</button>
-          </span>
-          <span class="mv-actions">
-            <button type="button" class="btn small ghost" data-action="modelviewer#reset">Reset view</button>
-            <button type="button" class="btn small ghost" data-action="modelviewer#fullscreen">Fullscreen</button>
-            <button type="button" class="btn small ghost" aria-label="Return to image" data-action="modelviewer#showPoster">✕ Image</button>
-          </span>
-        </div>
-        <div class="model-viewer-fallback" data-modelviewer-target="fallback">
-          <%= render "hero_poster" %>
-        </div>
-      </div>
-    <% else %>
-      <div class="model-hero">
-        <%= render "hero_poster" %>
-      </div>
-    <% end %>
-
-    <%# @by_role IS BUILT FROM THE LIVE ATTACHMENTS ONLY (ModelsController#show partitions against
-        @page_nodes), which is what lets both dereferences below drop their `&.`. The count matters
-        as much as the tile: this gallery renders only when there is more than one image, so an
-        unfiltered dead entry did not merely paint a broken <img> — it summoned a gallery around a
-        single live one. %>
-    <% images = Array(@by_role["image"]) %>
-    <% if images.size > 1 %>
-      <div class="image-gallery">
-        <% images.each do |a| %>
-          <% node = @page_nodes[a.node_id] %>
-          <%= link_to file_path(a.node_id) do %>
-            <%# `inline_image?`, NOT the role (tinkerex#285, found in review): a .heic is an image by
-                role and a broken picture as raw bytes, so it gets the same thumbnail cell the hero
-                poster falls back to — fed by @covers, which ModelsController#show widens to these. %>
-            <% if Maker::FileAttachment.inline_image?(node.name) %>
-              <%= image_tag blob_file_path(a.node_id), alt: node.name, loading: "lazy" %>
-            <% else %>
-              <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
-              <span class="thumb file-cell gallery-thumb" data-controller="thumbs"
-                    data-thumbs-url-value="<%= thumbnails_files_path %>" data-thumbs-target="cell"
-                    data-node-id="<%= a.node_id %>" data-ext="<%= ext %>">
-                <%= render "files/thumb", thumb: @covers.thumb(a.node_id), ext_label: ext,
-                           url: preview_src(@covers.thumb(a.node_id)) %>
-              </span>
-            <% end %>
-          <% end %>
-        <% end %>
-      </div>
-    <% end %>
-
-    <% instructions = Array(@by_role["instructions"]) %>
-    <% if instructions.present? %>
-      <section class="model-instructions">
-        <h2>Instructions</h2>
-        <% instructions.each do |a| %>
-          <iframe class="preview-pdf" src="<%= blob_file_path(a.node_id) %>" title="<%= @page_nodes[a.node_id].name %>"></iframe>
-        <% end %>
-      </section>
-    <% end %>
-
-    <% if @model.notes.present? %>
-      <section class="model-notes"><h2>Notes</h2><%= render_note(@model.notes) %></section>
-    <% end %>
-  </div>
-
-  <%# SIDE column: metadata, the files as a scrollable folder tree, then the print log. %>
-  <aside class="model-side">
-    <dl class="meta">
-      <% if @model.designer.present? %><dt>Designer</dt><dd><%= @model.designer %></dd><% end %>
-      <% if @model.license.present? %><dt>License</dt><dd><%= @model.license %></dd><% end %>
-      <% if @model.source_url.present? %>
-        <dt>Source</dt>
-        <dd>
-          <% if @model.source_url.match?(%r{\Ahttps?://}i) %>
-            <%= link_to @model.source_url, @model.source_url, target: "_blank", rel: "noopener" %>
-          <% else %>
-            <%= @model.source_url %>
-          <% end %>
-        </dd>
-      <% end %>
-      <% if @model.tags.any? %><dt>Tags</dt><dd><%= @model.tag_list %></dd><% end %>
-      <dt>Added</dt><dd><%= @model.created_at.strftime("%Y-%m-%d") %></dd>
-    </dl>
-
-    <% if @model.print_settings.present? %>
-      <section class="model-print-settings">
-        <h2>Print settings</h2>
-        <dl class="ps-grid">
-          <% @model.print_settings.each do |k, v| %>
-            <dt><%= k.tr("_", " ").capitalize %></dt><dd><%= v %></dd>
-          <% end %>
-        </dl>
-      </section>
-    <% end %>
-
+<%# THE MODEL PAGE, PRINTABLES-STYLE (2026-10-21): the model's files on the left, a pane on the right.
+    The list is OUTSIDE the frame so its scroll survives a click; modelstage_controller.js keeps its
+    aria-current true across frame loads, and on a phone scrolls the pane into view. %>
+<div class="model-layout" data-controller="modelstage" data-action="turbo:frame-load->modelstage#loaded">
+  <nav class="model-index" aria-label="Model files">
+    <%= link_to "Details", model_path(@model, file: "details"), class: "model-index-details",
+                aria: { current: ("true" if @stage == :details) },
+                data: { turbo_frame: "model_stage", turbo_action: "advance", modelstage_target: "entry" } %>
     <section class="model-files">
       <h2>Files <span class="muted">(<%= @file_count %>)</span></h2>
       <% if @file_tree.present? %>
-        <div class="file-tree-box"><%= render "file_tree", nodes: @file_tree %></div>
+        <div class="file-tree-box">
+          <%= render "file_tree", nodes: @file_tree, model: @model,
+                     current: (@stage == :details ? nil : @stage.node_id) %>
+        </div>
       <% else %>
         <p class="muted">No files yet.</p>
       <% end %>
@@ -192,7 +68,6 @@
         </p>
       <% end %>
     </section>
-
-    <%= render "models/print_log", model: @model, print_runs: @print_runs, printers: @printers, materials: @materials %>
-  </aside>
+  </nav>
+  <%= render "models/stage", model: @model, stage: @stage, viewer: @viewer %>
 </div>

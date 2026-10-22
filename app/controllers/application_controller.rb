@@ -37,6 +37,18 @@ class ApplicationController < ActionController::Base
   # direct_uploads hole in §15 is closed by the route shadow, not by this.
   before_action :authenticate_user!, unless: :devise_controller?
 
+  # A FRESH SHARE INSTALL CONFIRMS ITS LIBRARY FOLDER BEFORE ANYTHING ELSE (K, 2026-10-20). Every
+  # signed-in HTML page goes to /settings/library while Tinkerex::LibraryRoot.pending?: that page and
+  # Help skip this, Devise's own pages are excluded by the condition (sign-out among them), and
+  # Public:: stands on ActionController::Base and never reaches here (§14d). An HTML request is sent
+  # there; any other READ answers as itself (a poller, the chooser); any other WRITE is refused 409,
+  # so a JSON door cannot scan, upload or file into a folder nobody has chosen (found in review: a
+  # JSON POST /files/rescan indexed the whole mount). Off share the condition reads no setting; on
+  # share one cached read per request. After authentication, so a signed-out visitor still meets
+  # the sign-in page first.
+  before_action :require_library_folder!,
+                if: -> { !devise_controller? && user_signed_in? && Tinkerex::LibraryRoot.pending? }
+
   # The top bar renders on every signed-in page and needs both: which upload flow this deployment
   # drives (`capabilities.port_writable?`) and which folder it uploads into.
   include LibraryCapabilities
@@ -44,8 +56,6 @@ class ApplicationController < ActionController::Base
 
   # Changes to the importmap will invalidate the etag for HTML responses
   stale_when_importmap_changes
-
-  helper_method :web_device
 
   # After a Devise sign-in (or sign-up confirmation), land on Recent — the app's front door
   # (config/routes.rb's `root to: "home#index"`). This IS Devise's own default
@@ -55,14 +65,13 @@ class ApplicationController < ActionController::Base
     root_path
   end
 
-  # A stable, reusable Device for the signed-in web user. Lets the web UI mint per-user
-  # presigned URLs and record commits through the SAME machinery as the desktop client —
-  # the device-token bootstrap is unchanged; the web session just reuses it (CLAUDE.md §8).
-  WEB_DEVICE_NAME = "web-session".freeze
+  private
 
-  def web_device
-    return unless user_signed_in?
-    @web_device ||= current_user.devices.find_by(name: WEB_DEVICE_NAME) ||
-                    Device.register!(user: current_user, name: WEB_DEVICE_NAME)
+  def require_library_folder!
+    if request.format.html?
+      redirect_to settings_library_path
+    elsif !request.get? && !request.head?
+      render json: { error: "Choose the library folder first, at #{settings_library_path}." }, status: :conflict
+    end
   end
 end

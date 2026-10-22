@@ -166,10 +166,10 @@
       a blob URL never expires, so a visitor's poster outlived the project's publication.
     %>
     <% if File.extname(name).downcase == ".svg" %>
-      <img src="<%= blob_url %>" alt="<%= name %>" class="preview-image">
-    <% elsif thumbnail&.status == "ready" && thumbnail.asset.attached? %>
-      <img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image">
-    <% elsif %w[pending processing].include?(thumbnail&.status) %>
+      <div class="render-card"><img src="<%= blob_url %>" alt="<%= name %>" class="preview-image"></div>
+    <% elsif thumbnail&.showable? %>
+      <div class="render-card"><img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image"></div>
+    <% elsif thumbnail&.in_flight? %>
       <p class="muted">Generating preview…</p>
     <% else %>
       <p class="muted">No inline preview for this file.</p>

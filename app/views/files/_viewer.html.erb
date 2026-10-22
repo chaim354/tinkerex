@@ -1,0 +1,86 @@
+<%# locals: (viewer:, editable:, save:) %>
+<%# EIGHT BRANCHES, EIGHT PARTIALS UNDER files/viewers/ (stage 4, S4-5), AND A NINTH THE MAKER'S PAGES
+    ALONE RENDER: the workbook grid (_spreadsheet, 2026-10-21), whose data comes from a session-authed
+    door, so a visitor's page shows an .xlsx as the download fallback instead. Each takes every URL as
+    a STRICT local, so the same eight render on a visitor's public file page pointed at public
+    routes — a viewer that built its own URLs would be one condition with two answers across two
+    pages, the shape §14a forbids. The chain itself is the MAKER's, because the branch ORDER is the
+    maker's pages', and everything that is a fact about the OWNER rather than about the file stays on
+    files/show: the repo banner, the recipe panels, History and Notes.
+
+    ONE CHAIN FOR TWO MAKER PAGES (2026-10-21): the file page renders this, and so does the model
+    page's pane, both from FileViewer#viewer_state_for, so the two cannot disagree about which viewer
+    a file gets or what it is handed. IT LIVES OUTSIDE files/viewers/ ON PURPOSE: it calls private
+    route helpers (blob_file_path, geometry_file_path, …), which architecture_invariants_test.rb's
+    Public scan forbids inside that directory. A visitor's page keeps its own chain
+    (public/files/view.html.erb) over the same eight partials. `editable:` and `save:` are the two
+    facts about the OWNER's page the model pane switches off: the file page passes its own editable
+    answer and true; the pane passes false for both. %>
+<% if viewer.info.content_token.nil? %>
+  <p class="muted">No content yet.</p>
+<% elsif viewer.kind == :image %>
+  <%= render "files/viewers/image", name: viewer.node.name, blob_url: blob_file_path(viewer.node.node_id) %>
+<% elsif viewer.kind == :pdf %>
+  <%= render "files/viewers/pdf", name: viewer.node.name, blob_url: blob_file_path(viewer.node.node_id) %>
+<% elsif viewer.kind == :kicanvas %>
+  <%= render "files/viewers/kicanvas", controls: "full",
+             named_url: named_blob_file_path(viewer.node.node_id, filename: viewer.node.name) %>
+<% elsif viewer.kind == :gerber %>
+  <%= render "files/viewers/gerber", layers: viewer.gerber_layers, single: viewer.gerber_single,
+             thumbnail: viewer.thumbnail, thumbnail_url: preview_src(viewer.thumbnail), name: viewer.node.name,
+             download_url: blob_file_path(viewer.node.node_id, download: 1) %>
+<% elsif viewer.kind == :text %>
+  <%= render "files/viewers/code", blob_url: blob_file_path(viewer.node.node_id),
+             ext: File.extname(viewer.node.name).downcase.delete("."), editable: editable,
+             save_url: file_path(viewer.node.node_id), base_token: viewer.info.content_token %>
+<% elsif viewer.kind == :spreadsheet %>
+  <%# An .xlsx (2026-10-21): the grid fetches the workbook and saves edits through its own door,
+      Files::SpreadsheetsController. `save:` decides whether the grid can save at all — the file page
+      can, the model page's pane shows the workbook read-only. %>
+  <%= render "files/viewers/spreadsheet", data_url: file_spreadsheet_path(viewer.node.node_id),
+             save_url: (file_spreadsheet_path(viewer.node.node_id) if save),
+             download_url: blob_file_path(viewer.node.node_id, download: 1),
+             scripts: [ asset_path("jsuites.js"), asset_path("jspreadsheet.js") ],
+             styles: [ asset_path("jsuites.css"), asset_path("jspreadsheet.css") ] %>
+<% elsif viewer.kind == :model3d %>
+  <%= render "files/viewers/model3d", name: viewer.node.name,
+             named_url: named_blob_file_path(viewer.node.node_id, filename: viewer.node.name),
+             format: File.extname(viewer.node.name).downcase.delete("."),
+             colors: (viewer.manifest&.colors || []),
+             unit_factor: (viewer.manifest&.unit_factor || 1.0),
+             thumbnail: viewer.thumbnail, thumbnail_url: preview_src(viewer.thumbnail),
+             download_url: blob_file_path(viewer.node.node_id, download: 1),
+             preview_url: file_preview_path(viewer.node.node_id), viewer_preview: viewer.thumbnail&.viewer? %>
+<% elsif viewer.kind == :measure %>
+  <%# .lbrn/.lbrn2, .mage, .dxf, .svg — a picture at rest, with a button that swaps in a
+      measurable outline view built from the geometry payload. The four save URLs are the
+      maker's own doors (stage 4, S4-3): an export lands beside the file it came from, through
+      whichever of the two upload flows this deployment uses. `save:` is what renders those
+      two controls at all — the file page passes true; a VISITOR's file page passes false and gets
+      the same bar without them (stage 4, S4-5), because there is no library for an export to land
+      in, and the model page's pane passes false too, because saving is the file page's.
+
+      `source_node_id`/`link_url` ARE WHERE A SAVED EXPORT CAME FROM (stage 4, S4-8): this file,
+      and the door that records the fact. `__ID__` is a template measure_controller.js substitutes
+      once the upload has answered with the new node's id — the partial takes the URL as a strict
+      local rather than building one, like every other URL it needs (a shared viewer must not
+      reach a private route helper; architecture_invariants_test.rb scans that directory). %>
+  <%= render "files/viewers/measure", name: viewer.node.name,
+             geometry_url: geometry_file_path(viewer.node.node_id),
+             blob_url: blob_file_path(viewer.node.node_id), thumbnail: viewer.thumbnail,
+             thumbnail_url: preview_src(viewer.thumbnail),
+             download_url: blob_file_path(viewer.node.node_id, download: 1),
+             save: save,
+             port_writable: capabilities.port_writable?, create_url: files_path,
+             begin_url: begin_upload_files_path, finalize_url: finalize_upload_files_path,
+             parent_node_id: viewer.node.parent_node_id,
+             source_node_id: viewer.node.node_id, link_url: file_links_path("__ID__") %>
+<% else %>
+  <%# THE TAIL: the ready thumbnail, the "still generating" while its job runs, and the download
+      fallback. THREE elsifs COLLAPSED INTO ONE else, which is behaviour-preserving rather than a
+      simplification — the partial re-tests `kind == :thumbnail` internally and the chain's final
+      arm was already the catch-all. %>
+  <%= render "files/viewers/static", kind: viewer.kind, thumbnail: viewer.thumbnail, name: viewer.node.name,
+             thumbnail_url: preview_src(viewer.thumbnail),
+             download_url: blob_file_path(viewer.node.node_id, download: 1) %>
+<% end %>

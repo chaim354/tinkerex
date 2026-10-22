@@ -79,8 +79,8 @@ module FileLayer
         # swaps it, so in the full parallel suite whether this skipped depended on what had run
         # before it in the same worker. In isolation these files were perfectly deterministic;
         # the flap only appeared in the whole-suite counts, which is the hardest place to see it.
-        # LibraryBackend re-reads ENV on every call and nothing mutates it, so this asks the same
-        # question of something stable.
+        # LibraryBackendCheck.configured re-reads ENV on every call and nothing mutates it, so this
+        # asks the same question of something stable.
         # THESE RAN ONLY ON THE CHUNK LEG, AND CHUNK IS GONE (Arc D Part 2). The skip used to read
         # `unless LibraryBackend.name == "chunk"` because the rig below is a LOOPBACK: it pointed
         # the adapter's transport at this same Rails process, using the embedded engine's own v1
@@ -93,7 +93,7 @@ module FileLayer
         # asserted nothing. A configured server is a PRECONDITION, and the gate's own CI step
         # greps its output for skips so this cannot quietly become a no-op there.
         skip "needs a real sync server (bin/sync-server start); runs in the test-chunk-remote gate" \
-          unless ChunkRemoteJourney.configured? && LibraryBackend.name == "chunk_remote"
+          unless ChunkRemoteJourney.configured? && LibraryBackendCheck.configured == "chunk_remote"
         @user = User.create!(email: "remote-mutation-#{SecureRandom.hex(4)}@example.com",
                              password: "correct horse battery staple", confirmed_at: Time.current)
       end

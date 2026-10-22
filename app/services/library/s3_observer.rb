@@ -462,7 +462,7 @@ module Library
       # Root-anchored, so a nested `cad/.trash` is the user's own folder and none of our business.
       #
       # Scanner::TRASH_PREFIX rather than a second ".trash" literal — this skip, FileLayer::S3's
-      # `observable!` guard and its `trash_key` are ONE FACT, and two copies of it is exactly how
+      # `observable!` guard and its `entry_key` are ONE FACT, and two copies of it is exactly how
       # the trash quietly starts getting indexed. No log line: a trashed file is skipped on every
       # scan forever, and logging routine correctness is how a log stops being read.
       #

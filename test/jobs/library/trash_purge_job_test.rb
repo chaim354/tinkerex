@@ -73,7 +73,7 @@ module Library
     test "purging the bytes leaves the node tombstoned, and undelete then fails cleanly" do
       id = SecureRandom.uuid
       @user.nodes.create!(node_id: id, name: "p.stl", kind: "file", deleted: true,
-                          storage_path: nil, mtime: 1_700_000_000_000_000_000)
+                          storage_path: nil, trash_root_node_id: id, mtime: 1_700_000_000_000_000_000)
       trash!(id, "p.stl", "bytes", age_days: 45)
 
       Library::TrashPurgeJob.perform_now(root: @root.to_s, trash_days: 30)
@@ -164,6 +164,24 @@ module Library
             Library::TrashPurgeJob.purge_all!
           end
         end
+      end
+    end
+
+    # THE PAUSE (K §3), ScanJobTest's pair in one test: an unconfirmed share library has no trash
+    # to purge yet. The confirmed half proves the no-op is the gate; s3 has no folder to confirm.
+    test "purge_all! enqueues nothing while a share library's folder is unconfirmed" do
+      Dir.mktmpdir do |dir|
+        with_env("LIBRARY_BACKEND" => "share", "LIBRARY_PATH" => dir) do
+          Setting.forget(Tinkerex::LibraryRoot::KEY)
+          assert_no_enqueued_jobs(only: Library::TrashPurgeJob) { Library::TrashPurgeJob.purge_all! }
+
+          Setting.put(Tinkerex::LibraryRoot::KEY, "")
+          assert_enqueued_jobs(1, only: Library::TrashPurgeJob) { Library::TrashPurgeJob.purge_all! }
+        end
+      end
+      with_env(S3_ENV) do
+        Setting.forget(Tinkerex::LibraryRoot::KEY)
+        assert_enqueued_jobs(1, only: Library::TrashPurgeJob) { Library::TrashPurgeJob.purge_all! }
       end
     end
 
@@ -316,7 +334,7 @@ module Library
       fake = FakeS3.new
       id = SecureRandom.uuid
       @user.nodes.create!(node_id: id, name: "p.stl", kind: "file", deleted: true,
-                          storage_path: nil, mtime: 1_700_000_000_000_000_000)
+                          storage_path: nil, trash_root_node_id: id, mtime: 1_700_000_000_000_000_000)
       fake.seed!("library/.trash/#{id}/p.stl", "bytes", last_modified: 45.days.ago)
 
       with_injected_s3(fake) { Library::TrashPurgeJob.perform_now(trash_days: 30) }
@@ -456,7 +474,7 @@ module Library
       fake = FakeS3.new
       id = SecureRandom.uuid
       @user.nodes.create!(node_id: id, name: "p.stl", kind: "file", deleted: true,
-                          storage_path: nil, mtime: 1_700_000_000_000_000_000)
+                          storage_path: nil, trash_root_node_id: id, mtime: 1_700_000_000_000_000_000)
       # The library's ONLY object is this one trashed file — the corner, and the whole of it.
       fake.seed!("library/.trash/#{id}/p.stl", "bytes", last_modified: 45.days.ago)
 

@@ -60,8 +60,8 @@
           picture needs siblings a renderer handed one file's bytes cannot reach. Its URL is the
           strict local `thumbnail_url` (hardening, 2026-09-08; tinkerex#278) — `url_for(asset)` is a
           blob URL that never expires, which outlived a project's publication on a visitor's page. %>
-      <% if thumbnail&.status == "ready" && thumbnail.asset.attached? %>
-        <img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image">
+      <% if thumbnail&.showable? %>
+        <div class="render-card"><img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image"></div>
       <% end %>
       <p class="muted" data-gerber-target="status">Click <strong><%= single ? "View layer" : "View board" %></strong> to render <%= single ? "this layer" : "the board" %> in the browser, or download the file.</p>
       <%= link_to "Download #{name}", download_url, class: "btn" %>

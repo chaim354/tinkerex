@@ -41,11 +41,13 @@
                   a directory. #thumb_cell_data is the separate half the poll reads, and a folder
                   gets none. See files_helper.rb for why they are separate builders.
 
-                  Both file links are SELECTION ITEMS (FilesHelper#with_selection), as the grid's
-                  cards are; the folder link below is not. %>
+                  Both file links open the file on a click and in a new tab on a double-click
+                  (FilesHelper#file_open_data), and right-click › Details opens the side panel, which
+                  is what makes them SELECTION ITEMS (FilesHelper#with_selection), as the grid's
+                  cards are; the folder link below is neither, and navigates into the folder. %>
               <%= link_to file_path(node.node_id), class: [ "file-cell", ("is-selected" if node.node_id == @selected) ],
-                          data: with_selection(thumb_cell_data(node.node_id, ext_label)
-                                  .merge(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id])), node.node_id) do %>
+                          data: file_open_data(with_selection(thumb_cell_data(node.node_id, ext_label)
+                                  .merge(file_menu_data(node, @addon_origins[node.node_id])), node.node_id)) do %>
                 <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: Maker::FileAttachment.photo?(node.name) %>
                 <span class="file-name"><%= node.name %></span>
               <% end %>
@@ -53,7 +55,7 @@
               <%# The plain-link branch: a menu, but no poll cell — there is no thumbnail to wait
                   for. The branch that is easy to forget, and was forgotten first time round. %>
               <%= link_to node.name, file_path(node.node_id), class: ("is-selected" if node.node_id == @selected),
-                          data: with_selection(file_menu_data(node.node_id, node.name, @addon_origins[node.node_id]), node.node_id) %>
+                          data: file_open_data(with_selection(file_menu_data(node, @addon_origins[node.node_id]), node.node_id)) %>
             <% end %>
             <%= render "note_badge", count: @note_counts[node.node_id] %>
           <% else %>

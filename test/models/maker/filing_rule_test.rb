@@ -1,8 +1,9 @@
 require "test_helper"
 
 module Maker
-  # Stage 3, S3-1: the per-user extension map's one row. Validation shape copied from
-  # Maker::Shelf#path_segments_are_allowed (the same two reserved-name questions), and Task A's
+  # Stage 3, S3-1: the per-user extension map's one row. Its folder check is
+  # Maker::FilingRule.plain_segment? (the same two reserved-name questions every leaf-name door
+  # asks), which Maker::Shelf's name asks too since 2026-10-20, and Task A's
   # own decision to key off FilesController::EXT_RE rather than a second regex
   # (docs/invariants/files-preview.md: every extension in the one vocabulary must satisfy it).
   class FilingRuleTest < ActiveSupport::TestCase
@@ -44,10 +45,10 @@ module Maker
       end
     end
 
-    # THE REJECTIONS ARE THE POINT (test/models/maker/shelf_test.rb's own comment for the
-    # identical pair of questions, asked here about a filing rule's folder instead of a shelf's
-    # path). A reserved name here would become a real directory this app refuses to write to on
-    # every other door -- .trash, a temp-file prefix and a repo marker.
+    # THE REJECTIONS ARE THE POINT: the pair of questions every leaf-name door asks, here about a
+    # filing rule's folder (test/models/maker/shelf_test.rb asks them of a shelf's name through the
+    # same .plain_segment?). A reserved name here would become a real directory this app refuses
+    # to write to on every other door -- .trash, a temp-file prefix and a repo marker.
     test "a reserved or malformed folder name is refused" do
       [ ".trash", ".maker-tmp-x", ".git", "a/b", "..", "." ].each do |bad|
         rule = @user.maker_filing_rules.new(ext: "stl", folder: bad)

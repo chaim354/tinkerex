@@ -54,9 +54,9 @@ class User < ApplicationRecord
   has_many :maker_build_log_entries, class_name: "Maker::BuildLogEntry", dependent: :destroy
   has_many :maker_locations, class_name: "Maker::Location", dependent: :destroy
   has_many :maker_suppliers, class_name: "Maker::Supplier", dependent: :destroy
-  # Stage 3, S3-1: the per-user extension map (Maker::FilingRules, /settings/filing). `:destroy`
-  # for the same reason as the reference lists just above -- no callbacks, no dependents, nothing
-  # a faster delete would need to skip.
+  # Stage 3, S3-1: the per-user extension map (Maker::FilingRules, edited on /settings/shelves).
+  # `:destroy` for the same reason as the reference lists just above -- no callbacks, no
+  # dependents, nothing a faster delete would need to skip.
   has_many :maker_filing_rules, class_name: "Maker::FilingRule", dependent: :destroy
   # `:destroy`, not `:delete_all`, only because there is no reason to reach for the faster one:
   # the row carries no callbacks and no dependents. What is NOT optional is that this line
@@ -78,6 +78,9 @@ class User < ApplicationRecord
   has_many :maker_boms, class_name: "Maker::Bom", dependent: :destroy
   has_many :maker_bom_lines, class_name: "Maker::BomLine", dependent: :destroy
   has_many :maker_connections, class_name: "Maker::Connection", dependent: :destroy
+  # Calculator results saved onto a project (2026-10-21). Destroyed with the project too
+  # (Maker::Project#calculations); this is the tenant sweep's own door.
+  has_many :maker_calculations, class_name: "Maker::Calculation", dependent: :destroy
   # Content blocks (2026-09-09): the text, link and image blocks on a project's page. Destroyed
   # with the project too (Maker::Project#blocks); this is the tenant sweep's own door, the one
   # test/models/tenant_cleanup_test.rb asks for.
@@ -95,6 +98,7 @@ class User < ApplicationRecord
   has_many :maker_models, class_name: "Maker::Model", dependent: :destroy
   has_many :maker_print_runs, through: :maker_models, source: :print_runs
   has_many :maker_shelves, class_name: "Maker::Shelf", dependent: :destroy
+  has_many :maker_shelf_groups, class_name: "Maker::ShelfGroup", dependent: :destroy
   has_many :identities, class_name: "UserIdentity", dependent: :destroy
 
   # Human-identity auth via Devise (CLAUDE.md §8; replaces the hand-rolled password +
@@ -134,6 +138,21 @@ class User < ApplicationRecord
 
   normalizes :email, with: ->(e) { e.to_s.strip.downcase }
 
+  # WHO MAY MANAGE ACCOUNTS (Settings → Users; docs/superpowers/specs/2026-10-21-admin-users-design.md).
+  # `admin` is the stored flag; this is the ANSWER, and the shared demo account never gets a yes
+  # whatever its row says, because strangers are signed into it by one click (Tinkerex::Demo). The
+  # Users gate, the Settings hub row and the last-admin count all ask this, never `admin?` alone.
+  def can_manage_accounts? = admin? && !Tinkerex::Demo.demo?(self)
+
+  # The accounts `can_manage_accounts?` says yes to, as a query. The demo's address is excluded by
+  # value; with no demo configured `email <> ''` excludes nobody, since an email is never blank.
+  scope :account_managers, -> { where(admin: true).where.not(email: Tinkerex::Demo.email.to_s) }
+
+  # The only account left that can manage accounts. A count, not a lock: two admins acting in the
+  # same instant can both pass it -- recorded in the design, and `tinkerex:admin` repairs a server
+  # left with none.
+  def last_account_manager? = can_manage_accounts? && !User.account_managers.where.not(id:).exists?
+
   # THE HANDLE IS THE FIRST SEGMENT OF EVERY PUBLIC URL (/u/<handle>/<slug>, spec §2.2), so it is
   # lowercase, URL-safe and unique, claimed once under Settings → Account, and LOCKED while any
   # project is unlisted or public -- a rename would break every link a maker has already handed out.
@@ -165,7 +184,7 @@ class User < ApplicationRecord
     u explore admin administrator api v1 assets rails up files projects models tools settings
     trash search tags inventory shelves suppliers locations repos library notes attachments
     build_log_entries users login logout sign_in sign_up signin signup register account
-    connections csp-violation-report sheets tasks
+    connections csp-violation-report sheets tasks calculations
     tinkerex support help about root www mail
   ].freeze
 

@@ -23,8 +23,7 @@ module Web
     def sign_in(email = "maker@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email:, password: PASSWORD } }
-      user
+      sign_in_web!(user, password: PASSWORD)
     end
 
     test "requires login" do
@@ -592,22 +591,13 @@ module Web
       assert_equal folder.node_id, project.reload.folder_node_id, "and must not repoint it"
       assert_select ".attachments-panel .folder-missing", text: /in the trash or was removed/
       assert_select ".attachments-panel .folder-missing a[href=?]", trash_index_path
-    end
-
-    test "an upload to that project lands at the library root rather than minting a folder" do
-      user = sign_in
-      project = user.maker_projects.create!(name: "Tray")
-      folder_in_the_trash!(user, project)
-      before = user.nodes.count
-      file = Rack::Test::UploadedFile.new(StringIO.new("solid cube".b),
-                                          "application/octet-stream", original_filename: "cube.stl")
-
-      post project_uploads_path(project), params: { file: }
-
-      assert_response :redirect
-      node = user.nodes.present.find_by!(name: "cube.stl")
-      assert_nil node.parent_node_id, "the fallback destination is the library root"
-      assert_equal before + 1, user.nodes.count, "the upload must add its own node and nothing else"
+      # UPLOAD NEVER TARGETS A FOLDER IN THE TRASH, AND NEVER GUESSES THE ROOT FOR ONE. The project
+      # upload route answered this case by landing the file at the library root until F-S21-1
+      # retired it. The top bar gets a destination only from a listing that is `available?`, so here
+      # it asks with the folder chooser. The chooser and its caption are the same in both upload flows.
+      assert_select ".topbar-upload[data-controller=?]", "upload-pick", 1,
+                    "no destination: the top bar must ask, not upload into the root"
+      assert_select ".topbar-upload label[title=?]", "Choose a folder, then files"
     end
 
     test "an attach into that project attaches the row and leaves the bytes where they are" do

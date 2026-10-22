@@ -116,7 +116,7 @@ module Maker
     # The names are lowercase because they appear in Finder and on the NAS — deliberately NOT
     # ROLE_LABELS ("G-code", "CAD source"), which are UI headings. STAGE 3, S3-1 ADDS THE SECOND
     # HALF: every (ext, folder) pair Maker::FilingRules.seed! would actually WRITE must itself pass
-    # Maker::FilingRule's own validation, so the seed can never produce a row the /settings/filing
+    # Maker::FilingRule's own validation, so the seed can never produce a row the Shelves page's
     # form would refuse if a user tried to type it back in.
     test "folder names are single lowercase path segments, and every seed folder passes FilingRule's own validation" do
       Maker::ProjectFolders::ROLE_FOLDERS.values.uniq.each do |name|

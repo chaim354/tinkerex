@@ -32,21 +32,30 @@ class FilesController < ApplicationController
   # the node and the user. See app/controllers/concerns/file_delivery.rb.
   include FileDelivery
 
-  # WHICH VIEWER, AND A .gbrjob's LAYER LIST — shared verbatim with the sessionless public file page
-  # (stage 4, S4-5). See app/controllers/concerns/file_preview.rb; the three extension constants
-  # below are re-exposed, not redefined.
+  # WHICH VIEWER, AND THE BOARD IF THE FILE IS ONE — `#viewer_for`, the one answer the sessionless
+  # public file page asks too (stage 4, S4-5; the zip half since F-S10-2). See
+  # app/controllers/concerns/file_preview.rb; the three extension constants below are re-exposed,
+  # not redefined.
   include FilePreview
+  # WHAT THE VIEWER IS HANDED ON A MAKER'S PAGE — `#viewer_state_for`: the stat, `viewer_for`'s
+  # three facts, the current thumbnail and the 3MF manifest, one value for files/_viewer
+  # (2026-10-21). Maker-only, so it is a second concern rather than more of FilePreview, which a
+  # visitor's page includes too; ModelsController's pane asks it as well. `#current_thumbnail`
+  # lives there now, and #inspector below still calls it.
+  include FileViewer
 
   # ?move_conflict=<id> — the prompt an attach leaves behind when the auto-move into the project
   # folder hit a name collision. Rendered here and on the project page; an attach can come from
   # either, so the resolution lives in one concern rather than in two actions.
   include MoveConflicts
 
-  # The eager nudge (Task 11) — #intake_project_folder, called from #create and #finalize_upload
-  # below. Shared with Projects::UploadsController (the build-log entries' inline uploader; the
-  # project page's own Upload has been the top bar's, into this controller, since redesign slice 4),
-  # which needed the identical call once it stopped being the only other upload door; see the
-  # concern's header for why that made it a concern rather than a second copy.
+  # The batch loop (#write_batch, from #create) and the eager nudge (Task 11) —
+  # #intake_project_folder, called from #create and #finalize_upload below, with the sentences that
+  # report both. Shared with Projects::UploadsController, the build-log entries' photo uploader,
+  # which takes the loop and the sentences but not the nudge: its photos land at the library root,
+  # which no project owns. The project page's own Upload has been the top bar's, into this
+  # controller, since redesign slice 4. See ProjectFolderIntake's header for why a concern rather
+  # than a second copy.
   include UploadBatch
   include ProjectFolderIntake
 
@@ -261,9 +270,9 @@ class FilesController < ApplicationController
       # could not hide.
       @folder_project = @folder && current_user.maker_projects.find_by(folder_node_id: @folder.node_id)
       # THE FOLDER'S 3D MODEL, IF IT IS ONE (structural redesign §5.4, slice 5): the model strip above
-      # the files. Maker::ModelFolder is the one definition (the redirect from /models/:id reads it
-      # too). A project's claim wins, so a claimed folder never asks. Constant in N, beside
-      # @folder_project's lookup and for the same reason.
+      # the files. Maker::ModelFolder is the strip's one definition. A project's claim wins, so a
+      # claimed folder never asks. Constant in N, beside @folder_project's lookup and for the same
+      # reason.
       @folder_model = (@folder && @folder_project.nil?) ? Maker::ModelFolder.model_in(current_user, @folder.node_id) : nil
       load_model_strip(@folder_model) if @folder_model
       # `.outside_repo_metadata` here for the same reason it is on the flat scope above, and on
@@ -377,13 +386,18 @@ class FilesController < ApplicationController
     #   - the name IS renderable and the row simply has not been created yet -> OMIT, so the client
     #     keeps polling. `backfill: false` above means this door never creates one, so saying
     #     "unsupported" here would freeze a thumbnail that is genuinely on its way.
+    #
+    # A ROW WITH A PICTURE ANSWERS `ready`, A REBUILD INCLUDED — `Maker::Preview#wire_status`, the
+    # mapping the v1 API answers by too, so the two wires cannot drift apart. The poll asks "is there
+    # something to show in this cell yet?", and an older build's picture of this same content is
+    # that; a `rebuilding` status on this wire would match neither of thumbs_controller.js's arms and
+    # leave the cell polling until it gave up and drew "Preview not supported" over a picture it had.
     live = nodes.index_by(&:node_id)
     out = ids.each_with_object({}) do |id, h|
       node = live[id]
       preview = node && map.thumb(id)
       if preview
-        h[id] = { status: preview.status,
-                  url: (preview.status == "ready" && preview.asset.attached? ? url_for(preview.asset) : nil) }
+        h[id] = { status: preview.wire_status, url: (url_for(preview.asset) if preview.servable?) }
       elsif node.nil? || Maker::Previews::Registry.for_filename(node.name).nil?
         h[id] = { status: "unsupported", url: nil }
       end
@@ -431,7 +445,8 @@ class FilesController < ApplicationController
   # this action's shape holds regardless of what the caller's Accept header happens to be.
   #
   # LOOKS UP THE EXISTING ROW BEFORE CALLING Enqueue, RATHER THAN CALLING IT UNCONDITIONALLY. This
-  # is not the same shape as #enqueue_preview's eager, upload-time call: Enqueue.call resets a
+  # is not the same shape as the upload doors' eager call (LibraryOutput.enqueue_preview, through
+  # UploadBatch and #finalize_upload): Enqueue.call resets a
   # `failed` row to "pending" and re-enqueues WHENEVER it is called (documented — "when it
   # previously `failed`"), which is exactly right for a one-shot nudge at upload time and exactly
   # wrong for a passive poll. Calling it on every GET would mean a client polling a permanently
@@ -439,9 +454,11 @@ class FilesController < ApplicationController
   # the retry storm `Unsupported` exists elsewhere in this file to avoid — and would make the
   # "failed" branch below DEAD CODE, since preview.status could never still read "failed" by the
   # time this method reads it. Reading the row first and only falling through to Enqueue when
-  # nothing exists YET for the current content_token keeps Enqueue as the one-time trigger for the
-  # first render (or a re-render after content genuinely changes, via Enqueue's own staleness
-  # check) while leaving a terminal ready/failed/unsupported status alone to be reported as is.
+  # nothing exists YET for the current content_token — or when the row it found is one whose job
+  # was LOST, which `Enqueue.needs_job?` answers (with `retry_failed: false`, never for a failed
+  # row) — keeps Enqueue as the one-time trigger for the first render (or a re-render after content
+  # genuinely changes, via Enqueue's own staleness check) while leaving a terminal
+  # ready/failed/unsupported status alone to be reported as is.
   def geometry
     node = current_user.nodes.present.find_by!(node_id: params[:id])
     token = FileLayer.current.stat(current_user, node_id: node.node_id)&.content_token
@@ -460,31 +477,48 @@ class FilesController < ApplicationController
     # `kind` IS NAMED ONCE. It used to be written twice — once to look up the revision, once in
     # the `find_by` — with nothing coupling them, so mis-spelling either half made this lookup
     # silently never match (a re-enqueue on every poll, forever) or match on the wrong kind's
-    # revision. `#current_thumbnail` carried the identical three lines 330 lines below, differing
-    # only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more: what
-    # this action does with the answer — never reading `status` before deciding to enqueue — is
-    # deliberately the OPPOSITE of `#current_thumbnail`'s choice, and §14h forbids unifying that.
+    # revision. `#current_thumbnail` (FileViewer, since 2026-10-21) carried the identical three
+    # lines, differing only in that string. Note the finder answers WHICH ROW IS CURRENT and nothing more. Both doors
+    # now decide whether to enqueue the same way — `Enqueue.needs_job?(…, retry_failed: false)`,
+    # which reads `status` only to spot a lost job and to leave a failed one alone — and what
+    # differs is what each SAYS once it has: this action answers "pending" whenever it enqueued, and
+    # serves a row only as `current_build?`, while `#current_thumbnail` returns the row `call` hands
+    # back, which stays `showable?` — `rebuilding`, picture and all — through a renderer-only
+    # rebuild. That split is deliberate, and §14h forbids unifying it.
     preview = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
                                                        name: node.name, version_id: token,
                                                        kind: "geometry")
     # NOTHING CURRENT EXISTS -> TRIGGER A BUILD AND SAY "pending", WITHOUT CONSULTING THE ROW'S
-    # STATUS. Enqueue deliberately leaves a `ready` artifact visible through a renderer-only
-    # rebuild, because a thumbnail is a PICTURE of this same file — blanking it would put a spinner
-    # over a correct picture for the whole render (and, before S4-3's page poll, until someone
-    # reloaded). Geometry is the opposite on both counts: it is
-    # the DATA the client measures and draws from, so an older build's payload is wrong rather than
-    # merely old, and this endpoint's client polls, so "pending" costs nothing and resolves itself.
-    # Reading `preview.status` here instead would hand back the stale blob URL — exactly the bug
-    # the revision check exists to stop.
-    if preview.nil?
+    # STATUS. Enqueue deliberately keeps an artifact visible through a renderer-only rebuild,
+    # because a thumbnail is a PICTURE of this same file — blanking it would put a spinner over a
+    # correct picture for the whole render (and, before S4-3's page poll, until someone reloaded).
+    # Geometry is the opposite on both counts: it is the DATA the client measures and draws from,
+    # so an older build's payload is wrong rather than merely old, and this endpoint's client polls,
+    # so "pending" costs nothing and resolves itself.
+    #
+    # THE NEXT POLL IS WHERE THAT USED TO LEAK (F-S08-2). Enqueue stamped the new revision onto the
+    # row and left it `ready`, so the poll 250 ms later found a "current" ready row and served the
+    # older build's payload until the job ran. The row reads `rebuilding` now, and `current_build?`
+    # below is what refuses it.
+    #
+    # A CURRENT ROW WHOSE JOB WAS LOST IS THE OTHER TRIGGER, and `Enqueue.needs_job?` is what reads
+    # its status — only to tell "in flight past STALLED_AFTER" from everything else, never to serve
+    # anything (`retry_failed: false` keeps the `failed` branch below reachable). This poll used to
+    # answer "pending" over such a row forever; the heal restamps it, so a client polling every 2 s
+    # enqueues at most once per window.
+    revision = preview && Maker::Previews::Enqueue.revision_for_name(node.name, preview.kind)
+    if preview.nil? || Maker::Previews::Enqueue.needs_job?(preview, version_id: token, revision:,
+                                                           retry_failed: false)
       Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
                                     name: node.name, version_id: token, kind: "geometry")
       return render json: { status: "pending" }
     end
+    # `current_build?`, NEVER `showable?`: this payload is the DATA the Measure view draws from. A
+    # ready row whose asset is gone answers "pending" where it once answered "ready" with no URL;
+    # measure_controller.js keeps polling on both, so nothing a user sees moved.
+    return render json: { status: "ready", url: url_for(preview.asset) } if preview.current_build?
+
     case preview.status
-    when "ready"
-      render json: { status: "ready",
-                     url: (url_for(preview.asset) if preview.asset.attached?) }
     when "failed", "unsupported"
       render json: { status: preview.status, error: preview.error }
     else
@@ -506,8 +540,13 @@ class FilesController < ApplicationController
   # with is the port's whole job.
   def show
     @node = current_user.nodes.present.find_by!(node_id: params[:id])
-    @info = FileLayer.current.stat(current_user, node_id: @node.node_id)
-    @kind = preview_kind(@node.name)
+    # ONE ANSWER FOR THE VIEWER, ASKED BY THE MODEL PAGE'S PANE TOO (FileViewer, 2026-10-21): the stat,
+    # FilePreview#viewer_for's kind and board, the current thumbnail and the 3MF manifest. `@kind` is
+    # final from this line, before `@editable` reads it.
+    @viewer = viewer_state_for(@node)
+    @info = @viewer.info
+    @kind = @viewer.kind
+    @thumbnail = @viewer.thumbnail
     # ONE WALK, READ BY THE SURFACES THAT STILL NEED IT. It USED to read "editing appears exactly
     # where committing could"; since 2026-09-10 editing is WIDER than committing, so this answers
     # the commit box and the pending count below, and Maker::TextSave decides the pending git edit
@@ -528,51 +567,6 @@ class FilesController < ApplicationController
     # that holds the repository.
     @committable_here = @repo_root.present? && FileLayer.current.capabilities.local_worktree?
     @pending_count = @repo_root && Maker::RepoEdit.pending_for(current_user, @repo_root.node_id).count
-    token = @info&.content_token
-    @thumbnail = token && current_thumbnail(@node, token)
-    # A ZIP IS A BOARD WHEN ITS CONTENTS SAY SO — the one preview kind decided by a READ rather than
-    # by the name. `preview_kind` answers from the name for the whole vocabulary and stays that way;
-    # this branch lives here beside `gerber_layers_for`'s `.gbrjob` read, the other server read a
-    # Gerber page makes. One port read, bounded and cached (Maker::GerberArchive).
-    @gerber_archive = Maker::GerberArchive.archive?(@node.name) &&
-                      Maker::GerberArchive.for(user: current_user, node: @node)
-    @kind = :gerber if @gerber_archive
-    # WHAT THE 3D VIEWER'S IMPORTER CANNOT KNOW — the slicer's per-object filament colours and the
-    # model's declared unit, which three.js's 3MFLoader ignores. nil for everything that is not a
-    # 3MF (`for` refuses by NAME before it looks at anything else), so this is safe to call for any
-    # file and costs a non-3MF nothing. On a 3MF it is the second read this action can make, beside
-    # the Gerber one above: ONE port read, bounded on the catalog's size column and cached by
-    # content token, so it is one query per view of one file and nothing after the first.
-    @viewer_manifest = Maker::ThreeMfManifest.for(user: current_user, node: @node)
-    # THE :gerber BRANCH'S LAYER LIST, BUILT HERE BECAUSE ONLY A `.gbrjob` NEEDS A QUERY AND A READ.
-    # An ordinary layer is its own whole answer; a job file's page renders the BOARD it names, which
-    # means resolving its siblings. Nil for every other kind, so the view's branch and this one
-    # cannot disagree about whether the page has a Gerber on it.
-    #
-    # A ZIPPED EXPORT IS ONE ENTRY — the zip's own URL plus the member paths the BROWSER extracts —
-    # built through `FilesHelper#gerber_archive_entry`, the one place that shape is spelled, so that
-    # no second literal of keys only a browser reads can drift: nothing on the server would report
-    # the two spellings diverging.
-    @gerber_layers =
-      if @gerber_archive
-        [ helpers.gerber_archive_entry(name: @node.name,
-                                       url: named_blob_file_path(@node.node_id, filename: @node.name),
-                                       members: @gerber_archive.stacked) ]
-      elsif @kind == :gerber
-        # THE OWNER IS THE VISITOR HERE AND THE URL IS THIS PAGE'S — both are arguments since the
-        # sibling walk became shared with the public file page (stage 4, S4-5). The lambda never
-        # answers nil on this side: every live node of current_user has a private byte route.
-        gerber_layers_for(user: current_user, node: @node,
-                          url: ->(n) { named_blob_file_path(n.node_id, filename: n.name) })
-      end
-    # THE STACKUP/SINGLE CHOICE IS THIS ONE FACT, decided once here rather than re-derived in the
-    # template from the size of the list above: a folder holding exactly one layer beside a job file
-    # would then read as "single" and lose its Top/Bottom toggle, which is a different question from
-    # the one the page is answering.
-    #
-    # AN ARCHIVE IS NEVER SINGLE, for the `.gbrjob` reason: a zip is a whole export, so the honest
-    # render is the BOARD, with Top and Bottom.
-    @gerber_single = @kind == :gerber && !gerber_job?(@node.name) && !@gerber_archive
     @attached_projects, @projects = attach_choices_for(@node)
     @notes = current_user.maker_notes.where(node_id: @node.node_id).order(created_at: :desc).to_a
     @new_note = current_user.maker_notes.new(node_id: @node.node_id)
@@ -621,7 +615,8 @@ class FilesController < ApplicationController
   # about one node, so its cost is constant in the size of the folder (page_query_budget_test.rb).
   #
   # `current_thumbnail` ASKS FOR THE EXISTING ROW FIRST, so a panel opened again and again never
-  # re-enqueues — files-preview.md's Enqueue asymmetry (`call` resets `failed`).
+  # re-enqueues a failed render — files-preview.md's Enqueue asymmetry (`call` resets `failed`) —
+  # and heals a lost one at most once per `Enqueue::STALLED_AFTER`.
   #
   # A MISSING NODE ANSWERS A FRAME, NOT THE CONTROLLER'S REDIRECT: rescue_from sends HTML to
   # files_path, which inside a frame would put the whole Library into the panel. That holds for the
@@ -683,7 +678,8 @@ class FilesController < ApplicationController
     # is now wrong, and the save is where that is said) all live in Maker::TextSave, so the project
     # page's README door gets every one of them too. THIS door keeps its own two rules: the size
     # cap above (the SERVER is what enforces it — git-editing.md) and the FetchError → 503 below.
-    # `#enqueue_preview` further down stays for the two UPLOAD doors, which share no save.
+    # The UPLOAD doors share no save, but they share its re-enqueue: LibraryOutput.enqueue_preview,
+    # the one stat-then-enqueue TextSave calls, is theirs too (F-S21-2).
     result = Maker::TextSave.call(user: current_user, node:, parent_node_id: node.parent_node_id,
                                   name: node.name, body: params[:content], base_token: params[:base_token],
                                   repo_root_node_id: root&.node_id)
@@ -920,7 +916,7 @@ class FilesController < ApplicationController
     manifest = (params[:manifest] || []).map { |c| c.permit(:hash, :offset, :length).to_h }
 
     result = FileLayer.current.begin_upload(
-      current_user, device: web_device, name:, parent_node_id: params[:parent_node_id],
+      current_user, name:, parent_node_id: params[:parent_node_id],
       size: params.require(:size).to_i, mtime: (Time.current.to_f * 1e9).to_i, manifest:
     )
 
@@ -940,12 +936,8 @@ class FilesController < ApplicationController
   # Calls FileLayer#finalize_upload (Task 8; verify: true — confirm the bytes actually landed in
   # storage before creating the immutable version + changelog entry).
   #
-  # THE BROADCAST IS THE PORT'S, not this action's, and this comment used to say the opposite.
-  # An earlier draft delegated the nudge to each caller because the two that exist happen to want
-  # different things; that reopened §14f's "N doors that must all agree" shape, where a third
-  # caller forgets and a device silently never hears about a commit. The port now broadcasts by
-  # default and Maker::Addons::LibraryOutput opts out explicitly, which is the same behaviour with
-  # a safe floor. Nothing to do here.
+  # THE NUDGE IS THE SYNC SERVER'S, not this action's and not the port's: it tells the user's
+  # devices on every finalize, so no caller can forget one (§14a). Nothing to do here.
   def finalize_upload
     result = FileLayer.current.finalize_upload(
       current_user, commit_id: params.require(:commit_id), verify: true
@@ -958,7 +950,8 @@ class FilesController < ApplicationController
     # which is what stops them drifting (§14a's one-condition-two-answers).
     notice = nil
     if result.info
-      enqueue_preview(node_id: result.info.node_id, name: result.info.name)
+      # The ONE stat-then-enqueue, the same one UploadBatch calls for #create (F-S21-2).
+      Maker::Addons::LibraryOutput.enqueue_preview(current_user, result.info.node_id, result.info.name)
       notice = project_intake_notice(intake_project_folder(result.info.node_id), result.info.name)
     end
     render json: { version_id: result.version_id, seq: result.seq, notice: }
@@ -1215,39 +1208,6 @@ class FilesController < ApplicationController
       partners[l.public_send(theirs)] && [ l, partners[l.public_send(theirs)] ] if
         l.kind == kind && l.public_send(mine) == @node.node_id
     }
-  end
-
-  # The thumbnail for THIS content AND this build of its renderer, enqueueing when there is none.
-  #
-  # #show USED TO ONLY READ, and that is why a bumped revision never reached the detail page: the
-  # only thing enqueueing thumbnails is the index's backfill, so a file whose page you opened
-  # directly kept rendering an older build's metadata until you happened to visit the list. The
-  # Laser Settings panel is drawn from that metadata, which is how a deploy that added layer
-  # colours left them invisible on 172 of 174 files.
-  #
-  # Enqueue returns the repointed row (status "pending", so the view shows "Generating preview…"
-  # rather than an older artifact labelled as current) or nil when nothing can render this name.
-  def current_thumbnail(node, token)
-    row = Maker::Previews::Enqueue.current_preview(user: current_user, node_id: node.node_id,
-                                                   name: node.name, version_id: token,
-                                                   kind: "thumbnail")
-    return row if row
-
-    Maker::Previews::Enqueue.call(user: current_user, node_id: node.node_id,
-                                  name: node.name, version_id: token, kind: "thumbnail")
-  end
-
-  # Eagerly render a thumbnail for a file whose bytes just landed. Backend-neutral: content_token
-  # is the per-backend content id that keys maker_previews.version_id (FileLayer::FileInfo), so a
-  # new content supersedes. Never raises into the request -- a preview is best-effort UX, not part
-  # of the write's success; a vanished/unmounted file just means the scan will catch up later.
-  def enqueue_preview(node_id:, name:)
-    info = FileLayer.current.stat(current_user, node_id:)
-    return unless info&.content_token
-
-    ::Maker::Previews::Enqueue.call(user: current_user, node_id:, name:, version_id: info.content_token)
-  rescue FileLayer::NotFound, FileLayer::FetchError
-    nil
   end
 
   # Chunk mode's catalog is the sync engine's changelog; a manual scan is meaningless there. Reads
@@ -1702,7 +1662,8 @@ class FilesController < ApplicationController
 
   # What the strip shows beyond the row itself: the cover (only when its node is live — the cover is a
   # raw column nothing validates, and a dead one would spin forever, the case models/_hero_poster
-  # guards), the print log, and the composer's choices. None grows with the folder or the model: one
+  # guards), the print log, the composer's choices, and its projects row
+  # (Maker::ModelProjectChoices — constant too). None grows with the folder or the model: one
   # liveness check, one node's thumbnail, the print log in one query, and the composer's two plucks.
   def load_model_strip(model)
     cover = model.cover_node_id
@@ -1710,6 +1671,7 @@ class FilesController < ApplicationController
     @strip_covers = Maker::Previews::ThumbnailMap.for(current_user, @strip_cover_live ? [ cover ] : [])
     @strip_print_runs = model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
     @strip_printers, @strip_materials = Maker::PrintRun.composer_choices(current_user)
+    @strip_projects = Maker::ModelProjectChoices.for(current_user, model)
   end
 
   # `params[:folder]` is USER INPUT in a URL. Accept it ONLY when it names a `dir` the

@@ -101,17 +101,6 @@ module ActiveSupport
       mod.define_method(:available?, original)
     end
 
-    # Pin the FileLayer backend for the duration of one test.
-    #
-    # A test whose FIXTURES are chunk-shaped (ManifestChunk rows, Storage::ChunkStore blobs) is a
-    # chunk test, and must SAY so: FileLayer.current otherwise reads the ambient LIBRARY_BACKEND,
-    # so the whole suite run under LIBRARY_BACKEND=share pointed those tests at the Share adapter,
-    # which looked for the fixtures' bytes on a disk that has none. The failure was the honest
-    # signal ("this test depends on the ambient backend"), not a bug in either adapter — and the
-    # ci.yml `test-share-backend` leg exists to keep catching it.
-    #
-    # Call it in setup. The teardown below restores the prior value whether or not it was called,
-    # so nothing leaks into the next test in the worker.
     # SEEDS A FILE THROUGH THE PORT-WRITABLE DOOR, FOR ANY TEST THAT JUST NEEDS A FILE TO EXIST.
     #
     # ONE DEFINITION, deliberately. Before Arc D Part 2 this was an `upload` helper copied between
@@ -200,13 +189,11 @@ module ActiveSupport
     # A LIBRARY ROOT THAT IS FRESH FOR THIS ONE TEST. The ambient LIBRARY_PATH is a single tmpdir
     # for the whole run while the database rolls back per test, so files outlive the rows that
     # named them and Share's clobber refusal (§14a) rejects the second test to write a given name.
-    # `FileLayer.current =` rather than pin_file_layer_backend for the reason share_delivery_test.rb
-    # records: the pin rebuilds from ENV and would additionally need LIBRARY_PATH, which its
-    # teardown does not restore.
+    # A Share adapter over its own root, assigned directly; the shared teardown below resets it.
     #
-    # THE HELPER OWNS THE TEARDOWN OF EVERY DIRECTORY IT MINTS, and it has to. A direct assignment
-    # sets no @file_layer_backend_pinned, so this used to be the CALLER's obligation -- and the
-    # obligation was silently unmeetable: rescan_test.rb REASSIGNS `@root` to a second tmpdir
+    # THE HELPER OWNS THE TEARDOWN OF EVERY DIRECTORY IT MINTS, and it has to. Removing the directory
+    # used to be the CALLER's obligation -- and the obligation was silently unmeetable:
+    # rescan_test.rb REASSIGNS `@root` to a second tmpdir
     # mid-test, so its (correct-looking) teardown removed the second directory and dropped the
     # first, leaking five per run out of the eleven a full suite leaked. 2,817 stale
     # `test-library*` directories on the build box when it was measured.
@@ -230,30 +217,17 @@ module ActiveSupport
       root
     end
 
-    def pin_file_layer_backend(name)
-      # Capture the prior value ONCE. A second call in the same test would otherwise overwrite it
-      # with the first pin's value, and teardown would "restore" that into the next test in this
-      # worker — a leak that no test would report.
-      @file_layer_backend_prior = ENV["LIBRARY_BACKEND"] unless @file_layer_backend_pinned
-      @file_layer_backend_pinned = true
-      ENV["LIBRARY_BACKEND"] = name
-      FileLayer.reset!
-    end
-
+    # FileLayer.current IS PROCESS-GLOBAL AND OUTLIVES THE ROLLBACK, SO EVERY TEST ENDS WITH IT EMPTY.
+    # Whatever a test installed -- use_fresh_share_library!, a direct `FileLayer.current =`, or the
+    # ambient adapter a request built -- the next test in this forked worker rebuilds from ENV. The
+    # reset used to sit behind two flags that two helpers set (a `pin_file_layer_backend` that rebuilt
+    # from ENV, retired with the flags, and this helper's root list), so a direct assignment was the
+    # caller's job at ~90 sites, and a missed one surfaced in whichever test ran next -- as the
+    # KeyError previews_test.rb describes, nowhere near the test that leaked. UNCONDITIONAL now, and
+    # guarded from outside by file_layer_memo_isolation_test.rb and fresh_share_library_cleanup_test.rb.
     teardown do
-      if @file_layer_backend_pinned
-        ENV["LIBRARY_BACKEND"] = @file_layer_backend_prior
-        FileLayer.reset!
-      end
-      if @fresh_share_library_roots
-        # The reset is load-bearing, and NOT covered by the branch above: use_fresh_share_library!
-        # assigns FileLayer.current directly and sets no @file_layer_backend_pinned, so without it
-        # a Share adapter pointing at a directory this block is about to delete leaks into the next
-        # test in this forked worker -- where it surfaces as the KeyError previews_test.rb describes
-        # rather than as anything naming this helper.
-        FileLayer.reset!
-        @fresh_share_library_roots.each { |root| FileUtils.remove_entry(root) if root.exist? }
-      end
+      FileLayer.reset!
+      @fresh_share_library_roots&.each { |root| FileUtils.remove_entry(root) if root.exist? }
     end
 
     # Simulates a genuinely CONCURRENT writer landing the identical (user, attachable_type,
@@ -355,6 +329,30 @@ module ActionDispatch
     # Token-only convenience for the many helpers that returned just the device token.
     def bootstrap_token(email:, device_name: "device")
       bootstrap_account(email:, device_name:)["device_token"]
+    end
+
+    # THE PASSWORD THE WEB SUITES SIGN IN WITH. ~109 copies of this literal exist across test/; a
+    # new suite names this one.
+    WEB_PASSWORD = "correct horse battery staple".freeze
+
+    # Signs `user` in through the real session door and FAILS HERE if it did not take. A failed
+    # sign-in ALSO redirects -- Devise's FailureApp (a wrong password, an unconfirmed or locked
+    # account) and Users::SessionsController's per-IP throttle both `redirect_to` -- so a bare 3xx
+    # cannot tell success from failure. Only the destination can (ApplicationController's
+    # after_sign_in_path_for), and the user the session then holds is checked outright. Unverified,
+    # every later request in the test runs anonymously, and a test whose assertions are negative (a
+    # 404, `count: 0`, `assert_difference 0`) passes with nobody signed in -- three did, which is
+    # what test/sign_in_web_helper_test.rb records. The distinct name is deliberate: a private
+    # `sign_in`/`sign_in_as` in a test class would silently shadow a harness method of the same name.
+    def sign_in_web!(user, password: WEB_PASSWORD)
+      post user_session_path, params: { user: { email: user.email, password: } }
+      assert_redirected_to root_path,
+                           "sign-in as #{user.email} did not take (#{flash[:alert].presence || "no alert"}): " \
+                           "every later request in this test would run anonymously"
+      assert_equal user.id, controller.current_user&.id,
+                   "sign-in as #{user.email} landed on the signed-in page while the session holds " \
+                   "#{controller.current_user&.email.inspect}"
+      user
     end
   end
 end

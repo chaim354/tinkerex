@@ -26,12 +26,19 @@ module Maker
     teardown { FileLayer.reset! }
 
     # Every port read this block performs, by node_id — the singleton-method technique
-    # gerber_sets_test.rb uses, because this suite has no Object#stub (Minitest 6).
-    def counting_reads
+    # gerber_sets_test.rb uses, because this suite has no Object#stub (Minitest 6). `raising:` makes
+    # each of those reads fail with the port's own error instead, which is how a test stands in for
+    # an unmounted share or a missing file without touching the bytes.
+    def counting_reads(raising: nil)
       adapter = FileLayer.current
       original = adapter.method(:read)
       reads = []
-      adapter.define_singleton_method(:read) { |user, **kw| reads << kw[:node_id]; original.call(user, **kw) }
+      adapter.define_singleton_method(:read) do |user, **kw|
+        reads << kw[:node_id]
+        raise raising, "the store did not answer" if raising
+
+        original.call(user, **kw)
+      end
       begin
         yield reads
       ensure
@@ -284,7 +291,69 @@ module Maker
       end
     end
 
+    # A STORE THAT DID NOT ANSWER IS THIS VIEW'S nil, NEVER THE CONTENT'S. activesupport writes a nil
+    # block result unless `skip_nil`, so the rescue that sat INSIDE the fetch cached "the store did
+    # not answer" as "not a board" for CACHE_TTL — Solid Cache in production, surviving deploys —
+    # under a key that does not move when the store comes back: the zip lost its board on both file
+    # pages, and ProjectIntake filed it into the source folder on the next sweep. The null store this
+    # suite runs on cannot see any of that, so both tests stand a MemoryStore up.
+    #
+    # MUTATION: move the rescue back inside `Rails.cache.fetch` and the view after the outage answers
+    # the cached nil without reading; delete the banner line and the first test's flag goes red.
+    test "an unreachable store is nil for that view, raises the banner, and is never cached" do
+      node = write_gerber_zip!
+      seen = outage_then_recovery(node, FileLayer::FetchError)
+
+      assert_nil seen[:during]
+      assert seen[:banner], "an outage degraded the board to nil without raising the banner"
+      assert_equal fusion_zip_members, seen[:after]&.members,
+                   "the outage's nil was cached, so the zip stayed not-a-board after the store came back"
+      assert_equal [ node.node_id, node.node_id ], seen[:reads], "the view after the outage did not read again"
+    end
+
+    # NotFound IS NOT A FACT ABOUT THE CONTENT EITHER: Share#read answers it for a path that is not
+    # there right now, which includes an outside move until the next scan pairs it — and pairing
+    # keeps node_id AND content_hash, so a cached nil would outlive the repair. No banner: a file that
+    # is gone is not an outage (app/models/current.rb).
+    test "a missing file is nil without the banner, and that nil is never cached either" do
+      node = write_gerber_zip!
+      seen = outage_then_recovery(node, FileLayer::NotFound)
+
+      assert_nil seen[:during]
+      assert_nil seen[:banner], "a missing file raised the banner; nothing is down"
+      assert_equal fusion_zip_members, seen[:after]&.members,
+                   "a missing file's nil was cached, so the zip stayed not-a-board once it was back"
+      assert_equal [ node.node_id, node.node_id ], seen[:reads], "the view after the miss did not read again"
+    end
+
+    # THE NAMESPACE MOVED WITH THE FIX, because production's Solid Cache already holds nils that
+    # outages wrote under the old one and would serve them for up to 30 more days. MUTATION: put
+    # the old namespace back and this answers the planted nil.
+    test "an answer cached under the namespace outages poisoned is never read" do
+      node = write_gerber_zip!
+
+      with_memory_cache do
+        Rails.cache.write([ "gerber-archive", node.node_id, node.content_hash ], nil)
+        assert_equal fusion_zip_members, GerberArchive.for(user: @user, node:)&.members,
+                     "a nil cached under the pre-fix namespace was served"
+      end
+    end
+
     private
+
+    # ONE VIEW WHILE EVERY PORT READ RAISES `error`, THEN ONE AFTER THE STORE IS BACK, against a fresh
+    # MemoryStore — so the second answer is exactly what the first one left in the cache. Returns what
+    # each view answered, whether the first raised the banner, and every port read the two made.
+    def outage_then_recovery(node, error)
+      with_memory_cache do
+        Current.reset
+        during, failed_reads = counting_reads(raising: error) { |r| [ GerberArchive.for(user: @user, node:), r ] }
+        banner = Current.library_unreachable
+        Current.reset
+        after, reads = counting_reads { |r| [ GerberArchive.for(user: @user, node:), r ] }
+        { during:, banner:, after:, reads: failed_reads + reads }
+      end
+    end
 
     # `sql.active_record` while the block runs, SCHEMA/TRANSACTION/PRAGMA excluded exactly as
     # page_query_budget_test.rb excludes them: they are this call's cost only by accident of order.

@@ -1,0 +1,38 @@
+<%# locals: (data_url:, save_url:, download_url:, scripts:, styles:) %>
+<%# AN .xlsx AS A GRID, ONE TAB PER WORKSHEET (2026-10-21). The workbook arrives by fetch after the
+    page renders (Files::SpreadsheetsController#show), so the file page never waits on unzipping it,
+    and the grid library loads only on a page that has a workbook on it: spreadsheet_controller.js
+    injects jsuites and jspreadsheet as classic scripts (they are UMD bundles that publish globals)
+    and their two stylesheets BEFORE vendor-overrides.css, which is what lets the token skin there
+    win. Every URL is a strict local, files/viewers' rule — the asset paths too, which the seam
+    guard in architecture_invariants_test.rb holds to the same rule as a route.
+
+    `save_url` nil IS THE READ-ONLY GRID — the model page's pane — and the file page passes its own
+    door. The no-history note and the Save controls render only where there is something to save,
+    the code viewer's rule (files/viewers/_code). %>
+<div class="spreadsheet"
+     data-controller="spreadsheet"
+     data-spreadsheet-url-value="<%= data_url %>"
+     data-spreadsheet-download-url-value="<%= download_url %>"
+     <% if save_url %>data-spreadsheet-save-url-value="<%= save_url %>"<% end %>
+     data-spreadsheet-scripts-value="<%= scripts.to_json %>"
+     data-spreadsheet-styles-value="<%= styles.to_json %>">
+  <% if save_url %>
+    <%= render "shared/no_history_note" %>
+  <% end %>
+  <div class="toolbar spreadsheet-bar">
+    <nav class="tab-bar spreadsheet-tabs" role="tablist" aria-label="Worksheets" data-spreadsheet-target="tabs"></nav>
+    <span class="toolbar-spacer"></span>
+    <% if save_url %>
+      <button type="button" class="btn small" data-spreadsheet-target="addRow" data-action="spreadsheet#addRow" disabled>Add row</button>
+      <button type="button" class="btn small" data-spreadsheet-target="deleteRow" data-action="spreadsheet#deleteRows" disabled>Delete row</button>
+      <span class="spreadsheet-status" role="status" data-spreadsheet-target="status"></span>
+      <button type="button" class="btn small" data-spreadsheet-target="save" data-action="spreadsheet#save" disabled>Save</button>
+    <% end %>
+  </div>
+  <p class="spreadsheet-note muted" data-spreadsheet-target="note" hidden></p>
+  <p class="spreadsheet-cell" data-spreadsheet-target="cell" aria-live="polite"></p>
+  <div class="spreadsheet-panes" data-spreadsheet-target="panes">
+    <p class="muted" data-spreadsheet-target="loading">Loading workbook…</p>
+  </div>
+</div>

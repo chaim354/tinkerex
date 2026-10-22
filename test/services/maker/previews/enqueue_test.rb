@@ -7,6 +7,16 @@ module Maker
 
       setup { @user = User.create!(email: "enq@example.com") }
 
+      # A `ready` thumbnail of part.stl with a picture attached, at this build's revision unless told
+      # otherwise — the shape a row has once a render (or the maker's viewer capture) has landed.
+      def ready_thumbnail!(source: "renderer", version_id: "v1",
+                           renderer_revision: Enqueue.revision_for_name("part.stl", "thumbnail"))
+        row = @user.maker_previews.create!(node_id: "n1", version_id:, kind: "thumbnail", status: "ready",
+                                           source:, renderer_revision:)
+        row.asset.attach(io: StringIO.new("\x89PNG chosen".b), filename: "t.png", content_type: "image/png")
+        row
+      end
+
       test "creates a pending thumbnail preview and enqueues the job" do
         assert_enqueued_with(job: Maker::GeneratePreviewJob) do
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
@@ -77,21 +87,40 @@ module Maker
       # was compared. Four had to be found and destroyed by hand on the live box.
       test "a renderer revision bump makes an otherwise current preview stale" do
         current = Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "geometry")
-        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "geometry",
-                                     status: "ready", renderer_revision: current - 1)
+        row = @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "geometry",
+                                           status: "ready", renderer_revision: current - 1)
+        row.asset.attach(io: StringIO.new("{}"), filename: "g.json", content_type: "application/json")
 
         assert_enqueued_with(job: Maker::GeneratePreviewJob) do
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "design.lbrn2",
                                         version_id: "v1", kind: "geometry")
         end
-        row = @user.maker_previews.find_by!(node_id: "n1", kind: "geometry")
+        row.reload
         assert_equal current, row.renderer_revision
-        # STATUS IS LEFT ALONE on a renderer-only rebuild — the artifact still depicts this exact
-        # file, and blanking it strands a spinner on the (non-polling) file page. Consumers that
-        # cannot tolerate an older build's output say so themselves: FilesController#geometry
-        # answers "pending" whenever it had to enqueue, without reading this status at all.
-        assert_equal "ready", row.status,
-                     "a renderer rebuild must not blank an artifact that is still of this file"
+        # A RENDERER-ONLY REBUILD IS `rebuilding` (F-S08-2), WHICH IS TWO TRUE THINGS AT ONCE: the
+        # artifact still depicts this exact file, so a picture surface keeps showing it; and it is
+        # not the build its coordinates now name, so a surface that MEASURES from it refuses it.
+        # It used to stay `ready`, which said only the first — and the Measure poll then served
+        # the older build's payload as current until the job ran.
+        assert_equal "rebuilding", row.status
+        assert row.showable?, "a renderer rebuild must not blank an artifact that is still of this file"
+        assert_not row.current_build?, "an older build's artifact must not read as the current build"
+        assert row.in_flight?, "a rebuild is a job believed coming, which the stall window verifies"
+      end
+
+      # THE OTHER HALF OF THE RULE: `rebuilding` is for a row that HAS a picture to keep. Anything
+      # else a renderer bump finds has nothing on screen worth protecting, so it goes `pending`
+      # like any other row that is waiting for a job — `unsupported` included, which used to keep
+      # claiming "no renderer here" through the very render that might prove otherwise.
+      test "a renderer bump on a row with no picture to keep goes pending" do
+        current = Maker::Previews::Enqueue.revision_for_name("part.stl", "thumbnail")
+        { "n-unsupported" => "unsupported", "n-no-asset" => "ready", "n-busy" => "processing" }.each do |node_id, status|
+          @user.maker_previews.create!(node_id:, version_id: "v1", kind: "thumbnail", status:,
+                                       renderer_revision: current - 1)
+          Maker::Previews::Enqueue.call(user: @user, node_id:, name: "part.stl", version_id: "v1")
+
+          assert_equal "pending", @user.maker_previews.find_by!(node_id:).status, "#{status} with no picture"
+        end
       end
 
       test "a preview already at the current revision is left alone" do
@@ -138,22 +167,23 @@ module Maker
       # A renderer declaring no revision sits at the base — which is exactly what the migration
       # stamped every pre-existing row with, so installing this mechanism invalidated nothing.
       #
-      # `.obj` (Mesh), NOT `.stl`: this test named a real extension, and the extension it named
-      # acquired a revision when the STL camera was fixed — at which point the test failed for the
-      # right reason and had to move rather than be relaxed. If Mesh ever declares one too, MOVE THE
-      # FIXTURE AGAIN to whatever still declares nothing (Pdf, ImageThumb, TextThumb); do not delete
-      # the assertion, because "silence means BASE_REVISION" is what makes a renderer's cache
-      # invalidate only when someone deliberately says so.
+      # `.pdf` (Pdf), NOT `.stl` OR `.obj`: this test named a real extension, and the extension it
+      # named acquired a revision TWICE — `.stl` when the STL camera was fixed, `.obj` (Mesh) when
+      # the thumbnails became ink on paper (2026-10-21) — and each time the test failed for the
+      # right reason and had to move rather than be relaxed. If Pdf ever declares one too, MOVE THE
+      # FIXTURE AGAIN to whatever still declares nothing (ImageThumb); do not delete the assertion,
+      # because "silence means BASE_REVISION" is what makes a renderer's cache invalidate only when
+      # someone deliberately says so.
       test "a renderer with no declared revision sits at the base" do
-        assert_not Maker::Previews::Mesh.respond_to?(:payload_revision),
+        assert_not Maker::Previews::Pdf.respond_to?(:payload_revision),
                    "this fixture needs a renderer that declares NOTHING — pick another one"
         assert_equal Maker::Previews::Enqueue::BASE_REVISION,
-                     Maker::Previews::Enqueue.revision_for_name("part.obj", "thumbnail")
+                     Maker::Previews::Enqueue.revision_for_name("part.pdf", "thumbnail")
 
         @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
                                      status: "ready", renderer_revision: 1)
         assert_no_enqueued_jobs do
-          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.obj", version_id: "v1")
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.pdf", version_id: "v1")
         end
       end
 
@@ -197,9 +227,9 @@ module Maker
       end
 
       # THE OTHER HALF, and the one that keeps the recovery from becoming a stampede: a row that
-      # only just went pending is believed. `backfill_thumbnails` calls this once per row on every
-      # Files page load, so a window-less "re-enqueue any pending" would enqueue a duplicate job
-      # for every spinner on screen, every render.
+      # only just went pending is believed. `ThumbnailMap`'s backfill asks this (as `needs_job?`) of
+      # every row on every Files page load, so a window-less "re-enqueue any pending" would enqueue a
+      # duplicate job for every spinner on screen, every render.
       test "a freshly pending row is left alone — its job really is still coming" do
         Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
         clear_enqueued_jobs
@@ -226,6 +256,76 @@ module Maker
         end
       end
 
+      # A REBUILD WHOSE JOB WAS LOST IS HEALED LIKE ANY OTHER IN-FLIGHT ROW, AND KEEPS ITS PICTURE.
+      # `ready` was never in the stall set, so a renderer rebuild whose job vanished used to show
+      # the older build for good, with nothing anywhere to say a newer one was owed. The heal
+      # changes nothing but the job and the stamp: a lost rebuild is still a rebuild.
+      test "a rebuilding row stalled past the window is re-enqueued and still shows its picture" do
+        row = @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail",
+                                           status: "rebuilding",
+                                           renderer_revision: Enqueue.revision_for_name("part.stl", "thumbnail"))
+        row.asset.attach(io: StringIO.new("PNG"), filename: "t.png", content_type: "image/png")
+        # AGED AFTER THE ATTACH, which touches the row: aged first, the attach would leave it fresh
+        # and the test would fail for a reason that has nothing to do with the heal.
+        row.update_column(:updated_at, 3.days.ago)
+
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
+        end
+        row.reload
+        assert_equal "rebuilding", row.status, "the heal blanked a picture that is still of this file"
+        assert_operator row.updated_at, :>, 1.minute.ago, "the heal did not restamp the row"
+      end
+
+      # THE TRANSITION TABLE, ASKED DIRECTLY: `needs_job?` is the one answer `call` and every door
+      # that already holds a row give to "does this row need a job?". Every arm is a row a door
+      # really meets, and `retry_failed:` is the one place the two policies differ — the eager seams
+      # retry a failed render (`call`'s default), the read doors never do.
+      test "needs_job? answers a missing row, moved coordinates, a stall, and a failure only on request" do
+        rev = Enqueue.revision_for_name("part.stl", "thumbnail")
+        row = lambda do |status, version_id: "v1", revision: rev, at: Time.current|
+          travel_to(at) do
+            @user.maker_previews.create!(node_id: "n-#{SecureRandom.hex(4)}", kind: "thumbnail",
+                                         version_id:, status:, renderer_revision: revision)
+          end
+        end
+        ask = lambda do |preview, retry_failed: false|
+          Enqueue.needs_job?(preview, version_id: "v1", revision: rev, retry_failed:)
+        end
+
+        assert ask.call(nil), "no row at all"
+        assert ask.call(@user.maker_previews.new(node_id: "n-new", kind: "thumbnail")), "a row never saved"
+        assert ask.call(row.call("ready", version_id: "v0")), "the content moved"
+        assert ask.call(row.call("ready", revision: rev + 1)), "the renderer moved"
+        assert_not ask.call(row.call("ready")), "current and done"
+        assert_not ask.call(row.call("unsupported")), "terminal by design"
+
+        failed = row.call("failed")
+        assert_not ask.call(failed), "a read door retried a failed render"
+        assert ask.call(failed, retry_failed: true), "an eager seam did not retry a failed render"
+
+        # NAMED HERE, NOT READ FROM `Maker::Preview::IN_FLIGHT`: iterating the constant would let a
+        # status dropped from it drop out of this assertion too.
+        %w[pending processing rebuilding].each do |status|
+          assert_not ask.call(row.call(status)), "#{status} inside the window: its job is believed"
+          assert ask.call(row.call(status, at: (Enqueue::STALLED_AFTER + 1.minute).ago)),
+                 "#{status} past STALLED_AFTER: nothing verifies the job is still coming"
+        end
+      end
+
+      # THE SAME POLICY THROUGH `call`, for a caller that holds no row: `retry_failed: false` leaves a
+      # current failed render alone, where the default ("re-enqueues a previously failed preview",
+      # above) retries it.
+      test "call with retry_failed: false leaves a failed render alone" do
+        @user.maker_previews.create!(node_id: "n1", version_id: "v1", kind: "thumbnail", status: "failed",
+                                     renderer_revision: Enqueue.revision_for_name("part.stl", "thumbnail"))
+        assert_no_enqueued_jobs do
+          Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1",
+                                        retry_failed: false)
+        end
+        assert_equal "failed", @user.maker_previews.find_by!(node_id: "n1").status
+      end
+
       # THE RESTAMP IS LOAD-BEARING AND IS THE EASIEST HALF TO LEAVE OUT. Healing a stalled row
       # changes no other attribute, and `save!` on an unchanged record is a NO-OP that does not
       # touch `updated_at` — so without an explicit restamp the row stays stale forever and every
@@ -240,6 +340,47 @@ module Maker
         assert_no_enqueued_jobs do
           Maker::Previews::Enqueue.call(user: @user, node_id: "n1", name: "part.stl", version_id: "v1")
         end
+      end
+
+      # A VIEWER PREVIEW IS CURRENT WHILE ITS CONTENT IS (2026-10-20): a renderer upgrade must not
+      # repaint the angle the maker chose.
+      test "a viewer preview survives a renderer revision bump" do
+        row = ready_thumbnail!(source: "viewer", renderer_revision: 0) # 0: older than any real revision
+        assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
+          Maker::Previews::Enqueue.call(user: @user, node_id: row.node_id, name: "part.stl",
+                                        version_id: row.version_id)
+        end
+        row.reload
+        assert_equal [ "viewer", "ready" ], [ row.source, row.status ]
+      end
+
+      test "a viewer preview of old content goes back to the renderer" do
+        row = ready_thumbnail!(source: "viewer")
+        assert_enqueued_jobs 1, only: Maker::GeneratePreviewJob do
+          Maker::Previews::Enqueue.call(user: @user, node_id: row.node_id, name: "part.stl",
+                                        version_id: "new-content")
+        end
+        row.reload
+        assert_equal [ "renderer", "pending", "new-content" ], [ row.source, row.status, row.version_id ]
+      end
+
+      test "a viewer preview is current whatever its renderer revision" do
+        row = ready_thumbnail!(source: "viewer", renderer_revision: 0)
+        assert_equal row, Maker::Previews::Enqueue.current_preview(user: @user, node_id: row.node_id,
+                                                                    name: "part.stl", version_id: row.version_id,
+                                                                    kind: "thumbnail")
+        assert Maker::Previews::Enqueue.current_preview?(row, name: "part.stl", version_id: row.version_id)
+      end
+
+      # A VERSION-LESS ASK IS NOT A CONTENT CHANGE (found in review): the v1 previews API forwards a
+      # POST that names no `version_id` as nil, and nil != "v1" used to repoint the maker's picture.
+      test "a request that names no content leaves a viewer preview alone" do
+        row = ready_thumbnail!(source: "viewer")
+        assert_no_enqueued_jobs only: Maker::GeneratePreviewJob do
+          Maker::Previews::Enqueue.call(user: @user, node_id: row.node_id, name: "part.stl", version_id: nil)
+        end
+        row.reload
+        assert_equal [ "viewer", "ready", "v1" ], [ row.source, row.status, row.version_id ]
       end
     end
   end

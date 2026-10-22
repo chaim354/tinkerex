@@ -80,10 +80,24 @@ module Maker
     # "cad_soruce", which is exactly the failure a reader assumes it guards. This literal can.
     # `cnc_design` joined in stage 4, S4-2, and this literal going red is what a new role is
     # SUPPOSED to cost: the count in the test name is part of the claim, so widening the vocabulary
-    # is a decision someone typed here rather than one a derivation absorbed silently.
-    test "the role vocabulary is exactly these thirteen values" do
-      assert_equal %w[cad_source cnc_design code document gcode image instructions laser model other pcb source_archive vector],
+    # is a decision someone typed here rather than one a derivation absorbed silently. `spreadsheet`
+    # joined on 2026-10-21 with the workbook viewer.
+    test "the role vocabulary is exactly these fourteen values" do
+      assert_equal %w[cad_source cnc_design code document gcode image instructions laser model other pcb
+                      source_archive spreadsheet vector],
                    Maker::FileAttachment::ROLES.sort
+    end
+
+    # AN .xlsx IS A ZIP, SO ITS ROLE MUST NOT BE A TEXT ROLE. As `document` it would have been text to
+    # both readers of `text?` — the file page (a code viewer over zip bytes) and the TextThumb
+    # registration (a thumbnail of them). Asserted on the predicate AND the registry, the two layers
+    # files-preview.md says one table must reach.
+    test "an xlsx is a spreadsheet, files with the documents, and is not text" do
+      assert_equal "spreadsheet", Maker::FileAttachment.role_for("bom.xlsx")
+      assert_equal "docs", Maker::ProjectFolders.default_folder_for("bom.xlsx")
+      assert_not Maker::FileAttachment.text?("bom.xlsx")
+      assert_nil Maker::Previews::Registry.for("xlsx")
+      assert_not_includes Maker::FileAttachment::TEXT_ROLES, "spreadsheet"
     end
 
     # THE `pcb` ROLE (the Gerber preview slice). Three families, one role — RS-274X layers, Excellon

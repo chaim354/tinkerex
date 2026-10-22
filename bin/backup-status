@@ -52,6 +52,9 @@ fi
 # why `set -f` is mandatory, not as a value anything checks — nothing here compares against them.)
 # Destinations also stay the CLOSED SET ops/backup-db.sh itself accepts, so nothing else on the
 # line — the log path, `2>&1`, the marker comment — can be mistaken for one.
+# THIS SET AND THE FALLBACK BELOW ARE THE ONE DESTINATION LIST STILL SPELLED OUT BY HAND, because
+# this heredoc runs on the box, out of reach of the checkout's ops/backup-db.sh table.
+# test/ops_backup_table_test.rb holds both to that table, so they cannot go stale silently.
 set -f
 set -- $(printf '%s\n' "$schedule" | head -1)
 set +f

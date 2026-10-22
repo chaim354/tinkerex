@@ -1,0 +1,33 @@
+<%# locals: (model:, choices:) %>
+<%# A MODEL'S PROJECTS (2026-10-21; docs/superpowers/specs/2026-10-20-attach-model-to-project-design.md):
+    files/_attach's chips-and-dropdown, for a whole model. `choices` is Maker::ModelProjectChoices.
+    Attach posts to Models::ProjectsController#create and comes back here; × is its #destroy. The
+    located project's chip has no ×: the model is in that project by where it is. %>
+<% if choices.located || choices.linked.any? || choices.available.any? %>
+  <div class="attach-to-project model-projects">
+    <% if choices.located || choices.linked.any? %>
+      <span class="muted">In projects:</span>
+      <% if choices.located %>
+        <span class="project-chip"><%= link_to choices.located.name, project_path(choices.located) %></span>
+      <% end %>
+      <% choices.linked.each do |project| %>
+        <span class="project-chip">
+          <%= link_to project.name, project_path(project) %>
+          <%= button_to "×", model_project_path(model, project), method: :delete,
+                form: { data: { turbo_confirm: "Detach #{model.title} from #{project.name}?" } },
+                class: "chip-x", "aria-label": "Detach from #{project.name}" %>
+        </span>
+      <% end %>
+    <% end %>
+
+    <% if choices.available.any? %>
+      <%= form_with url: model_projects_path(model), method: :post, class: "attach-form",
+                    data: { turbo: false } do |f| %>
+        <%= f.label :project_id, "Attach to project:", class: "muted", for: "model_attach_project_id" %>
+        <%= f.select :project_id, choices.available.map { |p| [ p.name, p.slug ] }, {},
+                     id: "model_attach_project_id" %>
+        <%= f.submit "Attach", class: "btn small" %>
+      <% end %>
+    <% end %>
+  </div>
+<% end %>

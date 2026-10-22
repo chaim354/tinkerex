@@ -1,9 +1,9 @@
 /* The settings pages (stage 2, S2-3 onward): reference lists with an inline add form -- Suppliers,
-   Locations; the Shelves page keeps its own row rules (.shelf-list) in pages/models.css.
-   Same shape as .shelf-list: one row per record, its facts on the line, Remove at the end.
+   Locations, Tags: one row per record, its facts on the line, Remove at the end.
    Stage 2, S2-6: the hub (.settings-hub, one link + one fact per row) and the theme choice.
-   Stage 4, S4-2: /settings/filing left that shape -- it is a grid of folder cards
-   (.filing-cards) now, and only its add form still borrows .settings-add. */
+   Stage 4, S4-2: Filing left that shape for a grid of folder cards (.filing-cards), and since
+   2026-10-20 those cards are the Shelves page (/settings/shelves); only its add forms still borrow
+   .settings-add. */
 @layer pages {
   .settings-list { list-style: none; padding: 0; margin: 0 0 20px; max-width: 640px; }
   .settings-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -36,4 +36,30 @@
   .filing-card .chip { display: inline-flex; align-items: center; gap: 4px; }
   .filing-card .chip form { display: inline; margin: 0; }
   .filing-card .settings-add { max-width: none; }
+
+  /* Shelves (2026-10-20): a card's head row, its view/group form, a group's bar, the two add
+     forms. The cards themselves are the Filing page's `.filing-card`, unchanged. */
+  .shelf-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .shelf-card-head form { display: inline; margin: 0; }
+  .shelf-settings { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 10px; }
+  .shelf-settings label { display: grid; gap: 2px; font-size: 12px; }
+  .shelf-group { margin-top: var(--space-5); }
+  .shelf-group-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
+  .shelf-group-bar .group-head { margin: 0; }
+  .shelf-group-bar form { display: inline-flex; gap: 6px; margin: 0; }
+  /* THE RENAME FIELD SHRINKS WITH THE BAR (design-system.md rule 11). At its intrinsic width the
+     field and its button made the form 390px and the page scrolled sideways at 375px (measured). */
+  .shelf-group-bar .shelf-group-rename { flex: 1 1 14em; min-width: 0; max-width: 24em; }
+  .shelf-group-rename input[type="text"] { flex: 1 1 auto; min-width: 0; width: auto; }
+  .shelf-forms { display: flex; flex-wrap: wrap; gap: 16px; margin-top: var(--space-5); }
+
+  /* --- The library folder (K, 2026-10-20): /settings/library. Its form borrows .settings-add and
+     stacks, because the choice, the two outcomes and their buttons read top to bottom. */
+  .library-choice { flex-direction: column; align-items: flex-start; }
+  .library-facts, .library-outcomes { max-width: 640px; margin: 0 0 12px; padding-left: 18px; }
+  .library-outcomes { margin: 0; }
+  .library-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+
+  /* --- Users (2026-10-21): one account's page, three sections read top to bottom. --- */
+  .user-manage { max-width: 640px; margin-top: var(--space-5); }
 }

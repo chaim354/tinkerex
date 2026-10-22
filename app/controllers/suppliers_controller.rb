@@ -6,8 +6,8 @@
 class SuppliersController < ApplicationController
   def index
     @suppliers = current_user.maker_suppliers.order(:name)
-    # ONE GROUPED COUNT, NOT A QUERY PER ROW -- the same argument Settings::ShelvesController#decorate makes
-    # for its live/missing scan. Mutation-checked (this task's step 3): swapping this for
+    # ONE GROUPED COUNT, NOT A QUERY PER ROW -- the same argument Settings::ShelvesController#index
+    # makes for its cards' rules. Mutation-checked (this task's step 3): swapping this for
     # `supplier.inventory_items.count` inside the view turns a flat 2-query page into one that
     # costs a query per supplier.
     @item_counts = current_user.maker_inventory_items.group(:supplier_id).count

@@ -6,12 +6,16 @@ module Web
   # and the composer BELOW the list, a build-log composer that opens on demand, and a timeline with
   # the date in its own column. Nothing here adds a query: page_query_budget_test.rb still holds.
   class ProjectPageTest < ActionDispatch::IntegrationTest
+    # A PAGE RENDER ENQUEUES (Maker::Previews::ThumbnailMap backfills), and the cases under "What this
+    # render paints" read those jobs. Recorded, never run: the :test adapter is what `enqueued_jobs` reads.
+    include ActiveJob::TestHelper
+
     PASSWORD = "correct horse battery staple".freeze
 
     setup do
       @user = User.create!(email: "pp-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @project = @user.maker_projects.create!(name: "Desk Lamp", description: "An articulated lamp.")
       # BOTH FILES LIVE IN THE PROJECT'S FOLDER, not at the library root: the stats line's file
       # count is now Maker::ProjectFolderListing#total (the folder), not maker_file_attachments —
@@ -110,10 +114,8 @@ module Web
       tiles = css_select("section.attachments-panel .recent-files .attachment-tile")
       assert_equal %w[r5 r9 r1 r7 r3 r8 r2 r6], tiles.map { |t| t.at_css(".grid-name").text.delete_suffix(".stl") }
       assert_select "section.attachments-panel .recent-files .recent-files-head", text: "Recently changed"
-      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]",
-                    files_path(folder: "d-r-old", selected: "r5")
-      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]",
-                    files_path(folder: folder.node_id, selected: "r1")
+      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]", file_path("r5")
+      assert_select "section.attachments-panel .recent-files .attachment-tile a[href=?]", file_path("r1")
       assert_select ".recent-files .grid-name", { text: "r0.stl", count: 0 }, "a file outside the folder is not recent here"
       assert_select "section.attachments-panel .panel-head a.panel-path[href=?][title=?]",
                     files_path(folder: folder.node_id), "#{Maker::ProjectFolders::ROOT}/#{project.slug}", text: "Open folder →"
@@ -275,13 +277,14 @@ module Web
 
     # --- On-demand panels (structural redesign §6, slice 6) ---------------------------------------
     #
-    # AN EMPTY Build log, Tasks, BOM, Wiring, Releases or Sheets IS ABSENT FROM THE NORMAL PAGE — not
+    # AN EMPTY Build log, Tasks, BOM, Wiring, Releases, Sheets or Calculations IS ABSENT FROM THE NORMAL PAGE — not
     # quiet — and "+ Add panel" opens one for this visit with ?add=<key>, where it renders quiet (S4-1's
     # heading and one add control) with its composer. Decided in ProjectsController#show alone
     # (design-system.md rule 14). `@project` in `setup` is populated, so these build their own.
     ADD_MENU = { "build_log" => [ "Build log", "project-build-log" ], "tasks" => [ "Tasks", "project-tasks" ],
                  "bom" => [ "Bill of materials", "project-bom" ], "wiring" => [ "Wiring", "project-wiring" ],
-                 "releases" => [ "Releases", "project-releases" ], "sheets" => [ "Sheets", "project-sheets" ] }.freeze
+                 "releases" => [ "Releases", "project-releases" ], "sheets" => [ "Sheets", "project-sheets" ],
+                 "calculations" => [ "Calculations", "project-calculations" ] }.freeze
 
     def add_menu_links
       css_select(".head-actions details.add-panel .menu-list a.menu-item").map { |a| [ a.text.strip, a["href"] ] }
@@ -293,7 +296,7 @@ module Web
       get project_path(fresh)
 
       assert_response :success
-      %w[build-log tasks bom wiring releases sheets].each do |name|
+      %w[build-log tasks bom wiring releases sheets calculations].each do |name|
         assert_select "section.#{name}-panel", count: 0
       end
       assert_select "section.attachments-panel"
@@ -320,9 +323,9 @@ module Web
       assert_select "#project-tasks", count: 1
       assert_select "#project-tasks .tasks-group", count: 0
       assert_select "section.build-log-panel", count: 0
-      # The open panel leaves the menu; the other five stay in it.
+      # The open panel leaves the menu; the other six stay in it.
       assert_select ".add-panel a.menu-item", text: "Tasks", count: 0
-      assert_equal 5, add_menu_links.size
+      assert_equal ADD_MENU.size - 1, add_menu_links.size
     end
 
     # EACH LINK'S ANCHOR IS THE ID OF THE PANEL IT OPENS (ProjectsHelper::PANEL_ANCHORS), and each
@@ -367,7 +370,7 @@ module Web
 
       get project_path(fresh, add: "publish")
       assert_response :success
-      assert_equal 6, add_menu_links.size, "a key that is not on demand opens nothing and closes nothing"
+      assert_equal ADD_MENU.size, add_menu_links.size, "a key that is not on demand opens nothing and closes nothing"
       get "#{project_path(fresh)}?add[]=tasks"
       assert_response :success
       assert_select "section.tasks-panel", count: 0
@@ -671,6 +674,133 @@ module Web
       assert_select ".recent-files .grid-name", { text: "case.stl", count: 1 }, "a repository in tiles is a folder like any other"
       assert Maker::Preview.exists?(user: @user, node_id: "f-case"),
              "a tile on the page must have a row the poll can resolve"
+    end
+
+    # --- What this render paints is what it backfills (F-S15-1, 2026-10-19) ---------------------
+    #
+    # ONE ANSWER, TWO READERS. `ThumbnailMap.for` does not merely look: it BACKFILLS, a preview row
+    # and a render job for every id it is handed that has none. So the page's union must hold the
+    # ids some surface on THIS render paints, no more and no fewer. The recent row and the union used
+    # to answer "which subfolders draw no file cells" separately, the union keyed on `repo?`, and the
+    # two disagreed in four reachable cases. Three of them spent render jobs on tiles nobody drew
+    # (a hidden panel, a browsed plain folder, a repository nested in a tiles-view one). The fourth
+    # never backfilled an image the Photos panel paints, which is permanent on chunk_remote, where
+    # nothing but a backfill creates a row.
+    #
+    # EVERY CASE CARRIES A CONTROL THAT DOES BACKFILL, or a page whose thumbnail path stopped running
+    # altogether would pass each refutation for nothing.
+
+    # A FILE THE THUMBNAIL PATH WILL REALLY ACT ON: a name a renderer claims, and BOTH content
+    # columns (content_hash is share's and s3's token, current_version_id chunk_remote's; §14a).
+    # Without a token the map skips the node whatever the page paints.
+    def previewable!(node_id, name, parent)
+      @user.nodes.create!(node_id:, name:, kind: "file", parent_node_id: parent, size: 10,
+                          mtime: 1_000_000_000, content_hash: "h-#{node_id}", current_version_id: "v-#{node_id}")
+      node_id
+    end
+
+    def preview_row(node_id) = @user.maker_previews.find_by(node_id:, kind: "thumbnail")
+
+    # THE ROW AND ITS JOB. A backfill is `Enqueue.call`, which saves the pending row and enqueues its
+    # render together; asking for the job as well makes "it gets a thumbnail job" the assertion
+    # rather than an inference from the row.
+    def enqueued_for?(row)
+      !row.nil? && enqueued_jobs.any? { |j| j[:job] == Maker::GeneratePreviewJob && j[:args].first == row.id }
+    end
+
+    # CASES (a) AND (b). The images are the second control and the reason the folder is not simply
+    # dropped from the union whole: the Photos panel (always shown, Maker::ProjectKind::ALWAYS)
+    # paints every image in the folder at any depth, a hidden panel's and a browsed one's included.
+    test "a hidden or browsed folder panel backfills no tile it does not draw, and still backfills its photos" do
+      project = folder_panel_project!
+      loose = previewable!("f-lamp", "lamp.stl", project.folder_node_id)
+      hidden = previewable!("f-bracket", "bracket.stl", "d-models")
+      hidden_photo = previewable!("f-bench", "bench.jpg", "d-models")
+      browsed = previewable!("f-clip", "clip.stl", "d-notes")
+      browsed_photo = previewable!("f-desk", "desk.jpg", "d-notes")
+      project.update!(panels: { "hidden" => [ folder_key("d-models") ],
+                                "views" => { folder_key("d-notes") => "browser" } })
+
+      get project_path(project)
+
+      assert_response :success
+      # WHAT THIS RENDER DRAWS, read off the page, so the job assertions below are about it.
+      assert_select ".attachment-tile .grid-name", { text: "bracket.stl", count: 0 }
+      assert_select "section.folder-panel[id=?] .repo-browser", folder_key("d-notes"), 1
+      assert_select ".attachment-tile .grid-name", { text: "clip.stl", count: 0 }
+      assert_select ".photos-panel .photo-cell[title=?]", "bench.jpg"
+      assert_select ".photos-panel .photo-cell[title=?]", "desk.jpg"
+
+      assert enqueued_for?(preview_row(loose)), "control: a loose tile must still backfill"
+      assert_nil preview_row(hidden), "a hidden folder panel is absent from the page, so its files cost no render job"
+      assert_nil preview_row(browsed), "a plain folder in the browser view draws no tiles, so its files cost no render job"
+      assert enqueued_for?(preview_row(hidden_photo)), "the Photos panel paints a hidden panel's image, so it backfills"
+      assert enqueued_for?(preview_row(browsed_photo)), "the Photos panel paints a browsed folder's image, so it backfills"
+    end
+
+    # CASE (c). The tiles-view panel draws its OWN files as tiles, but a repository nested inside it is
+    # a closed browser section (projects/_file_tree_section). The union used to take the outer panel's
+    # whole subtree, so the nested repository's files were backfilled for no tile at all.
+    test "a repository nested in a tiles-view repository panel backfills nothing; the panel's own tiles do" do
+      project = folder_panel_project!
+      own = previewable!("f-case", "case.stl", "d-firmware")
+      @user.nodes.create!(node_id: "d-lib", name: "lib", kind: "dir", parent_node_id: "d-firmware")
+      @user.nodes.create!(node_id: "d-lib-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
+                          parent_node_id: "d-lib")
+      nested = previewable!("f-gear", "gear.stl", "d-lib")
+      project.update!(panels: { "views" => { folder_key("d-firmware") => "tiles" } })
+
+      get project_path(project)
+
+      assert_response :success
+      assert_select "section.folder-panel[id=?] .attachment-tile .grid-name", folder_key("d-firmware"), text: "case.stl"
+      assert_select ".attachment-tile .grid-name", { text: "gear.stl", count: 0 }
+      assert_select ".file-tree-section .repo-browser[data-filebrowser-root-value=?]", "d-lib"
+
+      assert enqueued_for?(preview_row(own)), "control: the tiles-view panel's own tile backfills"
+      assert_nil preview_row(nested), "a repository nested in a tiles-view panel is a closed browser section with no tiles"
+    end
+
+    # CASE (d), THE ONE THAT NEVER HEALED. A repository opens in the browser by default, so its files
+    # draw no tiles, but the Photos panel still paints its images. The union subtracted every file
+    # beneath a repository and gave Photos no term of its own, so the image's cell spun its polls and
+    # ended as a badge. The repository's other file is the negative control: Photos paints images,
+    # and only images, so the photo term must not bring the rest of the repository back in.
+    test "an image inside a browsed repository gets a thumbnail job, because the Photos panel paints it" do
+      project = folder_panel_project!
+      board = previewable!("f-board", "board.jpg", "d-firmware")
+      other = previewable!("f-case", "case.stl", "d-firmware")
+
+      get project_path(project)
+
+      assert_response :success
+      assert_select "section.folder-panel[id=?] .repo-browser", folder_key("d-firmware"), 1
+      assert_select ".attachment-tile .grid-name", { text: "board.jpg", count: 0 }
+      assert_select ".photos-panel .photo-cell[title=?]", "board.jpg"
+
+      assert enqueued_for?(preview_row(board)),
+             "the Photos panel paints this image, so the page must backfill it: nothing else will on chunk_remote"
+      assert_nil preview_row(other), "the repository's non-image file is drawn nowhere, so it costs no render job"
+    end
+
+    # THE EDITOR PAINTS A HIDDEN PANEL: the loop there is `order`, and a hidden folder panel renders
+    # ghosted WITH its tiles (projects/_panel_slot). So on that render its files are tiles like any
+    # other, and they backfill and appear on the recent row. That is the "on this render" reading of
+    # #dirs_without_tiles, and the RECENT-ROW half is the owner's call (F-S15-1): the alternative is
+    # dropping `!@editing &&` from that method, which also takes the ghost's tiles out of the union.
+    test "in the editor a hidden folder panel is drawn ghosted with its tiles, so they backfill and are recent" do
+      project = folder_panel_project!
+      bracket = previewable!("f-bracket", "bracket.stl", "d-models")
+      project.update!(panels: { "hidden" => [ folder_key("d-models") ] })
+
+      get edit_layout_project_path(project)
+
+      assert_response :success
+      assert_select "div.panel-slot.panel-slot--hidden[data-key=?] .attachment-tile .grid-name",
+                    folder_key("d-models"), text: "bracket.stl"
+      assert enqueued_for?(preview_row(bracket)), "a ghosted tile is drawn on this render, so it needs a row the poll can resolve"
+      assert_includes css_select(".recent-files .grid-name").map(&:text), "bracket.stl",
+                      "on the editor's render the hidden panel draws its tiles, so its files are recent there too"
     end
 
     test "the Files panel carries the anchor its own view toggle redirects to" do

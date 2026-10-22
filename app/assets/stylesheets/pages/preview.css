@@ -28,7 +28,8 @@
      is the one thing the 480px cap on .preview-text above was already avoiding. Matching that
      number keeps a file's page the same height before and after the bundle mounts. */
   .preview-code .cm-editor { max-height: 480px; border-radius: 6px; }
-  .preview-code .cm-editor.cm-focused { outline: none; }
+  /* No `.cm-focused { outline: none }` here or below (2026-10-21): CodeMirror's unlayered CSS beat
+     those layered rules, so they never applied; vendor-overrides.css owns the focus treatment now. */
   .preview-code .cm-scroller { font-family: var(--font-mono); font-size: 13px; }
 
   /* The editor's Save bar (editor_controller.js builds it in #addSaveBar) and the commit box's
@@ -76,7 +77,6 @@
   /* The inline diff (diffview_controller.js). Bounded for .preview-code's reason — a repository
      with six edited files must not make the commit page six file-lengths tall. */
   .commit-diff .cm-editor { max-height: 320px; }
-  .commit-diff .cm-editor.cm-focused { outline: none; }
   .commit-diff .cm-scroller { font-family: var(--font-mono); font-size: 13px; }
   .commit-diff:empty { display: none; }
 
@@ -151,7 +151,6 @@
   }
   /* Bounded for .commit-diff's reason — a row's diff must not make the file page ten screens tall. */
   .history-diff .cm-editor { max-height: 320px; }
-  .history-diff .cm-editor.cm-focused { outline: none; }
   .history-diff .cm-scroller { font-family: var(--font-mono); font-size: 13px; }
 
   /* --- Interactive 3D viewer (modelviewer_controller.js) — every format Online3DViewer reads,
@@ -177,8 +176,14 @@
   .model-viewer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
   .model-viewer-source { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); max-width: 60%; }
   .mv-launch { display: inline-flex; gap: 8px; }
-  .mv-actions { display: none; gap: 8px; }
+  /* WRAPS, because the 3D viewer's bar outgrew one line on a phone: "Use this view as preview"
+     (2026-10-20) took the open viewer's buttons to 435px against a 375px viewport, and nowrap
+     pushed the whole page sideways (design-system.md rule 11; o3dv_test.rb measures it). */
+  .mv-actions { display: none; gap: 8px; flex-wrap: wrap; }
   .model-viewer-dims { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
+  /* "Use this view as preview"'s answer. Outside .mv-actions and never hidden by --ready: a status
+     line must be readable while the viewer is open, which is when the button is pressed. */
+  .mv-status { font-size: 12px; }
   .model-viewer-fallback { text-align: center; padding: 24px; }
   /* --ready MEANS "THE VIEWER IS OPEN", NOT "THE MODEL RENDERED" — reveal the canvas + bar, hide
      the poster. The controller adds it when the user launches (the stage must have a size before
@@ -212,9 +217,8 @@
   .gerber-viewer .model-viewer-stage svg { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
   .gerber-viewer .model-viewer-stage svg.is-panning { cursor: grabbing; }
   /* A board's bar carries Top/Bottom and one toggle per layer beside Fit, Fullscreen and ✕ Image —
-     a dozen buttons on a six-layer board — so it wraps where the 3D viewer's three-button bar never
-     needs to. `.btn small` is the component (design-system.md rule 3); these only lay the groups out. */
-  .gerber-viewer .mv-actions { flex-wrap: wrap; }
+     a dozen buttons on a six-layer board — and wraps them as every .mv-actions does (above).
+     `.btn small` is the component (design-system.md rule 3); these only lay the groups out. */
   .gerber-sides, .gerber-tools { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 
   /* --- Measure view (measure_controller.js) — .lbrn/.lbrn2, .mage, .dxf, .svg --- */
@@ -224,7 +228,17 @@
      WebDriver clicks at the centre of an element's VISIBLE part — measure_print_test's computed
      click landed on the hole instead of the line. min(100%, 78vh) keeps it square (the tests derive
      mm-per-pixel from the width) and on screen; on a phone 100% is the smaller term. */
-  .measure-stage { display: none; width: min(100%, 78vh); aspect-ratio: 1; margin: 0 auto; }
+  /* THE STAGE IS THE CARD, IN BOTH THEMES (design-system.md rule 5). The drawing is the FILE's own
+     layer colours, and a LightBurn black or blue layer, a DXF's ACI 7 or a plain SVG's black stroke
+     reads on no dark ground: on Graphite's page it was black on #141512. The card is light in both
+     themes, so the drawing reads in both, and it is the same card the poster sits on, so launching
+     swaps a picture for a live drawing on one ground. The ring is a box-shadow, NOT a border: a
+     border would shrink the SVG inside by 2px, and the Measure tests derive mm-per-pixel from the
+     stage's width. */
+  .measure-stage {
+    display: none; width: min(100%, 78vh); aspect-ratio: 1; margin: 0 auto;
+    background: var(--thumb-stage); border-radius: var(--radius-panel); box-shadow: 0 0 0 1px var(--line);
+  }
   .measure-stage svg { width: 100%; height: 100%; touch-action: none; cursor: crosshair; }
   .measure-stage svg.is-panning { cursor: grabbing; }
   /* Seven controls since stage 4, S4-3 (paper, Print, Save sheet, Download SVG, Save SVG, Reset,
@@ -235,12 +249,13 @@
   .measure-actions { display: none; gap: 4px; flex-wrap: wrap; }
   .measure-dims { flex: 1; color: var(--fg-muted); font-variant-numeric: tabular-nums; }
   .measure-fallback { text-align: center; padding: 24px; }
-  /* THE POSTER, CENTRED (slice 7). `.preview-image` is `display: block`, which the fallbacks'
-     `text-align: center` does not move, so a thumbnail narrower than the column sat against its
-     left padding. Scoped to the two fallback containers (the Gerber viewer's is
-     `.model-viewer-fallback` too): the bare `.preview-image` is shared with the addon bundles
-     and is never restyled (design-system.md rule 12). files_layout_test.rb measures it. */
-  .model-viewer-fallback .preview-image, .measure-fallback .preview-image { margin-inline: auto; }
+  /* THE POSTER IS CENTRED BY ITS CARD (2026-10-21). It sat against the fallback's left padding
+     until slice 7, because `.preview-image` is `display: block` and `text-align: center` does not
+     move a block; a `margin-inline: auto` here fixed it. Every poster now sits in a `.render-card`
+     (components.css), which centres it as a flex container, so that rule went: two mechanisms for
+     one centring is how one of them stops being the one that works. files_layout_test.rb measures
+     it. The bare `.preview-image` is still never restyled (shared with the addon bundles). */
+  .measure-fallback .render-card, .model-viewer-fallback .render-card { margin-bottom: var(--space-3); }
   /* The controller adds --ready on a successful render: reveal the outline stage, hide the poster. */
   .measure-view--ready .measure-stage { display: block; }
   .measure-view--ready .measure-fallback { display: none; }

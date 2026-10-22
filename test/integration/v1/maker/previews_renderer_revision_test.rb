@@ -86,6 +86,7 @@ module V1
         synced_node(name: "part.stl")
         current = ::Maker::Previews::Stl::THUMBNAIL_REVISION
         row = existing_preview(status: "ready", revision: current - 1)
+        row.asset.attach(io: StringIO.new("\x89PNG".b), filename: "t.png", content_type: "image/png")
 
         assert_enqueued_with(job: ::Maker::GeneratePreviewJob) { post_preview }
         assert_response :ok
@@ -93,8 +94,65 @@ module V1
         assert_equal current, row.reload.renderer_revision
         # §14h: A CONTENT REPOINT BLANKS THE ARTIFACT; A RENDERER REBUILD DOES NOT. This is the
         # observable wire change — the API used to answer a fresh `pending` here.
-        assert_equal "ready", row.status
-        assert_equal "ready", JSON.parse(response.body)["status"]
+        #
+        # THE ROW SAYS `rebuilding` AND THE WIRE STILL SAYS `ready` (F-S08-2), ON BOTH ANSWERS THAT
+        # CARRY IT. tinkerex-client's Preview documents "url is null until status == ready", and the
+        # url IS present — an older build's picture of this same content — so `ready` is the answer
+        # that keeps a client's own contract true. Exposing `rebuilding` is a wire change to make
+        # deliberately, with the client.
+        assert_equal "rebuilding", row.status
+        body = JSON.parse(response.body)
+        assert_equal "ready", body["status"]
+        assert body["url"].present?, "a ready answer must carry the picture it describes"
+
+        get "/v1/maker/previews", params: { node_id: UUID }, headers: auth(@token)
+        assert_equal [ "ready" ], JSON.parse(response.body)["previews"].map { |p| p["status"] }
+      end
+
+      # (b2) A MEASURED KIND IS NOT `ready` MID-REBUILD. The thumbnail above answers `ready` through
+      # its rebuild because an older build's picture of this content is still a correct picture. The
+      # Measure payload is DATA, and an older build's is wrong: the web Measure poll answers
+      # `pending` for this very row, so this wire must not hand an API client its old payload URL as
+      # ready. It says `pending`, the word its vocabulary already has for a job still coming, and
+      # never `rebuilding`, which tinkerex-client was never told about.
+      test "a geometry row mid-rebuild is pending on this wire with no url, never ready" do
+        synced_node(name: "design.lbrn2")
+        current = ::Maker::Previews::Enqueue.revision_for_name("design.lbrn2", "geometry")
+        row = @user.maker_previews.create!(node_id: UUID, kind: "geometry", version_id: "v1",
+                                           status: "ready", renderer_revision: current - 1)
+        row.asset.attach(io: StringIO.new('{"shapes":[]}'), filename: "g.json", content_type: "application/json")
+
+        assert_enqueued_with(job: ::Maker::GeneratePreviewJob) { post_preview(kind: "geometry") }
+        assert_response :ok
+        assert_equal "rebuilding", row.reload.status
+
+        body = JSON.parse(response.body)
+        assert_equal [ "pending", nil ], [ body["status"], body["url"] ],
+                     "an older build's Measure payload was answered as ready"
+
+        get "/v1/maker/previews", params: { node_id: UUID, kind: "geometry" }, headers: auth(@token)
+        item = JSON.parse(response.body)["previews"].sole
+        assert_equal [ "pending", nil ], [ item["status"], item["url"] ]
+      end
+
+      # (b3) THE URL IS NULL UNTIL THE ANSWER IS `ready` — tinkerex-client's own documented contract
+      # ("`url` is null until `status == "ready"`"). This wire emitted a url for ANY attached asset,
+      # so a row repointed at new content (`pending`) — or one whose render then failed — handed out
+      # the PREVIOUS content's picture beside a status saying it was not ready.
+      test "a row that is not ready carries no url, even with an older asset attached" do
+        synced_node(name: "part.stl", version: "v2")
+        row = existing_preview(status: "ready", revision: ::Maker::Previews::Stl::THUMBNAIL_REVISION)
+        row.asset.attach(io: StringIO.new("\x89PNG".b), filename: "t.png", content_type: "image/png")
+
+        post_preview(version_id: "v2") # the content moved on: the row is repointed and blanked
+        body = JSON.parse(response.body)
+        assert_equal [ "pending", nil ], [ body["status"], body["url"] ],
+                     "a pending row handed out the previous content's picture"
+
+        row.reload.update_column(:status, "failed")
+        get "/v1/maker/previews", params: { node_id: UUID }, headers: auth(@token)
+        item = JSON.parse(response.body)["previews"].sole
+        assert_equal [ "failed", nil ], [ item["status"], item["url"] ]
       end
 
       # (c) THE `stalled` AXIS. `processing` is an ASSERTION that a job exists; nothing else ever

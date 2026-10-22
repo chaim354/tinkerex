@@ -1,9 +1,10 @@
-<%# locals: (model:, cover_live:, covers:, print_runs:, printers:, materials:) %>
-<%# THE MODEL STRIP (structural redesign §5.4, slice 5). A catalogued model's folder carries what the
-    model page did: cover, status, details, print settings and the print log. The folder's own files,
-    the inspector and the workspace show the rest, so the page's viewer, gallery and file tree are not
-    repeated here. Which model a folder shows is Maker::ModelFolder.model_in's answer, asked by
-    FilesController#index only when no project claims the folder (a project's claim wins).
+<%# locals: (model:, cover_live:, covers:, print_runs:, printers:, materials:, projects:) %>
+<%# THE MODEL STRIP (structural redesign §5.4, slice 5). A catalogued model's folder carries the head
+    of what the model page shows: cover, status, details, print settings and the print log. The
+    folder's own files, the inspector and the workspace show the rest, so the page's viewer, gallery
+    and file tree are not repeated here. Which model a folder shows is Maker::ModelFolder.model_in's answer, asked by
+    FilesController#index only when no project claims the folder (a project's claim wins). Its
+    title opens the model's own page (2026-10-21): files on the left, a pane on the right.
 
     NOT A SELECTION ITEM AND NO ACCENT: Upload is the folder's one action (design-system.md rule 13),
     and nothing here goes through with_selection. Its cover cell carries its OWN thumbs controller,
@@ -23,7 +24,7 @@
     <% end %>
     <div class="model-strip-title">
       <span class="eyebrow">3D model</span>
-      <h2><%= model.title %></h2>
+      <h2><%= link_to model.title, model_path(model) %></h2>
       <span class="badge mstatus-<%= model.print_status %>"><%= model.print_status_label %></span>
       <% details = [ model.designer.presence, model.license.presence ].compact %>
       <% if details.any? || model.source_url.present? %>
@@ -55,6 +56,7 @@
       <% end %>
     </div>
   </div>
+  <%= render "models/projects", model: model, choices: projects %>
   <% if model.print_settings.present? %>
     <dl class="meta model-strip-settings">
       <% model.print_settings.each do |key, value| %>

@@ -222,12 +222,12 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
   Full argument, including why the fix is deliberately NOT thread-local caching either: §14a.
 - **Bytes never flow through Rails** — control plane only (§15; the share backend is the one departure, §14a).
 - **Registration creates a new account only** (no `find_or_create_by` takeover), and **it is CLOSED
-  by default in production: the first account is the owner, confirmed without mail, and
+  by default in production: the first account is the owner AND ADMIN, confirmed without mail, and
   `REGISTRATION=open` is REFUSED at boot on `share`/`s3`**, where every account indexes ONE library
-  (`lib/tinkerex/registration.rb`; pinned by `deploy_hygiene_test` and `registration_mode_test`).
-  A device joins via **`POST /v1/devices/login`** (email + password → a 256-bit device token) or
-  `POST /v1/devices` from an authenticated device. Pairing codes are gone (`18c623a`). Web auth is
-  Rails 8 built-in with an OmniAuth seam; real OAuth/OIDC email verification is the later upgrade.
+  (`lib/tinkerex/registration.rb`). Admins add accounts at Settings → Users; the demo never manages
+  (`User#can_manage_accounts?`). A device joins via **`POST /v1/devices/login`** (email + password →
+  a 256-bit device token) or `POST /v1/devices` from an authenticated device. Pairing codes are gone
+  (`18c623a`). Web auth is Rails 8 built-in with an OmniAuth seam; OIDC email verification is later.
 - **Device tokens are 256-bit, SHA256-digested at rest.** A device token is the **only** credential
   the whole v1 API accepts, including all fourteen `v1/maker/*` controllers — which is why
   `devices` is deliberately ungated (§14a) and why `Device` is owned here, not by the sync server.
@@ -262,7 +262,7 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
                  gerber-svg (the pinned tracespace bundle under node, Maker::Previews::Gerber).
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
-                 bin/backup-cron-install. No gate covers these; invariants in §14i.
+                 bin/backup-cron-install. Only its destination table is gated; invariants in §14i.
 /docs            sync-protocol.md, SYNC_SERVER.md, DEPLOY.md, roads-not-taken.md,
                  architecture-sync-engine.md, adr/
 /docs/invariants §14's AREA rules, one file per area — addons.md, measure-view.md,
@@ -339,9 +339,9 @@ slot. A closed item keeps its row for the same reason it always did: the citatio
 bin/ci                 # bin/ci --list for gate names; config/ci.rb is the single definition.
                        # 7 gates (6 under CI -- `setup` is local-only, bin/ci --list-ci):
                        #   setup style scan test test-s3 test-chunk-remote system
-                       # THE THREE BACKEND LEGS ARE share / s3 / chunk_remote and must report
-                       # IDENTICAL run counts (§15). `test` IS the share leg; `test-share` and
-                       # `test-no-engine` were folded away with embedded chunk (2026-08-25).
+                       # THE THREE BACKEND LEGS ARE share / s3 / chunk_remote; bin/ci itself fails
+                       # when their RUN counts differ (§15). `test` IS the share leg; `test-share`
+                       # and `test-no-engine` were folded away with embedded chunk (2026-08-25).
 
 # ONE gate needs a SIBLING CHECKOUT. `test-chunk-remote` drives this app against a real
 # chaim354/tinkerex-sync server -- its Rust binary since 2026-10-14, which bin/sync-server builds
@@ -464,14 +464,14 @@ area belongs there too, with a stub here.
   SubtreeDelete; **share** renames into `.trash` in one atomic call; **s3** copies-then-deletes per
   object, capped at `S3::DIR_DELETE_MAX_OBJECTS` and refusing above it, writing the catalog **only
   once the bucket agrees** (a delete failing *after* a tombstone leaves an unclaimed key that mints
-  a new `node_id` and orphans every attachment, silently). Both writable adapters tombstone the one
-  walk, `FileLayer::Subtree`, **by the parent edge, never a `storage_path` prefix** (a moved child's
-  path is stale until a scan pairs it). **`undelete` refuses an orphan** rather than reparenting to
-  the root — a refusal is recoverable, a scatter is not — discriminating on the **tombstone kind**,
-  not on `deleted:`: a SCAN tombstone keeps its path and restoring into one is self-healing, so
-  `parent&.deleted?` breaks it (measured). **`dir_deletable` was the 6th capability and is
-  RETIRED** — it gated this while share and s3 refused, then varied on nothing, and a capability
-  earns its place by **varying**.
+  a new `node_id` and orphans every attachment, silently). Both writable adapters walk
+  `FileLayer::Subtree` **by the parent edge, never a `storage_path` prefix** (a moved child's path
+  is stale until a scan pairs it), and tombstone only its LIVE rows. **`undelete` refuses an
+  orphan** rather than reparenting to the root — a refusal is recoverable, a scatter is not —
+  discriminating on **`trash_root_node_id`**, not on `deleted:`: a SCAN tombstone records no entry
+  and restoring into one is self-healing, so `parent&.deleted?` breaks it (measured).
+  **`dir_deletable` was the 6th capability and is RETIRED** — it gated this while share and s3
+  refused, then varied on nothing, and a capability earns its place by **varying**.
 - **`begin_upload`/`put_chunk`/`finalize_upload` are port verbs, and NONE of the three is the
   byte-taking `write` above.** The port never holds a byte: `begin_upload` returns presigned PUT
   URLs for whichever chunks the store is missing, and the caller PUTs straight to object storage —
@@ -486,13 +486,10 @@ area belongs there too, with a stub here.
   **loopback into the same Puma pool** (§14e's reentrancy bug). Only the adapter knows which
   situation it is in, which is why the caller cannot decide. The maker layer now names **zero**
   chunk-internals references (§14c).
-- **`finalize_upload` broadcasts by DEFAULT, with exactly one explicit opt-out** —
-  `Maker::Addons::LibraryOutput` passes `broadcast: false`, preserving what addon saves have
-  always done (never nudged live devices; open item, the record (§11)). `mkdir`/`move`/
-  `delete`/`undelete` broadcast unconditionally, so a caller cannot forget; this verb has two
-  callers wanting different behaviour for one fact, so it defaults to the safe answer (notify)
-  rather than delegating the choice — an unwritten third caller that forgets to opt out gets a
-  working nudge, not a silent gap.
+- **No port verb takes `device:` or `broadcast:`, and no upload mints a `devices` row** (enrolment
+  alone does, §8). The sync server attributes a commit to the device its bearer token names and
+  nudges the user's devices on EVERY commit, mutation and restore — an addon save's included — so
+  no caller here can forget a nudge or opt out of one. The adapter contract refuses both keywords.
 - **AN ORPHANED RESTORE IS REFUSED, ON EVERY BACKEND THAT CAN REACH THE STATE — AND THIS REVERSED
   AN EARLIER RULE** (which reparented an orphan to the library ROOT). Since `delete` cascades a
   whole directory in one call, restoring a CHILD before its PARENT is the **mainline** case, not an
@@ -598,61 +595,62 @@ area belongs there too, with a stub here.
   loop** (`node_ids.map { stat }` is behaviorally identical): the query count must be
   **constant in N**, asserted as constant rather than a literal (chunk_remote needs 2, share/s3 1).
 - **THE TWO TOMBSTONE KINDS — the thing most likely to get "simplified" away.** A **scan**
-  tombstone **keeps** `storage_path`; a **trash** tombstone **NULLs it** and is revivable
-  only by `undelete`. Collapse them and `Reconciler#create_or_revive!` hands a **new,
-  unrelated file the trashed node's `node_id`** — with every attachment, BOM link and tag —
-  while the old bytes await an `undelete` that then collides. Silent.
-- **Trash layout `.trash/<node_id>/<name>`, keyed by `node_id`** — which is *why* two
-  same-named deletes can't collide, and why `undelete` has one place to look.
+  tombstone **keeps** `storage_path`; a **trash** tombstone **NULLs it**, names its entry in
+  `trash_root_node_id` (the suites assert the two spellings agree on every row), and is revivable
+  only by `undelete`. Collapse them and `Reconciler#create_or_revive!` hands a **new, unrelated
+  file the trashed node's `node_id`** — with every attachment, BOM link and tag — while the old
+  bytes await an `undelete` that then collides. Silent.
+- **Trash layout `.trash/<root id>/<root name>/<path beneath>` on share and s3 alike** — keyed by
+  node_id, so same-named deletes never collide — and **MEMBERSHIP is `trash_root_node_id`, never
+  existence at a rebuilt key**: a restore revives only its own members, and re-roots any it leaves behind.
 - **`undelete` is a FOURTH port verb.** "Undelete is just a move back" is *precluded*:
   `move` starts with `live_node!` (a tombstone isn't live) and resolves via `storage_path`,
   which is NULL — it would rename the library root.
 - **Order is load-bearing both ways:** `delete` is **move-then-tombstone** (the reverse
   fails *silently* — the next scan resurrects it); `undelete` is **move-then-revive**.
   `EXDEV` → `FetchError`, **never** a copy+delete fallback.
-- **`delete` refuses directories; `move` ALLOWS them.** A dir delete strands children at
-  paths that no longer exist while their bytes sit in `.trash`, where the scan refuses to
-  look. A moved dir leaves the bytes observable **at an observable destination**, so pairing
-  rescues the children — that qualifier is load-bearing (see §14b). On **S3 both refuse
-  dirs**, because there is no directory and no rename: a dir node's key doesn't exist.
+- **Share's `move` ALLOWS directories; s3's refuses them** (no directory, no rename: a dir node's
+  key doesn't exist). A moved dir leaves the bytes observable **at an observable destination**, so
+  pairing rescues the children — that qualifier is load-bearing (see §14b).
 - **An unmounted share must never read as "your file is permanently gone":** `undelete` and
   `read` raise **`FetchError`** (retryable → 503), not `NotFound` (terminal → 404).
   `FetchError` → 503 and `UnsupportedOperation` → 422 are mapped once at `FilesController`.
-- **A clobber is `UnsupportedOperation`, and ALL THREE VERBS moved together.** Both adapters
-  once raised `NotFound`, so a duplicate-name upload said "File not found." about a file in
-  the list behind the alert. "The destination is taken" is ONE condition that
-  `write`/`move`/`undelete` all meet — fixing only `write` leaves one condition with two
-  answers inside one adapter. `FetchError` would be worse: it is the *retryable* answer and a
-  clobber never succeeds on retry. If a caller must branch, the answer is a **subclass**.
-  (This also broke `TrashController`, which rescued `NotFound` but not
-  `UnsupportedOperation` → an uncaught 500, **while its own rescue comment already named
-  that case**. The gap was in the CONTROLLER, which is why no adapter suite could find it.)
+- **A clobber is `UnsupportedOperation`, and ALL THREE VERBS moved together.** Both adapters once
+  raised `NotFound`, so a duplicate-name upload said "File not found." about a file in the list
+  behind the alert. "The destination is taken" is ONE condition that `write`/`move`/`undelete` all
+  meet — fixing only `write` leaves one condition with two answers inside one adapter. `FetchError`
+  would be worse: it is the *retryable* answer and a clobber never succeeds on retry. If a caller
+  must branch, the answer is a **subclass**. (This also broke `TrashController`, which rescued
+  `NotFound` but not `UnsupportedOperation` → an uncaught 500, **while its own rescue comment already
+  named that case**. The gap was in the CONTROLLER, which is why no adapter suite could find it.)
 - **`LIBRARY_TRASH_DAYS`** default **30**; **`0` = keep forever, NOT purge everything**
   (`0.days.ago` is *now*, so the obvious implementation deletes the lot). Purges by
   entry-dir mtime, never touches the row, and **empties `.trash` but never removes `.trash`
   itself** (an empty root reads as unmounted → would flip `undelete`'s error class).
-- **The boot guard touch-probes for writability; `File.writable?` is NOT the check** — it
-  tests POSIX mode bits, not effective access, and is wrong under exactly the NFS/SMB ACLs
-  this backend targets. It must run in **`after_initialize`**: app constants aren't
-  autoloadable while initializers run, so the naive version raised `uninitialized constant
-  Library` and **took the boot down while every test stayed green** (test env skips it).
-  **The S3 boot guard does NO NETWORK** — a boot depending on a third party turns a blip
-  into a crash loop. Config *presence* is what boot can honestly check.
-- **`FileLayer.build` TELLS `check!` WHICH BACKEND IT RESOLVED; the guard's no-arg default is the
-  BOOT INITIALIZER's question and is deliberately DIFFERENT.** Calling `check!` with no arguments
-  let it re-read ENV with a default (`chunk`) Arc D Part 2 left behind when `build`'s became
-  `share` — so **the one backend reachable WITHOUT setting `LIBRARY_BACKEND` was the one the guard
-  never checked**, and `Share.new` raised a bare `KeyError` that broke `bin/ci setup`, a gate no CI
-  job runs (`LOCAL_ONLY_GATES`). Do NOT instead match the guard's own default to `build`'s:
-  measured, that refuses an unconfigured dev box's BOOT and moves the same failure one step
-  earlier. A port that cannot be CONSTRUCTED is not a scannable one — `Library::RepoMetadataPurge`
-  declines with a `reason`, rescuing `LibraryBackendCheck::Error` alone, never `KeyError` (too
-  broad) and never around the sweep (§15's silent-success shape).
-- **PRODUCTION REFUSES TO BOOT WITH `LIBRARY_BACKEND` BLANK (`required_in_production!`); the lib
-  default stays `chunk`-shaped** — blank, the CSP `connect_src` lambda resolved `FileLayer.current`
-  on EVERY response and 500'd `/up` from middleware. `ACTIVE_RECORD_ENCRYPTION_*` ENV keys apply ONLY
-  WHEN PRESENT (a nil splats over the credential). `docs/INSTALL.md` is the env reference a stranger
-  installs from, kept complete by `test/install_docs_test.rb`; `RAILS_MASTER_KEY` is never theirs.
+- **The boot guard touch-probes for writability; `File.writable?` is NOT the check** — it tests POSIX
+  mode bits, not effective access, and is wrong under exactly the NFS/SMB ACLs this backend targets.
+  It must run in **`after_initialize`**: app constants aren't autoloadable while initializers run, so
+  the naive version raised `uninitialized constant Library` and **took the boot down while every test
+  stayed green** (test env skips it). **The S3 boot guard does NO NETWORK** — a boot depending on a
+  third party turns a blip into a crash loop. Config *presence* is what boot can honestly check.
+- **THE SHARE ROOT IS THE MOUNT PLUS A STORED RELATIVE CHOICE (`Tinkerex::LibraryRoot`).** The mount
+  is probed at boot, the choice at selection; changing the choice is a scan under the mass-deletion
+  guard, and only an explicit reset (`Library::Reset`) wipes the catalog, which never touches disk.
+  **The choice is read per request and per job (`Current`), NEVER memoised per process**: the in-Puma
+  job supervisor FORKS its workers, so a process-wide memo left every one on the old folder.
+- **ONE READING OF `LIBRARY_BACKEND`: `LibraryBackendCheck.configured` answers nil (unset or blank),
+  a `NAMES` member, or `UnknownBackend` (a typo, `S3`, a stray space, the retired `chunk`) — rejected,
+  never normalised.** The boot (`boot!`, the initializer's ONE call, pinned statically: the test env
+  skips it) and the factory (`configured || "share"`) both consume it, and `check!` takes the name
+  with NO default — its `chunk` default checked nothing, so an unknown value booted and then 500'd
+  EVERY response, `/up` included (the CSP `connect_src` lambda resolves `FileLayer.current` each
+  time). **Unset is a state, not a default:** development boots (refusing it was measured to break an
+  unconfigured dev box one step EARLIER), production refuses (precompile's `SECRET_KEY_BASE_DUMMY`
+  exempt). `UnknownBackend` is an `ArgumentError`, never an `Error`: `Library::RepoMetadataPurge`
+  declines with a `reason` on `LibraryBackendCheck::Error` alone, never `KeyError`, never around the
+  sweep. `ACTIVE_RECORD_ENCRYPTION_*` ENV keys apply ONLY WHEN PRESENT (a nil splats over the
+  credential). `docs/INSTALL.md` is the env reference a stranger installs from, kept complete by
+  `test/install_docs_test.rb`; `RAILS_MASTER_KEY` is never theirs.
 - **`write(..., replace: true)` IS AN OPT-IN BESIDE THE CLOBBER REFUSAL, NOT A RELAXATION OF IT.** The
   refusal is still the default on both writable adapters and every existing caller omits the kwarg;
   `replace:` exists for a door that has just asked a user "this would replace `design/x.svg` —
@@ -668,25 +666,24 @@ area belongs there too, with a stub here.
   created, and the leg splits chunk-green / share-red. **A replace may also NAME what it replaces:
   `expect_token:` is compared against the STORE (content AND existence), not the catalog, raising
   `FileLayer::StaleContent < UnsupportedOperation` with nothing written**; nil means no check.
-- **THE IDENTITY LADDER** (`FileLayer::S3::ObjectIdentity`). One namespaced value answers
-  two different questions: `content_token` need only be an opaque content-*state* token, but
-  `content_hash` must be content-*determined* for move-pairing — and **a multipart ETag is
-  not**. Ladder: **`sha256:`** (FULL_OBJECT only — a COMPOSITE sha256 is a
-  checksum-of-checksums, so the *type* is required, not the checksum alone) → **`md5:`** (a
-  **32-hex** single-part ETag is the md5 — 32-hex, not merely "dash-free") → **`etag:`**
-  (moves degrade to delete+create — a *missed* rename, never a *wrong* pairing). **TOTAL by
-  construction, never nil**: `Reconciler#plan_moves` **drops** a nil-hash observation from
-  `candidates`, and candidates become the leftovers that get indexed → the object is **never
-  indexed at all**, no error, no log. **Quotes come off in exactly ONE place** (S3 quotes
-  every ETag in list, head *and* put). Blind spot: an **SSE-KMS** object has a 32-hex ETag
-  that is *not* the content md5, so the rung-3 warning count reads **zero while no move
-  pairs at all**.
-- **`LIBRARY_S3_HEAD_FOR_CHECKSUM` is NOT implemented — do not document it as working.** An
-  observer cannot know what is new (the Reconciler does), so a HEAD there is
-  per-object-per-**scan**: 2M billed requests every 15 min on a 2M-object bucket, not 2M
-  once. Consequence: the **`sha256:` rung is unreachable from any production path today**.
-  Download-and-hash was rejected on §1's own terms — a full billed egress to index a library
-  the user already has is the cost the on-ramp exists to avoid.
+- **THE IDENTITY LADDER** (`FileLayer::S3::ObjectIdentity`). One namespaced value answers two
+  questions: `content_token` need only be an opaque content-*state* token, but `content_hash` must
+  be content-*determined* for move-pairing — and **a multipart ETag is not**. Ladder: **`sha256:`**
+  (FULL_OBJECT only — a COMPOSITE sha256 is a checksum-of-checksums, so the *type* is required) →
+  **`md5:`** (a **32-hex** single-part ETag, not merely "dash-free") → **`etag:`** (moves degrade
+  to delete+create — a *missed* rename, never a *wrong* pairing). **TOTAL by construction, never
+  nil NOR BLANK**: `Reconciler#plan_moves` **drops** a nil-hash observation (never indexed, no log)
+  and one `etag: ` pairs strangers, so a blank ETag (quoted `""` or `" "` too) raises `BlankEtag`,
+  and **only `for_reported` maps it to nil**: `move`/`restored_stat` keep the old value (the bytes
+  already moved), `write` refuses (`FetchError`), the observer's raise refuses the scan (a dropped
+  key tombstones its row). **Quotes come off in exactly ONE place** (S3 quotes every ETag in list,
+  head *and* put). Blind spot: an **SSE-KMS** object's 32-hex ETag is *not* its md5, so the rung-3
+  warning reads **zero while no move pairs at all**.
+- **`LIBRARY_S3_HEAD_FOR_CHECKSUM` is NOT implemented — do not document it as working.** An observer
+  cannot know what is new (the Reconciler does), so a HEAD there is per-object-per-**scan**: 2M billed
+  requests every 15 min on a 2M-object bucket, not 2M once. Consequence: the **`sha256:` rung is
+  unreachable from any production path today**. Download-and-hash was rejected on §1's own terms — a
+  full billed egress to index a library the user already has is the cost the on-ramp exists to avoid.
 - **LANDMINE — copy → delete → TOMBSTONE.** "Tombstone only after the copy confirms" is
   necessary but **not sufficient**: if the **delete** fails after a tombstone, the next scan
   finds an unclaimed key with **no tombstone to revive by path** → a **new `node_id`** →
@@ -744,10 +741,10 @@ area belongs there too, with a stub here.
   driven directly and no `observable!` exists to reach. Probed through the real doors: a
   `.DS_Store`/`.trash`/`.maker-tmp-x` output was **302 + a live node on chunk** and **422 on
   share/s3** — §14a's one-condition-two-answers, with the main deployment on the wrong side.
-  **FOUR web doors mint a leaf name and all four ask two questions in the same breath**:
+  **SIX web doors mint a leaf name and all six ask two questions in the same breath**:
   `Maker::MoveNode.valid_leaf_name?` (syntax) then `ReservedNames.reserved?` (the library's own
   namespace) — `Tools::AddonsController#parse_files`, `LibraryBrowseController#create_folder`,
-  `FilesController#begin_upload`, `FilesController#rename` (F, 2026-10-13). `begin_upload` had **neither** and was the weakest door in the app
+  `FilesController#begin_upload`, `Files::TextFilesController#create` (2026-09-10), `FilesController#rename` (F, 2026-10-13), `Files::UnpacksController#create` (a model zip's folder, 2026-10-21). `begin_upload` had **neither** and was the weakest door in the app
   (`begin=200, finalize=200`, a live node named `"../../escape.txt"` in the changelog); it is
   `syncable`-gated, so **no cross-backend leg could ever have caught it**. Three things not to
   undo: the predicate is the **UNION** of the two adapters' guards, because a door cannot know
@@ -936,8 +933,8 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   repair an illegal cross-tenant reference, whereas writing a name into someone else's row would
   disclose one.
 - **`Current.library_unreachable` IS SET ONLY WHERE A `FetchError` WAS RESCUED INTO DEGRADED OUTPUT** —
-  the `Readme`/`RepoCard`/`GerberSets`/`ThreeMfManifest` readers (`ThumbnailMap`'s setter cannot fire: `stat_all`
-  is catalog-only on every adapter) — **AND THE BANNER NEVER PROBES THE PORT**: a page that did not touch the port says nothing (§2).
+  the `Readme`/`RepoCard`/`GerberSets`/`GerberArchive`/`ThreeMfManifest` readers (`ThumbnailMap`'s setter cannot
+  fire: `stat_all` is catalog-only on every adapter) — **AND THE BANNER NEVER PROBES THE PORT**: a page that did not touch the port says nothing (§2).
 
 ### 14e. Architecture and process
 
@@ -1120,8 +1117,8 @@ binding only inside the preview stack. Nothing was dropped; this anchor stays: c
 ### 14i. Backup and restore → **`docs/invariants/backup-restore.md`**
 
 **Read that file before touching** `ops/backup-db.sh`, `bin/backup-db`, `bin/restore-db`,
-`bin/backup-status`, or `bin/backup-cron-install`. **Nothing in `bin/ci` can go red for any of it** —
-it is shell, cron and docs, and the shared failure mode is *you find out when you need a restore*.
+`bin/backup-status`, or `bin/backup-cron-install`. **`bin/ci` gates only their destination table** —
+the rest is shell, cron and docs, and the shared failure mode is *you find out when you need a restore*.
 The single-site rules live inside `ops/backup-db.sh` itself; that file carries the cross-file ones,
 including the unencrypted-archives decision. Nothing was dropped; this anchor stays.
 
@@ -1180,8 +1177,7 @@ Four rules survive on **this** side of the boundary:
 ### 14k. The model catalog and shelves → **`docs/invariants/model-intake.md`**
 
 **Read that file before touching** `app/services/maker/{model_intake*,library_tree.rb,model_folder.rb}`,
-`app/models/maker/{model,item,shelf}.rb`, `app/controllers/settings/shelves_controller.rb`,
-`app/views/files/_model_strip.html.erb`, `app/jobs/maker/model_intake_job.rb`, or `maker_models`'
+`app/models/maker/{model,item}.rb`, `app/views/files/_model_strip.html.erb`, `app/jobs/maker/model_intake_job.rb`, or `maker_models`'
 `origin`, `auto_node_id`, `folder_node_id`, `dismissed_at`. Nearest-shelf; a shelf is a PATH and a model
 a NODE ID; dismissing is not deleting; ScanJob ordering; `path_for`'s cycle guard and memo; Model and
 Item are TWO catalogs; which files a model claims and which model a folder shows; `rake models:prune`.
@@ -1265,15 +1261,13 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   does not exist and excluded `test-chunk-remote` from the rule below, contradicting both §13 and
   `config/ci.rb`'s own comment. Read the tool, not the prose.)
 - **The three backend legs are `test` (share), `test-s3` and `test-chunk-remote`, and all three
-  must report identical run counts.** `test-chunk-remote` is included *because* it runs the full
-  suite — `config/ci.rb` says so in as many words: there is no in-process chunk backend any more,
-  so if it ran less, **the primary deployment's backend would be the only one without full
-  coverage.** It needs `../tinkerex-sync` checked out (§13).
-  **`bin/ci` PRINTS the three counts and never COMPARES them** — the rule has always relied on a
-  human reading them, and `tinkerex#131` records a small pre-existing flap (±2
-  assertions, ±1 skip) that varies between runs of the *same* leg, so it is nondeterminism rather
-  than a backend dependency. A ±2 difference is the known flap; a structural one means a test
-  depends on the ambient `LIBRARY_BACKEND` and is a real bug.
+  must report identical RUN counts — `bin/ci` COMPARES them itself** (`Ci::LegRuns`, over the log
+  each leg tees under `tmp/ci/`) and goes red when they differ or a leg wrote no summary.
+  `test-chunk-remote` is included *because* it runs the full suite: there is no in-process chunk
+  backend any more, so if it ran less, **the primary deployment's backend would be the only one
+  without full coverage** (it needs `../tinkerex-sync`, §13). Only RUNS are compared: assertions
+  and skips differ between legs by structure, and `tinkerex#131`'s ±2 assertion flap varies between
+  runs of the *same* leg. A RUN difference means a test depends on the ambient `LIBRARY_BACKEND`.
 - **Merging always needs an explicit go-ahead.** Never merge, never `--admin`-merge, never
   push to `main`.
 - If the gates are red or the work is partial, **stop and report** — do not open a PR to
@@ -1298,12 +1292,12 @@ treat it as the default close-out for a task, and use `/finish-branch` to run it
   `runs-on: [self-hosted, linux|macos|windows]`. GitHub bills *only* hosted runners
   (`ubuntu/macos/windows-latest`; macOS 10×, Windows 2×); self-hosted are **free**. So
   **never add `*-latest`** to a workflow.
-- **RUNNERS ARE REGISTERED PER REPOSITORY. THIS REPO'S ARE FOUR LINUX CONTAINERS ON THE UNRAID
+- **RUNNERS ARE REGISTERED PER REPOSITORY. THIS REPO'S ARE THREE LINUX CONTAINERS ON THE UNRAID
   BOX** — `ci/runner/Dockerfile` + `ops/ci-runner-stack.yml`, on Docker host **192.168.1.146**
-  (not .7 = NPM, not .95 = the Kamal VM). Measured 2026-08-31 via
-  `gh api repos/:owner/:repo/actions/runners`: `tinkerex-unraid-1..4` online, labels
-  `[self-hosted, Linux, X64, maker-unraid]`. CI was a developer's own MacBook, one job at a time,
-  until then, and the siblings still are. **Re-measure rather than trusting this** — hence the date.
+  (not .7 = NPM, not .95 = the Kamal VM). Measured 2026-10-22 via
+  `gh api repos/:owner/:repo/actions/runners`: `tinkerex-unraid-1..3` online, labels
+  `[self-hosted, Linux, X64, maker-unraid]`. **Their limits must SUM under the box** (`x-host-budget`;
+  four 8 GB runners froze it, 2026-10-22). **Re-measure rather than trusting this** — hence the date.
   Needs an **admin-scoped** token; `administration` is not grantable to a workflow `GITHUB_TOKEN`,
   so it **403s from inside Actions**.
 - **`ci.yml`'s jobs target `linux`, and it is the ONLY workflow here** since the cross-repo suites

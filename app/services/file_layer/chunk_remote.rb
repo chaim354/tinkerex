@@ -1,11 +1,11 @@
 # frozen_string_literal: true
 
 module FileLayer
-  # THE MAKER APP AS A SYNC CLIENT — Stage 4, design doc §6. Not yet selectable: `LibraryBackend`
-  # offers chunk, share and s3 only, and `FileLayer.build` has no "chunk_remote" arm. This class and
-  # its Transport land first so the wire and its error vocabulary can be built and tested against a
-  # real server before anything can route traffic at them. Adding the arm is the LAST step of the
-  # arc, not the first, so a half-implemented adapter can never be reached by a deployment.
+  # THE MAKER APP AS A SYNC CLIENT — Stage 4, design doc §6. Selected by LIBRARY_BACKEND=chunk_remote,
+  # a member of LibraryBackendCheck::NAMES with its own arm in FileLayer.build. That arm was the LAST
+  # step of Stage 4, not the first: this class and its Transport landed before it, so the wire and its
+  # error vocabulary were built and tested against a real server while no deployment could route
+  # traffic at a half-implemented adapter.
   #
   # WHY IT IS NOT A SUBCLASS OF `FileLayer::Chunk`, WHICH IS THE OBVIOUS-LOOKING MOVE. Chunk ships
   # in the tinkerex-sync gem, and a chunk_remote deployment does not load that gem at all -- it
@@ -318,11 +318,9 @@ module FileLayer
     # `port_writable: false` selects in the UI, and why "cannot accept uploads" is the wrong reading
     # of that flag (§14a).
     #
-    # `device:` IS ACCEPTED AND UNUSED, DELIBERATELY. The port hands it over because Chunk needs one
-    # to attribute the commit; here the server derives the device from the bearer token this app
-    # authenticates with, so passing ours would be telling the server about a device it does not
-    # have. Dropping the kwarg instead would break the shared port signature for every caller.
-    def begin_upload(user, name:, size:, manifest:, device: nil, parent_node_id: nil,
+    # NO `device:` (F-X-1): the server attributes the commit to the device its bearer token names,
+    # so there is nothing for this app to pass -- and filling one minted a `devices` row (§8).
+    def begin_upload(user, name:, size:, manifest:, parent_node_id: nil,
                      node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
       node_id ||= SecureRandom.uuid
       body = transport(user).post("/v1/commit", {
@@ -357,8 +355,7 @@ module FileLayer
     # `begun:` is the SAME `UploadBegun` `#begin_upload` already returned to the caller -- this
     # reads `put_urls`, the field `Chunk#put_chunk` has no use for (it reads `hash` straight
     # against its own store instead). One signature across the port, each adapter reading the part
-    # it needs, matching how `device:`/`broadcast:` are accepted-and-unused on the arms that don't
-    # need them.
+    # it needs.
     #
     # `.fetch(hash)` is bare and UNRESCUED on purpose: `begin_upload`'s own contract
     # (`FileLayer::UploadBegun`'s header) guarantees `put_urls` is keyed by exactly the entries in
@@ -371,11 +368,9 @@ module FileLayer
       @chunk_fetch.put(begun.put_urls.fetch(hash), bytes)
     end
 
-    # `broadcast:` IS ACCEPTED AND UNUSED for the same reason `device:` is: the SERVER broadcasts to
-    # the devices attached to it when the commit lands, and this app is one of those devices rather
-    # than the thing doing the notifying. Maker::Addons::LibraryOutput passes `broadcast: false`
-    # (§14a) and gets what it asked for either way -- there is nothing here to suppress.
-    def finalize_upload(user, commit_id:, verify: true, broadcast: true)
+    # NO `broadcast:` (F-X-1): the SERVER nudges the user's devices on every finalize, an addon
+    # save's included -- this app is one of its clients, not the thing doing the notifying (§14e).
+    def finalize_upload(user, commit_id:, verify: true)
       body = transport(user).post("/v1/commit/#{commit_id}/finalize", { verify: })
       version_id = body["version_id"]
       refresh!(user)

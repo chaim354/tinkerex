@@ -1,5 +1,6 @@
 module Maker
-  # Orchestrates one preview: processing → fetch bytes → pick a renderer → attach → ready.
+  # Orchestrates one preview: start (pending → processing; a `rebuilding` row keeps its picture) →
+  # fetch bytes → pick a renderer → attach → ready.
   #
   # Terminal states:
   #   ready       — rendered + asset attached.
@@ -9,8 +10,8 @@ module Maker
   #                 type simply isn't renderable here).
   #   failed      — a real error while fetching bytes or rendering (e.g. missing chunk).
   #
-  # Phase 1 registers ONLY SVG (Maker::Previews::Registry). Later phases add renderers to
-  # the registry; this orchestrator is unchanged.
+  # The renderer comes from Maker::Previews::Registry; adding a format changes the registry, never
+  # this orchestrator.
   class GeneratePreviewJob < ApplicationJob
     queue_as :default
 
@@ -65,8 +66,9 @@ module Maker
     # A transient byte-store failure (403 creds blip, 5xx, network) is RETRYABLE — the
     # chunk likely exists, we just couldn't read it this instant. Retry with backoff
     # instead of burning the preview to a terminal "failed" (the prod creds-outage bug).
-    # After attempts are exhausted, ActiveJob re-raises; the preview stays non-terminal
-    # ("processing") so a later manual/scheduled re-enqueue can still succeed.
+    # After attempts are exhausted, ActiveJob re-raises; the preview stays non-terminal (in flight:
+    # `processing`, or `rebuilding` with its old picture still up) so a later re-enqueue — the
+    # STALLED_AFTER heal — can still succeed.
     retry_on Maker::FileBytes::FetchError, wait: :polynomially_longer, attempts: 5
 
     def perform(preview_id, filename: nil)
@@ -87,7 +89,22 @@ module Maker
       target = [ preview.version_id, preview.renderer_revision ]
 
       begin
-        preview.update!(status: "processing", error: nil)
+        # THE START, COMPARE-AND-SET LIKE EVERY OTHER WRITE HERE (F-S08-2). It was a bare `update!`
+        # on the row as this job first read it, so a row that moved on in between was overwritten:
+        # a renderer bump landing in that gap had its `rebuilding` flipped to `processing` by the
+        # stale object, blanking a picture that was still correct, and the job went on to render
+        # coordinates nobody had asked for. A row that moved is answered by the job enqueued for
+        # it, so this one stops.
+        #
+        # AND IT MOVES `pending` AND NOTHING ELSE. `pending → processing` is the v1 wire's "a worker
+        # has it" and restarts the stall clock; every other status already says something true
+        # about what is on screen. Above all `rebuilding`, whose old picture must stay up through
+        # the render: this line used to write `processing` unconditionally, which every surface
+        # drew as a spinner over that picture for as long as the render took.
+        started = commit_if_current(preview, target) do
+          preview.update!(status: "processing", error: nil) if preview.status == "pending"
+        end
+        return unless started
 
         # An explicit filename arg wins (e.g. the UI passes it). Otherwise resolve the
         # file's real name from the synced Node row (tenant-scoped) — the enqueue API may
@@ -123,8 +140,8 @@ module Maker
         # Not an error — a deliberate terminal state. Don't re-raise (no retries).
         commit_if_current(preview, target) { preview.update!(status: "unsupported", error: e.message) }
       rescue Maker::FileBytes::FetchError => e
-        # Transient (auth/network/5xx). Do NOT mark terminal — leave it "processing" and
-        # re-raise so retry_on schedules a backed-off retry (or re-raises once exhausted).
+        # Transient (auth/network/5xx). Do NOT mark terminal — leave its in-flight status alone
+        # and re-raise so retry_on schedules a backed-off retry (or re-raises once exhausted).
         commit_if_current(preview, target) { preview.update!(error: "#{e.class}: #{e.message} (retrying)") }
         raise
       rescue StandardError => e
@@ -160,23 +177,29 @@ module Maker
             "ceiling (raise PREVIEW_MAX_BYTES to render larger files)"
     end
 
-    # Write the outcome ONLY if the row still points at the content this run rendered.
+    # Write ONLY if the row still points at the content this run rendered, and the maker has not
+    # chosen its picture in the viewer since (`Maker::Preview#viewer?`); true when it did.
     #
-    # EVERY terminal write goes through here, not just the successful one, and that is the part
-    # most likely to be trimmed later: a stale `unsupported` or `failed` is as wrong as a stale
-    # image. A v1 render that fails must not mark a row that has already moved to v2 as failed —
-    # `Enqueue` treats `failed` as "retry me", so it would look repaired while describing content
-    # nobody asked about, and the genuine v2 result would be overwritten by an older verdict.
+    # EVERY write goes through here — the start and every terminal one, not just the successful
+    # one — and that is the part most likely to be trimmed later: a stale `unsupported` or
+    # `failed` is as wrong as a stale image. A v1 render that fails must not mark a row that has
+    # already moved to v2 as failed — `Enqueue` treats `failed` as "retry me", so it would look
+    # repaired while describing content nobody asked about, and the genuine v2 result would be
+    # overwritten by an older verdict.
     #
     # Losing the write is the CORRECT outcome, not a dropped update: whoever repointed the row also
     # enqueued a job for the new content, so the newer render is already coming.
     def commit_if_current(preview, target)
       preview.reload
-      return if [ preview.version_id, preview.renderer_revision ] != target
+      # NEVER OVER A PICTURE THE MAKER CHOSE (2026-10-20): a render queued before they clicked
+      # "Use this view as preview" finds the row turned `viewer` and stands down.
+      return false if preview.viewer?
+      return false if [ preview.version_id, preview.renderer_revision ] != target
 
       yield
+      true
     rescue ActiveRecord::RecordNotFound
-      nil # the row was deleted mid-render; nothing to write and nothing wrong
+      false # the row was deleted mid-render; nothing to write and nothing wrong
     end
 
     def asset_ext(content_type)

@@ -1,8 +1,9 @@
 require "test_helper"
 
 module Maker
-  # THE ONE ANSWER TO "WHICH 3D MODEL DOES THIS FOLDER SHOW?" AND "WHERE DOES /models/:id SEND YOU?"
-  # (structural redesign §5.4, slice 5). Rows only, no port: every backend leg runs the same assertions.
+  # THE ONE ANSWER TO "WHICH 3D MODEL DOES THIS FOLDER SHOW?" (structural redesign §5.4, slice 5) — the
+  # Library's model strip. Its second answer, the folder /models/:id redirected to, went with the
+  # redirect on 2026-10-21. Rows only, no port: every backend leg runs the same assertions.
   class ModelFolderTest < ActiveSupport::TestCase
     setup do
       @user = User.create!(email: "mf-#{SecureRandom.hex(4)}@example.com", password: "x" * 12, confirmed_at: Time.current)
@@ -70,38 +71,6 @@ module Maker
       other = User.create!(email: "o-#{SecureRandom.hex(4)}@example.com", password: "x" * 12, confirmed_at: Time.current)
       other.maker_models.create!(title: "Theirs", folder_node_id: "d-bracket")
       assert_nil ModelFolder.model_in(@user, "d-bracket")
-    end
-
-    test "a folder model lands on its live folder" do
-      m = model!
-      assert_equal "d-bracket", ModelFolder.landing_folder_id(@user, m)
-    end
-
-    # ONE MODEL THROUGHOUT, AND IT IS THE ONE THE FOLDER SHOWS (the control assertion says so). A
-    # second model for the project clause would be refused by the "shows THIS model" check before the
-    # claim was ever asked — mutation-checked: deleting the claim line stayed green until this test
-    # stopped creating one model per clause.
-    test "no landing for a one-file model, a trashed folder, or a project's folder" do
-      one_file = model!(origin: "auto", folder: nil, auto: "n-bracket")
-      assert_nil ModelFolder.landing_folder_id(@user, one_file)
-
-      m = model!
-      assert_equal "d-bracket", ModelFolder.landing_folder_id(@user, m)
-
-      @dir.update!(deleted: true)
-      assert_nil ModelFolder.landing_folder_id(@user, m)
-      @dir.update!(deleted: false)
-
-      @user.maker_projects.create!(name: "Shelf").update_column(:folder_node_id, "d-bracket")
-      assert_equal m, ModelFolder.model_in(@user, "d-bracket"), "the folder still names this model"
-      assert_nil ModelFolder.landing_folder_id(@user, m)
-    end
-
-    test "only the model the folder actually shows lands there" do
-      shown = model!
-      second = model!
-      assert_equal "d-bracket", ModelFolder.landing_folder_id(@user, shown)
-      assert_nil ModelFolder.landing_folder_id(@user, second)
     end
   end
 end

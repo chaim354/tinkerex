@@ -1,11 +1,23 @@
 import { Controller } from "@hotwired/stimulus"
 
+// THE PREVIEW IS SQUARE AND 512px, the size the server's thumbnails are rendered at.
+const PREVIEW_SIZE = 512
+
+// A data: URL to a Blob WITHOUT fetch(): the page's CSP `connect-src` does not list `data:`, so
+// `fetch(dataUrl)` is refused; decoding by hand needs no policy at all.
+function dataUrlToBlob(dataUrl) {
+  const binary = atob(dataUrl.slice(dataUrl.indexOf(",") + 1))
+  const bytes = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+  return new Blob([bytes], { type: "image/png" })
+}
+
 // Interactive 3D viewer for every format Online3DViewer's importers read — meshes (STL, 3MF, OBJ,
 // glTF/GLB, PLY, OFF, DAE, WRL, 3DS, FBX, AMF), Rhino (3DM) and, through OpenCascade compiled to
 // WebAssembly, the CAD formats (STEP, IGES, BREP, FCStd). The bytes are parsed CLIENT-SIDE — no
 // server conversion — and rendered as a manipulable WebGL scene.
 //
-// THE ENGINE IS DYNAMIC-IMPORTED in boot(), so the ~1 MB bundle ships only on a page that actually
+// THE ENGINE IS DYNAMIC-IMPORTED in load(), so the ~1 MB bundle ships only on a page that actually
 // holds a 3D file (Stimulus eager-imports controller MODULES at startup, so a top-level `import`
 // would load it everywhere). Its `preload: false` pin is the other half — see config/importmap.rb
 // and test/integration/web/lazy_bundles_test.rb.
@@ -22,46 +34,58 @@ import { Controller } from "@hotwired/stimulus"
 // fetch/CORS failure, corrupt file, a missing wasm importer) restores the server-rendered
 // thumbnail poster. `data-modelviewer-state` reports which of those happened —
 // loading / ready / failed — and is what the system test drives.
+//
+// THE LIFECYCLE IS gerber_controller.js's, PLUS THE ONE RULE THE ENGINE ADDS (F-S22-1,
+// 2026-10-19). There is one staleness token, `generation`. A load acts only while its number is
+// the latest, and ✕ Image and a disconnect bump it. There is one engine record or none
+// (`this.engine`), holding everything the engine owns, and the engine's callbacks close over THAT
+// record, so a released engine can only ever reach its own promise. connect() rests the element,
+// because a Turbo-restored snapshot of an open viewer has no engine behind it. And the engine runs
+// ONE IMPORT AT A TIME, so a load waits for the running one before asking for another (load()
+// says why). The lifecycle section of test/system/o3dv_test.rb drives each of these.
 export default class extends Controller {
   static values = {
     url: String, format: String, lazy: Boolean,
     // WHAT THE IMPORTER CANNOT KNOW, HANDED OVER BY THE SERVER (Maker::ThreeMfManifest): one
     // "#RRGGBB"-or-null per imported mesh from the slicer's own metadata, and the millimetre factor
     // for a 3MF's declared `unit`. Empty and 1 for every other format, which is a no-op on both.
-    colors: Array, unitFactor: { type: Number, default: 1 }
+    colors: Array, unitFactor: { type: Number, default: 1 },
+    // Files::PreviewsController's door for THIS file, where "Use this view as preview" posts.
+    // Empty on a visitor's page, which offers no such button.
+    previewUrl: String
   }
-  static targets = ["canvas", "dims", "fallback", "source"]
+  static targets = ["canvas", "dims", "fallback", "source", "status", "poster"]
 
-  connect() {
-    this.disposed = false
+  // ONE STALENESS TOKEN FOR THE LIFE OF THIS CONTROLLER, only ever incremented. It is set in
+  // `initialize` and never in `connect`, because Stimulus hands a re-attached element the SAME
+  // controller. Restarting the count on reconnect would re-issue numbers that loads from before
+  // the disconnect still hold, and one of those could then report itself as current.
+  initialize() {
     this.generation = 0
-    if (this.lazyValue) return // wait for load()
-    this.load()
+  }
+
+  // AT REST, WHATEVER THE MARKUP SAYS — gerber_controller.js's rule. A Turbo Drive Back restores
+  // the page from a snapshot taken WITH the viewer open: `--ready`, the state attribute, the dims
+  // and a blank clone of the engine's <canvas>. It then connects this fresh controller, which has
+  // no engine. Left alone, the launch button stayed hidden under `--ready`, Reset did nothing and
+  // Fullscreen enlarged an empty box. A switch on the model page then built a second engine and
+  // appended its canvas below the clone. Resting puts the poster back, and the model is one click
+  // away as it was.
+  connect() {
+    this.rest()
+    if (!this.lazyValue) this.load()
   }
 
   disconnect() {
-    this.disposed = true
-    this.teardown()
+    this.generation++
+    this.release()
   }
 
-  // Free the WebGL context and empty the stage, WITHOUT marking the controller disposed — so a
-  // later load() (re-opening after showPoster) can start clean. Reused by disconnect() and
-  // showPoster().
-  //
-  // A SOURCE SWITCH DOES NOT COME THROUGH HERE, deliberately: `LoadModelFromUrlList` clears the
-  // viewer itself, so switching reuses the one EmbeddedViewer instead of building a second WebGL
-  // context. That is not only cheaper — `EmbeddedViewer`'s constructor registers a `window`
-  // resize listener it never removes, so one instance per file switch would accumulate listeners
-  // pointing at destroyed viewers. One instance per open is bounded by the user's own clicking.
-  teardown() {
-    this.resizeObserver?.disconnect()
-    this.viewer?.Destroy()
-    this.viewer = null
-    this.resizeObserver = null
-    this.modelLoaded = this.modelFailed = null
-    // Destroy() disposes the renderer but leaves its <canvas> (and any progress text) in the DOM.
-    if (this.hasCanvasTarget) this.canvasTarget.replaceChildren()
-    if (this.hasDimsTarget) this.dimsTarget.textContent = ""
+  // THE ENGINE, as ONE RECORD OR NONE: `{ viewer, observer, importing, settle }`, built by
+  // construct() and dropped by release(). `viewer` stays readable as a property because
+  // applyColors, showDims and reset read it, and so does o3dv_test.rb's material probe.
+  get viewer() {
+    return this.engine?.viewer
   }
 
   // "View in 3D" (and the file-switch path): resolve the active source, then import the engine and
@@ -76,6 +100,9 @@ export default class extends Controller {
       // old one's palette, which the count check would usually but not always catch.
       this.colorsValue = JSON.parse(opt.dataset.colors || "[]")
       this.unitFactorValue = Number(opt.dataset.unitFactor || 1)
+      // The preview door belongs to the FILE for the colours' reason: a switch that left it
+      // behind would save this model's picture as the previous file's thumbnail.
+      this.previewUrlValue = opt.dataset.previewUrl || ""
     }
     const gen = ++this.generation // invalidate any in-flight load (rapid switches / keyboard nav)
 
@@ -88,38 +115,110 @@ export default class extends Controller {
     this.state("loading")
 
     try {
-      await this.boot(gen)
-      if (this.disposed || gen !== this.generation) return
-      // The callbacks are reassigned per load rather than closed over at construction, so a
-      // completion that belongs to a SUPERSEDED load cannot report itself as the current one.
-      this.modelLoaded = () => this.loaded(gen)
-      this.modelFailed = () => this.fail(gen, new Error("the importer could not read this file"))
-      this.viewer.LoadModelFromUrlList([this.urlValue])
+      const OV = await import("online-3d-viewer")
+      if (gen !== this.generation) return
+      this.OV = OV
+      // ONE ENGINE PER OPEN, AND A SOURCE SWITCH REUSES IT rather than building a second WebGL
+      // context. That is not only cheaper. `EmbeddedViewer`'s constructor registers a `window`
+      // resize listener it never removes, so one instance per file switch would pile up listeners
+      // pointing at destroyed viewers. One instance per open is bounded by the user's own clicking.
+      const engine = (this.engine ||= this.construct(OV))
+      // ONE IMPORT PER ENGINE, WHICH IS THE ENGINE'S RULE AND NOT A CHOICE MADE HERE. Asked for a
+      // load while one is running, `ThreeModelLoader.LoadModel` DROPS the request without a word
+      // (`this.inProgress || …`). Before dropping it, `LoadModelFromInputFiles` has already thrown
+      // away the running import's progress element, and that import then throws when its next
+      // callback writes to it. The engine never resets `inProgress` after that, so it ignores
+      // every later load until ✕ Image. This comment used to say `LoadModelFromUrlList` "clears
+      // the viewer itself". That holds only for an IDLE engine, and arrowing through the
+      // switcher's options is exactly the busy case. So a switch waits here for the running import
+      // to finish, and only the latest choice goes on to load. The superseded model shows briefly
+      // before it is replaced.
+      await engine.importing?.catch(() => {})
+      if (gen !== this.generation) return
+      engine.importing = new Promise((resolve, reject) => {
+        engine.settle = { resolve, reject }
+        engine.viewer.LoadModelFromUrlList([this.urlValue])
+      })
+      await engine.importing
+      if (gen !== this.generation) return
+      this.loaded()
     } catch (e) {
       this.fail(gen, e)
     }
   }
 
-  async boot(gen) {
-    if (this.viewer) return
-    const OV = await import("online-3d-viewer")
-    if (this.disposed || gen !== this.generation) return
-    this.OV = OV
-
-    this.viewer = new OV.EmbeddedViewer(this.canvasTarget, {
+  // THE ENGINE'S CALLBACKS CLOSE OVER THE RECORD BEING BUILT, NEVER OVER A CONTROLLER FIELD.
+  // `Destroy()` does not stop a running import: it runs to the end on the destroyed engine and then
+  // calls back whatever this constructor was given. They used to call `this.modelLoaded` and
+  // `this.modelFailed`, which every load reassigned. So ✕ Image while a file was still importing,
+  // followed by a launch of another file, let the old import's failure fail the new load. Bound to
+  // the record, a released engine can only settle its own import, which release() has already
+  // rejected, so its late answer is ignored.
+  construct(OV) {
+    const engine = {}
+    engine.viewer = new OV.EmbeddedViewer(this.canvasTarget, {
       // THE RENDERER IS NOT CREATED WITH `alpha: true` (checked in the engine's viewer.js), so a
       // transparent background paints BLACK rather than letting the stage show through. Reading
       // the stage's own computed colour instead keeps the viewer on the page's palette in both
       // themes without duplicating a hex value that a restyle would leave behind (§14m).
       backgroundColor: this.stageColor(OV),
-      defaultColor: new OV.RGBColor(150, 160, 170), // used only where the file names no colour
+      // THE PALETTE'S MESH MATERIAL, `--model-material`, used only where the file names no colour.
+      // It was a cool blue-grey literal. The token is ONE value in both themes on purpose: it
+      // clears 3:1 on --raised in Paper and in Graphite (application.css carries the numbers), so a
+      // theme switch has only the background to repaint, and the STL and F3D thumbnails are drawn
+      // in the same material (Maker::Previews::Palette::MATERIAL, held equal to the token).
+      defaultColor: this.materialColor(OV),
       edgeSettings: new OV.EdgeSettings(false, new OV.RGBColor(0, 0, 0), 1),
-      onModelLoaded: () => this.modelLoaded?.(),
-      onModelLoadFailed: () => this.modelFailed?.()
+      onModelLoaded: () => engine.settle.resolve(),
+      onModelLoadFailed: () => engine.settle.reject(new Error("the importer could not read this file"))
     })
+    engine.observer = new ResizeObserver(() => engine.viewer.Resize())
+    engine.observer.observe(this.canvasTarget)
+    // A THEME SWITCH REPAINTS AN OPEN VIEWER. The ground is read from the stage's computed colour
+    // (above), and that is the one colour here that flips with the theme, so the record watches the
+    // two things that can flip it: theme_controller.js writing `html[data-theme]`, and the OS
+    // scheme changing under `system`. Both are released with the engine, in release().
+    const repaint = () => engine.viewer.GetViewer()?.SetBackgroundColor(this.stageColor(OV))
+    engine.themeObserver = new MutationObserver(repaint)
+    engine.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] })
+    engine.schemeQuery = window.matchMedia("(prefers-color-scheme: dark)")
+    engine.schemeListener = repaint
+    engine.schemeQuery.addEventListener("change", repaint)
+    return engine
+  }
 
-    this.resizeObserver = new ResizeObserver(() => this.viewer?.Resize())
-    this.resizeObserver.observe(this.canvasTarget)
+  // Free the WebGL context and empty the stage, so a later load() starts clean. Reached through
+  // rest() (connect, ✕ Image, a failure) and disconnect(); a source switch never comes here (see
+  // load()). REJECTING THE RECORD'S IMPORT FIRST is what lets a load still queued behind it (in
+  // load()'s `await engine.importing`) see it is stale and exit. A promise that has already
+  // settled ignores the reject. IT DOES NOT STOP A RUNNING IMPORT, and one cost of that remains:
+  // leave the page or press ✕ Image while a VALID file is still importing, and that import later
+  // finishes on the destroyed engine and tries to remove a progress element this method already
+  // took out of the stage. That logs "Uncaught DOMException: Failed to execute 'removeChild' on
+  // 'Node'". It is cosmetic. A per-engine mount <div> would fix it, but needs a CSS rule beside
+  // the addon-shared `.model-viewer-stage > div` (docs/invariants/files-preview.md).
+  release() {
+    const engine = this.engine
+    this.engine = null
+    if (engine) {
+      engine.settle?.reject(new Error("released"))
+      engine.observer.disconnect()
+      engine.themeObserver?.disconnect()
+      engine.schemeQuery?.removeEventListener("change", engine.schemeListener)
+      engine.viewer.Destroy()
+    }
+    // Destroy() disposes the renderer but leaves its <canvas> (and any progress text) in the DOM.
+    if (this.hasCanvasTarget) this.canvasTarget.replaceChildren()
+    if (this.hasDimsTarget) this.dimsTarget.textContent = ""
+  }
+
+  // THE POSTER, AND THE ONE WAY BACK TO IT: connect(), ✕ Image and a failure all come through
+  // here.
+  rest() {
+    this.release()
+    this.say("")
+    this.element.classList.remove("model-viewer--ready")
+    this.element.removeAttribute("data-modelviewer-state")
   }
 
   // `getComputedStyle` resolves the var(--raised) the stylesheet sets; `rgb(r g b)` and
@@ -133,8 +232,19 @@ export default class extends Controller {
     return new OV.RGBAColor(247, 248, 250, 255)
   }
 
-  loaded(gen) {
-    if (this.disposed || gen !== this.generation || !this.viewer) return
+  // `--model-material` off the element, as "#rrggbb". A custom property is not resolved into a
+  // colour by getComputedStyle (it comes back as the authored string), so the hex is parsed here.
+  // A value we cannot read (no stylesheet, a detached element) falls back to the engine-neutral
+  // mid grey rather than to the engine's own default, which is the blue-grey this replaced.
+  materialColor(OV) {
+    const hex = getComputedStyle(this.element).getPropertyValue("--model-material").trim()
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+    if (m) return new OV.RGBColor(parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16))
+    return new OV.RGBColor(128, 128, 128)
+  }
+
+  // Reached only from load(), after its own generation check, so the engine it reads is current.
+  loaded() {
     this.applyColors()
     this.showDims()
     this.state("ready")
@@ -197,10 +307,9 @@ export default class extends Controller {
   }
 
   fail(gen, error) {
-    if (this.disposed || gen !== this.generation) return // superseded — leave newer state alone
+    if (gen !== this.generation) return // superseded — leave newer state alone
     console.warn(`[modelviewer] ${this.formatValue}: keeping thumbnail fallback:`, error)
-    this.teardown()
-    this.element.classList.remove("model-viewer--ready")
+    this.rest()
     this.state("failed")
   }
 
@@ -217,9 +326,7 @@ export default class extends Controller {
   // "✕ Image": drop the scene (frees the WebGL context) and reveal the poster.
   showPoster() {
     this.generation++ // cancel any in-flight load so it can't reopen the viewer after dismissal
-    this.teardown()
-    this.element.classList.remove("model-viewer--ready")
-    this.element.removeAttribute("data-modelviewer-state")
+    this.rest()
     // The ✕ button that had focus is now hidden; return focus to the "View in 3D" launch button.
     this.element.querySelector(".mv-launch button")?.focus()
   }
@@ -281,6 +388,65 @@ export default class extends Controller {
     viewer.SetUpVector(this.OV.Direction.Y, false)
     const sphere = viewer.GetBoundingSphere(() => true)
     if (sphere) viewer.FitSphereToWindow(sphere, false)
+  }
+
+  // "Use this view as preview" (2026-10-20): the engine draws the current camera into a square PNG
+  // (o3dv's Viewer#GetImageAsDataUrl renders, reads the canvas and restores its size in one call,
+  // so no preserveDrawingBuffer is needed) and Files::PreviewsController stores it as the file's
+  // thumbnail. The poster behind the viewer takes the new picture at once; a page reload shows the
+  // "Back to automatic preview" button the server renders for a viewer preview.
+  //
+  // ONLY A `ready` VIEWER MAY BE PHOTOGRAPHED. A source switch sets the new file's URL first and
+  // then waits for the running import (load()), so while the state reads `loading` the stage still
+  // shows the PREVIOUS model and the door already names the next one: a save then would file one
+  // file's picture as another's thumbnail.
+  //
+  // THE POSTER IS A TARGET, NOT "THE FALLBACK'S FIRST IMAGE". The file page's poster is this file's
+  // thumbnail; the model page's is the MODEL's cover (a photo, or another file of the model), which
+  // this file's picture must not replace. Only the file page marks one.
+  async usePreview(event) {
+    const button = event?.currentTarget
+    const three = this.viewer?.GetViewer()
+    if (!three || !this.previewUrlValue || this.element.dataset.modelviewerState !== "ready") return
+    if (button) button.disabled = true
+    this.say("Saving preview…")
+    try {
+      // THE PICTURE IS TAKEN ON THE RENDER PAPER, NOT ON THE THEME'S STAGE. Every thumbnail keeps a
+      // pure-white ground that the page multiplies onto its card (design-system.md rule 5); one
+      // saved from a Graphite stage would be a dark square on that card for good, and one saved
+      // from Paper's --raised a grey one. So the ground goes white for the capture and back after,
+      // in the same task, so nothing on screen flickers.
+      three.SetBackgroundColor(new this.OV.RGBAColor(255, 255, 255, 255))
+      let dataUrl
+      try {
+        dataUrl = three.GetImageAsDataUrl(PREVIEW_SIZE, PREVIEW_SIZE, false)
+      } finally {
+        three.SetBackgroundColor(this.stageColor(this.OV))
+      }
+      const body = new FormData()
+      body.append("image", dataUrlToBlob(dataUrl), "preview.png")
+      const response = await fetch(this.previewUrlValue, {
+        method: "POST",
+        body,
+        credentials: "same-origin",
+        headers: {
+          Accept: "application/json",
+          "X-CSRF-Token": document.querySelector("meta[name='csrf-token']")?.content || ""
+        }
+      })
+      if (!response.ok) throw new Error(`HTTP ${response.status}`)
+      if (this.hasPosterTarget) this.posterTarget.src = dataUrl
+      this.say("Saved as the preview.")
+    } catch (error) {
+      console.warn("[modelviewer] could not save the preview:", error)
+      this.say("Couldn't save the preview.")
+    } finally {
+      if (button) button.disabled = false
+    }
+  }
+
+  say(text) {
+    if (this.hasStatusTarget) this.statusTarget.textContent = text
   }
 
   fullscreen() {

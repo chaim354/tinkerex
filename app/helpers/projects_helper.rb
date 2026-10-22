@@ -23,12 +23,32 @@ module ProjectsHelper
   # ProjectsController::ON_DEMAND, which `fetch` holds it to.
   PANEL_ANCHORS = { "build_log" => "project-build-log", "tasks" => "project-tasks", "bom" => "project-bom",
                     "wiring" => "project-wiring", "releases" => "project-releases",
-                    "sheets" => "project-sheets" }.freeze
+                    "sheets" => "project-sheets", "calculations" => "project-calculations" }.freeze
 
   # The maker's title, else the default label — Maker::Project::PANEL_LABELS for a fixed key, the
   # folder's own name for a folder key, which only the caller knows.
   def panel_title(layout, key, default = nil)
     layout.title_for(key, default || Maker::Project::PANEL_LABELS.fetch(key.to_s))
+  end
+
+  # THE SHELF-GROUP HEADINGS (2026-10-20). Yields each key for its slot markup and draws a heading
+  # before every run of consecutive RENDERED panels whose folder's shelf is in the same group. A
+  # panel that renders nothing (the visitor's page omits empty ones) neither draws nor breaks a
+  # run, which is why the heading is decided here, after the body is known, and not from the keys.
+  # Each key is yielded ONCE (projects/_panel_groups' rule), and a call is one grid: a run never
+  # continues across two calls, so a group a tab splits is headed in each grid it lands in.
+  def panels_with_group_heads(keys, layout)
+    previous = nil
+    parts = keys.filter_map do |key|
+      body = yield(key)
+      next if body.blank?
+
+      group = layout.shelf_group_for(key)
+      head = tag.h2(group, class: "group-head shelf-group-head") if group && group != previous
+      previous = group
+      safe_join([ head, body ].compact)
+    end
+    safe_join(parts)
   end
 
   # One muted line under the heading, or nothing. Escaped by `content_tag`; an intro is text.

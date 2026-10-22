@@ -14,8 +14,14 @@ module FileLayer
   # back — a prefix walk would miss exactly the children most likely to be mid-reorganisation, which
   # is the wedge again with a narrower door. The parent edge is always accurate in the catalog.
   #
-  # TOMBSTONES ARE INCLUDED. A directory can hold nodes a scan already tombstoned; they must travel
-  # with it, both so none is left live-by-omission and so `undelete` has the full set to revive.
+  # TOMBSTONES ARE INCLUDED, AND THAT IS A CLAIM ABOUT REACH, NOT MEMBERSHIP. A live row can sit
+  # beneath a tombstoned directory — `undelete` restores into a folder the scan tombstoned, and it
+  # stays that way until the next scan revives the folder — so a walk that stopped at tombstones
+  # would leave that row live by omission. WHICH returned rows a delete moves is not this walk's
+  # answer: a tombstone already in the folder was never part of what the user deleted, so each
+  # adapter narrows its own UPDATE to `present` rows. Narrow the consumers, never this walk. And
+  # which rows a RESTORE brings back is not its answer either: that is `nodes.trash_root_node_id`,
+  # the entry the delete recorded on exactly the rows it moved (FileLayer::TrashMembership).
   module Subtree
     # A cap on DEPTH, not on size. `parent_node_id` has no constraint forbidding a cycle — the same
     # reason `Maker::LibraryTree#path_for` carries a guard (docs/invariants/model-intake.md) — and

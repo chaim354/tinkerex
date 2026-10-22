@@ -73,7 +73,7 @@ module Web
       assert_match(/directly inside Projects\/.*becomes a project within 15 minutes/,
                    text_of(".getting-started .projects-intake"))
       assert_match(/filed into type folders/, text_of(".getting-started .projects-intake"))
-      assert_select ".getting-started .projects-intake a[href=?]", settings_filing_rules_path
+      assert_select ".getting-started .projects-intake a[href=?]", settings_shelves_path
       assert_select ".getting-started a[href=?]", tools_path
       # Task 3 of the same plan adds the route; the literal keeps this green on its own.
       assert_select ".getting-started a[href=?]", "/help"
@@ -128,6 +128,16 @@ module Web
       end
     end
 
+    # K (2026-10-20): once a folder inside the mount is chosen at /settings/library, the sentence
+    # names THAT folder, not the mount it was chosen from.
+    test "a folder chosen inside the mount is the one the panel names" do
+      Setting.put(Tinkerex::LibraryRoot::KEY, "Workshop/3d")
+      with_library_host_path("/Users/me") do
+        get root_path
+        assert_match(%r{/Users/me/Workshop/3d is your library}, text_of(".getting-started .file-sources"))
+      end
+    end
+
     # --- The Library -----------------------------------------------------------------------------
 
     test "the Library's new-library state says the same" do
@@ -139,7 +149,7 @@ module Web
       assert_match(/Upload, in the top bar/, empty)
       assert_match(/library folder on the server.*within 15 minutes/, empty)
       assert_match(/becomes a project/, empty)
-      assert_select ".library-main .empty .projects-intake a[href=?]", settings_filing_rules_path
+      assert_select ".library-main .empty .projects-intake a[href=?]", settings_shelves_path
     end
 
     test "the Library's empty state names the folder the same way" do
@@ -180,7 +190,7 @@ module Web
       assert_match(/filed into type folders within 15 minutes/, note)
       assert_match(/README/, note)
       assert_select ".project-folder-note a[href=?]", project_path(project), text: "Desk Lamp"
-      assert_select ".project-folder-note a[href=?]", settings_filing_rules_path
+      assert_select ".project-folder-note a[href=?]", settings_shelves_path
 
       # Off, the sweep files nothing (ProjectIntake#call), and the line must not say it will.
       project.update!(autofile: false)
@@ -212,7 +222,7 @@ module Web
       assert_match(/No projects yet/, empty)
       assert_match(/directly inside Projects\/.*becomes a project within 15 minutes/, empty)
       assert_match(/filed into type folders/, empty)
-      assert_select ".empty .projects-intake a[href=?]", settings_filing_rules_path
+      assert_select ".empty .projects-intake a[href=?]", settings_shelves_path
       assert_select ".empty a[href=?]", new_project_path
       # The ways FILES arrive are the Library's question, not this page's.
       assert_select ".empty .file-sources", 0

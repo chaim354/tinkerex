@@ -6,7 +6,7 @@ module Maker
   # SeedPcbFilingRules' shape and an attachment-role re-derive in RederiveCodeRoles' shape, both in
   # one migration because they are one fact.
   #
-  # `seed!`'s `exists?` GUARD MUST NOT BE WEAKENED INTO A TOP-UP. /settings/filing promises that a
+  # `seed!`'s `exists?` GUARD MUST NOT BE WEAKENED INTO A TOP-UP. The Shelves page promises that a
   # removed rule "will file into other until you add a new one", so a per-extension fill-in on every
   # read would resurrect a rule the user deliberately deleted. A migration runs ONCE, which is what
   # makes the top-up safe.
@@ -85,7 +85,7 @@ module Maker
       assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "kicad_sch").folder
     end
 
-    # THE USER WHO ALREADY ADDED `.mage` BY HAND at /settings/filing before this ran: their folder
+    # THE USER WHO ALREADY ADDED `.mage` BY HAND on the Filing page before this ran: their folder
     # survives and no duplicate row appears. ON CONFLICT DO NOTHING is not an upsert, and this is
     # what says the difference matters. (It does not pin `unique_by:` — the bare form skips too;
     # what naming the index buys is that only the EXPECTED collision is swallowed, which no test
@@ -108,7 +108,11 @@ module Maker
     # leaves them alone.
     test "down removes the bench rules and leaves a hand-made one that files into the same folder" do
       seed_without_bench!(@user)
-      @user.maker_filing_rules.create!(ext: "xnc", folder: "pcb")
+      # find_or_initialize_by, NOT create!: `.xnc` is the extension file_attachment.rb invites into
+      # ROLE_BY_EXT as a one-line edit, and the day it lands the pre-S4-2 seed above writes this row
+      # itself, so a create! would collide. The question is unchanged either way: `down` must leave
+      # a pcb-filing rule that is not one of its own five keys.
+      @user.maker_filing_rules.find_or_initialize_by(ext: "xnc").update!(folder: "pcb")
       @user.maker_filing_rules.find_by!(ext: "stp").update!(folder: "pcb")
       run_up
       assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "kicad_sch").folder

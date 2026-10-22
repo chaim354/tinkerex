@@ -97,8 +97,9 @@ module Maker
     # question this object answers about the arrangement — which panels render, which folders are
     # hidden, which view a folder opens in, whether a side document exists — comes off this one
     # value, so the page, the manifest, the feed and the CSV cannot disagree about an arrangement
-    # the maker saved once. `listing.panel_folders` is in memory over the tree the constructor
-    # already built (no query), which is what makes asking here free.
+    # the maker saved once. `listing.panel_folders` is the tree the constructor already built plus
+    # ONE query for the OWNER's shelves (2026-10-20: a shelf's default view and group shape the
+    # visitor's page too), memoised on the listing, so asking here costs one constant query.
     #
     # AND IT KNOWS THE BLOCKS (2026-09-09, content blocks): a block is a panel of the layout, so its
     # key has to be in the vocabulary here or the maker's own order would be filtered down to the
@@ -114,47 +115,48 @@ module Maker
     def blocks_by_key = @blocks_by_key ||= blocks.index_by(&:layout_key)
 
     # AN IMAGE BLOCK IS DERIVED CONTENT (spec §6), so it answers to all three of the page's rules
-    # at once: the node must be LIVE, PERMITTED (`permits?` is the one answer to "is this file
-    # public"), and OUTSIDE a folder the maker hid — hiding a folder takes its pictures off this
-    # page, and an image block naming one would be the Photos leak with a caption under it. nil is
-    # the whole answer: the block then renders nothing at all, like a cover that is not permitted.
+    # at once: the node must be LIVE (it comes from `page_nodes`), and `#shown?` — PERMITTED
+    # (`permits?` is the one answer to "is this file public") and not under a folder the maker hid,
+    # at any depth. Hiding a folder takes its pictures off this page, and an image block naming one
+    # would be the Photos leak with a caption under it. nil is the whole answer: the block then
+    # renders nothing at all, like a cover that is not permitted.
     def block_image_node(block)
       node = page_nodes[block.node_id]
-      node if node && permits?(node) && !hidden_file_ids.include?(node.node_id)
+      node if node && shown?(node)
     end
 
     def visible_panels = layout.visible
 
-    # THE FOLDERS THE MAKER HID, AS NODE IDS. A hidden folder leaves the visitor's page AND the
-    # bundle (spec decision 2) — the page because `visible_panels` never yields its key, the bundle
-    # because `#bundle_files` rejects every row beneath one of these.
-    def hidden_folder_ids
-      @hidden_folder_ids ||= layout.hidden.select { |key| layout.folder?(key) }.map { |key| layout.folder_id(key) }.to_set
-    end
+    # WHAT THIS PAGE SHOWS OUT OF THE FOLDER: every listed row except the backups and whatever sits
+    # under a folder the maker hid (2026-10-19, F-S14-1; spec decisions 2 and 10). A hidden folder
+    # leaves the visitor's page AND the bundle — the page because `visible_panels` never yields its
+    # key, everything else because it reads this list.
+    #
+    # ONE LIST, AND EVERY DERIVED READER STARTS FROM IT. A derived reader is anything a visitor gets
+    # because the app walked the folder. `bundle_files`, `bundle_path_for`, `kicad_rows` and `thumbs`
+    # read this list. `photo_rows`, `repo_cards`, `cover_node` and `block_image_node` resolve their
+    # nodes elsewhere and ask the same ancestry question: `hidden?`, or `#shown?` where the node must
+    # also be permitted. Before this there were seven inline filters over two Sets, and the first two
+    # readers that forgot theirs (the repo cards and the KiCad rows) were found by review, not by the
+    # rule. A new derived reader is now right because of what it reads.
+    # AUTHORED prose does not start here. A README's own links and images, a text block and a BOM
+    # line's file link are things the maker wrote that name a file, so they read `listing` and
+    # `permits?` (decision 2: hidden is not unpermitted).
+    #
+    # HIDDEN IS DECIDED BY ANCESTRY, walking up from a file to the project folder and no further
+    # (`.depth_one_dir`), NEVER BY THE CAPPED LISTING. `permits?` refuses the capped listing as its
+    # basis for the same reason. The Sets this replaced were built from the listing, which stops at
+    # FILE_CAP in name order across the whole folder. A picture in a hidden folder whose name sorted
+    # past the cap was in neither Set, so the hero (`find_by`) and an image block (`page_nodes`),
+    # which resolve nodes outside the listing, showed it as the page's largest image
+    # (public_project_test.rb drives it). Backups are out because a visitor's page renders none: a
+    # rescue copy is noise to everyone but the maker.
+    def shown_rows = @shown_rows ||= listing.all_rows.reject { |row| row.backup? || hidden?(row.node) }
 
-    # Every file id beneath a hidden folder, IN MEMORY over the tree the listing already walked —
-    # `Dir#subtree_file_ids` is recursive, so hiding a folder hides what nests inside it too, which
-    # is the same subtree the panel would have rendered. Backups are not in it and need not be: the
-    # bundle already drops every backup, wherever it sits.
-    # WHO FILTERS BY THIS SET, AND WHO DOES NOT — written down because the first two surfaces that
-    # forgot (the repo cards and the KiCad rows) were found by review, not by the rule. DERIVED
-    # readers filter: what a visitor gets because the app walked the folder — `bundle_files`,
-    # `bundle_path_for`, `photo_rows`, `repo_cards`, `kicad_rows`, `cover_node`. AUTHORED prose does
-    # not: a README's own links and images and a BOM line's file link are things the maker wrote
-    # naming a file, and `permits?` still answers for the file (decision 2: hidden is not
-    # unpermitted). A new reader of the listing on the visitor's page decides which side it is on
-    # and says so here.
-    def hidden_file_ids
-      @hidden_file_ids ||= listing.tree.select { |dir| hidden_folder_ids.include?(dir.node_id) }
-                                  .flat_map(&:subtree_file_ids).to_set
-    end
-
-    # Every DIRECTORY under a hidden depth-one folder, the folder itself included — the set a repo
-    # card asks, since a repository can sit at depth one or anywhere beneath a hidden folder.
-    def hidden_dir_ids
-      @hidden_dir_ids ||= listing.tree.select { |dir| hidden_folder_ids.include?(dir.node_id) }
-                                 .flat_map { |dir| [ dir.node_id ] + flatten_dirs(dir.children).map(&:node_id) }.to_set
-    end
+    # The same answer for ONE node resolved outside the listing (the hero, an image block): permitted,
+    # and not under a folder the maker hid. A hidden file stays PERMITTED. It still answers its own
+    # link, and this page only stops showing it.
+    def shown?(node) = permits?(node) && !hidden?(node)
 
     # The FOLDER's own README, rendered, or nil when it holds none. `defined?` rather than `||=`
     # because nil is a real answer here and `||=` would re-read the port on every call for a folder
@@ -254,9 +256,9 @@ module Maker
       items.sort_by { |item| [ item.time, item.id ] }.reverse.first(FEED_CAP)
     end
 
-    # EVERY FILE THE BUNDLE BUTTON WILL FETCH (stage 3, S3-6) — the listing's own rows, minus the
-    # backups the page already leaves out (`#sections`' rule: a rescue copy is noise to everyone
-    # but the maker, and a visitor did not ask for two copies of a LightBurn file).
+    # EVERY FILE THE BUNDLE BUTTON WILL FETCH (stage 3, S3-6) — `#shown_rows`, the listing's own
+    # rows minus the backups the page already leaves out (a rescue copy is noise to everyone but
+    # the maker, and a visitor did not ask for two copies of a LightBurn file).
     #
     # NO `permits?` PER ROW, AND THAT IS AN ARGUMENT RATHER THAN AN OMISSION: every listing row is
     # a live, visible file beneath the project folder, which is exactly the ancestry arm of
@@ -264,8 +266,8 @@ module Maker
     # exists to prevent. The dot-files and `.git` internals a visitor must never get are already
     # gone — `ProjectFolderListing` filters on `Node.visible_entries` and never descends into a
     # dot-dir or a build-output dir (`Library::BuildOutput`, stage 4, S4-2, which is why a bundle
-    # no longer carries a `node_modules/` tree) — which is the same reason `#sections` can render
-    # its rows without a check.
+    # no longer carries a `node_modules/` tree) — which is the same reason the Files and folder
+    # panels can render their rows without a check.
     #
     # THE LIST IS THE LISTING'S, SO IT IS CAPPED (FILE_CAP) and the manifest says so with
     # `truncated`. A bundle that silently held the first 300 files of a 900-file folder would be a
@@ -285,34 +287,29 @@ module Maker
     # A HIDDEN FOLDER'S FILES ARE NOT IN IT (2026-09-08, folder panels; spec decision 2). That IS a
     # panel gate, and it does not contradict the paragraph above: `attachments` cannot be hidden, a
     # SUBFOLDER can, and a maker who took a folder off their public page did not mean to leave it in
-    # the zip that page's own button builds. `#hidden_file_ids` is a Set over the tree the listing
-    # already walked, so the rejection costs nothing per row.
+    # the zip that page's own button builds. `#shown_rows` has already dropped them, at any depth
+    # and past FILE_CAP alike, so there is nothing to reject here.
     #
     # THE FILE ITSELF STILL ANSWERS ITS DIRECT LINK, and that is the same decision: permission is by
     # folder claim (`#permits?`), never by panel, so `#deliverable!` is untouched and a URL a README
     # or a BOM row already handed out keeps working. What changes is only what this page ADVERTISES.
-    # One wrinkle rides along and is deliberate: Maker::BomCsv's `file` column names
-    # `#bundle_path_for`, so a BOM line pointing INTO a hidden folder still names a path the zip no
-    # longer carries — the CSV is untouched by decision 2, and naming a path is not delivering one.
+    # Maker::BomCsv agrees by construction. Its `file` column names `#bundle_path_for`, which reads
+    # this same list, so a BOM line pointing at a hidden folder's file or at a backup names the bare
+    # file. It never names a path the zip does not carry.
     def bundle_files
-      @bundle_files ||= listing.all_rows.reject(&:backup?)
-                               .reject { |row| hidden_file_ids.include?(row.node_id) }
-                               .map { |row| BundleFile.new(path: bundle_path(row), size: row.node.size.to_i,
-                                                           url: file_url_for(row.node_id, download: true)) }
-                               .sort_by(&:path)
+      @bundle_files ||= shown_rows.map { |row| BundleFile.new(path: bundle_path(row), size: row.node.size.to_i,
+                                                              url: file_url_for(row.node_id, download: true)) }
+                                  .sort_by(&:path)
     end
 
-    # The path this node has INSIDE the bundle, or nil when the listing does not hold it (outside
-    # the folder, past FILE_CAP, or in a repository DIR_CAP never entered). `Maker::BomCsv` names
-    # it in the `file` column so a row of the CSV points at a file in the same zip.
+    # The path this node has INSIDE the bundle, or nil when the bundle does not carry it: outside the
+    # folder, past FILE_CAP, in a repository DIR_CAP never entered, under a hidden folder, or a
+    # backup. `Maker::BomCsv` names it in the `file` column so a row of the CSV points at a file in
+    # the same zip, and on nil it writes the bare name. Hidden is not unpermitted, and the name is
+    # not a secret. It reads `#shown_rows`, the list `#bundle_files` is built from, because when it
+    # read the listing it named zip paths for backups the bundle never carries.
     def bundle_path_for(node_id)
-      # A HIDDEN FOLDER'S FILE HAS NO PATH IN THE ZIP (folder panels, decision 2): `bundle_files`
-      # leaves it out, so a BOM row naming its path would point at an entry the visitor's bundle
-      # does not carry. nil is what a file outside the listing answers already, and Maker::BomCsv
-      # then writes the bare name — hidden is not unpermitted, and the name is not a secret.
-      return nil if hidden_file_ids.include?(node_id)
-
-      row = listing.row_for(node_id)
+      row = shown_row(node_id)
       row && bundle_path(row)
     end
 
@@ -320,13 +317,12 @@ module Maker
     # rule (projects/_schematics.html.erb), reading the SAME extension list so the two surfaces can
     # never name a different set of formats.
     def kicad_rows
-      # MINUS A HIDDEN FOLDER'S BOARDS (folder panels, decision 2; found in review): the first row
-      # is the file the page's KiCanvas embed loads, so a hidden folder's board was the picture on
-      # the page. Same rule as `photo_rows`.
-      @kicad_rows ||= listing.all_rows
-                             .select { |row| FilesController::KICANVAS_EXTS.include?(File.extname(row.node.name).delete(".").downcase) }
-                             .reject { |row| hidden_file_ids.include?(row.node_id) }
-                             .sort_by { |row| row.node.name }
+      # FROM `#shown_rows`, SO NEVER A HIDDEN FOLDER'S BOARD (folder panels, decision 2; found in
+      # review): the first row is the file the page's KiCanvas embed loads, so a hidden folder's
+      # board was the picture on the page.
+      @kicad_rows ||= shown_rows
+                      .select { |row| FilesController::KICANVAS_EXTS.include?(File.extname(row.node.name).delete(".").downcase) }
+                      .sort_by { |row| row.node.name }
     end
 
     # Repo cards for every working tree in the folder, keyed by dir node_id (the private page's
@@ -339,7 +335,7 @@ module Maker
         # page renders the card INSIDE the folder panel, so hiding the folder hid the card there
         # while this page went on rendering it after the panel loop — the owner's library path, the
         # README and a public link into the folder they had hidden.
-        dirs = flatten_dirs(listing.tree).select(&:repo?).reject { |dir| hidden_dir_ids.include?(dir.node_id) }
+        dirs = flatten_dirs(listing.tree).select(&:repo?).reject { |dir| hidden_dir?(dir.node_id) }
         roots = owner.nodes.present.where(node_id: dirs.map(&:node_id), kind: "dir").index_by(&:node_id)
         dirs.index_by(&:node_id).transform_values do |dir|
           Maker::RepoCard.for(user: owner, dir:, root_node: roots[dir.node_id], listing:,
@@ -356,13 +352,13 @@ module Maker
     # gallery (stage 4, S4-1): two pages showing "this project's photos" must not drift about what
     # counts as one, so this reads the shared answer rather than keeping a second copy of it.
     def photo_rows
-      # MINUS THE HIDDEN FOLDERS' IMAGES, ON THE VISITOR'S PAGE ONLY (folder panels, decision 2). The
-      # Photos panel cannot be hidden (`ALWAYS`), so without this a folder the maker hid would keep
-      # showing its pictures one panel down; the maker's own page keeps every photo, since hiding a
-      # panel there arranges the page rather than publishing it. Entry photos live outside the
-      # folder and are never in `hidden_file_ids`, so they stay.
-      @photo_rows ||= Maker::ProjectPhotos.rows(listing:, entries:, page_nodes:)
-                                          .reject { |row| hidden_file_ids.include?(row.node_id) }
+      # MINUS WHATEVER SITS UNDER A HIDDEN FOLDER, ON THE VISITOR'S PAGE ONLY (folder panels,
+      # decision 2). The Photos panel cannot be hidden (`ALWAYS`), so without this a folder the
+      # maker hid would keep showing its pictures one panel down. The maker's own page keeps every
+      # photo, since hiding a panel there arranges the page rather than publishing it. An entry
+      # photo is asked the same question as a folder image. One that lives outside the folder is
+      # never under a hidden one, so it stays.
+      @photo_rows ||= Maker::ProjectPhotos.rows(listing:, entries:, page_nodes:).reject { |row| hidden?(row.node) }
     end
 
     # THE COVER, PERMITTED (stage 4, S4-5; story 5.7). `Maker::Project#cover_node_id` derives one
@@ -376,9 +372,10 @@ module Maker
 
       id = project.cover_node_id
       node = id && owner.nodes.present.find_by(node_id: id)
-      # AND NOT INSIDE A HIDDEN FOLDER (folder panels, decision 2): the hero is the page's largest
+      # SHOWN, NOT MERELY PERMITTED (folder panels, decision 2): the hero is the page's largest
       # picture, and a hidden folder's image as the hero is the Photos leak in its biggest frame.
-      @cover_node = (node if node && permits?(node) && !hidden_file_ids.include?(node.node_id))
+      # `#shown?` decides that by ancestry, so a cover past FILE_CAP is refused like any other.
+      @cover_node = (node if node && shown?(node))
     end
 
     # Live nodes for everything the page shows that is not in the listing: entry photos and BOM
@@ -422,12 +419,35 @@ module Maker
       @visible_page_ids ||= owner.nodes.visible_entries.where(node_id: page_nodes.keys).pluck(:node_id).to_set
     end
 
+    # THE THUMBNAIL MAP IS WHAT THIS PAGE PAINTS, one term per painting surface, the hero first
+    # (2026-10-19, F-S14-1):
+    #   * the hero                                → `#cover_node`
+    #   * the Files panel and every folder panel  → `#shown_rows` (the Photos panel's folder images too)
+    #   * the build log and the Photos panel      → the entry photos still live, out of `page_nodes`
+    #   * an image block                          → `#block_image_node`
+    # It was `listing.node_ids + page_nodes.keys`: everything the page might REFERENCE. That was wrong
+    # in both directions. `ThumbnailMap.for` backfills on an anonymous GET, so it queued renders for
+    # backups, for a hidden folder's files and for BOM and release targets, none of which this page
+    # draws. And a cover attached from outside the folder was in neither source, so that hero never
+    # showed a ready thumbnail. The build log paints its photos wherever they live, because an entry
+    # is authored, so that term is not filtered by folder. Whether a PANEL is hidden is not asked
+    # here, so a hidden build log's photos and a hidden block's picture stay in the map. Both are
+    # permitted, and there are few of them. The order is the backfill budget's walk order
+    # (Maker::Previews::ThumbnailMap), so the hero renders first. It is all in memory over rows the
+    # page already loaded, and `.for` costs the same queries for one more id.
+    #
     # READY THUMBNAILS ONLY on a public page — `ThumbnailMap.for` still backfills, which is what
     # makes a first visit start the renders, but nothing here polls: `files/_thumb` renders the
-    # spinner markup for a pending row and `pages/public.css` stops its animation, so it reads as a
-    # static badge rather than a promise the page will never keep (files-preview.md).
+    # spinner markup for a pending row, and a spinner turns only inside a poll cell (components.css),
+    # so with none here it reads as a static badge rather than a promise the page will never keep
+    # (files-preview.md).
     def thumbs
-      @thumbs ||= Maker::Previews::ThumbnailMap.for(owner, listing.node_ids + page_nodes.keys)
+      @thumbs ||= Maker::Previews::ThumbnailMap.for(
+        owner,
+        [ cover_node&.node_id ] + shown_rows.map(&:node_id) +
+          entries.flat_map(&:file_attachments).map(&:node_id).select { |id| page_nodes.key?(id) } +
+          blocks.select { |block| block.kind == "image" }.filter_map { |block| block_image_node(block)&.node_id }
+      )
     end
 
     # THE ONE PERMISSION CHECK. A live, visible FILE node that either descends from the project
@@ -480,6 +500,37 @@ module Maker
       attached.include?(node.node_id)
     end
 
+    # THE DEPTH-ONE FOLDER A DIR SITS UNDER, or the dir itself when it is one. nil at the folder's
+    # own root, outside the folder, or when the walk breaks before it reaches the folder. Depth one is
+    # where a panel is (spec decision 3), so this is the folder whose `folder:` key hides everything
+    # beneath it (`#hidden_dir?`).
+    #
+    # IT WALKS UP FROM THE DIR AND STOPS AT THE PROJECT FOLDER, so nothing ABOVE the folder takes part
+    # (review of #430). `ancestors_of` is the wrong walk here: it answers nil for the whole chain when
+    # any ancestor is missing. A tombstoned `Projects/` above a live project folder therefore read
+    # every hidden folder as shown, while the listing, which walks DOWN from the folder, still held
+    # their files for the bundle, the Photos and Schematics panels and the repo cards
+    # (public_project_test.rb). A break BELOW the folder still reads as not hidden: a missing dir, or a
+    # cycle, which the `seen` set stops. A file there is neither listed nor permitted by ancestry, so
+    # only an attachment can show it, and `permits?` still gates that.
+    #
+    # It is a class method beside `claimed?` so that a caller with no listing in hand can ask it too.
+    # `permitted_cover_ids` would be that caller, and does not ask it yet (see the note there).
+    def self.depth_one_dir(dir_id, tree:, folder_node_id:)
+      return nil unless folder_node_id
+
+      seen = Set.new
+      below = nil
+      current = dir_id
+      while current && seen.add?(current)
+        return below if current == folder_node_id
+
+        below = current
+        current = tree.parent_of(current)
+      end
+      nil
+    end
+
     # EVERY PROJECT'S PERMITTED COVER ON ONE OWNER'S PAGE, IN A CONSTANT NUMBER OF QUERIES. One
     # PublicProject per card would ask `cover_node` at a tree, a listing and two attachment queries
     # PER PROJECT — the growth /u/:handle's budget forbids — so the page asks once: the cover nodes
@@ -488,6 +539,14 @@ module Maker
     # entries, so the count is the same for a maker with one project and one with fifty). Returns
     # `project.id => node_id` for the covers `claimed?` admits, and nothing for the rest — the view
     # renders the placeholder for an absent key, never the picture.
+    #
+    # PERMITTED, NOT SHOWN: THIS DOES NOT READ THE LAYOUT, AND THAT IS KNOWN (2026-10-19, F-S14-1). A
+    # cover under a folder the maker hid still shows on this card, while the project page's hero
+    # (`#cover_node`, which asks `#shown?`) refuses it. Closing that changes an existing surface, so
+    # it is left for the owner to decide, and this change's arc records the question. The fix is one
+    # `next if` here: ask `.depth_one_dir` of the cover's parent, then ask the project's own
+    # `panel_layout(folders:)`, built over that one folder, whether its key is hidden. Both inputs
+    # are already in hand, so it adds no query.
     def self.permitted_cover_ids(owner, projects)
       wanted = projects.filter_map { |p| [ p.id, p.cover_node_id ] if p.cover_node_id }.to_h
       return {} if wanted.empty?
@@ -597,6 +656,26 @@ module Maker
     end
 
     def feed_releases = project.releases.includes(:files, :rich_text_notes).limit(FEED_CAP)
+
+    # Is this file under a folder the maker hid? A file asks about the dir it sits in.
+    def hidden?(node) = hidden_dir?(node.parent_node_id)
+
+    # IS THIS DIRECTORY UNDER (OR ITSELF) A DEPTH-ONE FOLDER WHOSE PANEL THE MAKER HID? Asked of the
+    # saved layout, the one `visible_panels` renders from. The layout's vocabulary is this page's own
+    # depth-one folders, so no other key can be hidden. Memoised per dir, because the rows of one
+    # folder share the answer. `listing.folder_id` and not the raw column: it is nil unless the tree
+    # knows the folder, which is the gate `claimed?` applies.
+    def hidden_dir?(dir_id)
+      @hidden_dirs ||= {}
+      return @hidden_dirs[dir_id] if @hidden_dirs.key?(dir_id)
+
+      depth_one = self.class.depth_one_dir(dir_id, tree:, folder_node_id: listing.folder_id)
+      @hidden_dirs[dir_id] = !depth_one.nil? && layout.hidden?(Maker::ProjectKind.folder_key(depth_one))
+    end
+
+    # `#shown_rows`' own row for one node_id, or nil. Built once, never per lookup, the same shape
+    # as `ProjectFolderListing#row_for`.
+    def shown_row(node_id) = (@shown_rows_by_id ||= shown_rows.index_by(&:node_id))[node_id]
 
     # FOLDER-RELATIVE, from the row's OWN `section` — the display path the listing computed while
     # it built the tree, never re-derived by walking node_id chains a second time (that class's own

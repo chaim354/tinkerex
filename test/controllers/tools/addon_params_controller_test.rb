@@ -9,7 +9,7 @@ module Tools
 
     setup do
       @user = User.create!(email: "addonparams@example.com", password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @state = @user.maker_addon_states.create!(
         addon_key: "boxes", name: "My Box",
         data: { "generator" => "ABox", "params" => { "x" => "120", "y" => "60" } }

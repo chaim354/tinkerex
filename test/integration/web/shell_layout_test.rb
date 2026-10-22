@@ -10,7 +10,7 @@ module Web
     setup do
       @user = User.create!(email: "shell-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     test "a signed-in page renders the rail with exactly one active section" do
@@ -80,9 +80,10 @@ module Web
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
       get project_path(project)
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
-      # settings/shelves (slice 5) and settings/tags are nested controllers whose family is the
-      # rail FOOT's Settings, not a place: Settings lights and no `.rail-link` does. Shelves lit
-      # 3D models from 2026-09-10 until it moved back under Settings.
+      # settings/shelves and settings/tags are nested controllers whose family is the rail FOOT's
+      # Settings, not a place: Settings lights and no `.rail-link` does. The model catalog's old
+      # shelves page lit 3D models from 2026-09-10 until it moved back under Settings (slice 5); the
+      # path is the project-folder Shelves page since 2026-10-20.
       [ settings_shelves_path, settings_tags_path ].each do |path|
         get path
         assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current='page']", count: 1
@@ -97,7 +98,8 @@ module Web
       assert_response :success
       assert_select "aside.rail", count: 0
       assert_select "body.app-shell", count: 0
-      # The collapsed rules hide `.brand-name`, and the auth card has one (found in review).
+      # The collapsed rules once hid `.brand-name`, and the auth card has one (found in review). The
+      # class sets only the rail's track since F-S20-1, and it still belongs to the shell alone.
       assert_select "body.rail--collapsed", count: 0
     end
 
@@ -262,11 +264,14 @@ module Web
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: "Recent"
     end
 
-    test "the stylesheet references fingerprinted, servable Plex fonts" do
+    test "the stylesheet references fingerprinted, servable self-hosted fonts" do
       get Rails.application.assets.resolver.resolve("application.css")
       assert_response :success
       css = response.body
-      %w[ibm-plex-sans ibm-plex-sans-italic ibm-plex-mono-400 ibm-plex-mono-500].each do |name|
+      # Material Symbols is KiCanvas's icon font, same-origin since bin/build-kicanvas stopped it
+      # calling Google (kicanvas_test.rb asserts the viewer page then raises no CSP violation).
+      %w[ibm-plex-sans ibm-plex-sans-italic ibm-plex-mono-400 ibm-plex-mono-500
+         material-symbols-outlined].each do |name|
         font = css[%r{/assets/#{name}-[0-9a-f]{8,}\.woff2}]
         assert font, "application.css does not reference a fingerprinted #{name}.woff2"
         get font

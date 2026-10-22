@@ -140,6 +140,7 @@
         <%= button_to "Try the demo", demo_session_path, class: "btn" %>
       <% end %>
       <%= link_to "Install guide", install_url, class: "btn" %>
+      <%= link_to "Make a compose file", public_compose_path, class: "btn" %>
     </div>
   </section>
 
@@ -148,6 +149,7 @@
     <span>Apache-2.0</span>
     <a href="<%= source_url %>">Source</a>
     <a href="<%= install_url %>">Install guide</a>
+    <%= link_to "Compose file", public_compose_path %>
     <%= link_to "Log in", new_user_session_path %>
   </footer>
 </div>

@@ -83,15 +83,33 @@ module Library
     # a caller named a share root and gets it scanned, whatever the deployment is (pinned by a
     # test). `root:` omitted = "this deployment's library", which resolves to a scannable adapter
     # or RAISES. Neither branch can silently do nothing, which is the property that matters:
-    # `scan_all!` may decline to schedule, but `perform` always performs or says why.
+    # `scan_all!` may decline to schedule, but `perform` always performs or says why. (The one
+    # decline is a QUEUED scan of a root the library folder has since left, and it logs which:
+    # #stale_root?.)
     def perform(user_id:, root: nil)
       user = User.find(user_id)
+      # ONE SCAN, ONE LIBRARY FOLDER (K; found in review). The walk below uses `root:`, fixed when the
+      # job was queued, while the intake after it writes through FileLayer.current, whose share root
+      # is read per job (FileLayer::Share#root). Reading the setting HERE, first, pins that answer for
+      # the whole job: a folder chosen in the web process mid-walk is this process's NEXT job's, never
+      # this job's intake -- which otherwise minted the old library's project folders inside the new
+      # one. Library::RootChangeJob queues behind this job and scans the new folder. `if root`: only a
+      # share scan names a root, and off share there is no setting to pin.
+      Tinkerex::LibraryRoot.relative if root
+      return if stale_root?(root)
 
       # `new` + `call` rather than `.call`, which returns the instance only on success: holding
       # the observer means #unreadable_dirs is still reachable, and that is the whole reason
       # Task 5 exposed it (and Task 7 gave S3Observer the same method for the same caller — here).
       observer = root ? Library::Scanner.new(user, root:) : observer_for(user)
-      observer.call
+      begin
+        observer.call
+      rescue Library::Scanner::UnsafeScan => e
+        # THE REFUSAL IS RECORDED AND STILL RAISED (K §5): /settings/library shows it with its next
+        # step, and the failed-jobs row stays the operator's report.
+        user.update_column(:library_scan_refusal, e.message)
+        raise
+      end
       warn_unreadable(observer, user)
       discover_projects(user)
       intake_project_folders(user)
@@ -109,9 +127,10 @@ module Library
       # deliberately has no retry_on for it), and a stamp on that path would tell every watching
       # page the scan succeeded while the catalog was never touched.
       #
-      # update_column: a bookkeeping stamp, not a user edit — no validations, no callbacks, and
-      # `updated_at` left alone so a scan does not look like a profile change.
-      user.update_column(:library_scanned_at, Time.current)
+      # update_columns: a bookkeeping stamp, not a user edit — no validations, no callbacks, and
+      # `updated_at` left alone so a scan does not look like a profile change. It also clears a
+      # refusal recorded above: the folder scanned.
+      user.update_columns(library_scanned_at: Time.current, library_scan_refusal: nil)
     end
 
     # THE ONE PLACE THAT DECIDES WHAT MAY BE SERIALIZED INTO THE QUEUE. #perform's header states
@@ -130,16 +149,24 @@ module Library
       perform_later(user_id: user.id, **args)
     end
 
-    # THE FIRST ACCOUNT TRIGGERS THE FIRST SCAN (J, 2026-10-15). Scans are enqueued PER USER, so the
-    # boot-time hook in config/puma.rb has no one to scan for on a fresh install -- measured: it ran,
-    # enqueued nothing, and a folder full of files sat unindexed until Rescan while the guide said
-    # "indexed on start". The two doors that create an account on a fresh server -- the sign-up form
-    # (Users::RegistrationsController) and `bin/rails tinkerex:owner` -- call this for the FIRST
-    # account only. Deliberately NOT a User callback: 241 test files create users, and a callback
-    # dragged FileLayer.current and a real scan into every one of them (red on all three legs,
-    # including an S3 listing against stub credentials). The gate is the same one scan_all! obeys.
+    # THE FIRST ACCOUNT TRIGGERS THE FIRST SCAN (J, 2026-10-15) -- ON SHARE, ONCE THE FOLDER IS
+    # CONFIRMED (K, 2026-10-20). Scans are enqueued PER USER, so the boot-time hook in config/puma.rb
+    # has no one to scan for on a fresh install -- measured: it ran, enqueued nothing, and a folder
+    # full of files sat unindexed until Rescan while the guide said "indexed on start". The two doors
+    # that create an account on a fresh server -- the sign-up form (Users::RegistrationsController)
+    # and `bin/rails tinkerex:owner` -- call this for the FIRST account only, and the first-run
+    # confirmation on /settings/library calls it once the folder is written. On a fresh share install
+    # the sign-up's call meets the pending gate below and scans nothing; tinkerex:owner confirms the
+    # whole mount first, so the console path still scans with no browser. Deliberately NOT a User
+    # callback: 241 test files create users, and a callback dragged FileLayer.current and a real scan
+    # into every one of them (red on all three legs, including an S3 listing against stub
+    # credentials). The gates are the same two scan_all! obeys.
     def self.enqueue_first_for(user)
       return unless FileLayer.current.capabilities.scannable?
+      # NOT WHILE THE LIBRARY FOLDER IS UNCONFIRMED (K §3). A fresh share install scans nothing until
+      # its owner has said which folder is the library -- the boot hook, the schedule and the sign-up
+      # form all reach this method or scan_all!. `.enqueue_for` stays a command and is not gated.
+      return if Tinkerex::LibraryRoot.pending?
 
       enqueue_for(user)
     end
@@ -168,6 +195,8 @@ module Library
     # "false", it is "you must say".
     def self.scan_all!
       return unless FileLayer.current.capabilities.scannable?
+      # The same pause as .enqueue_first_for's, and for the same reason (K §3).
+      return if Tinkerex::LibraryRoot.pending?
 
       User.find_each { |user| enqueue_for(user) }
     end
@@ -197,6 +226,26 @@ module Library
     end
 
     private
+
+    # A SCAN QUEUED BEFORE THE LIBRARY FOLDER CHANGED MUST NOT RUN ON THE OLD ONE (K §5). The
+    # semaphore Library::RootChangeJob shares stops one running DURING a change; this stops one queued
+    # before it from running AFTER. Only a QUEUED job is judged: `enqueued_at` is nil for perform_now,
+    # so a command still scans the root it names (this job's header), and a job queued after the
+    # change names the new root anyway. A job queued before a write that left the root where it was
+    # (the same folder confirmed twice) names the current root and runs.
+    def stale_root?(root)
+      return false if root.nil? || enqueued_at.nil?
+
+      changed = Tinkerex::LibraryRoot.changed_at
+      return false if changed.nil? || enqueued_at >= changed
+
+      current = FileLayer.current
+      return false unless current.is_a?(FileLayer::Share) && current.root.to_s != root
+
+      Rails.logger.warn("Library::ScanJob: discarding a scan of #{root} queued before the library " \
+                        "folder changed to #{current.root}")
+      true
+    end
 
     def observer_for(user)
       adapter = FileLayer.current
@@ -236,17 +285,22 @@ module Library
       )
     end
 
-    # STRICTLY AFTER THE RECONCILE AND STRICTLY BEFORE THE PROJECT INTAKE, and BOTH orderings
-    # change the ANSWER rather than the timing.
+    # STRICTLY AFTER THE RECONCILE AND STRICTLY BEFORE THE PROJECT INTAKE. The first ordering
+    # changes the ANSWER; since F-S07-1 (2026-10-19) the second changes only the TIMING.
     #
     # After the RECONCILE because discovery reads names and parentage, and a folder the Scanner has
     # not settled is a wrong answer — the same reason the two methods below give.
     #
-    # Before the PROJECT INTAKE because a discovered project's loose files must be filed in the SAME
-    # pass. Left at `Projects/new-thing/`, the seeded `*` shelf makes `Projects` the nearest shelf
-    # above them, so the whole `new-thing` FOLDER becomes one model titled "new-thing" — and nothing
-    # reaps an auto model, so the wrong row is permanent. That is #intake_models' own IntakeOrderTest
-    # hazard, one step earlier in the chain. Pinned by DiscoveryOrderTest, which is RED on the swap.
+    # Before the PROJECT INTAKE so a discovered project's loose files are filed in the SAME pass, not
+    # the next. This used to change the answer as well: left at `Projects/new-thing/`, the built-in `*`
+    # shelf makes `Projects` the nearest shelf above them, so a catalog that reached the folder
+    # before it was adopted made the whole `new-thing` FOLDER one model, permanently. Ordering never
+    # closed that and could not: this call is CAPPED (Maker::ProjectDiscovery::MAX_PROJECTS), so a
+    # folder past the cap reached #intake_models unadopted inside this very sequence, and on
+    # chunk_remote the three sweeps are independent schedules. The catalog closes it instead, by
+    # counting every folder discovery owns BY POSITION as claimed (Maker::ModelIntake
+    # .claimed_folders). Pinned by DiscoveryOrderTest: RED on the swap as a file left unfiled, and a
+    # capped run must leave no model behind.
     #
     # CALLS THE JOB, NOT Maker::ProjectDiscovery DIRECTLY, for the reason #intake_project_folders
     # records as a finding rather than a preference: the SERVICE logs nothing, so the JOB is the
@@ -324,13 +378,17 @@ module Library
     # answer.
     #
     # After the PROJECT INTAKE because that step MOVES files, and the model a file belongs to is
-    # decided by the nearest SHELF above it — so a move changes the answer rather than merely the
-    # location. A loose `panel.stl` at `Projects/desk-lamp/` has no shelf nearer than the library
-    # root, which makes the whole `Projects` FOLDER its model; one intake later it sits at
-    # `Projects/desk-lamp/models/panel.stl`, under the seeded `Projects/*/models` shelf, and it is
-    # its own model titled "panel". Catalogue first and the sweep mints the first answer, in the
-    # same job that is about to make it false. Pinned by scan_job_test.rb's IntakeOrderTest
-    # ("cataloguing runs after the project intake…"), which is RED on the swap.
+    # decided by the nearest SHELF above it — so a move can change the answer rather than merely the
+    # location. Measured 2026-10-19 on a project adopted at a TOP-LEVEL folder with filing on: its
+    # root is itself a shelf (the built-in `*`), so a loose `lid.stl` there is its own one-file model.
+    # Catalogue first and that row makes the intake refuse to move the file (`:model_bundle`, a file
+    # a model holds stays put), so it sits at the root for good; in this order it is filed into
+    # `models/` and joins that folder's model. UNDER `Projects/` THE SAME SWAP NOW COSTS ONLY A SCAN:
+    # a file loose at a project's root keys to the project's folder, which is claimed — by its
+    # project, or by discovery's position before the project exists (F-S07-1) — so the catalog
+    # leaves it alone until the intake has moved it under the built-in `Projects/*/models` shelf.
+    # Pinned by scan_job_test.rb's IntakeOrderTest ("cataloguing runs after the project intake…"),
+    # which is RED on the swap with [] — the `Projects/` half; the top-level half has no test yet.
     #
     # CALLS THE JOB, NOT Maker::ModelIntake DIRECTLY, for the reason #intake_project_folders
     # records as a finding rather than a preference: Maker::ModelIntake logs NOTHING itself, so

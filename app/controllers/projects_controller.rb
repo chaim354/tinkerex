@@ -31,7 +31,9 @@ class ProjectsController < ApplicationController
   # empty, unless this request opens one with ?add=<key> ("+ Add panel"). Nothing else is on demand:
   # Files and Publish always show, Photos and Schematics already render nothing when empty, and an
   # empty folder panel stays quiet (docs/invariants/design-system.md rule 14).
-  ON_DEMAND = %w[build_log tasks bom wiring releases sheets].freeze
+  # Calculations (2026-10-21) joined because a saved result is its only way in: an empty panel
+  # would be a heading over nothing, and its quiet state says how to fill it.
+  ON_DEMAND = %w[build_log tasks bom wiring releases sheets calculations].freeze
 
   # The sentence #demo_may_publish? refuses with (Tinkerex::Demo; the argument is at the method).
   DEMO_PUBLISH_REFUSAL = "The shared demo can't publish projects: everything made here stays " \
@@ -141,8 +143,9 @@ class ProjectsController < ApplicationController
 
     # THE PAGE'S PANEL LIST (stage 4, S4-7; story 6.5): this project's kind's preset with its own
     # overrides on top, over a vocabulary that now includes this folder's own depth-one subfolders
-    # (Maker::ProjectKind's header). Zero queries — two columns off the row `set_project` already
-    # loaded, plus `panel_folders`, which is one `map` over the tree above.
+    # (Maker::ProjectKind's header). Two columns off the row `set_project` already loaded, plus
+    # `panel_folders` — the tree above plus ONE shelves query (2026-10-20, Maker::Shelves.by_name),
+    # memoised on the listing and constant in the number of folders.
     # CONTENT BLOCKS (2026-09-09; spec §2). ONE query, and ONE read: the layout's `blocks:` pairs
     # and the index the partials render from come from the same array, so a block created between
     # two reads can never reach the loop as a key with no kind — which `render "projects/#{key}"`
@@ -152,7 +155,7 @@ class ProjectsController < ApplicationController
     @blocks_by_key = @blocks.index_by(&:layout_key)
     @panel_layout = @project.panel_layout(folders: @listing.panel_folders,
                                           blocks: @blocks.map { |b| [ b.key, b.kind ] })
-    # WHAT THE CHOOSER CALLS EACH PANEL. The ten fixed labels plus one per folder — its own name,
+    # WHAT THE CHOOSER CALLS EACH PANEL. The twelve fixed labels plus one per folder — its own name,
     # which is the only label a folder key could honestly carry. Built here rather than in the
     # chooser because the chooser has no listing of its own, and a label map assembled in a view
     # would be a second definition the panels door could not reuse. A key with no entry cannot
@@ -189,11 +192,14 @@ class ProjectsController < ApplicationController
 
     # THE FILES PANEL'S "RECENTLY CHANGED" ROW (structural redesign §6, slice 6): the 8 newest files
     # under the folder, ONE query, and [] with no query when the folder is unavailable. AFTER THE
-    # LAYOUT, because it leaves out the folders the page draws no tile for (#dirs_without_tiles): a
-    # panel the maker hid must take its files off the page with it, and a browsed repository's files
-    # must not come back as tiles here. Their ids join the page's one ThumbnailMap and its one
-    # addon-origin lookup below, so each stays one call.
-    @recent_files = @listing.recent_files(skip: dirs_without_tiles)
+    # LAYOUT AND THE EDIT FLAG, because it leaves out the subfolders this render draws no file cells
+    # for (#dirs_without_tiles): a panel the maker hid takes its files off the page with it, and a
+    # browsed folder's files must not come back as tiles here. `no_tiles` IS KEPT: the thumbnail
+    # union below subtracts the SAME Dirs, so the row and the union cannot disagree about which
+    # folders this render paints (F-S15-1). The row's ids join the page's one ThumbnailMap and its
+    # one addon-origin lookup below, so each stays one call.
+    no_tiles = dirs_without_tiles
+    @recent_files = @listing.recent_files(skip: no_tiles)
 
     # A FILE DELETED FROM THE LIBRARY LEAVES THE PROJECT, IMMEDIATELY. It used to sit here forever
     # as a "⚠️ (file unavailable)" tile with a per-file Remove button: `Library::Reconciler`
@@ -366,13 +372,22 @@ class ProjectsController < ApplicationController
     # renders anywhere. One query pair (Maker::AddonOrigin.for's own contract), regardless of N.
     @generated = Maker::AddonOrigin.for(user: current_user, node_ids: @listing.node_ids)
     @generated_ids = @generated.keys.to_set
+    # THE MODELS PANEL (2026-10-21; docs/superpowers/specs/2026-10-20-attach-model-to-project-design.md):
+    # the models in this project's folder plus the ones attached from elsewhere, derived from rows
+    # that already exist (Maker::ProjectModels). ONLY WHEN THE PANEL SHOWS — and that condition is
+    # load-bearing, not a saving: a carded model's files leave "Linked from elsewhere" below, so with
+    # the panel hidden they would be on the page nowhere at all.
+    @project_models = if @panel_layout.visible?("models")
+      Maker::ProjectModels.for(current_user, @project, attached_node_ids: @attachments.map(&:node_id))
+    end
+    carded = @project_models&.owned_node_ids || Set.new
     # "Linked" is a FOLDER question, asked of the tree, not a LIST question: the listing is capped
     # at FILE_CAP, so an attached file past the cap, or inside a repository the walk never entered
     # (DIR_CAP), is absent from `node_ids` while sitting squarely in the folder — it must not
     # reappear as "linked from elsewhere". `section` is the file's own library path (not scoped to
     # this folder, since a Linked file lives somewhere else in it entirely) — @listing.path_for
     # reads the same tree this listing already built, so this costs no extra query either.
-    @linked_rows = @attachments.reject { |a| @listing.contains?(@page_nodes[a.node_id]) }
+    @linked_rows = @attachments.reject { |a| @listing.contains?(@page_nodes[a.node_id]) || carded.include?(a.node_id) }
                                .map { |a|
                                  node = @page_nodes[a.node_id]
                                  Maker::ProjectFolderListing::Row.new(node:, attachment: a, linked: true,
@@ -382,34 +397,36 @@ class ProjectsController < ApplicationController
     # already dropped anything @page_nodes could not find — `stat_all` would answer nothing for a
     # gone id anyway, but it would still spend a slot in the ORDERED walk BACKFILL_LIMIT bounds.
     #
-    # A CLOSED REPOSITORY'S FILES ARE NOT TILES, SO THEY ARE NOT IN THIS UNION (2026-09-07). Since
-    # `_file_tree_section` stopped drawing tiles inside a repo — the Finder-style browser navigates
-    # it instead — every id beneath one is a thumbnail this page renders nowhere, and
+    # THE UNION IS WHAT THIS RENDER PAINTS, ONE TERM PER PAINTING SURFACE (F-S15-1, 2026-10-19).
     # `ThumbnailMap.for` does not merely LOOK: it BACKFILLS, creating a preview row and enqueueing a
-    # render job per missing id. Probed in review: a project whose repository holds 60 files
-    # enqueued 60 GeneratePreviewJobs from a page that shows none of them, spending the bounded
-    # BACKFILL_LIMIT budget the visible tiles are what it exists for. EXCEPT @generated_ids — a
-    # generated file INSIDE a repository still renders as a tile in the Generated group below, so
-    # its thumbnail must stay in the map. The subtree walk is the listing's own
-    # (Maker::ProjectFolderListing#repo_subtree_ids): in memory over the tree it already built, so
+    # render job for every id it is handed that has none. An id no surface paints is a job for a
+    # picture nobody sees, spent from the bounded BACKFILL_LIMIT budget the visible cells exist for
+    # (probed in review: a project whose repository held 60 files enqueued 60 GeneratePreviewJobs
+    # from a page showing none of them). A painted id the union misses spins for its polls and ends
+    # as a badge, and on chunk_remote it stays that way: nothing but a backfill creates a row there.
+    #
+    # THE TILES: every file the listing holds, minus every file beneath `no_tiles`, the SAME Dirs the
+    # recent row skipped above. The union used to derive its own exclusion keyed on `repo?`, and it
+    # disagreed with the row in four reachable cases: it backfilled a hidden panel, a browsed plain
+    # folder and a repository nested in a tiles-view panel, none of which draws a tile, and it never
+    # backfilled an image inside a browsed repository, which Photos paints (project_page_test.rb pins
+    # all four). EXCEPT @generated_ids: a generated file renders as a tile in the Generated group
+    # wherever it physically sits. Backups need no exception: Dir#subtree_file_ids never holds one,
+    # and the Backups group draws them all. In memory over the tree the listing already built, so
     # this costs no query and page_query_budget_test.rb stays flat.
-    # EXCEPT A DEPTH-ONE REPOSITORY WHOSE PANEL IS NOT IN THE BROWSER (folder panels; found in
-    # review): the exclusion was written when a repository could only ever render as the browser.
-    # A `tiles` or `list` view puts exactly those ids on the page as tiles, and a tile this map
-    # never backfilled spins for its 41 polls and then wears "Preview not supported" over a file
-    # that renders fine — worst on chunk_remote, where nothing but a backfill creates a row. A
-    # nested repository is still a closed browser section, so it stays out.
-    unrolled = @listing.tree.select { |d| d.repo? && @panel_layout.view_for(Maker::ProjectKind.folder_key(d.node_id)) != "browser" }
-                            .flat_map(&:subtree_file_ids)
-    hidden_in_repos = @listing.repo_subtree_ids - @generated_ids - unrolled
-    tile_ids = @listing.node_ids.reject { |id| hidden_in_repos.include?(id) } +
+    untiled = no_tiles.flat_map(&:subtree_file_ids).to_set - @generated_ids
+    tile_ids = @listing.node_ids.reject { |id| untiled.include?(id) } +
                @linked_rows.map(&:node_id)
+    # PHOTOS (stage 4, S4-1): the public page's own definition, on the maker's page too, and ITS OWN
+    # TERM IN THE UNION, which is why it is computed here, above it. The panel is always shown
+    # (Maker::ProjectKind::ALWAYS) and paints every image in the folder at any depth, a hidden
+    # panel's and a browsed repository's included, so `tile_ids` cannot stand in for it. Its entry
+    # half is every live build-log photo, exactly what projects/_log_entry paints. In memory over
+    # @listing, @entries and @page_nodes, all loaded above, so nothing here queries.
+    @photo_rows = Maker::ProjectPhotos.rows(listing: @listing, entries: @entries, page_nodes: @page_nodes)
     # THE PICKERS' OWN ROWS, IN EDIT MODE ONLY (content blocks; spec §2): the image block's picker
-    # and the page intro's cover picker both draw the FOLDER'S images as thumbnails, and a row this
-    # map never backfilled shows a spinner that never resolves — worst on chunk_remote, where
-    # nothing but a backfill creates a preview row. Every one of these ids is already in
-    # `@listing.node_ids`, so on a project with no repository this adds nothing; what it rescues is
-    # an image inside one, which `hidden_in_repos` above has just taken out of `tile_ids`.
+    # and the page intro's cover picker both draw the FOLDER'S images as thumbnails. They need no
+    # union term: they are exactly the folder half of @photo_rows, which the union already holds.
     @folder_images = @editing ? @listing.all_rows.select { |row| row.role == "image" } : []
     # AN IMAGE BLOCK'S PICTURE, ONLY WHERE IT IS LIVE: `@page_nodes` has already answered that, and
     # a dead id here would spend a slot in the backfill budget for a block that renders nothing.
@@ -421,20 +438,17 @@ class ProjectsController < ApplicationController
     # of the Files panel: behind 300 listed tiles, a recent file past the cap would wait renders for
     # a slot (project_attachments_test.rb).
     recent_ids = @recent_files.map(&:node_id)
+    # The model cards' covers SECOND, after the recent row: BACKFILL_LIMIT is first-come, as above.
+    model_cover_ids = @project_models ? @project_models.models.filter_map(&:cover_node_id) : []
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
-      current_user, recent_ids + tile_ids + entry_photo_ids.select { |id| @page_nodes.key?(id) } +
-                    block_thumb_ids + @folder_images.map(&:node_id) + (@cover_node ? [ cover_id ] : [])
+      current_user, recent_ids + model_cover_ids + tile_ids + @photo_rows.map(&:node_id) + block_thumb_ids +
+                    (@cover_node ? [ cover_id ] : [])
     )
-    # PHOTOS (stage 4, S4-1): the public page's own definition, on the maker's page too. In memory
-    # over @listing, @entries and @page_nodes — all already loaded above — so nothing here queries,
-    # and every row's thumbnail is already in @page_thumbs (folder rows through tile_ids, entry
-    # photos through entry_photo_ids).
-    @photo_rows = Maker::ProjectPhotos.rows(listing: @listing, entries: @entries, page_nodes: @page_nodes)
-    # TILE_IDS ONLY, NOT THE BUILD-LOG PHOTOS. Every tile this page can render — a folder section,
-    # Backups, Generated, Linked — carries `contextmenu->filemenu#open`;
-    # `_log_entry`'s photos are spans driven by the `thumbs` controller alone, with no menu to add
-    # an entry to — so an origin resolved for one would be work nothing reads. That is why entry
-    # photos are not merged into this union either.
+    # TILE_IDS ONLY, NOT THE PHOTO ROWS. Every tile this page can render — a folder section,
+    # Backups, Generated, Linked — carries `contextmenu->filemenu#open`; `_log_entry`'s photos and
+    # the Photos panel's cells are driven by the `thumbs` controller alone, with no menu to add an
+    # entry to — so an origin resolved for one would be work nothing reads. That is why the photo
+    # rows join the thumbnail union above and not this one.
     @addon_origins = addon_origins_for((recent_ids + tile_ids).uniq)
     @tasks = @project.tasks.order(:position, :created_at).to_a
     @sheets = @project.sheets.to_a
@@ -443,6 +457,10 @@ class ProjectsController < ApplicationController
     #
     # SKIPPED WHEN HIDDEN (stage 4, S4-7) — one query, and projects/_wiring is its only reader.
     @connections = @panel_layout.visible?("wiring") ? @project.connections.to_a : []
+    # SAVED CALCULATIONS (2026-10-21). ONE query, oldest first (Maker::Project#calculations), skipped
+    # when hidden like the wiring table above: projects/_calculations is its only reader, and the
+    # stats line does not count them.
+    @calculations = @panel_layout.visible?("calculations") ? @project.calculations.to_a : []
     # The entry form binds to a real object: `rich_text_area` reads its value from the form's
     # object, and Action Text's form helper is not built for the object-less `fields_for` the plain
     # textarea used.
@@ -604,6 +622,7 @@ class ProjectsController < ApplicationController
     when "wiring" then @connections.any?
     when "releases" then @releases.any?
     when "sheets" then @sheets.any?
+    when "calculations" then @calculations.any?
     end
   end
 
@@ -623,21 +642,28 @@ class ProjectsController < ApplicationController
     dirs.flat_map { |d| (d.repo? ? [ d ] : []) + collect_repo_dirs(d.children) }
   end
 
-  # THE SUBFOLDERS WHOSE FILES THE PAGE DRAWS NO TILE FOR (slice 6), so the recent row does not draw
-  # one either: a folder panel the maker HID (hidden is absent, files and all — project_page_test.rb),
-  # a depth-one repository in the browser view, and every repository nested deeper, which is always
-  # a closed browser section. The last two are the exclusion #show's thumbnail union already makes
-  # (`hidden_in_repos`), asked of dirs rather than file ids so the recent query can subtract
-  # them before its LIMIT. In memory over the listing's tree; no query.
+  # THE SUBFOLDERS THIS RENDER DRAWS NO FILE CELLS FOR (slice 6; ONE answer since F-S15-1): the Dirs
+  # whose whole subtree the recent row leaves out of its query AND the thumbnail union leaves out of
+  # its backfill. #show calls this once and hands the same Dirs to both. Three kinds:
+  #   * a depth-one folder panel the maker HID, which is absent from the page, files and all
+  #     (project_page_test.rb). EXCEPT IN EDIT MODE: the editor's loop is `order`, and a hidden
+  #     panel renders ghosted WITH its tiles (projects/_panel_slot), so on that render it is painted.
+  #     That reading puts a ghost's files on the editor's recent row too, and it is the owner's to
+  #     confirm (F-S15-1): dropping `!@editing &&` keeps the editor's row identical to the page's,
+  #     at the price of the ghost's tiles never being backfilled.
+  #   * a depth-one panel in the BROWSER view, repository or plain folder: the Finder-style browser
+  #     replaces its tiles, its rows and its nested sections (projects/_folder_panel).
+  #   * every repository nested inside any other panel, which is always a closed browser section
+  #     (projects/_file_tree_section).
+  # THE PANEL'S VIEW DECIDES, NEVER `repo?` ALONE (slice 6 review): a plain folder in the browser
+  # draws no tiles, and a repository in tiles or list draws its own. Asked of Dirs rather than file
+  # ids so the recent query can subtract them before its LIMIT; the union reads their
+  # Dir#subtree_file_ids. In memory over the listing's tree; no query.
   def dirs_without_tiles
     @listing.tree.flat_map do |dir|
       key = Maker::ProjectKind.folder_key(dir.node_id)
-      # THE PANEL'S VIEW DECIDES, NOT WHETHER IT IS A REPOSITORY (slice 6 review): a hidden panel and a
-      # browser-view panel — repository or plain folder — draw no tiles; any other panel draws its own
-      # files, and every repository nested inside it is a closed browser section.
-      if !@panel_layout.visible?(key) || @panel_layout.view_for(key) == "browser" then [ dir ]
-      else collect_repo_dirs(dir.children)
-      end
+      dropped = (!@editing && !@panel_layout.visible?(key)) || @panel_layout.view_for(key) == "browser"
+      dropped ? [ dir ] : collect_repo_dirs(dir.children)
     end
   end
 

@@ -7,11 +7,13 @@ module Web
     setup do
     end
 
+    # VERIFIED, through test_helper's `sign_in_web!`: two tests below assert only negatives
+    # (`count: 0`, `assert_difference 0`), and both passed with nobody signed in while this posted
+    # and checked nothing.
     def sign_in(email = "maker@example.com")
       user = User.find_by(email:) ||
              User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email:, password: PASSWORD } }
-      user
+      sign_in_web!(user, password: PASSWORD)
     end
 
     test "the file detail page offers a project dropdown, not a button per project" do

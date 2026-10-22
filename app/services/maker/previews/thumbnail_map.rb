@@ -29,8 +29,9 @@ module Maker
     # sixth caller gets it without knowing it needed to ask.
     #
     # A page render therefore WRITES: it creates preview rows and enqueues jobs on a GET. That is
-    # already true of `files#index` and it is bounded (BACKFILL_LIMIT), idempotent (`Enqueue`
-    # no-ops on a current row) and best-effort. The alternative — an adjacent `backfill` call each
+    # already true of `files#index` and it is bounded (BACKFILL_LIMIT), idempotent (a current row
+    # needs no job, and one whose job was lost is restamped as it is healed, so at most once per
+    # `Enqueue::STALLED_AFTER`) and best-effort. The alternative — an adjacent `backfill` call each
     # caller must remember — is the two-call shape `FilesController` had, and forgetting it is
     # precisely how these five call sites diverged in the first place.
     class ThumbnailMap
@@ -84,7 +85,7 @@ module Maker
       # A ROW FROM AN OLDER RENDERER IS NOT "EXISTING". Leaving that out is what made the whole
       # `renderer_revision` mechanism unreachable for thumbnails once already: `Enqueue` compares
       # revisions correctly, but only something that CALLS it can act on that, and the backfill
-      # below skips any node this method reports a row for. So a stale row satisfied the check,
+      # below skipped any node this method reported a row for. So a stale row satisfied the check,
       # nothing re-enqueued, and 172 of 174 LightBurn thumbnails sat at revision 1 through two
       # deploys that had bumped it (§14h). On this path the second half of the same bug also
       # showed: the stale artifact was served, so the page presented an old picture as the file's
@@ -128,6 +129,14 @@ module Maker
       # Directories are asked of the PORT's `kind`, which all three adapters carry — a folder named
       # `models.stl` is still a folder, and there are no bytes to render.
       #
+      # A ROW THAT IS CURRENT IS ASKED ONE MORE QUESTION: does it still need a job? This loop used
+      # to skip every node holding a current row, which is right for `ready` and was exactly wrong
+      # for a row whose job was lost: `pending`/`processing` on current content never reached
+      # `Enqueue::STALLED_AFTER`'s heal, so it spun on every render forever. `Enqueue.needs_job?` is
+      # the one answer, asked of the row already in memory (no query unless a job is needed), with
+      # `retry_failed: false` — a page render that re-queued every failed render it showed would
+      # be a doomed job per failed file per view.
+      #
       # The new rows are deliberately NOT merged into the map: the view then sees nil and shows a
       # spinner, which is now truthful because a job IS coming.
       def self.backfill!(user, node_ids, info, map)
@@ -136,9 +145,13 @@ module Maker
           break if budget.zero?
 
           fi = info[node_id]
-          next if fi.nil? || fi.kind != "file"
-          next if fi.content_token.nil? || map.current?(node_id)
-          next if Maker::Previews::Registry.for_filename(fi.name).nil?
+          next if fi.nil? || fi.kind != "file" || fi.content_token.nil?
+
+          renderer = Maker::Previews::Registry.for_filename(fi.name)
+          next if renderer.nil?
+          revision = Maker::Previews::Enqueue.revision_for(renderer, "thumbnail")
+          next unless Maker::Previews::Enqueue.needs_job?(map.thumb(node_id), version_id: fi.content_token,
+                                                          revision:, retry_failed: false)
 
           Maker::Previews::Enqueue.call(user:, node_id:, name: fi.name, version_id: fi.content_token)
           budget -= 1
@@ -154,11 +167,6 @@ module Maker
       # in _thumb). Every row in `@previews` has already passed `Enqueue.current_preview?`, so
       # there is nothing left to compare here — a node with no CURRENT row is simply absent.
       def thumb(node_id) = @previews[node_id]
-
-      # Is there already an artifact for this node's current content and current build? Distinct
-      # from `thumb(...)` being non-nil only in intent — this is the backfill's question, and
-      # naming it keeps the loop from reading as though it cared about the row itself.
-      def current?(node_id) = !thumb(node_id).nil?
     end
   end
 end

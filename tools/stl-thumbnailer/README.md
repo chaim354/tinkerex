@@ -29,6 +29,14 @@ fixed iso-ish camera (45° yaw / 30° pitch, ~10% margin) → rasterize with
 directional key light + ambient) at 3× supersampling → box-downsample for
 anti-aliasing → encode PNG with [`image`].
 
+The picture is **ink on paper**: a warm mid-grey material (`#7f7b73`, reached
+exactly by a face square-on to the key light) on a **pure-white** ground. The
+Tinkerex web app multiplies every thumbnail onto a themed card, so the ground
+must be exactly white; both values mirror `Maker::Previews::Palette` and the
+CSS tokens, and `test/services/maker/previews/palette_test.rb` (in the Rails
+app) parses `src/lib.rs` to hold them equal. A colour change needs the Rails
+side's `Stl::THUMBNAIL_REVISION` bumped too, or nothing re-renders.
+
 Robustness: empty/degenerate meshes produce a blank-but-valid PNG; missing or
 zero STL normals are recomputed from triangle geometry; unparseable input
 returns `Err` (never panics).

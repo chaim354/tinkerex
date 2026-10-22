@@ -68,7 +68,26 @@ class DocsHygieneTest < ActiveSupport::TestCase
   #
   # LOWERED 1,362 -> 1,360 ON 2026-10-14 (Phase 6, the maker half): §14j's first bullet lost the
   # bin/sync-server function it described, and §13 a sentence about a deploy.yml the sync repo deleted.
-  MAX_LINES = 1_360
+  #
+  # LOWERED 1,360 -> 1,358 ON 2026-10-19 (audit slice S-1, suite honesty): §15's "bin/ci PRINTS the
+  # three counts and never COMPARES them" became "bin/ci compares them" (Ci::LegRuns), two lines fewer.
+  #
+  # LOWERED 1,358 -> 1,356 ON 2026-10-19 (audit slice F-S01-1, one reading of LIBRARY_BACKEND): §14a's
+  # two bullets about check!'s `chunk` default became one bullet about the reading that replaced it.
+  #
+  # LOWERED 1,356 -> 1,353 ON 2026-10-19 (audit slice F-X-1, the dead port kwargs): §14a's
+  # "finalize_upload broadcasts by DEFAULT, with exactly one explicit opt-out" described a keyword
+  # no adapter read; it became the rule that replaced it, 3 lines shorter.
+  #
+  # RAISED 1,353 -> 1,355 ON 2026-10-20 (K, the library chooser): §14a's new bullet first fitted in
+  # the ceiling by re-wrapping its neighbours, and then review found the invariant it most needed --
+  # the chosen folder is read per request and per job, NEVER memoised per process, because the
+  # in-Puma job supervisor forks (a per-process memo shipped in the branch and left every worker on
+  # the old folder). That is the line a future editor would "optimise" back, so it earns its two
+  # lines here rather than living only in app/models/setting.rb.
+  # LOWERED 1,355 -> 1,354 ON 2026-10-20 (shelves): the model catalog lost its Settings page, and
+  # §14k's stub its two paths with it.
+  MAX_LINES = 1_354
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size

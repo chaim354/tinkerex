@@ -14,7 +14,16 @@
 
   /* --- Tools (addons) gallery --- */
   .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
-  .addon-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }
+  /* The gallery's two kinds (2026-10-21): Built in (the calculator, written in the view) above the
+     Add-ons a manifest makes. The heading is the page's section heading, quieter than the h1. */
+  .tools-section { margin-bottom: var(--space-5); }
+  .tools-section-head { margin: 0 0 var(--space-3); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
+  .calculator-card .addon-icon .rail-icon { width: 22px; height: 22px; }
+  .calculator-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
+  .calculator-card-actions form { display: inline; }
+  /* `.tool-card` is a built-in tool's card (the calculator): the same face, a different class, so
+     every `.addon-card` is still one a manifest made. It is not a link, so it takes no hover. */
+  .addon-card, .tool-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }
   .addon-card:hover { text-decoration: none; border-color: var(--fg); }
   .addon-card.disabled { opacity: .6; }
   .addon-card-head { display: flex; align-items: center; gap: 10px; }
@@ -68,7 +77,6 @@
   }
   .box-toc-all:hover { color: var(--fg); }
   .box-toc-list { list-style: none; padding: 0; margin: 0; }
-  .box-toc-list li[hidden] { display: none; }
   .box-toc-list a {
     display: flex; align-items: center; justify-content: space-between; gap: 8px;
     padding: 5px 8px; border-radius: 7px; font-size: 14px; color: var(--fg);
@@ -94,7 +102,6 @@
   details[open] > .box-group-summary::before, details[open] > .box-saved-summary::before { transform: rotate(45deg); }
   .box-group-summary:hover .box-group-title, .box-saved-summary:hover .box-saved-name { color: var(--fg); }
   .box-group > .tools-grid { margin-top: 10px; }
-  .addon-card[hidden], .box-group[hidden] { display: none; }
 
   /* The saved rail: section, then box type, both closed until asked for. */
   .box-saved-rail { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
@@ -218,8 +225,10 @@
   }
   .generator-field input[type="checkbox"] { width: auto; align-self: flex-start; }
   .generator-save { margin-top: 4px; align-self: flex-start; }
-  .generator-preview { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; background: var(--thumb-stage); }
-  .generator-preview img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; }
+  /* A generator's live drawing is ink on paper too (design-system.md rule 5): the panel is the
+     card, and the drawing is multiplied onto it. */
+  .generator-preview { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; background: var(--thumb-stage); isolation: isolate; }
+  .generator-preview img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; mix-blend-mode: multiply; }
   .generator-saved-list { margin-top: 28px; }
   .generator-saved { margin: 4px 0; }
 

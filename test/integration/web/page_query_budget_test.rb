@@ -34,7 +34,7 @@ module Web
     setup do
       @user = User.create!(email: "budget@example.com", password: PASSWORD,
                            confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     # Only the addon-origins test below stubs the source; a reset is harmless for every other test
@@ -254,6 +254,10 @@ module Web
           # STAGE 3, S3-3: the wiring panel grows too -- one connection per iteration, the same
           # constant-in-N argument as tasks and build-log entries two lines up.
           project.connections.create!(user: @user, from_label: "from-#{id}", to_label: "to-#{id}")
+          # 2026-10-21: A SAVED CALCULATION PER ITERATION, so the Calculations panel's rows grow with N
+          # (and stay off the visitor's page, whose budget shares this seed).
+          project.calculations.create!(user: @user, label: "calc #{id}", expression: "1in + 1mm",
+                                       result: 1.03937, unit: "in", inch_fraction: 16)
           # STAGE 3, S3-5: A RELEASE PER ITERATION, EACH WITH A FILE, and BOTH halves grow for a
           # reason. The panel has no cap, so the number of releases is what a missing
           # `includes(:rich_text_notes)` costs one query each of; the number of FILES is what a
@@ -302,16 +306,18 @@ module Web
     # inequality rather than a literal for the same reason every other budget here avoids one: the
     # counts differ per LIBRARY_BACKEND (§14e), and what is asserted is that the skip HAPPENS.
     #
-    # THREE PANELS AND NO MORE. @tasks and @sheets are counted by the page's stats line and
+    # FOUR PANELS AND NO MORE (calculations joined 2026-10-21). @tasks and @sheets are counted by
+    # the page's stats line and
     # @entries is read by Maker::ProjectPhotos, so skipping any of those three would change a
     # surface other than its own panel — ProjectsController#show says so at each site.
-    test "hiding bom, wiring and releases skips their controller loads" do
+    test "hiding bom, wiring, releases and calculations skips their controller loads" do
       project = @user.maker_projects.create!(name: "Skippable", status: "active")
       project_folder_rows!(@user, project)
       bom = project.boms.create!(user: @user)
       3.times do |i|
         bom.lines.create!(user: @user, part_name: "part #{i}", quantity: 1, unit: "each")
         project.connections.create!(user: @user, from_label: "a#{i}", to_label: "b#{i}")
+        project.calculations.create!(user: @user, label: "c#{i}", expression: "#{i}mm", result: i, unit: "mm")
         release = project.releases.create!(user: @user, version: "v#{i}", published_at: Time.current)
         node!("rel-#{i}", "rel-#{i}.stl")
         release.files.create!(user: @user, node_id: "rel-#{i}", name: "rel-#{i}.stl",
@@ -321,14 +327,14 @@ module Web
       get project_path(project)
       shown = count_queries { get project_path(project) }
 
-      project.update!(panels: { "hidden" => %w[bom wiring releases] })
+      project.update!(panels: { "hidden" => %w[bom wiring releases calculations] })
       get project_path(project)
       hidden = count_queries { get project_path(project) }
 
       assert_operator hidden, :<, shown,
                       "a hidden panel still paid for its loads: #{hidden} queries hidden against " \
                       "#{shown} shown. ProjectsController#show gates @bom/@bom_lines/@items/" \
-                      "@suppliers, @releases/@release_repos and @connections on @panel_layout."
+                      "@suppliers, @releases/@release_repos, @connections and @calculations on @panel_layout."
 
       # ONE PANEL AT A TIME, BECAUSE THE ASSERTION ABOVE IS AN AGGREGATE AND AN AGGREGATE CANNOT
       # SEE ONE GATE GO. Measured rather than reasoned: with `bom_shown = true` restored in
@@ -337,7 +343,7 @@ module Web
       # guard stayed GREEN over a gate that had stopped working. Each key below is compared against
       # the same `shown`, so each of the three gates carries weight on its own; a strict inequality
       # for the same reason as above, never a literal (§14e).
-      %w[bom wiring releases].each do |key|
+      %w[bom wiring releases calculations].each do |key|
         project.update!(panels: { "hidden" => [ key ] })
         get project_path(project)
         alone = count_queries { get project_path(project) }
@@ -409,7 +415,7 @@ module Web
         end
       end
       sign_out = -> { delete destroy_user_session_path }
-      sign_in = -> { post user_session_path, params: { user: { email: @user.email, password: PASSWORD } } }
+      sign_in = -> { sign_in_web!(@user, password: PASSWORD) }
       public_path = public_project_path("blockbudget", project.slug)
 
       measure = lambda do
@@ -447,7 +453,7 @@ module Web
       project_folder_rows!(@user, project)
       public_path = public_project_path("tabbudget", project.slug)
       sign_out = -> { delete destroy_user_session_path }
-      sign_in = -> { post user_session_path, params: { user: { email: @user.email, password: PASSWORD } } }
+      sign_in = -> { sign_in_web!(@user, password: PASSWORD) }
 
       measure = lambda do |n|
         keys = (1..n).map { |i| Maker::ProjectKind.tab_key(format("%012x", i)) }
@@ -623,6 +629,10 @@ module Web
                                                     logged_at: Time.current)
           entry.file_attachments.create!(user: @user, node_id: "#{id}-shot", role: "image", position: 0)
           project.connections.create!(user: @user, from_label: "from-#{id}", to_label: "to-#{id}")
+          # 2026-10-21: A SAVED CALCULATION PER ITERATION, so the Calculations panel's rows grow with N
+          # (and stay off the visitor's page, whose budget shares this seed).
+          project.calculations.create!(user: @user, label: "calc #{id}", expression: "1in + 1mm",
+                                       result: 1.03937, unit: "in", inch_fraction: 16)
           # THE LINKED CASE, which is also what grows `attached_ids` -- the two plucks `permits?`
           # answers the attachment arm from, and neither may become a query per attachment.
           node!(id, "#{id}.stl")
@@ -818,12 +828,21 @@ module Web
     end
 
     # Same reasoning as projects#index above: a model with no attachment has no derived cover, so
-    # the grid's `@covers` map was being budgeted while resolving nothing.
+    # the grid's `@covers` map was being budgeted while resolving nothing. EVERY MODEL SITS IN ITS
+    # OWN PROJECT'S FOLDER, one level down, so the page's grouping (Maker::ModelProjects) walks a
+    # chain and forms a group per model -- a model at the root would skip the walk entirely and the
+    # budget would say nothing about it.
     test "files/models#index does not grow with the number of models" do
       add = lambda do |prefix, count|
         count.times do |i|
+          project = @user.maker_projects.create!(name: "P #{prefix}#{i}")
+          folder = @user.nodes.create!(node_id: "mp-#{prefix}#{i}", name: "p#{prefix}#{i}", kind: "dir",
+                                       size: 0, mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "mm-#{prefix}#{i}", name: "models", kind: "dir", parent_node_id: folder.node_id,
+                              size: 0, mtime: 1_700_000_000_000_000_000)
+          project.update_column(:folder_node_id, folder.node_id)
           model = @user.maker_models.create!(title: "#{prefix}#{i}", slug: "#{prefix}#{i}")
-          node!("mc-#{prefix}#{i}", "mc-#{prefix}#{i}.stl")
+          node!("mc-#{prefix}#{i}", "mc-#{prefix}#{i}.stl").update_column(:parent_node_id, "mm-#{prefix}#{i}")
           model.file_attachments.create!(user: @user, node_id: "mc-#{prefix}#{i}", role: "image")
         end
       end
@@ -831,28 +850,6 @@ module Web
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
                               "files/models#index")
-    end
-
-    # THIS PAGE GROWS ON TWO AXES AT ONCE -- one row per shelf, and each row's live/missing
-    # indicator scanned against every DIRECTORY in the library -- so it is seeded on both. The scan
-    # is Ruby over ONE pluck that Settings::ShelvesController#decorate memoizes across the whole map; drop
-    # that memo and the page costs a pluck per shelf, which is precisely the linear-in-rows shape
-    # this file exists for and which no assertion about the rendered markup can see.
-    test "shelves#index does not grow with shelves or directories" do
-      # Stamped, so seeding is not a write inside the measured requests. It would be absorbed by the
-      # warm-up render either way; this makes what is being counted unambiguous.
-      @user.update_column(:shelves_seeded_at, Time.current)
-      add = lambda do |prefix, count|
-        count.times do |i|
-          @user.maker_shelves.create!(path: "#{prefix}#{i}")
-          @user.nodes.create!(node_id: "sd-#{prefix}#{i}", name: "#{prefix}#{i}", kind: "dir",
-                              size: 0, mtime: 1_700_000_000_000_000_000)
-        end
-      end
-      assert_constant_queries(settings_shelves_path,
-                              -> { add.call("s", SMALL) },
-                              -> { add.call("l", LARGE - SMALL) },
-                              "shelves#index")
     end
 
     test "models#show does not grow with attachments or print runs" do
@@ -869,6 +866,27 @@ module Web
                               -> { add.call("ms", SMALL) },
                               -> { add.call("ml", LARGE - SMALL) },
                               "models#show")
+    end
+
+    # THE PANE (2026-10-21): one file's viewer, whatever the model holds. The first attachment is the
+    # one shown at both sizes, so the measurement is the page around one viewer, not the viewer.
+    test "models#show with a file in the pane does not grow with attachments or print runs" do
+      model = @user.maker_models.create!(title: "Paned", slug: "paned")
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}#{i}"
+          node!(id, "#{id}.stl")
+          model.file_attachments.create!(user: @user, node_id: id, role: "model")
+          model.print_runs.create!(user: @user, printed_on: Date.current, outcome: "success")
+        end
+      end
+      assert_constant_queries(model_path(model, file: "ps0"),
+                              -> { add.call("ps", SMALL) },
+                              -> { add.call("pl", LARGE - SMALL) },
+                              "models#show (file pane)")
+      # THE PANE WAS MEASURED, NOT DETAILS: a regression in ModelsController#stage_for would quietly
+      # turn this into a second measurement of the Details page above.
+      assert_select "turbo-frame#model_stage .model-stage-name", text: "ps0.stl"
     end
 
     # A REAL FOLDER, NOT THE ROOT. This test has always been named for the folder view and has
@@ -1257,19 +1275,18 @@ module Web
                               "search#index")
     end
 
-    # STAGE 2, S2-6 (the Filing count added in stage 3, S3-1): five plain counts, one per
-    # reference list -- each a single `SELECT COUNT(*)`, independent of how many rows it is
-    # counting, so growing all five together is what proves none of them was quietly rewritten
-    # into something that scans rows. Rules are created directly, not through
-    # Maker::FilingRules.seed! -- #show never seeds (its own header: a bare count must not
-    # side-effect 82 rows into existence), so this measures the plain count alone.
-    test "settings#show does not grow with shelves, suppliers, locations, filing rules or tags" do
+    # STAGE 2, S2-6: four plain counts, one per reference list (the Filing count that stage 3,
+    # S3-1 added went with the Filing row, 2026-10-20) -- each a single `SELECT COUNT(*)`,
+    # independent of how many rows it is counting, so growing all four together is what proves
+    # none of them was quietly rewritten into something that scans rows. Shelves are created
+    # directly, not through Maker::Shelves.ensure! -- #show never seeds (its own header: a bare
+    # count must not side-effect 82 filing rules into existence), so this measures the count alone.
+    test "settings#show does not grow with shelves, suppliers, locations or tags" do
       add = lambda do |prefix, count|
         count.times do |i|
-          @user.maker_shelves.create!(path: "#{prefix}shelf#{i}")
+          @user.maker_shelves.create!(name: "#{prefix}shelf#{i}")
           @user.maker_suppliers.create!(name: "#{prefix}sup#{i}")
           @user.maker_locations.create!(name: "#{prefix}loc#{i}")
-          @user.maker_filing_rules.create!(ext: "#{prefix}e#{i}", folder: "other")
           @user.maker_tags.create!(name: "#{prefix}tag#{i}")
         end
       end
@@ -1313,39 +1330,42 @@ module Web
                               "settings/tags#index")
     end
 
-    # STAGE 3, S3-1: THE FILING RULES LIST. Rows are created directly (not through
-    # Maker::FilingRules.seed!) BEFORE the first request, so #index's own `seed!` call sees
-    # `exists?` true and never runs its insert_all -- the measurement below is of the plain
-    # `order(:ext)` read alone, the same steady-state argument the thumbnail-backfill comment
-    # above makes for the file pages.
-    test "settings/filing_rules#index does not grow with the number of rules" do
+    # THE SHELVES PAGE ON ITS RULES AXIS (stage 3, S3-1, when it was Filing). Rows are created
+    # directly (not through Maker::FilingRules.seed!) BEFORE the first request, so #index's own
+    # `seed!` call sees `exists?` true and never runs its insert_all, and Maker::Shelves.ensure!'s
+    # one insert (`other`) lands in the warm-up render -- the measurement below is of the steady
+    # state, the same argument the thumbnail-backfill comment above makes for the file pages. Every
+    # rule here files into `other`, so this grows the chips inside ONE card.
+    test "settings/shelves#index does not grow with the number of rules" do
       add = lambda do |prefix, count|
         count.times { |i| @user.maker_filing_rules.create!(ext: "#{prefix}e#{i}", folder: "other") }
       end
-      assert_constant_queries(settings_filing_rules_path,
+      assert_constant_queries(settings_shelves_path,
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
-                              "settings/filing_rules#index")
+                              "settings/shelves#index")
     end
 
-    # STAGE 4, S4-2: THE SAME PAGE ON ITS OTHER AXIS, AND THE ONE THE CARD LAYOUT ADDED. The case
-    # above grows RULES inside a single folder, which the obvious wrong implementation -- a
-    # `where(folder:)` inside the card partial -- survives untouched, because the number of CARDS
-    # never moves there. Eleven cards over one query is the property; a maker who invents folders
-    # is the reader who pays for the other shape. Every row here names a folder of its own, so the
-    # page renders 14 cards small and 26 large, and a per-card query shows as +12.
-    #
-    # Rows are created directly (not through Maker::FilingRules.seed!) BEFORE the first request, so
-    # #index's own `seed!` sees `exists?` true and never runs its insert_all -- the same
-    # steady-state argument the case above and the thumbnail-backfill comment both make.
-    test "settings/filing_rules#index does not grow with the number of folders" do
+    # THE SAME PAGE ON ITS OTHER TWO AXES: SHELVES AND GROUPS (stage 4, S4-2 grew cards; 2026-10-20
+    # grew groups). The case above grows RULES inside a single card, which the obvious wrong
+    # implementation -- a `where(folder:)` inside the card partial -- survives untouched, because
+    # the number of CARDS never moves there. Each iteration here adds a rule naming a folder of its
+    # own, a group, and that folder's shelf inside the group, so the page grows one card AND one
+    # group section per step: a per-card rules query, a per-group shelves query or a per-card
+    # groups lookup each shows as growth. The rows exist before the first request, so the warm-up
+    # render absorbs any insert Maker::Shelves.ensure! makes.
+    test "settings/shelves#index does not grow with the number of shelves or groups" do
       add = lambda do |prefix, count|
-        count.times { |i| @user.maker_filing_rules.create!(ext: "#{prefix}e#{i}", folder: "#{prefix}f#{i}") }
+        count.times do |i|
+          @user.maker_filing_rules.create!(ext: "#{prefix}e#{i}", folder: "#{prefix}f#{i}")
+          group = @user.maker_shelf_groups.create!(name: "#{prefix}g#{i}")
+          @user.maker_shelves.create!(name: "#{prefix}f#{i}", shelf_group: group)
+        end
       end
-      assert_constant_queries(settings_filing_rules_path,
+      assert_constant_queries(settings_shelves_path,
                               -> { add.call("s", SMALL) },
                               -> { add.call("l", LARGE - SMALL) },
-                              "settings/filing_rules#index (folders)")
+                              "settings/shelves#index (shelves and groups)")
     end
 
     # STAGE 4, S4-5: /u/:handle GREW PER-CARD WORK (a cover thumbnail and the maker's handle), so it

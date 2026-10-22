@@ -21,7 +21,7 @@ module Web
     setup do
       @user = User.create!(email: "mpt-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
     end
 
     # A file shaped like one in a real library — a content token, so `stat_all` reports content and
@@ -143,6 +143,129 @@ module Web
       assert_no_enqueued_jobs(only: Maker::GeneratePreviewJob) { get model_path(model) }
       assert_response :success
       assert_select ".thumb img"
+    end
+
+    # ----------------------------------------------------------------------------------
+    # GAP 3 — a row whose job was LOST. `pending`/`processing` assert that a job is coming, and
+    # `Enqueue::STALLED_AFTER` is what stops believing them — but it lived only inside
+    # `Enqueue.call`, and every door that renders a row asked "is this row current?" first and
+    # never called it for one that was. A row wedged on current content (a share unmounted through
+    # the job's five retries, a job lost between claim and start) stayed wedged: the grid spun its
+    # 40 polls and gave up, the file page sat on "Generating preview…", forever. The doors now ask
+    # `Enqueue.needs_job?`, the predicate `call` itself answers by.
+    # ----------------------------------------------------------------------------------
+
+    # A row stamped three days ago, at the file's CURRENT content and build — so nothing but its
+    # status and its age can make a door enqueue for it.
+    def stalled_thumbnail!(node_id, name)
+      travel_to(3.days.ago) { in_flight_thumbnail!(node_id, name) }
+    end
+
+    def in_flight_thumbnail!(node_id, name)
+      @user.maker_previews.create!(node_id:, version_id: token_for(node_id), kind: "thumbnail",
+                                   status: "processing", renderer_revision: current_revision(name))
+    end
+
+    def enqueued_preview_ids
+      enqueued_jobs.select { |j| j[:job] == Maker::GeneratePreviewJob }.map { |j| j[:args].first }
+    end
+
+    # MUTATION: drop the restamp from `Enqueue.call` and the second load enqueues a duplicate;
+    # delete the stall line from `needs_job?` and the first load enqueues nothing.
+    test "the Files page re-enqueues a thumbnail whose job was lost, and only once per window" do
+      node = file!("lost-grid", "bracket.stl")
+      row = stalled_thumbnail!(node, "bracket.stl")
+
+      get files_path
+      assert_response :success
+      assert_equal [ row.id ], enqueued_preview_ids, "the Files page left a wedged row wedged"
+
+      clear_enqueued_jobs
+      get files_path
+      assert_empty enqueued_preview_ids, "a second load enqueued the same heal again"
+    end
+
+    test "the file page re-enqueues a thumbnail whose job was lost" do
+      node = file!("lost-page", "bracket.stl")
+      row = stalled_thumbnail!(node, "bracket.stl")
+
+      get file_path(node)
+      assert_response :success
+      assert_equal [ row.id ], enqueued_preview_ids, "the file page left a wedged row wedged"
+    end
+
+    # THE WINDOW'S OTHER HALF: a row that only just went in flight is believed, or every spinner on
+    # screen would enqueue a duplicate job on every load.
+    test "a row that only just went processing is believed by both pages" do
+      node = file!("busy", "bracket.stl")
+      in_flight_thumbnail!(node, "bracket.stl")
+
+      get files_path
+      assert_response :success
+      get file_path(node)
+      assert_response :success
+      assert_empty enqueued_preview_ids, "a render already under way was enqueued again"
+    end
+
+    # ----------------------------------------------------------------------------------
+    # GAP 4 — a renderer REBUILD (F-S08-2). A renderer bump re-renders a picture that is still of
+    # this file, so the row keeps showing it as `rebuilding` — through the queue wait AND the
+    # render. The job's start used to write `processing` over it, which every surface drew as a
+    # spinner (or "Generating preview…") for as long as the render took, and the file page polled
+    # and reloaded to get back the picture it had just taken down.
+    # ----------------------------------------------------------------------------------
+
+    CUBE_3MF = File.binread(Rails.root.join("test/fixtures/files/cube.3mf")).freeze
+
+    # Runs `look` while the preview job is under way — after its start, at its byte read, before
+    # its render — then hands the job a real 3MF so it finishes normally. The read is answered here
+    # rather than by the backend because these fixtures carry no bytes on any leg. Captured and
+    # restored, never prepended (generate_preview_job_test.rb says why).
+    def during_its_job(row, look)
+      original = Maker::FileBytes.method(:read)
+      Maker::FileBytes.define_singleton_method(:read) { |*, **| look.call; CUBE_3MF }
+      Maker::GeneratePreviewJob.perform_now(row.id)
+    ensure
+      Maker::FileBytes.define_singleton_method(:read, original)
+    end
+
+    # `.3mf` because its renderer needs no toolchain (it lifts the slicer's embedded thumbnail), so
+    # the job reaches its render on every box; `.stl` would stop at a missing binary first.
+    test "a renderer rebuild keeps the old picture up on the Files page and the file page" do
+      name = "case.3mf"
+      node = file!("rebuild", name)
+      row = preview!(node, name, revision: current_revision(name) - 1)
+      old = row.asset.blob.signed_id
+
+      get files_path # the render after the bump: its backfill queues the rebuild
+      assert_equal [ row.id ], enqueued_preview_ids
+
+      seen = nil
+      during_its_job(row, lambda {
+        seen = row.reload.then { |r| [ r.showable?, r.in_flight? ] }
+
+        get files_path
+        assert_select "[data-node-id=?] .thumb img[src*=?]", node, old
+        assert_select "[data-node-id=?] .thumb-spinner", node, count: 0
+
+        # THE POLL'S ANSWER for a cell that was spinning when the rebuild began: `ready`, with the
+        # picture. `rebuilding` there matches neither of thumbs_controller.js's arms, so the cell
+        # would poll out its 40 tries and settle on "Preview not supported".
+        get thumbnails_files_path(ids: node)
+        answer = response.parsed_body[node]
+        assert_equal "ready", answer["status"]
+        assert_includes answer["url"].to_s, old
+
+        get file_path(node)
+        assert_select ".model-viewer-fallback img.preview-image[src*=?]", old
+        # NO POLL CELL: /files/thumbnails answers `ready` for a row with a picture, so a page that
+        # polled here would reload into this same state, forever.
+        assert_select "[data-thumbs-pending]", { count: 0 },
+                      "a page showing its picture declared itself pending — it would reload in a loop"
+      })
+
+      assert_equal [ true, true ], seen, "mid-render the row must show its picture and be in flight"
+      assert row.reload.current_build?, "the rebuild did not land as the current build"
     end
 
     # THE DEGRADE PATH SURVIVES THE ENQUEUE. `ThumbnailMap` swallows a FetchError so a backend

@@ -1,4 +1,4 @@
-# The sync server overlay (docs/INSTALL.md section 5):
+# The sync server overlay (docs/INSTALL.md section 9, Advanced — still a work in progress):
 #
 #   docker compose -f docker-compose.yml -f docker-compose.chunk_remote.yml up -d --build
 #
@@ -47,7 +47,7 @@ services:
       # a self-hosted install never reclaims the bytes of an upload that never finalised.
       SYNC_SCHEDULER: "true"
       # Unset, chunk links carry the host each client connected through, which is right for this
-      # layout. Only a reverse proxy that changes the public address needs this (INSTALL.md section 8).
+      # layout. Only a reverse proxy that changes the public address needs this (INSTALL.md section 9).
       # CHUNK_PUBLIC_URL: https://sync.example.net
     ports:
       # What devices and the desktop client connect to; it must be reachable from them.

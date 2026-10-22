@@ -17,8 +17,10 @@
                             built by SearchController#index over the CAPPED rows, because a note
                             has no page of its own and the row is a link to the file it is on.
 
-  A FILE ROW IS A PLAIN NAME LINK, DELIBERATELY NOT thumb_cell_data — this list has no polling
-  cell to seed (docs/invariants/files-preview.md), just a name and an extension label.
+  A FILE ROW IS A NAME LINK, DELIBERATELY NOT thumb_cell_data — this list has no polling cell to
+  seed (docs/invariants/files-preview.md), just a name and an extension label. It and the :note
+  arm's link carry FilesHelper#file_open_data (2026-10-21): a click opens the file, a double-click
+  opens it in a new tab, as every file link on a signed-in page does.
 
   Renders nothing at all when records is empty, so a caller may render this unconditionally per
   group (SearchController#add_group never adds an empty one anyway; TagsController's groups can
@@ -49,7 +51,7 @@
               record.location&.name
             ].compact.join(" · ") %></span>
           <% when :file %>
-            <%= link_to record.name, file_path(record.node_id) %>
+            <%= link_to record.name, file_path(record.node_id), data: file_open_data %>
             <span class="result-sub"><%= File.extname(record.name).delete(".").upcase.first(4) %></span>
           <% when :folder %>
             <%#
@@ -71,7 +73,7 @@
               raw here would escape every tag into noise in the result row.
             %>
             <% names = local_assigns.fetch(:node_names, {}) %>
-            <%= link_to names[record.node_id] || "this file", file_path(record.node_id) %>
+            <%= link_to names[record.node_id] || "this file", file_path(record.node_id), data: file_open_data %>
             <span class="result-sub"><%= truncate(record.body.to_plain_text, length: 80) %></span>
           <% when :tag %>
             <%= link_to record.name, tag_path(record.name), class: "tag-chip" %>

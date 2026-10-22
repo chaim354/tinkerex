@@ -1,18 +1,27 @@
-/* The model catalog: index toolbar, the detail page's two columns, the file tree, print log,
-   and the shelf rows Settings::ShelvesController renders (they stayed in this sheet). */
+/* The model catalog: index toolbar, the detail page's two columns, the file tree, print log. The
+   shelf rows the old model-shelves settings page drew left with that page (2026-10-20). */
 @layer pages {
   /* The detail page's rules below (hero, gallery, file tree, print settings) were migrated from the
-     old models.css with the token substitution applied; the toolbar, the card badge, the print log,
-     the drop zone and the shelf rows were rewritten for PR 3. The .badge.mstatus-* rules are NOT
+     old models.css with the token substitution applied; the toolbar, the card cover, the print log,
+     and the drop zone were rewritten for PR 3. The .badge.mstatus-* rules are NOT
      here — they are components. The index toolbar is the .toolbar component, so this page only
      sizes what sits in it; the status filters are .chip and carry no page rule at all. */
   .models-toolbar { margin-bottom: 14px; }
   .models-toolbar input[type="search"] { flex: 0 1 260px; min-width: 160px; }
   .models-toolbar .chips { display: inline-flex; flex-wrap: wrap; gap: 6px; }
 
-  /* Detail page: main column (image → instructions) + side column (meta → files → print log). */
-  .model-layout { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(280px, 1fr); gap: 28px; align-items: start; }
-  @media (max-width: 800px) { .model-layout { grid-template-columns: 1fr; } }
+  /* THE MODEL PAGE, PRINTABLES-STYLE (2026-10-21): the model's files on the left, the pane on the
+     right. One column below 900px, the list first (modelstage_controller.js scrolls the pane into
+     view on a phone). Selection is ink (design-system rule 13): the shown entry is --fg on --raised. */
+  .model-layout { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: 28px; align-items: start; }
+  @media (max-width: 899px) { .model-layout { grid-template-columns: 1fr; } }
+  .model-index-details { display: block; padding: 4px 8px; margin-bottom: 14px; border-radius: 4px; font-weight: 600; }
+  .model-index a[aria-current="true"] { background: var(--raised); color: var(--fg); }
+  .model-stage { display: block; min-width: 0; }
+  .model-stage-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; }
+  .model-stage-name { font-size: 15px; margin: 0; overflow-wrap: anywhere; }
+  .model-stage-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+  .model-stage .preview-pdf { width: 100%; height: 75vh; }
 
   .model-hero { margin-bottom: 14px; }
   .model-hero-img { display: block; width: 100%; max-height: 60vh; object-fit: contain;
@@ -28,9 +37,8 @@
   .image-gallery .gallery-thumb, .image-gallery .gallery-thumb .thumb { width: 84px; height: 66px; display: inline-flex; align-items: center; justify-content: center; }
   .image-gallery img { width: 84px; height: 66px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); }
 
-  .model-instructions, .model-notes { margin-top: 20px; }
-  .model-instructions h2, .model-notes h2, .model-files h2 { font-size: 15px; margin: 0 0 10px; }
-  .model-main .preview-pdf { width: 100%; height: 640px; border: 1px solid var(--line); border-radius: var(--radius-panel); }
+  .model-notes { margin-top: 20px; }
+  .model-notes h2, .model-files h2 { font-size: 15px; margin: 0 0 10px; }
 
   /* Files as a scrollable folder tree. */
   .model-files { margin-bottom: 22px; }
@@ -56,28 +64,20 @@
   .ps-grid dt { color: var(--fg-muted); white-space: nowrap; }
   .ps-grid dd { margin: 0; }
 
-  /* The shelves settings page. A shelf row is path + status + Remove on one line, which needs the
-     button_to override: button_to emits a block-level <form>, so without it "Remove" drops onto its
-     own line under the two spans. */
-  .shelf-list { list-style: none; padding: 0; margin: 0 0 20px; max-width: 640px; }
-  .shelf-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); }
-  .shelf-list li form { display: inline; margin: 0; }
-  .shelf-path { font-family: var(--font-mono); font-size: 13px; }
-  .shelf-status { margin-left: auto; font: 11px/1.4 var(--font-mono); }
-  .shelf-add { display: flex; align-items: center; gap: 10px; }
-
-  /* The card's badge sits OVER the cover: the card's markup is untouched (it still renders the
-     badge after the name), so the placement is this rule and nothing else. */
-  .model-card { position: relative; }
-  .model-card .badge { position: absolute; top: 6px; left: 6px; }
+  /* A MODEL'S COVER IS SQUARE (2026-10-20). `.project-card .thumb` is a fixed 120px tall in a grid
+     whose columns are at least 150px wide, so a square render sat in a short, wide box. Model cards
+     only: project and explore cards keep their banner shape. The status badge that sat over the
+     cover's corner is gone; the chips above the grid and the model page carry the status. */
+  .model-card .thumb { height: auto; aspect-ratio: 1 / 1; }
 
   /* An empty hero is the 3D models icon (slice 5; no emoji in the interface), at the size the
      glyph it replaced was set. The model CARD's empty cover is sized by pages/projects.css's
      `.project-card .project-thumb-empty .rail-icon`: the card carries `.project-card` too. */
   .model-hero-empty .rail-icon { width: 48px; height: 48px; color: var(--fg-muted); }
 
-  /* The 3D models view's one pointer at the Settings rule that decides what counts as a model. */
-  .models-shelves-hint { margin: 0 0 14px; font-size: 13px; }
+  /* The 3D models view grouped by project: the head is the .group-head component, and only the
+     space between groups is this page's. */
+  .models-group + .models-group { margin-top: var(--space-5); }
 
   .print-log details.composer { margin: 0 0 10px; }
   .print-form { display: grid; gap: 8px; max-width: 480px; }
@@ -90,4 +90,8 @@
   .dropzone { display: block; padding: 18px; border: 1px dashed var(--line-strong); border-radius: var(--radius-panel); background: var(--surface); text-align: center; cursor: pointer; }
   .dropzone:hover { border-color: var(--fg); }
   .dropzone input[type="file"] { display: block; margin: 10px auto 0; }
+
+  /* A MODEL'S PROJECTS ROW (2026-10-21): on the strip it sits under the head; on the model page, in
+     its Details pane under the metadata. */
+  .model-strip .model-projects, .model-details .model-projects { margin-top: 8px; }
 }

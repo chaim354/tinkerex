@@ -27,10 +27,14 @@ set -euo pipefail
 DEST="${1:-share}"
 HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
 OUTDIR="${BACKUP_DIR:-$HOME/tinkerex-backups}"
-case "$DEST" in
-  chunk|share|s3|sync) ;;
-  *) echo "usage: bin/backup-db [chunk|share|s3|sync]" >&2; exit 64 ;;
-esac
+# A DESTINATION IS A ROW OF ops/backup-db.sh's TABLE, the very file pushed to the box below, so
+# that is what is asked (locally and read-only) rather than a list of this script's own that
+# could drift from it. Asked before anything opens an ssh connection.
+IMPL="$(dirname "$0")/../ops/backup-db.sh"
+if ! bash "$IMPL" --describe "$DEST" >/dev/null; then
+  echo "usage: bin/backup-db [$(bash "$IMPL" --list | paste -s -d '|' -)]" >&2
+  exit 64
+fi
 
 # Armed only AFTER the argument check, so a usage error does not open an ssh connection to delete
 # a file that was never created.
@@ -53,7 +57,7 @@ ARCHIVE="$OUTDIR/tinkerex-$DEST-$STAMP.tar.gz"
 mkdir -p "$OUTDIR"
 
 echo "==> $DEST on $HOST"
-scp -q "$(dirname "$0")/../ops/backup-db.sh" "$HOST:$REMOTE_IMPL"
+scp -q "$IMPL" "$HOST:$REMOTE_IMPL"
 
 # Only the tarball may reach stdout here — the archive IS this command's stdout. The remote
 # script keeps its progress on stderr for exactly this reason.

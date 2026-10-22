@@ -149,6 +149,9 @@ root to: "home#index"
       patch "rename"
       patch "move"
     end
+    # AN .xlsx's GRID AND ITS SAVE (2026-10-21): GET the workbook as JSON, PATCH a list of edits back
+    # to the same file. /files/:file_id/spreadsheet, Files::SpreadsheetsController.
+    resource :spreadsheet, only: %i[show update], module: :files
   end
 
   # --- A text file made from nothing (2026-09-10) ---
@@ -164,6 +167,12 @@ root to: "home#index"
   # member route spelled `:id/:action` would swallow this; there is not one, and adding one would.
   namespace :files do
     resources :text_files, only: %i[new create]
+    # A MODEL ZIP UNPACKED BY THE TOP BAR'S UPLOAD (2026-10-21; docs/superpowers/specs/
+    # 2026-10-20-zip-upload-unpacks-models-design.md). The browser unzips and uploads each entry
+    # through the ordinary doors; these two only make the folders and nudge the catalog, so no zip
+    # byte reaches Rails (§15). Two segments, POST only — nothing in `resources :files` matches them.
+    post "unpack_folder", to: "unpacks#create", as: :unpack_folder
+    post "unpacked",      to: "unpacks#finish", as: :unpacked
   end
 
   # --- Review and commit, for a repository the maker brought (session-authed; never the v1 API,
@@ -194,6 +203,12 @@ root to: "home#index"
   # node_id, which is a string the library owns, while the subject of a destroy is a row id.
   post "files/:node_id/links", to: "files/links#create", as: :file_links
   resources :file_links, only: %i[destroy], controller: "files/links"
+
+  # --- A file's preview chosen in the 3D viewer (2026-10-20; keyed by node_id, session auth) ---
+  # The node_id shape of the notes and links routes above. POST takes the viewer's PNG; DELETE
+  # hands the thumbnail back to the server renderer (Files::PreviewsController).
+  post   "files/:node_id/preview", to: "files/previews#create",  as: :file_preview
+  delete "files/:node_id/preview", to: "files/previews#destroy"
 
   # Sidebar places (structural redesign spec §4.1). `:id` IS THE FOLDER'S node_id, not the row's,
   # so the Unpin button names the folder it unpins and a stale row id can never unpin the wrong one.
@@ -230,6 +245,9 @@ root to: "home#index"
       # `on: :collection` keeps it nested despite `shallow: true`.
       post :relocate, on: :collection
     end
+    # THE ADD-MODEL PICKER (2026-10-21, attach-a-model spec): the project page's Models panel opens
+    # it. `new` only — the attach itself is POST /models/:model_id/projects, one door for both ends.
+    resources :models, only: %i[new], module: :projects
     resources :build_log_entries, only: %i[create destroy], module: :projects, shallow: true
     resources :tasks, only: %i[create update destroy], module: :projects, shallow: true
     # THE BILL OF MATERIALS (stage 2, S2-4). ONE bom per project on the web -- the latest revision,
@@ -252,9 +270,6 @@ root to: "home#index"
     # Free-form spreadsheets. Shallow like tasks and build-log entries: create is nested under the
     # project, the grid page and its autosave/CSV live at /sheets/:id.
     resources :sheets, only: %i[create show update destroy], module: :projects, shallow: true
-    # Inline upload-and-attach (share/s3 multipart write). Chunk mode uploads via
-    # /files/{begin,finalize}_upload then POSTs the node_id to the attachments endpoint.
-    resources :uploads, only: :create, module: :projects
     # "Look at my library NOW" — the per-project scan button. SINGULAR: there is no scan record
     # and nothing to identify, only a verb. It is nested rather than shallow because the project is
     # what the redirect and the flash are about, and the door files nothing on a scannable backend
@@ -304,7 +319,10 @@ root to: "home#index"
   # attachment_path.)
   post "attachments", to: "projects/attachments#create", as: :attachments
 
-  # Inline photo upload on a build-log entry (share/s3 multipart), same Projects::UploadsController.
+  # Inline photo upload on a build-log entry (share/s3 multipart write). Chunk mode uploads via
+  # /files/{begin,finalize}_upload, then POSTs the node_id to entry_photos below. This is
+  # Projects::UploadsController's only route: the project-level one went in F-S21-1 (2026-10-19),
+  # because the top bar uploads into a project's folder through FilesController.
   resources :build_log_entries, only: [], module: :projects do
     resources :uploads, only: :create
   end
@@ -324,6 +342,9 @@ root to: "home#index"
   # `*filename` glob carries the real name and `.kicad_sch` must not be parsed as a format. ---
   scope module: :public, as: :public do
     get "explore",                                to: "explore#index",  as: :explore
+    # THE COMPOSE GENERATOR (2026-10-21): a visitor's docker-compose.yml, built in the browser from the
+    # repo's own file. GET only, and nothing it shows is posted anywhere -- the page has no form.
+    get "install/compose",                        to: "compose#show",   as: :compose
     get "u/:handle",                              to: "users#show",     as: :user,    constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
     get "u/:handle/:slug",                        to: "projects#show",  as: :project, constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
     # STAGE 4, S4-5: THE VISITOR'S FILE PAGE AND ITS GEOMETRY POLL. BOTH MUST BE DECLARED ABOVE THE
@@ -374,7 +395,8 @@ root to: "home#index"
   #
   # /models/shelves WAS THE PAGE FROM 2026-09-10 TO SLICE 5 — a maker's bookmarks and anything that
   # linked it keep working. Declared before `resources :models`, or it matches models#show id=shelves.
-  # The page itself went back to `settings/shelves` (the `settings` namespace below says why).
+  # It lands on `settings/shelves`, which since 2026-10-20 is the Shelves page for project folders
+  # (the model catalog's shelves it once served are Maker::ModelIntake::SHELVES, fixed in code).
   # THE REVERSE REDIRECT IS GONE AND MUST STAY GONE: the 2026-09-10 move left
   # `settings/shelves → /models/shelves` here, and anywhere above the namespace it matches before
   # the page does — /settings/shelves 301s to /models/shelves, which 301s back, forever.
@@ -397,6 +419,10 @@ root to: "home#index"
     # identical either way, so the importer's attach step is unaffected.
     resources :attachments, only: %i[create destroy], module: :models
     resources :print_runs, only: %i[create destroy], module: :models, shallow: true
+    # A MODEL'S PROJECTS (2026-10-21, attach-a-model spec): attach (create) and detach (destroy).
+    # NOT shallow, for the reason `attachments` above is not: a shallow DELETE /projects/:id would
+    # be projects#destroy. `:id` is the PROJECT's slug.
+    resources :projects, only: %i[create destroy], module: :models
   end
 
 
@@ -408,6 +434,14 @@ root to: "home#index"
   resources :inventory_items, path: "inventory" do
     post :adjust, on: :member
   end
+
+
+  # --- Saved calculations (2026-10-21; plan 2026-10-21-calculator-modal.md). `new` is the calculator
+  # modal's Save-to-project form, fetched into a lazy frame only when the maker opens it, so the
+  # layout that renders the modal on every page reads no project list; `create` answers that frame.
+  # `update` (the label) and `destroy` are the project page's Calculations panel. Top level rather
+  # than nested under a project because the form CHOOSES the project — the URL cannot name it first.
+  resources :calculations, only: %i[new create update destroy]
 
 
   # --- Tags and search (stage 2, S2-5). One results page for everything, driven from the top bar;
@@ -424,21 +458,35 @@ root to: "home#index"
   resource :settings, only: :show, controller: "settings"
   namespace :settings do
     resources :tags, only: %i[index destroy]
-    # WHICH FOLDERS COUNT AS MODELS (structural redesign slice 5). Back under Settings, reversing the
-    # 2026-09-10 move to /models/shelves: Models is now a Library view (/files/models), not a section,
-    # so the section shelves serve is Settings — a rule, not navigation. The old path redirects
-    # (declared above `resources :models`, where its static segment must precede the parent).
-    resources :shelves, only: %i[index create destroy]
-    # Stage 3, S3-1: the per-user extension map the intake sweep files by (Maker::FilingRules).
-    # `path: "filing"` keeps the URL as /settings/filing while the helpers stay
-    # settings_filing_rule(s)_path; `create` is the per-folder add form, `destroy` the chip's Remove
-    # (stage 4, S4-2: one card per folder). `update` stays routed with no control on the page since
-    # S4-2 dropped the per-row folder edit -- a future move control lands on it; its tests still run.
-    resources :filing_rules, only: %i[index create update destroy], path: "filing"
+    # THE SHELVES (2026-10-20): the folders the intake sweep files into inside each project, one
+    # card each with its extensions, its default view and its group. This page WAS Filing
+    # (/settings/filing, which now redirects here); the model catalog's old shelves page that held
+    # this path became Maker::ModelIntake::SHELVES, fixed in code. /models/shelves still lands here.
+    resources :shelves, only: %i[index create update destroy]
+    resources :shelf_groups, only: %i[create update destroy], path: "shelf-groups"
+    get "filing", to: redirect("/settings/shelves")
+    # The extension chips' own doors (stage 3, S3-1; stage 4, S4-2) under their old path. No index:
+    # the page is Shelves. `update` stays routed with no control on the page (its tests drive it).
+    resources :filing_rules, only: %i[create update destroy], path: "filing"
     # STAGE 3, S3-4: the handle is claimed on the Account page (users/registrations/edit) through
     # its own form, because Devise's update demands the current password and a handle is not a
     # credential.
     resource :handle, only: :update
+    # ACCOUNTS (2026-10-21): an admin lists and adds accounts on the index, and changes one on its own
+    # page (`edit`), which the three member actions post from. No `show` and no `update`: each change
+    # has its own door and its own words (Settings::UsersController).
+    resources :users, only: %i[index create edit destroy] do
+      member do
+        patch :reset_password
+        patch :set_admin
+      end
+    end
+    # K (2026-10-20): which folder under the mount is the share library. Singular, like /settings
+    # itself; `controller:` because Rails would otherwise pluralise it to `libraries`. `children` is
+    # the chooser's path-based data source (LibraryBrowseController#children is the node-based one).
+    resource :library, only: %i[show update], controller: "library" do
+      get :children
+    end
   end
   get "help", to: "help#show", as: :help
 
@@ -450,6 +498,13 @@ root to: "home#index"
   # The New ▾ menu's tool entries, for its lazy frame. ABOVE `tools/:key`, or "new_menu" would be
   # read as an addon key.
   get "tools/new_menu", to: "tools/home#new_menu", as: :tools_new_menu
+
+  # THE CALCULATOR'S SIDEBAR PIN (2026-10-21; plan 2026-10-21-calculator-modal.md). The calculator
+  # is a CORE feature that opens as a modal on every signed-in page, not an addon, so it has no
+  # `tools/:key` page; this is the one write its Tools card makes. Three segments, so `tools/:key`
+  # (two) cannot shadow it, and above that block anyway, as its comment asks of every /tools route.
+  post "tools/calculator/pin", to: "tools/calculator_pins#create", as: :tools_calculator_pin
+  delete "tools/calculator/pin", to: "tools/calculator_pins#destroy"
 
   # The params behind ANY addon state, as a download. ONE route for every addon: `Maker::AddonState`
   # is addon-agnostic (`data` IS each addon's own shape), so there is nothing per-addon to branch on.

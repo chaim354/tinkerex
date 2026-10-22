@@ -66,16 +66,18 @@
   additionally put a SECOND folder somewhere the maker never chose. **NIL IS PART OF THE CONTRACT,
   NOT A FAILURE**, and every caller answers it rather than raising: the Files panel renders "This
   project's folder is in the trash or was removed" with a link to Trash,
-  `Projects::UploadsController#upload_parent` falls back to the library root (the `&.` is what
-  keeps that from being a 500 on every upload), `Maker::AttachToProject#move` returns
-  `:unavailable` and leaves the bytes where they are, and `Maker::ProjectFolderListing` answers
-  `available? == false`. A project whose `folder_node_id` was never set — the form path — still
-  mints, which is what `ProjectsController#create` depends on. **THE THREE DOOR TESTS IN
-  `projects_flow_test.rb` NEED THEIR REAL-SHARE FIXTURE AND MUST NOT BE "SIMPLIFIED" TO
+  `Maker::AttachToProject#move` returns `:unavailable` and leaves the bytes where they are, and
+  `Maker::ProjectFolderListing` answers `available? == false`, so `ProjectsController#show` gives
+  the top bar no destination and its Upload asks with the folder chooser rather than guess the
+  root. (`Projects::UploadsController#upload_parent` was a fourth answer, landing the file at the
+  library root, until F-S21-1 retired that controller's project-level route.) A project whose
+  `folder_node_id` was never set — the form path — still mints, which is what
+  `ProjectsController#create` depends on. **THE DOOR TESTS IN `projects_flow_test.rb` (two since
+  F-S21-1) NEED THEIR REAL-SHARE FIXTURE AND MUST NOT BE "SIMPLIFIED" TO
   `project_folder_rows!`:** measured, with rows alone `Projects/` has no `storage_path`, so
   restoring the re-minting branch raised `FileLayer::NotFound` into each caller's rescue and all
-  three guards stayed GREEN over the regression they exist for — §15's green-suite shape, masked by
-  the fixture rather than caught by the assertion.
+  three guards of the time stayed GREEN over the regression they exist for — §15's green-suite
+  shape, masked by the fixture rather than caught by the assertion.
 
 - **DIRECT CHILDREN ONLY, AND DOT-FOLDERS ARE SKIPPED.** `adoptable` scopes to
   `parent_node_id: root.node_id` and rejects any name starting with `.`. Without the depth limit,
@@ -131,14 +133,23 @@
   turns it on. **`discovered_at` STAYS NIL ON AN ADOPTED PROJECT ON PURPOSE**: the maker made this
   one, so it is never "new to you" and never wears the badge.
 
-- **DISCOVERY RUNS STRICTLY BEFORE THE FILING SWEEP, AND THE ORDER CHANGES THE ANSWER, NOT THE
-  TIMING.** A newly-discovered project's loose files sitting at its folder's root have no shelf
-  nearer than `Projects` itself (the seeded `*` shelf), so if the model catalog looked first, the
-  WHOLE FOLDER becomes one model — and nothing reaps an auto model, so the wrong row is permanent.
-  **Verified by mutation** in `test/jobs/library/scan_job_test.rb`'s `DiscoveryOrderTest`: swapping
-  the order leaves a `Maker::Model` titled after the project folder with `auto_node_id` and
-  `folder_node_id` both equal to the folder's own `node_id` — a real folder swallowed whole, not
-  merely a file left unfiled. `Library::ScanJob#perform` sequences `discover_projects` →
+- **DISCOVERY RUNS STRICTLY BEFORE THE FILING SWEEP, AND SINCE F-S07-1 (2026-10-19) THE ORDER
+  CHANGES THE TIMING, NOT THE ANSWER**: a discovered project's loose files are filed in the SAME
+  pass rather than the next. It used to change the answer — those files have no shelf nearer than
+  `Projects` itself (the built-in `*`), so a model catalog that reached the folder before discovery
+  made the WHOLE FOLDER one model, permanently — and **no ordering could close that**: discovery
+  is CAPPED (`MAX_PROJECTS`) even inside `Library::ScanJob`'s own sequence, and on `chunk_remote`
+  discovery and the catalog are independent schedules. `Maker::ModelIntake.claimed_folders` closes
+  it instead, by asking discovery for **every folder it owns BY POSITION** —
+  `Maker::ProjectDiscovery.positional_claims`, public and UNCAPPED, with `adoptable` defined as it
+  minus what is already claimed — so a folder discovery has not reached is claimed all the same.
+  **Any rule that decides what discovery will EVER adopt belongs in `positional_claims`**, never
+  only in `adoptable` and never as a path test in the catalog, so the catalog follows it. Pinned in
+  `test/jobs/library/scan_job_test.rb`'s `DiscoveryOrderTest`: every ordering mutation of `#perform`
+  goes RED (a file left unfiled, or catalogued a scan late), and a capped run
+  (`PROJECT_DISCOVERY_MAX=1`) must leave no auto model over the folder it has not reached — the
+  assertion that used to stand on the ordering, moved there because no ordering can fail it any
+  more. `Library::ScanJob#perform` sequences `discover_projects` →
   `intake_project_folders` → `intake_models` inline, all via `perform_now`, inside one call. There
   is no scan to sequence inside on `chunk_remote`, so `Maker::ProjectDiscoveryJob#chain_intake`
   enqueues the intake itself once a run has created something — **gated off scannable backends**,
@@ -146,11 +157,13 @@
   below already records (a move racing the Scanner's own observations).
 
 - **THE SCAN BUTTON IS A SECOND SYNCHRONOUS CALLER OF DISCOVERY, ON `chunk_remote` ONLY, AND IT SITS
-  BETWEEN THE PULL AND THE INTAKE** (`Projects::ScansController#pull_and_file`, stage 4, S4-6). Same
-  ordering rule as the bullet above and for the same reason — it changes the ANSWER, not the timing:
-  the pull is what makes a folder another device pushed visible at all, and a newly discovered
-  project's loose files have no shelf nearer than `Projects` itself, so filing before adopting hands
-  the whole folder to the model catalog, permanently. **It calls the JOB with `perform_now`, not
+  BETWEEN THE PULL AND THE INTAKE** (`Projects::ScansController#pull_and_file`, stage 4, S4-6). The
+  pull comes first because a folder another device pushed is not in the mirror until it lands, so
+  discovery cannot adopt it before; discovery then precedes the intake in the order
+  `Library::ScanJob` uses. That order no longer protects the model catalog — it used to read
+  "filing before adopting hands the whole folder to the model catalog, permanently", and since
+  F-S07-1 a folder discovery has not adopted yet is claimed by position (the bullet above), so it is
+  never one model whichever runs first. **It calls the JOB with `perform_now`, not
   `Maker::ProjectDiscovery` directly** — the idiom `Library::ScanJob` already uses, and for the same
   two reasons: the job is the only place a run is LOGGED, and `#chain_intake` is what sweeps a
   project this call has just created (`.for_project` below it sweeps THAT project only). **`perform_now`
@@ -237,12 +250,14 @@
   DIRECTLY ANY MORE.**
   `Maker::ProjectFolders.folder_for(user, name)` reads `Maker::FilingRules.for(user)`: one row per
   extension, seeded once from `ROLE_FOLDERS` over `Maker::FileAttachment::ROLE_BY_EXT` on a user's
-  first read and edited from then on at `/settings/filing`. Since stage 4, S4-2 (`cnc_design` was
+  first read and edited from then on as the chips of the Shelves page (`/settings/shelves`, which
+  was Filing until 2026-10-20; each shelf is a `Maker::Shelf` row joined to its rules by folder
+  name and made on read by `Maker::Shelves.ensure!`). Since stage 4, S4-2 (`cnc_design` was
   the thirteenth role) the seed ALSO writes one row per `Maker::FilingRules::BEYOND_ROLE_BY_EXT`
   entry — today `kicad_sch`/`kicad_pcb` → `pcb`, a literal folder because there is no role to look one
   up by — so the count a test asserts is `ROLE_BY_EXT.size + BEYOND_ROLE_BY_EXT.size`, never the first
   alone. `seed!`'s `exists?` guard stays a whole-batch guard: an existing user's new keys arrive by
-  MIGRATION, once (`20260907120100`), because `/settings/filing` promises a removed rule files into
+  MIGRATION, once (`20260907120100`), because the Shelves page promises a removed rule files into
   `other` and a per-read top-up would resurrect it. Keep `BEYOND_ROLE_BY_EXT` small — every entry
   claims a real format the Files page cannot filter by. `default_folder_for(name)` stays the
   OLD pure function of the static, role-keyed vocabulary — kept for the seed itself (which cannot
@@ -302,11 +317,27 @@
   a user moving a README in from elsewhere, and refusing there would strand it outside the folder.
   Guard: `project_intake_test.rb` ("a README at the root is attached but never filed away").
 
-- **ROOT = INBOX IS THE WHOLE SORT RULE, AND IT IS STATELESS.** Only files at a project
-  folder's own root are ever filed; anything already in a subfolder — including one filed
-  "wrong" by hand — is never revisited, and no column records that a file was "handled."
-  Position is the marker. Re-filing a subfolder would fight the user every 15 minutes, and
-  on chunk each round of that fight is a changelog entry broadcast to every device.
+- **ROOT = INBOX, PLUS WHAT `other/` NO LONGER HOLDS — AND IT IS STATELESS.** Files at a project
+  folder's own root are filed; anything in any other subfolder — including one filed "wrong" by
+  hand — is never revisited, and no column records that a file was "handled." Position is the
+  marker. Re-filing a subfolder would fight the user every 15 minutes, and on chunk each round of
+  that fight is a changelog entry broadcast to every device.
+  **`other/` is the one exception, on the owner's word (2026-10-20):** a file DIRECTLY in the
+  project's `other/` (`Maker::ProjectFolders::OTHER`) whose extension has a rule naming another
+  folder is re-sorted into it. `other/` is the sweep's own answer for "no rule for this", so such a
+  file is the app's earlier "don't know", not the maker's filing — catan's three `.mage` files went
+  into `other/` on 2026-09-06, the day before `.mage` got `cnc/`, and stayed there. What triggers it
+  is a rule APPEARING (a vocabulary widening's migration, or an Add on the Shelves page), so the
+  periodic sweep catches it; no nudge does, because no file arrival signals a rule change. Three
+  things not to undo: **`Maker::ProjectIntake.resortable?` decides by NAME alone** and is the ONE
+  predicate both `#call`'s selection and `.inbox_count` (both caps' count) use, so a cap counts
+  exactly what the run files — and counting every file in `other/` instead would make a library
+  full of unrecognised files refuse every run; **direct children only**, since a folder the maker
+  made inside `other/` is their filing; and **a selected file whose destination works out to
+  `other/` again stays put** (`:already_filed` — reachable as a board zip whose `gbr` rule names
+  `other`), never a move onto its own parent reported as a filing every sweep. **The cost, accepted:**
+  a file with a rule that the maker parks in `other/` by hand moves out on the next sweep; a folder
+  of their own, anywhere else, is what keeps it.
 - **A SWEEP OVER `nodes`, NOT A HOOK PER DOOR — because there are SEVEN doors and no
   funnel.** `FilesController#create` (share/s3), `#finalize_upload` (chunk),
   `Library::Reconciler` (the scan), a device push landing on the sync server,
@@ -385,10 +416,18 @@
   in the library, no node to read them from — so it must never grow a `node:` kwarg no caller can
   fill. Its one caller (`Tools::AddonsController#resolve_placements`) writes SVG and 3MF, so no
   bundle here or in `chaim354/tinkerex-addons` reaches the divergence. What keeps the user-facing
-  sentence true anyway is `Result#conflict_folders`: the flash names the folder `#place` **actually
-  tried**, recorded as it tried it, never re-derived from a name. `ProjectFolderIntake
-  #conflict_folder` reads that map and falls back to `ProjectFolders.folder_for` only for a Result
-  built without it. **The member is not called `conflicts`** — that is one of
+  sentence true anyway is the conflict's own row: the flash names the folder `#place` **actually
+  tried**, recorded as it tried it, never re-derived from a name.
+  **`ProjectIntake::Result` HOLDS `attached`, `status` AND ONE `Filing` PER INBOX FILE — `name`,
+  `folder`, `skip` — AND NO COUNT OR LIST BESIDE THEM (F-S06-1).** `plan`, `skips`, `moved` and
+  `skipped` are readers over those rows, so no count can disagree with its list; `#place` answers
+  a `Filing` on every path, so there is no String-or-Symbol return to dispatch on; and a
+  `:conflict` row carries the folder it tried, so there is no name-keyed map beside the skips for
+  that folder to go missing from.
+  `ProjectFolderIntake#left_unfiled_by_conflict?` and `#conflict_folder` both read
+  `Result#conflict_folder(name)` **WITH NO FALLBACK**: re-deriving from the name is the wrong flash
+  521bfb30 fixed, and the fallback that outlived the fix hid a conflict recorded without its folder
+  behind a plausible answer. **Nothing here is called `conflicts`** — that is one of
   `architecture_invariants_test.rb`'s `ENGINE_ASSOCIATIONS`, matched as a bare ident, and the seam
   guard takes no allowlist.
 - **`maker_projects.autofile` IS A STATEMENT ABOUT DIRECTORIES, NOT ABOUT KNOWING (stage 4, S4-2;
@@ -496,8 +535,9 @@
   EFFECT.** Every caller threw it away until a review caught it: a same-named upload whose eager
   nudge lost a collision at its destination folder reported a silent "Uploaded x." with no sign the
   file had stayed at the project root. `ProjectFolderIntake#left_unfiled_by_conflict?` /
-  `#project_intake_notice` read the `:conflict` entry out of `Result#skips` for exactly this — but
-  only in the **three** doors whose response a user actually sees (`FilesController#create`'s HTML
-  branch, `Projects::UploadsController#create`, the addon save door). The JSON-only branches still
-  run the intake and still file what they can; they just don't surface it, because nothing
-  downstream reads that response key today.
+  `#project_intake_notice` read the `:conflict` Filing out of the Result for exactly this, and
+  every door that runs the nudge reads it: `FilesController#create` (the HTML flash and, since stage
+  4 S4-3, the JSON `notice`), `#finalize_upload`'s JSON `notice` (S4-3), and the addon save door.
+  Save-to-library (`measure_controller.js`) reads `notice` off both upload doors through
+  `lib/chunk_upload.js`. `Projects::UploadsController#create` was a reader too until F-S21-1. Its
+  build-log photos land at the library root, which no project owns, so it no longer runs the nudge.

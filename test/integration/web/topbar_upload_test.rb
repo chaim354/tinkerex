@@ -11,7 +11,7 @@ module Web
     setup do
       @user = User.create!(email: "up-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
-      post user_session_path, params: { user: { email: @user.email, password: PASSWORD } }
+      sign_in_web!(@user, password: PASSWORD)
       @user.nodes.create!(node_id: "d-cad", name: "cad", kind: "dir", mtime: 1, size: 0)
       @user.nodes.create!(node_id: "d-jigs", name: "jigs", kind: "dir", parent_node_id: "d-cad", mtime: 1, size: 0)
       @user.nodes.create!(node_id: "n-plate", name: "plate.dxf", kind: "file", parent_node_id: "d-jigs",

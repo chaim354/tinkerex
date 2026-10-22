@@ -82,10 +82,10 @@ codebase for sixteen minutes to check three claims. In the prompt:
 
 ## 5. Close out
 
-Run bare `bin/ci` yourself and **read the three backend legs' run counts** — `test` (share),
-`test-s3`, `test-chunk-remote` must report **identical run counts** (§15). `bin/ci` prints them and
-never compares them. From a worktree, export `TINKEREX_SYNC_DIR` to the real sibling checkout or the
-chunk_remote leg cannot find the sync repo.
+Run bare `bin/ci` yourself. It compares the three backend legs' RUN counts itself — `test` (share),
+`test-s3`, `test-chunk-remote` must be identical (§15) — and goes red when they differ; assertion
+counts differ between legs by design and are not compared. From a worktree, export
+`TINKEREX_SYNC_DIR` to the real sibling checkout or the chunk_remote leg cannot find the sync repo.
 
 Then `/finish-branch`. Record the arc with `bin/log` — that is the single write door onto the
 canonical record (CLAUDE.md §11), and it is part of the work, not a follow-up.

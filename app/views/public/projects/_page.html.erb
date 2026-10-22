@@ -121,11 +121,12 @@
     placeholder box — /files/thumbnails is session-authed, so a spinner here would turn forever, and
     a page with no cover simply has no hero, exactly as the private one.
 
-    `pub.cover_node` is the PERMITTED cover: a chosen cover is a raw column nothing validates, so an
-    unpermitted one renders nothing rather than becoming the page's largest picture.
-    `pub.thumbs` is already memoised for the page, so the hero costs no query of its own; a cover
-    outside the listing is simply not in that map and falls through to no picture, which is the
-    honest answer on a page that cannot poll. %>
+    `pub.cover_node` is the SHOWN cover: a chosen cover is a raw column nothing validates, so one the
+    project does not permit, or one under a folder the maker hid, renders nothing rather than
+    becoming the page's largest picture. The cover is the FIRST term of `pub.thumbs` wherever it
+    lives, in the folder or attached from outside it (2026-10-19, F-S14-1). The map is already
+    memoised for the page, so the hero costs no query of its own and shows whatever thumbnail is
+    READY. A pending one shows nothing, which is the honest answer on a page that cannot poll. %>
 <% if (cover = pub.cover_node) %>
   <div class="project-hero">
     <%= link_to pub.view_url_for(cover.node_id) do %>
@@ -138,9 +139,13 @@
             tinkerex#278): a blob URL is unauthenticated and never expires, so the page's LARGEST
             picture was the one that outlived the publication longest. `pub.preview_url_for` carries
             this project's link_params, so an unlisted project's hero keeps its `k`. %>
-        <% if cover_thumb&.status == "ready" && cover_thumb.asset.attached? %>
-          <%= image_tag pub.preview_url_for(cover.node_id), class: "project-hero-img",
-                        alt: "Preview of #{cover.name}" %>
+        <%# A RENDER SITS ON THE CARD, multiplied, like every thumbnail (design-system.md rule 5); the
+            photo branch above does not, being the file's own picture. %>
+        <% if cover_thumb&.showable? %>
+          <div class="render-card project-hero-render">
+            <%= image_tag pub.preview_url_for(cover.node_id), class: "project-hero-img",
+                          alt: "Preview of #{cover.name}" %>
+          </div>
         <% end %>
       <% end %>
     <% end %>
@@ -215,7 +220,8 @@
     <%= render "public/projects/repo_card", card: card %>
   <% end %>
 <% end %>
-<%= render layout: "projects/panel_groups", locals: { groups: pub.layout.groups(pub.visible_panels), tail: cards.presence } do |key| %>
+<%= render layout: "projects/panel_groups",
+           locals: { groups: pub.layout.groups(pub.visible_panels), layout: pub.layout, tail: cards.presence } do |key| %>
   <% body = capture do %>
     <% if key == "wiring" %>
       <% if pub.connections.any? %>

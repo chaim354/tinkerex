@@ -47,12 +47,22 @@ pin "lib/chunk_upload", to: "lib/chunk_upload.js"
 # merged importmap too — but a bundle must NOT import it by this specifier: the contract is the
 # ctx function, so that this path stays the host's to change without republishing a bundle.
 pin "lib/file_chooser", to: "lib/file_chooser.js"
+pin "lib/zip_bundle", to: "lib/zip_bundle.js"
+pin "lib/zip_unpack", to: "lib/zip_unpack.js"
+# The compose generator's builder (/install/compose): the visitor's docker-compose.yml from
+# Tinkerex::ComposeTemplate's derivation of the repo file, entirely in the browser.
+pin "lib/compose_file", to: "lib/compose_file.js"
 
 # The Measure view's to-scale print — pagination and sheet rendering, imported by
 # measure_controller.js. A HOST pin like the two above, so it is drawn into every addon's merged
 # importmap too. A bundle must NOT import it — the `boxes` bundle ships its own sheet.js
 # precisely so neither repo can break the other (the module header argues that in full).
 pin "lib/print_sheet", to: "lib/print_sheet.js"
+
+# The calculator's engine — tokenizer, parser, evaluator, formatter; pure, no DOM — imported by
+# calculator_controller.js. A HOST pin like the ones above; a bundle must NOT import it, since the
+# calculator is a core feature and its language is this app's to change.
+pin "lib/calc", to: "lib/calc.js"
 
 # One geometry-payload shape -> one SVG element, and the `el`/`unionBox` doors that used to live in
 # lib/print_sheet. Imported by print_sheet, by measure_controller and by lib/export_svg, so all
@@ -80,7 +90,8 @@ pin "lib/svg_pan_zoom", to: "lib/svg_pan_zoom.js"
 # every one of them dynamic-imports, so this never ships on a page with no text file.
 pin "lib/codemirror_languages", to: "lib/codemirror_languages.js", preload: false
 
-# Which CodeMirror theme the page wants, read from html[data-theme]. A HOST pin for the same
+# The code viewers' token-coloured syntax highlighting (the same in every theme; the colours are
+# CSS custom properties, so a theme switch repaints an open editor). A HOST pin for the same
 # reason as the languages table directly above — it takes the CodeMirror namespace as an argument
 # rather than importing the bundle, so it is only meaningful to a controller that already holds
 # it, and it is DYNAMIC-imported from all three so neither it nor the bundle ships on a page with
@@ -88,6 +99,12 @@ pin "lib/codemirror_languages", to: "lib/codemirror_languages.js", preload: fals
 # name, so a new one that nothing pins resolves to nothing and its importer's dynamic import
 # rejects — which in these three controllers degrades silently to the plain <pre>.
 pin "lib/codemirror_theme", to: "lib/codemirror_theme.js", preload: false
+
+# Which theme the page is showing (html[data-theme], and the OS under "system"), for the one viewer
+# that takes its theme as a NAME rather than following the tokens: KiCanvas. Imported statically by
+# kicanvas_controller.js; a few lines, so it is preloaded like lib/svg_pan_zoom. A HOST pin; a
+# bundle must NOT import it.
+pin "lib/ui_theme", to: "lib/ui_theme.js"
 
 # THE ADDON SDK — a HOST pin, which is the whole point: merged_importmap draws every host pin before
 # the addon's own, so a bundle imports "@maker/addon-sdk" without declaring anything in its manifest

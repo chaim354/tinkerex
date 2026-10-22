@@ -24,7 +24,7 @@
       <% kicad_rows.each do |row| %>
         <% ext = File.extname(row.node.name).downcase.delete(".") %>
         <li>
-          <%= link_to row.node.name, file_path(row.node_id) %>
+          <%= link_to row.node.name, file_path(row.node_id), data: file_open_data %>
           <span class="badge"><%= ext == "kicad_sch" ? "schematic" : "board" %></span>
         </li>
       <% end %>

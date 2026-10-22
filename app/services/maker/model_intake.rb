@@ -47,7 +47,35 @@ module Maker
     # ADDED IN THE SAME CHANGE AS THE ROLE ITSELF (stage 4, S4-2) — this list is a DENYLIST, so a
     # new role joins models BY DEFAULT and the omission would have been silent: `Projects/catan/`
     # holding one `.stl` and twenty `.mage` files would have catalogued all twenty into that model.
-    EXCLUDED_ROLES = %w[cnc_design code document gcode laser vector].freeze
+    #
+    # `spreadsheet` (an `.xlsx`, 2026-10-21) sits beside `document` for `document`'s reason: a parts
+    # list or a cut list in a model folder is about the model, not part of it. Added with the role.
+    EXCLUDED_ROLES = %w[cnc_design code document gcode laser spreadsheet vector].freeze
+
+    # THE SHELVES ARE BUILT IN (2026-10-20). A shelf is a folder that is not itself a model: a
+    # model-role file directly on one is its own model, and each of its subfolders is one model.
+    # These four were per-user `maker_shelves` rows edited at /settings/shelves until that page was
+    # retired; every live user held exactly these four when it went, so fixing them changed no
+    # one's catalog, and `maker_shelves` now means something else (Maker::Shelf).
+    #
+    # `*` -- EVERY TOP-LEVEL FOLDER IS A SHELF -- IS THE ONE THAT IS EASY TO READ AS REDUNDANT NEXT
+    # TO `""`, AND REMOVING IT BREAKS THE HEADLINE CASE. `""` alone makes each top-level folder ONE
+    # model holding its whole subtree: measured on a real share library, `3D Models/` collapsed into
+    # a single entry and `Projects/` became one entry. `Projects/*/models` is still needed beside
+    # it: `*` makes `Projects` a shelf, and the deeper pattern is the NEARER shelf inside `models/`.
+    SHELVES = [ "", "*", "Models", "Projects/*/models" ].freeze
+    # A whole segment may be this and nothing else.
+    WILDCARD = "*".freeze
+
+    # Does `pattern` name `path`? Both are "" for the library root, segments joined by "/".
+    # A "*" segment matches exactly one segment -- never zero, never several.
+    def self.shelf_matches?(pattern, path)
+      ps = pattern.to_s.split("/")
+      xs = path.to_s.split("/")
+      return false unless ps.size == xs.size
+
+      ps.zip(xs).all? { |p, x| p == WILDCARD || p == x }
+    end
 
     # What one run did. `status` is :ok or :capped -- a caller has to be able to tell "your library
     # is catalogued" from "there is more of it than one run will do".
@@ -64,8 +92,9 @@ module Maker
     #
     # THERE IS DELIBERATELY NO SECOND, SMALLER CAP. Maker::ProjectIntake carries MAX_MOVES AND
     # EAGER_MAX_MOVES because it has an entry point that runs inside a browser request. This class
-    # does not: nothing in a web request sweeps. If a nudge is ever added it needs its own cap, for
-    # the reason §14f states at both of those constants.
+    # does not: nothing in a web request sweeps. If an IN-REQUEST nudge is ever added it needs its
+    # own cap, for the reason §14f states at both of those constants. Files::UnpacksController#finish
+    # only ENQUEUES Maker::ModelIntakeJob, so it owes none (docs/invariants/model-intake.md).
     MAX_MODELS = 200
 
     # A BAD OVERRIDE FALLS BACK; IT DOES NOT CRASH THE JOB. `Integer("-5")` SUCCEEDS, so the rescue
@@ -81,7 +110,6 @@ module Maker
     end
 
     def self.for_user(user:, cap: nil)
-      Maker::Shelf.seed_once!(user)
       cap ||= max_models
       plan = classify(user)
 
@@ -128,38 +156,73 @@ module Maker
     # question this sweep asks, not a second spelling of it.
     #
     # FOLDERS THAT ARE SOMEONE ELSE'S ALREADY -- look, do not take (§14f's "reads folder_node_id,
-    # never calls ensure_library_folder!" has the same shape). TWO CLAIMANTS:
+    # never calls ensure_library_folder!" has the same shape). THREE CLAIMANTS:
     #
     #   an IMPORT-origin model -- a folder the user imported into is that model's;
-    #   a PROJECT -- a folder under `Projects/` is a build, not a print. `*` makes `Projects` a
-    #     shelf, so without this a project folder became one model holding its whole tree: measured,
-    #     `Projects/TheFlightWall_OSS` had 2305 attachments of which 2 were meshes. Asking WHO
-    #     CLAIMS THE FOLDER rather than re-testing the path keeps ProjectDiscovery's policy in one
-    #     place, and Library::ScanJob already runs discovery before this sweep (§14k). A user who
-    #     deletes the project releases the folder, which is the same "the row is the memory" rule
-    #     dismissal runs on.
+    #   a PROJECT -- a project's folder is a build, not a print. `*` makes `Projects` a shelf, so
+    #     without this a project folder became one model holding its whole tree: measured,
+    #     `Projects/TheFlightWall_OSS` had 2305 attachments of which 2 were meshes. A user who
+    #     deletes the project releases a folder nothing else claims, which is the same "the row is
+    #     the memory" rule dismissal runs on;
+    #   DISCOVERY, BY POSITION (F-S07-1, 2026-10-19) -- a folder Maker::ProjectDiscovery will adopt
+    #     is the project's BEFORE the row exists. This used to be left to running discovery first,
+    #     and that ordering could not hold: discovery is capped even inside Library::ScanJob's own
+    #     sequence, and on chunk_remote the two sweeps are independent schedules. So whatever order
+    #     the sweeps run in, this sweep never CREATES a model over a folder discovery will adopt.
+    #     It does not REMOVE one either: an auto row already there -- written before this claim
+    #     existed, or before its folder moved under `Projects/` -- stops accreting (its key is
+    #     dropped before `existing`) and survives until `rake models:prune` or the adoption door
+    #     (Projects::AdoptionsController) destroys it.
     #
-    # BOTH QUERIES ARE UNSCOPED ON STATUS. An ARCHIVED project keeps folder_node_id and still claims
-    # its folder; filtering archived rows out here is exactly how a dismissed thing comes back, the
-    # mistake Maker::ProjectDiscovery#adoptable and the `catalogued` scope both record.
+    # EACH ASKS THE CLAIMANT, NEVER RE-TESTS A PATH, which keeps ProjectDiscovery's policy in one
+    # place: its own reader decides, so a dot-folder it will never adopt is still catalogued here.
+    #
+    # THE TWO ROW QUERIES ARE UNSCOPED ON STATUS. An ARCHIVED project keeps folder_node_id and still
+    # claims its folder; filtering archived rows out here is exactly how a dismissed thing comes
+    # back, the mistake Maker::ProjectDiscovery#adoptable and the `catalogued` scope both record.
+    # The positional reader costs two more queries, CONSTANT in N, and is UNCAPPED for the reason
+    # its own comment gives.
     def self.claimed_folders(user, model_keys)
       user.maker_models.where(origin: "import").where(folder_node_id: model_keys)
           .pluck(:folder_node_id)
           .concat(user.maker_projects.where(folder_node_id: model_keys).pluck(:folder_node_id))
+          .concat(Maker::ProjectDiscovery.positional_claims(user).map(&:first))
           .to_set
     end
 
-    # ONE STATEMENT, NOT ONE QUERY PER FILE. `unique_by` names the existing uniqueness index, so a
-    # re-sweep of an already-attached library inserts nothing rather than raising. insert_all
-    # bypasses timestamp autofill, hence the explicit stamps.
+    # ONE PLUCK, THEN ONE STATEMENT FOR WHAT IS MISSING -- NEVER ONE QUERY PER FILE, AND NEVER A
+    # WRITE WHEN NOTHING IS MISSING. Maker::ProjectIntake#attach's shape, and its two layers for its
+    # two jobs:
+    #
+    #   THE PLUCK-AND-REJECT is what makes a sweep over an unchanged library WRITE NOTHING (F-S07-2,
+    #   2026-10-19). This used to re-send one `INSERT … ON CONFLICT DO NOTHING` carrying every file
+    #   the catalog owns, every tick -- a write statement, so on SQLite it took the single write
+    #   lock in order to write nothing. The pluck is the query that INSERT was, so the count stays
+    #   constant in N (model_intake_test.rb pins both). It is NOT a concurrency guard: a read, then
+    #   later a write.
+    #
+    #   `unique_by:`, NAMING the uniqueness index, still is: a pair another writer lands in that gap
+    #   is skipped by the database rather than raised, and it is skipped ONLY on that index.
+    #
+    # The explicit stamps are the app's clock, as they always were here. Without them insert_all
+    # fills both columns itself, from the database's clock (record_timestamps, which
+    # Maker::ProjectIntake#attach relies on) -- it does NOT skip them, as this comment once said.
     def self.attach_all(user, plan, models)
-      now = Time.current
-      rows = plan.owners.filter_map do |file_id, key|
+      pairs = plan.owners.filter_map do |file_id, key|
         model = models[key]
         next unless model
         next if model.dismissed_at.present?
 
-        { user_id: user.id, attachable_type: "Maker::Model", attachable_id: model.id,
+        [ model.id, file_id ]
+      end
+      return 0 if pairs.empty?
+
+      have = Maker::FileAttachment.where(user_id: user.id, attachable_type: "Maker::Model",
+                                         attachable_id: pairs.map(&:first).uniq)
+                                  .pluck(:attachable_id, :node_id).to_set
+      now  = Time.current
+      rows = pairs.reject { |pair| have.include?(pair) }.map do |model_id, file_id|
+        { user_id: user.id, attachable_type: "Maker::Model", attachable_id: model_id,
           node_id: file_id, role: Maker::FileAttachment.role_for(plan.names[file_id]), position: 0,
           created_at: now, updated_at: now }
       end
@@ -172,11 +235,11 @@ module Maker
     end
     private_class_method :attach_all
 
-    # PURE. Reads `nodes` and `maker_shelves`, writes nothing, and is the whole rule.
-    def self.classify(user)
-      tree     = Maker::LibraryTree.new(user)
-      patterns = user.maker_shelves.pluck(:path)
-      shelves  = shelf_dir_ids(tree, patterns, user)
+    # PURE. Reads `nodes` only, writes nothing, and is the whole rule. `patterns:` is SHELVES in
+    # production; a test passes its own so a fixture can hold a file with no shelf above it.
+    def self.classify(user, patterns: SHELVES)
+      tree    = Maker::LibraryTree.new(user)
+      shelves = shelf_dir_ids(tree, patterns, user)
 
       owners  = {}
       titles  = {}
@@ -238,12 +301,12 @@ module Maker
     # Which DIR node_ids (plus nil, the library root) the shelf patterns name.
     def self.shelf_dir_ids(tree, patterns, user)
       ids = Set.new
-      ids << nil if patterns.any? { |p| Maker::Shelf.matches?(p, "") }
+      ids << nil if patterns.any? { |p| shelf_matches?(p, "") }
       user.nodes.present.where(kind: "dir").pluck(:node_id).each do |dir_id|
         path = tree.path_for(dir_id)
         next if path.nil?
 
-        ids << dir_id if patterns.any? { |p| Maker::Shelf.matches?(p, path) }
+        ids << dir_id if patterns.any? { |p| shelf_matches?(p, path) }
       end
       ids
     end

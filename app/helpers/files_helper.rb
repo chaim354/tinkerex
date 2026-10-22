@@ -38,16 +38,21 @@ module FilesHelper
   #
   # NOT A SHARED `_file_cell` PARTIAL: the four `link_to` block bodies genuinely differ, and only
   # the data hash is the identical part.
-  # `node_name` IS AN ARGUMENT, NOT DERIVED, for the reason `ext_label` already is below: the caller
-  # holds the node and this helper holds only its id, and a lookup here would be a second query per
-  # row on a page that renders hundreds. The menu's `confirm` reads it — a missing one degrades to
-  # "Delete this item?" rather than to a broken menu.
-  def file_menu_data(node_id, node_name, origin)
+  # `node_name` IS READ OFF THE CALLER'S NODE, NEVER LOOKED UP: a lookup here would be a second query
+  # per row on a page that renders hundreds. The menu's `confirm` reads it — a missing one degrades
+  # to "Delete this item?" rather than to a broken menu.
+  #
+  # DETAILS (2026-10-21) is the Library with this file selected: its own folder, so the listing
+  # FilesController#index renders contains it, and `selected=` its id. A root file has no parent and
+  # `files_path` drops the nil. It takes the NODE, not an id and a name, because it now needs the
+  # parent too, and every caller already holds the node.
+  def file_menu_data(node, origin)
     { action: "contextmenu->filemenu#open",
-      node_name:,
-      note_url: file_notes_path(node_id),
-      download_url: blob_file_path(node_id, download: 1),
-      delete_url: file_path(node_id),
+      node_name: node.name,
+      note_url: file_notes_path(node.node_id),
+      download_url: blob_file_path(node.node_id, download: 1),
+      delete_url: file_path(node.node_id),
+      details_url: files_path(folder: node.parent_node_id, selected: node.node_id),
       addon_open_url: origin&.dig(:url),
       addon_open_label: origin&.dig(:label) }
   end
@@ -89,21 +94,27 @@ module FilesHelper
     { thumbs_target: "cell", node_id:, ext: ext_label }
   end
 
-  # A FILE TILE IS A SELECTABLE ITEM (structural redesign §5.1): click selects, double-click opens,
-  # and the link's own behaviour stays for everything else (selection_controller.js). Merged into
-  # whatever data the tile already carries — its `action` is APPENDED to, never replaced, because
-  # the file menu's `contextmenu->filemenu#open` lives in the same attribute. A FOLDER IS NEVER
-  # PASSED THROUGH THIS: a folder click navigates into it.
+  # A FILE TILE IS A SELECTION ITEM FOR DETAILS (2026-10-21). A click opens the file
+  # (fileopen_controller.js, through file_open_data) and a double-click opens it in a new tab; the
+  # side panel opens from the file menu's Details, which dispatches `filemenu:details` on the tile and
+  # is answered here by selection_controller.js#details. Merged into whatever data the tile already
+  # carries — its `action` is APPENDED to, never replaced. A FOLDER IS NEVER PASSED THROUGH THIS: a
+  # folder click navigates into it.
   def with_selection(data, node_id)
     data.merge(selection_target: "item", selection_id: node_id,
-               action: [ data[:action], "click->selection#click", "dblclick->selection#open" ].compact.join(" "))
+               action: [ data[:action], "filemenu:details->selection#details" ].compact.join(" "))
   end
 
-  # WHERE A FILE OPENS FROM A PAGE WITHOUT ITS OWN INSPECTOR (structural redesign §6 and §7): its folder
-  # in the Library with the file selected, so the inspector answers "what is this" and its Open reaches
-  # the file page. Recent and the project hub link here; the Library's own tiles keep file_path, which
-  # selection intercepts. A file at the root has no parent, and Rails drops the nil `folder`.
-  def library_file_path(node) = files_path(folder: node.parent_node_id, selected: node.node_id)
+  # A FILE LINK THAT OPENS ON A CLICK AND IN A NEW TAB ON A DOUBLE-CLICK (2026-10-21,
+  # fileopen_controller.js, mounted on the layout's <main>). Merged into a link's data the way
+  # with_selection is: the action is APPENDED, never replaced, because the file menu and the
+  # thumbnail poll share the hash. `new_tab:` is for a link whose href is NOT the file page — the
+  # model page's list, whose click swaps the pane — and is omitted everywhere else, so the key is
+  # absent rather than nil.
+  def file_open_data(data = {}, new_tab: nil)
+    opened = data.merge(action: [ data[:action], "click->fileopen#click" ].compact.join(" "))
+    new_tab ? opened.merge(fileopen_new_tab_url: new_tab) : opened
+  end
 
   # WHAT THE "Type" COLUMN SHOWS, AND IT MUST AGREE WITH WHAT THE "Type" HEADER SORTS BY
   # (FilesController#sort_key's "type" branch): the file's extension, or "Symlink" for a symlink.
@@ -216,9 +227,10 @@ module FilesHelper
   # THE ONE WIRE SHAPE gerber_controller.js READS FOR A ZIPPED EXPORT — one entry, the zip's own
   # name and URL, `archive: true`, and the member paths the browser extracts with JSZip after
   # fetching the zip once through the same URL a download uses (Maker::GerberArchive's header).
-  # Built here rather than as a literal in FilesController#show so that only a browser ever reads
-  # these keys and no second spelling of them exists for a server-side assertion to miss drifting.
-  # Its loose-layer sibling is `FilesController#gerber_layer_for` (`{ name:, url: }`).
+  # Built here rather than as a literal in FilePreview#viewer_for (its one caller, for both file
+  # pages) so that only a browser ever reads these keys and no second spelling of them exists for a
+  # server-side assertion to miss drifting. Its loose-layer sibling is `FilePreview#gerber_layer_for`
+  # (`{ name:, url: }`).
   def gerber_archive_entry(name:, url:, members:)
     { name:, url:, archive: true, members: }
   end

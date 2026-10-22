@@ -41,6 +41,7 @@ require "tmpdir"
 # bin/build-codemirror.
 class CiHygieneTest < ActiveSupport::TestCase
   WORKFLOW_DIR = Rails.root.join(".github/workflows")
+  RUNNER_STACK = Rails.root.join("ops/ci-runner-stack.yml")
 
   # build-app.yml and install-app-on-runners.yml used to be exempt from the runner-family rules
   # below (DYNAMIC_MATRIX_WORKFLOWS): both were workflow_dispatch-ONLY and took their runner from a
@@ -472,14 +473,63 @@ class CiHygieneTest < ActiveSupport::TestCase
   # header records), so each service repeats the pair; a count of 3 is one runner silently unable
   # to register.
   test "the runner stack reads its token from a mounted file, never a stack variable" do
-    stack = File.read(Rails.root.join("ops/ci-runner-stack.yml"))
+    stack = File.read(RUNNER_STACK)
+    runners = runner_stack.fetch("services").size
+    assert_operator runners, :>=, 1, "parsed no runner services, so the counts below prove nothing"
 
     assert_no_match(/\$\{RUNNER_ACCESS_TOKEN\}/, stack,
                     "ops/ci-runner-stack.yml interpolates a stack variable for the token again")
-    assert_equal 4, stack.scan(%r{^\s+ACCESS_TOKEN_FILE: /run/secrets/runner_token$}).size,
+    assert_equal runners, stack.scan(%r{^\s+ACCESS_TOKEN_FILE: /run/secrets/runner_token$}).size,
                  "every runner service must name ACCESS_TOKEN_FILE"
-    assert_equal 4, stack.scan(%r{^\s+- /mnt/user/appdata/tinkerex-ci/runner\.token:/run/secrets/runner_token:ro$}).size,
+    assert_equal runners, stack.scan(%r{^\s+- /mnt/user/appdata/tinkerex-ci/runner\.token:/run/secrets/runner_token:ro$}).size,
                  "every runner service must bind-mount the token file read-only"
+  end
+
+  # ---------------------------------------------------------------------------------------------
+  # THE RUNNERS' LIMITS MUST ADD UP TO LESS THAN THE BOX THEY SHARE — PER-CONTAINER LIMITS ARE NOT
+  # ENOUGH (2026-10-22). Every runner carried `mem_limit: 8g, cpus: 8.0`, each sane alone, but four of
+  # them promised 32 GB on a 31 GB host that also runs two 4 GB VMs and ~20 other containers. With
+  # four full gates running at once no container ever reached its own cap; the HOST ran out first,
+  # and with no swap it did not OOM-kill anything — it livelocked (load average 172 on 36 threads,
+  # ssh timing out in banner exchange) until it was power-cycled, taking Kaneo, Portainer and the
+  # production VM down with it. `cpus:` made it worse in a way that reads as harmless: a CFS quota
+  # does not change what `Etc.nprocessors` reports, so `parallelize(workers: :number_of_processors)`
+  # forked 36 workers in every job, 144 in all. A `cpuset` does change it.
+  #
+  # So the invariant is the SUM, declared against the host in the stack's own `x-host-budget`, plus
+  # disjoint cpusets kept off the VMs' pinned threads. A runner that needs more than its share is
+  # then OOM-killed INSIDE its container — one red job — instead of freezing the box. The reserved
+  # figures are measurements of the box written into the file, not something a test can verify;
+  # what this pins is that nobody raises a runner's limit, or adds a fifth, without the arithmetic
+  # visibly failing.
+  test "the runners' limits add up to less than the box they share" do
+    stack = runner_stack
+    budget = stack.fetch("x-host-budget")
+    runners = stack.fetch("services").values
+    assert_operator runners.size, :>=, 1, "parsed no runner services, so the sum below proves nothing"
+
+    runners.each do |svc|
+      name = svc.fetch("container_name")
+      assert svc["mem_limit"], "#{name} has no mem_limit"
+      assert_equal stack_bytes(svc["mem_limit"]), stack_bytes(svc["memswap_limit"] || "0"),
+                   "#{name}: memswap_limit must equal mem_limit, or a box with swap lets CI thrash it"
+      assert svc["cpuset"], "#{name} has no cpuset: without one the suite forks a worker per HOST thread"
+      assert_nil svc["cpus"], "#{name} sets cpus: as well as cpuset — a quota the cpuset already bounds"
+      assert_equal 1000, svc["oom_score_adj"],
+                   "#{name}: if the host does run out, the kernel must kill CI before a VM"
+      assert_operator svc["pids_limit"].to_i, :>, 0, "#{name} has no pids_limit"
+    end
+
+    runner_ram = runners.sum { |svc| stack_bytes(svc.fetch("mem_limit")) }
+    reserved_ram = budget.fetch("reserved_ram").values.sum { |size| stack_bytes(size) }
+    assert_operator runner_ram + reserved_ram, :<=, stack_bytes(budget.fetch("ram")),
+                    "the runners' mem_limits plus the box's reserved RAM exceed the box"
+
+    pinned = runners.flat_map { |svc| stack_cpus(svc.fetch("cpuset")) }
+    assert_equal pinned.uniq.size, pinned.size, "two runners are pinned to the same CPU"
+    held = budget.fetch("reserved_cpus").values.flat_map { |spec| stack_cpus(spec) }
+    assert_empty pinned & held, "a runner is pinned to a CPU the box keeps for a VM or for itself"
+    assert_operator pinned.max, :<, budget.fetch("cpus"), "a runner is pinned to a CPU the box does not have"
   end
 
   test "the runner image wraps the base entrypoint to read that file" do
@@ -648,6 +698,24 @@ class CiHygieneTest < ActiveSupport::TestCase
   end
 
   private
+
+    # The runner stack as compose reads it — `aliases: true` because every service merges `*runner`.
+    def runner_stack = YAML.load_file(RUNNER_STACK, aliases: true)
+
+    # A compose size ("4g", "512m", "2gb") in bytes. Refuses rather than guesses: a size this cannot
+    # read would otherwise count as zero and quietly pass the budget.
+    def stack_bytes(size)
+      match = /\A(\d+(?:\.\d+)?)\s*([kmg]?)b?\z/i.match(size.to_s.strip) or flunk("unreadable size #{size.inspect}")
+      (match[1].to_f * { "" => 1, "k" => 1024, "m" => 1024**2, "g" => 1024**3 }.fetch(match[2].downcase)).to_i
+    end
+
+    # A cpuset ("4-6,22-24", "13,31") as the CPU numbers it names.
+    def stack_cpus(spec)
+      spec.to_s.split(",").flat_map do |part|
+        first, last = part.strip.split("-", 2).map { |n| Integer(n) }
+        (first..(last || first)).to_a
+      end
+    end
 
     # `runs-on` normalised to a downcased label list — THE ONE PARSE, consumed by all three runner
     # checks above.

@@ -14,6 +14,12 @@ module Maker
       "image"          => "Images",
       "instructions"   => "Instructions",
       "document"       => "Documents",
+      # A WORKBOOK, AND ITS OWN ROLE RATHER THAN `document` (2026-10-21). `document` is a TEXT role
+      # (TEXT_ROLES below), and every reader of that list — the file page's code viewer and the
+      # TextThumb registration — would have treated an `.xlsx`, which is a zip, as source text. It
+      # files into the same `docs/` folder as `document` (ProjectFolders), the way `instructions`
+      # already does; what differs is only that its bytes are not text.
+      "spreadsheet"    => "Spreadsheets",
       "vector"         => "Vector",
       "laser"          => "Laser",
       "cad_source"     => "CAD source",
@@ -100,6 +106,11 @@ module Maker
       "txt" => "document", "md" => "document", "markdown" => "document",
       "json" => "document", "csv" => "document", "tsv" => "document",
       "rst" => "document", "tex" => "document",
+      # An Excel workbook (2026-10-21): the file page shows it as a grid and saves basic edits back
+      # (Files::SpreadsheetsController, Maker::Xlsx). `xlsm`/`xls`/`ods` are deliberately absent —
+      # a macro workbook, the pre-2007 binary format and OpenDocument are three other formats the
+      # editor does not read, and naming them here would promise a viewer they do not get.
+      "xlsx" => "spreadsheet",
       # Source code, config and build files — the "firmware + software" half of a project (§1),
       # which until now was filed entirely as `other`. Three groupings are decisions rather than
       # observations. `h`/`hpp` sit with c/cpp because a firmware tree is headers and sources
@@ -166,7 +177,10 @@ module Maker
       #
       # DELIBERATELY ABSENT: `.xnc` — it is a real Excellon extension (KiCad writes one) but it is
       # also the extension of nothing else, and tracespace identifies a drill layer from the
-      # FILENAME, so adding it later is a one-line edit here with no other consequence. It is left
+      # FILENAME, so adding it later is a one-line edit here: rows already attached as `other`
+      # follow by `classify_unclassified!` below (F-S33-1). What it does not reach is an existing
+      # user's FILING map: without the top-up migration every widening carries
+      # (`SeedPcbFilingRules`' shape), a user seeded earlier files `.xnc` into `other/`. It is left
       # out only because no fixture or live library in this repo has produced one; add it the day
       # one does. `.gbp` above is the solder-paste layer, NOT the `.gbp` some backup tools write.
       "gbr" => "pcb", "gtl" => "pcb", "gbl" => "pcb", "gts" => "pcb", "gbs" => "pcb",
@@ -186,6 +200,12 @@ module Maker
     # many words. Files::LinksController asks `role_for` again on the server, through this same
     # hash, so a hand-posted node id is refused whatever the picker showed.
     IMAGE_EXTS = ROLE_BY_EXT.filter_map { |ext, role| ext if role == "image" }.freeze
+
+    # WHAT THE TOP BAR'S UPLOAD CALLS A MODEL when it decides whether a zip unpacks (2026-10-21,
+    # lib/zip_unpack.js) — DERIVED, like IMAGE_EXTS above, so a model extension added to ROLE_BY_EXT
+    # makes a zip holding it unpack with no second edit. The importer's own five-entry MODEL_EXT
+    # (importer_controller.js) is display-only and is not this.
+    MODEL_EXTS = ROLE_BY_EXT.filter_map { |ext, role| ext if role == "model" }.freeze
 
     # WHAT A BROWSER CAN SHOW AS `<img>` BYTES — NOT THE `image` ROLE, and since 2026-09-08
     # (tinkerex#285) the two lists differ: `.heic`/`.heif`/`.tif`/`.tiff` are images by role and no
@@ -344,6 +364,41 @@ module Maker
     # Best-effort role from a filename's extension; unknown -> "other".
     def self.role_for(name)
       ROLE_BY_EXT.fetch(File.extname(name.to_s).downcase.delete("."), "other")
+    end
+
+    # STORED ROLES FOLLOW THIS VOCABULARY BY ONE RULE, AND THIS IS ITS ONE OWNER (F-S33-1). `role`
+    # is written with the row, from `role_for` at the attach doors, so a row written before
+    # ROLE_BY_EXT learned its extension says `other` until something rewrites it. For seven
+    # widenings that was a hand-copied data migration (eight migrations rewrite stored roles; the
+    # eighth is the one RE-classification, `lbrn2` vector -> laser); two widenings never got one
+    # (`nc`/`tap`/`ngc`, and the Gerber layers, whose SeedPcbFilingRules seeds filing rules only),
+    # so an electronics project showed a photo where its board should be. This re-reads ONE user's
+    # `other` rows against TODAY's table and rewrites those it now names, which makes the row half
+    # of a widening the table edit and nothing else. Maker::ClassifyAttachmentRolesJob runs it daily
+    # for every user and `rake maker:classify_roles` runs it on demand. -> rows rewritten.
+    #
+    # `other` IS THE ONE VALUE IT TOUCHES, and it means "nothing classified this name when the row
+    # was written". The schema keeps no chosen-versus-derived column, so every other value is a
+    # decision and is never rewritten: the photo door's `image` on whatever node it is handed, a v1
+    # client's posted role. A client that posts `other`, or omits the role and gets the column
+    # default, is given the vocabulary's answer within a day, the same overwrite all seven
+    # from-`other` migrations made. What it cannot reach, by construction: a RE-classification (the
+    # `lbrn2` vector -> laser move) and an extension REMOVED from the table. Each still needs a
+    # migration.
+    #
+    # The name is read off the row's OWN user's node (node_ids are unique per user, not globally),
+    # and a row whose node is gone drops out of the join. One query per user plus one UPDATE per
+    # role with work to do, so zero writes in steady state. `update_all` skips the inclusion
+    # validation, which is safe only while every ROLE_BY_EXT value is one of ROLES; the
+    # table-derived test in file_attachment_classify_test.rb asserts every row it rewrites still
+    # validates.
+    def self.classify_unclassified!(user)
+      unclassified = user.maker_file_attachments.where(role: "other")
+      names = unclassified.joins("JOIN nodes ON nodes.user_id = maker_file_attachments.user_id " \
+                                 "AND nodes.node_id = maker_file_attachments.node_id")
+                          .pluck("maker_file_attachments.id", "nodes.name")
+      names.group_by { |_id, name| role_for(name) }.except("other")
+           .sum { |role, rows| unclassified.where(id: rows.map(&:first)).update_all(role:) }
     end
 
     # LightBurn and MillMage (same vendor, same convention) write a rescue copy of a project beside

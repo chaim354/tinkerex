@@ -7,11 +7,20 @@ module FileLayer
   # `nodes` is still the catalog — the scanner indexes into it — so browse/search/tags and the
   # maker layer work unmodified.
   class Share
-    def initialize(root: ENV.fetch("LIBRARY_PATH"))
-      @root = Pathname.new(root).expand_path
+    # `root:` stays a keyword because ~240 tests build adapters over their own tmpdirs and must keep
+    # doing so; a root given here is FIXED.
+    def initialize(root: nil)
+      @root = Pathname.new(root).expand_path if root
     end
 
-    attr_reader :root
+    # THE FACTORY-BUILT ADAPTER FOLLOWS THE LIBRARY FOLDER, ASKED PER CALL (K, 2026-10-20): the mount
+    # plus the folder chosen at /settings/library (Tinkerex::LibraryRoot.path). NOT fixed at
+    # construction, because FileLayer.current memoises ONE adapter per process and the in-Puma job
+    # supervisor FORKS its workers (Solid Queue's plugin, the default mode): a root captured at build
+    # time went on scanning, filing and previewing the old folder in every worker until a restart
+    # (found in review). The setting it reads is cached per request and per job (Setting.get), so this
+    # costs no query after the first, and one request or one job sees one root throughout.
+    def root = @root || Tinkerex::LibraryRoot.path
 
     def capabilities
       # No history (nothing to restore), no sync engine (web-only), nothing to presign (a
@@ -52,16 +61,18 @@ module FileLayer
       user.nodes.present.where(node_id: node_ids).to_h { |n| [ n.node_id, file_info(n) ] }
     end
 
-    # What is in this deployment's trash: the files WE moved to `.trash/<node_id>/<name>`, which
-    # `undelete` can move back. A read verb, so it is answered here even though it reports on the
-    # write path's leavings.
+    # What is in this deployment's trash: the files WE moved to `.trash/<root id>/<root name>/...`,
+    # which `undelete` can move back. A read verb, so it is answered here even though it reports on
+    # the write path's leavings.
     #
     # `storage_path: nil` IS THE FILTER, AND IT IS THE TWO-TOMBSTONE-KINDS DISTINCTION (2b
     # Landmine 2) BEING READ RATHER THAN A CLEVER PREDICATE. There are exactly two ways a node
     # here becomes deleted, and only one of them is a trash:
     #
     #   - a TRASH tombstone (`delete` above): the bytes are in `.trash` and storage_path is NULLED
-    #     — precisely so a scan cannot revive it by path. `undelete` moves them back.
+    #     — precisely so a scan cannot revive it by path — and `trash_root_node_id` names the entry
+    #     it went into, which is what `undelete` reads (FileLayer::TrashMembership; the suite asserts
+    #     the two spellings agree on every row). `undelete` moves them back.
     #   - a SCAN tombstone (Reconciler): the user removed the file in Finder, so the bytes are
     #     GONE from storage we do not own, and the row KEEPS its storage_path (that is what lets a
     #     restored file revive its old node). `undelete` on one raises NotFound — there is nothing
@@ -254,7 +265,6 @@ module FileLayer
       end
 
       bytes = read_capped!(io)
-      FileUtils.mkdir_p(dest.dirname)
       # Temp-then-rename: the 15-minute scan may be walking this directory right now, and a
       # half-written file would be indexed with a hash of its own torn state. The rename is
       # atomic, and keeping the temp in the DESTINATION'S OWN directory is what makes it so —
@@ -271,6 +281,10 @@ module FileLayer
       # two copies that must match exactly would bring the wedge back the moment they drift.
       tmp = dest.dirname.join("#{Library::Scanner::TEMP_PREFIX}#{SecureRandom.hex(8)}")
       begin
+        # mkdir_p INSIDE the begin, for the reason delete, move and undelete give: it is I/O against
+        # the same share, and outside this rescue a catalog folder missing on disk whose re-creation
+        # fails (a file at that path, a read-only remount) escaped as a raw Errno — a 500.
+        FileUtils.mkdir_p(dest.dirname)
         File.binwrite(tmp, bytes)
         File.rename(tmp, dest)
       rescue SystemCallError => e
@@ -314,7 +328,7 @@ module FileLayer
     TWO_PHASE_MSG = "#{name} is port_writable -- uploads go through #write (bytes arrive in one " \
                     "request), not the sync engine's two-phase presigned flow".freeze
 
-    def begin_upload(_user, name: nil, size: nil, manifest: nil, device: nil, parent_node_id: nil,
+    def begin_upload(_user, name: nil, size: nil, manifest: nil, parent_node_id: nil,
                      node_id: nil, base_version_id: nil, mtime: nil, mode: nil)
       raise NotImplementedError, TWO_PHASE_MSG
     end
@@ -351,9 +365,9 @@ module FileLayer
       stat(user, node_id: node.node_id)
     end
 
-    # Move the file out of the indexed tree into `.trash/<node_id>/<name>` and tombstone the
-    # node. Keyed by node_id, not name: two `bracket.stl` from different folders must not
-    # collide, and Task 4's undelete needs one unambiguous place to look.
+    # Move the node out of the indexed tree into `.trash/<node_id>/<name>` and tombstone it, with
+    # everything live beneath it when it is a folder. Keyed by node_id, not name: two `bracket.stl`
+    # from different folders must not collide, and undelete needs one unambiguous place to look.
     #
     # NO TRANSACTION, and this is the one place in this file where that needs arguing rather
     # than asserting: `File.rename` is not transactional, so a `transaction do` around both
@@ -364,6 +378,10 @@ module FileLayer
       node = live_node!(user, node_id)
       src = absolute_path(node) # read BEFORE the update nulls storage_path
       dest_dir = trash_dir(node.node_id)
+      # WHAT TRAVELS, DECIDED BEFORE THE RENAME — see the `update_all` below for why this set, and
+      # why it is captured here rather than read after the move.
+      travelling = user.nodes.present.where(node_id: FileLayer::Subtree.node_ids(user, node.node_id))
+                       .pluck(:node_id)
       begin
         # mkdir_p is INSIDE the begin: it is I/O against the same share as the rename, and it
         # fails for the same transient reasons (a read-only mount, a full disk, an NFS perms
@@ -419,9 +437,22 @@ module FileLayer
       #
       # `update_all`, not a loop of `update!`: one statement for a folder of any size, and — the
       # part that matters — it cannot half-apply, so a subtree is never partly live.
-      ids = FileLayer::Subtree.node_ids(user, node.node_id)
-      user.nodes.where(node_id: ids).update_all(deleted: true, storage_path: nil,
-                                                updated_at: Time.current)
+      #
+      # `travelling`: ONLY THE ROWS THAT WERE LIVE TRAVELLED WITH THE FOLDER. The walk returns
+      # tombstones too (it must — see Subtree), and rewriting one it did not make breaks it: a SCAN
+      # tombstone (removed in Finder, path kept, bytes gone) becomes a trash tombstone listed with a
+      # Restore that can never work, and an older trash tombstone has its "Deleted" date re-stamped,
+      # restarting Maker::DeadNodes' grace. AND IT WAS CAPTURED BEFORE THE RENAME, never re-read
+      # here: nothing serializes a scan against a port write, so a scan landing in between sees the
+      # folder vanished and scan-tombstones what just moved, and a re-read of `present` would skip
+      # those rows — bytes in `.trash`, rows never listed there. s3's phase 3 does the same.
+      #
+      # `trash_root_node_id: node.node_id` RECORDS THE ENTRY THESE ROWS WENT INTO, on exactly the
+      # set that went: what `undelete` revives is read back from it (FileLayer::TrashMembership), so
+      # a tombstone this delete did not make — a scan's, an older entry's — is never one of them.
+      user.nodes.where(node_id: travelling).update_all(deleted: true, storage_path: nil,
+                                                       trash_root_node_id: node.node_id,
+                                                       updated_at: Time.current)
       nil
     end
 
@@ -523,39 +554,20 @@ module FileLayer
       # is what makes undeleting a live node a clean NotFound instead of a confusing rename.
       node = user.nodes.find_by(node_id:, deleted: true) ||
              raise(NotFound, "node #{node_id.inspect} is not in the trash")
-      # AN ORPHANED RESTORE IS REFUSED (§14a), AND IT BECAME REACHABLE HERE ON 2026-09-10. Until the
-      # directory cascade above, `delete` could not tombstone a parent out from under a live child,
-      # so this state had no port-reachable door on share and the shared contract SKIPPED it. Now a
-      # folder delete tombstones the whole subtree, and restoring a CHILD first is the MAINLINE
-      # case, not an edge.
+      # WHICH ENTRY THIS ROW IS RESTORED AS, OR THE REFUSAL — FileLayer::TrashMembership, read off
+      # `trash_root_node_id` (§14a). A scan tombstone records no entry (NotFound: nothing in .trash);
+      # a row that went in with its folder is REFUSED while that folder is in the trash (a refusal is
+      # recoverable — restore the folder, then the file — and a scatter to the root is not, and the
+      # message names the ACTION because a browser Restore click has no prompt to offer); so is a row
+      # whose own parent is trash. A parent the SCAN tombstoned records no entry, so restoring into
+      # one stays allowed and SELF-HEALING: mkdir_p recreates the folder, and the next scan revives
+      # that very dir node by its kept path. Refusing on `deleted:` broke exactly that once.
       #
-      # REFUSE RATHER THAN REPARENT TO THE ROOT, which is the trade §14a already settled: a refusal
-      # is recoverable — restore the folder, then the file — and a scatter is not. The message names
-      # the ACTION, not just the failure, because a browser Restore click has no prompt to offer.
-      #
-      # AND IT DISCRIMINATES ON THE TOMBSTONE KIND, NOT ON `deleted:` — which is §14a's two-kinds
-      # rule doing real work rather than being restated. A SCAN tombstone KEEPS its storage_path
-      # (the user removed the emptied folder in Finder), and restoring into one is SELF-HEALING:
-      # mkdir_p recreates the folder, that is positive evidence, and the next scan revives the very
-      # same dir node by storage_path with its original id. A TRASH tombstone NULLs the path, and
-      # that is exactly what the cascade above writes — so the NULL is the discriminator, and it is
-      # the only one that separates "restore the folder first" from a dead end the user can neither
-      # see nor fix.
-      #
-      # Written as `deleted: true` first, which refused BOTH and broke the self-healing case: an
-      # existing test drove it and said so. Do not widen this back.
-      #
-      # AND IT RUNS BEFORE THE BYTES CHECK, which is not cosmetic ordering. A child tombstoned by
-      # the CASCADE has no entry of its own under `.trash/<its id>/` — its bytes travelled inside
-      # the directory, at `.trash/<dir id>/<dir>/…`. So the bytes check finds nothing and answers
-      # NotFound: "its trashed bytes are gone (purged?)" — terminal, wrong, and it tells the user
-      # their file is unrecoverable when restoring the folder beside it would bring it back. The
-      # shared mutation contract caught exactly this substitution.
-      parent = user.nodes.find_by(node_id: node.parent_node_id) if node.parent_node_id.present?
-      if parent&.deleted? && parent.storage_path.nil?
-        raise UnsupportedOperation,
-              "#{node_id.inspect}: its folder is in the trash too — restore the folder first"
-      end
+      # IT RUNS BEFORE THE BYTES CHECK, which is not cosmetic ordering: a row that went in with its
+      # folder has no entry of its own under `.trash/<its id>/`, so the bytes check would answer
+      # "its trashed bytes are gone (purged?)" — terminal, wrong, and a reason to give up on a file
+      # that restoring the folder beside it would bring back.
+      FileLayer::TrashMembership.restorable!(user, node)
 
       src = trash_dir(node.node_id).join(node.name)
       unless File.exist?(src)
@@ -568,9 +580,9 @@ module FileLayer
           raise FetchError, "#{node_id.inspect}: the trashed bytes are missing and the library " \
                             "root looks unmounted"
         end
-        # The library is there and the bytes are not. The purge job (Task 6) took them, or this is
-        # a SCAN tombstone, which never had bytes in .trash to begin with. Both are terminal and
-        # both are the user's answer: it is gone.
+        # The library is there and the bytes are not: the purge job (Task 6) took them, or this row
+        # was a member its folder's restore could not bring back. Terminal either way, and the
+        # user's answer: it is gone.
         raise NotFound, "#{node_id.inspect}: its trashed bytes are gone (purged?)"
       end
 
@@ -604,8 +616,8 @@ module FileLayer
       # Re-stat: the bytes are the same, but mtime/size are what the next scan compares against,
       # and a stale pair would make it re-hash the file for nothing.
       st = File.stat(dest)
-      node.update!(deleted: false, storage_path: rel, size: st.size, mtime: nanos(st))
-      revive_subtree!(user, node)
+      node.update!(deleted: false, storage_path: rel, trash_root_node_id: nil, size: st.size, mtime: nanos(st))
+      revive_members!(user, node)
       stat(user, node_id: node.node_id)
     end
 
@@ -646,7 +658,7 @@ module FileLayer
     # second ".trash" literal: the Scanner's skip and this layout are the SAME fact, and two
     # copies of it is how the trash quietly starts getting indexed. (write's temp prefix makes
     # the identical argument, for the identical reason.)
-    def trash_dir(node_id) = @root.join(Library::Scanner::TRASH_PREFIX, node_id)
+    def trash_dir(node_id) = root.join(Library::Scanner::TRASH_PREFIX, node_id)
 
     # A DIRECTORY DELETE CASCADES HERE NOW (2026-09-10). `deletable_file!` stood in this place and
     # refused one; its argument is kept because it is still true about what would happen WITHOUT the
@@ -676,8 +688,8 @@ module FileLayer
     #
     # THIS IS WHAT MAKES THE CASCADE UNDOABLE, and therefore what makes it safe to offer at all: a
     # delete whose inverse does not exist is a delete the user cannot undo. `delete` nulled every
-    # descendant's storage_path (so no tombstone could be revived by path), and the rename back has
-    # already put the bytes where they belong — so all that is left is the catalog.
+    # LIVE descendant's storage_path (so no tombstone could be revived by path), and the rename back
+    # has already put the bytes where they belong — so all that is left is the catalog.
     #
     # THE SAME ROWS, NEVER NEW ONES. Every attachment, BOM line and tag is keyed on `node_id`, so a
     # restore that minted ids would look perfect — the files are back, the bytes are right — while
@@ -685,30 +697,40 @@ module FileLayer
     # believed was unavoidable here.
     #
     # TOP-DOWN, AND THE ORDER IS LOAD-BEARING: a child's path is its parent's path plus its name,
-    # so the parent must be written first. `Subtree.node_ids` returns root-first in level order,
-    # which is exactly that guarantee — do not re-sort it.
+    # so the parent must be written first. TrashMembership.members answers root-first in level
+    # order, which is exactly that guarantee — do not re-sort it.
     #
-    # A file whose bytes did not come back is left TOMBSTONED rather than revived to a path with
+    # A member whose bytes did not come back is left TOMBSTONED rather than revived to a path with
     # nothing behind it: a live node over absent bytes is the vanished-file shape the mass-deletion
-    # guard exists for, and it would be this method creating it.
-    def revive_subtree!(user, root)
-      ids = FileLayer::Subtree.node_ids(user, root.node_id)
-      return if ids.size <= 1
+    # guard exists for, and it would be this method creating it. And it is RE-ROOTED, never left naming
+    # this folder (TrashMembership.release!): the folder's next delete writes the same root id, and a
+    # row still naming it would be adopted and revived over a same-named replacement. Its own restore
+    # then answers from its own entry, which it has only if it was deleted on its own.
+    #
+    # ONLY WHAT WENT INTO THIS ENTRY COMES BACK WITH IT: the rows that recorded this root, which its
+    # delete wrote. A scan tombstone in the folder recorded nothing (the scan revives it by path when
+    # its bytes return), and a row deleted on its own before the folder recorded its own entry and is
+    # restored on its own — even after the purge has taken that entry, which is the case the old
+    # inference (revive whatever rebuilt path exists, skip whatever still owns a `.trash/<id>`) got
+    # wrong: it revived the earlier `x.stl` over its replacement's bytes, or collided with the
+    # replacement in the partial unique index and 500ed with the rows not yet reached left pathless.
+    #
+    # The release runs in `ensure`, so a revive that raises partway (a scan racing the restore, the
+    # residual #undelete records) still leaves no row naming a folder that is back.
+    def revive_members!(user, root)
+      members = FileLayer::TrashMembership.members(user, root)
+      revived = Set.new
+      members.each do |child, beneath|
+        rel = join_rel(root.storage_path, beneath)
+        path = resolve_inside!(rel)
+        next unless File.exist?(path)
 
-      by_parent = user.nodes.where(node_id: ids - [ root.node_id ]).group_by(&:parent_node_id)
-      queue = [ root ]
-      until queue.empty?
-        parent = queue.shift
-        Array(by_parent[parent.node_id]).each do |child|
-          rel = join_rel(parent.storage_path, child.name)
-          path = resolve_inside!(rel)
-          next unless File.exist?(path)
-
-          st = File.stat(path)
-          child.update!(deleted: false, storage_path: rel, size: st.size, mtime: nanos(st))
-          queue << child
-        end
+        st = File.stat(path)
+        child.update!(deleted: false, storage_path: rel, trash_root_node_id: nil, size: st.size, mtime: nanos(st))
+        revived << child.node_id
       end
+    ensure
+      FileLayer::TrashMembership.release!(user, members, revived) if members && revived
     end
 
     # Undo the entry dir when the move it was made for never landed, mirroring write's rm_f of
@@ -725,10 +747,11 @@ module FileLayer
     # (It took an `allow_root:` parameter until that fix, on the read path's behalf; the parameter
     # is gone rather than left switched off, so there is nothing to switch back on.)
     def resolve_inside!(rel)
-      path = @root.join(rel.to_s).expand_path
-      # start_with?("#{@root}/"), never start_with?(@root): a SIBLING directory whose name merely
+      base = root
+      path = base.join(rel.to_s).expand_path
+      # start_with?("#{base}/"), never start_with?(base): a SIBLING directory whose name merely
       # has the root as a prefix would otherwise pass.
-      unless path.to_s.start_with?("#{@root}/")
+      unless path.to_s.start_with?("#{base}/")
         raise NotFound, "path escapes the library root: #{rel.inspect}"
       end
       path
@@ -813,11 +836,12 @@ module FileLayer
       parent = scope.find_by(node_id: parent_node_id, kind: "dir") ||
                raise(NotFound, "parent #{parent_node_id.inspect} is not a " \
                                "#{'live ' if live}directory")
-      # A dir node cannot carry a nil storage_path today — delete refuses directories, and a scan
-      # tombstone keeps its path — so this is unreachable. It is here because of what happens if
-      # that ever stops being true: blank means the root, so a path-less parent would silently
-      # relocate the file to the top of the library rather than fail. Of everything this adapter
-      # can get wrong, a silent misplacement is the one it has no later way to detect.
+      # A TRASHED folder has a nil storage_path, but `undelete` refuses one before it gets here
+      # (FileLayer::TrashMembership), and a scan tombstone keeps its path — so only data reaches
+      # this (a pathless live dir carried over from chunk). It is here because of what that data
+      # would do: blank means the root, so a path-less parent would silently relocate the file to
+      # the top of the library rather than fail. Of everything this adapter can get wrong, a silent
+      # misplacement is the one it has no later way to detect.
       raise NotFound, "parent #{parent_node_id.inspect} has no storage_path" if parent.storage_path.blank?
       parent.storage_path
     end
@@ -852,8 +876,9 @@ module FileLayer
     # mountpoint test would be exact, but LIBRARY_PATH may be a SUBDIRECTORY of the mount, where
     # st_dev always matches the parent and every read would look unmounted.
     def library_present?
-      return false unless @root.directory?
-      Dir.each_child(@root.to_s) { return true }
+      base = root
+      return false unless base.directory?
+      Dir.each_child(base.to_s) { return true }
       false
     rescue SystemCallError
       # Can't even list the root: definitely not a healthy library. Retryable.

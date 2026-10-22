@@ -14,8 +14,10 @@ module Maker
   # A PANEL IS A FIXED KEY OR A FOLDER (2026-09-08, folder panels; spec decisions 3, 5, 6). The
   # vocabulary #layout_for reads against is Maker::Project::PANELS plus `folder:<node_id>` for the
   # project's CURRENT depth-one folders, which the caller supplies as `folders:` —
-  # Maker::ProjectFolderListing#panel_folders, `[[node_id, repo?], …]` in disk order. Four rules
-  # follow, and the first is why totality has to be computed on the way OUT:
+  # Maker::ProjectFolderListing#panel_folders, `[[node_id, repo?, shelf], …]` in its default order
+  # (disk order, a shelf group's folders together; `shelf` is a Maker::Shelves::Entry or nil, and a
+  # pair without one reads as nil). Four rules follow, and the first is why totality has to be
+  # computed on the way OUT:
   #
   #   * TOTALITY IS AGAINST THE FOLDERS THAT EXIST NOW, not the ones that existed when the layout
   #     was saved. A key naming a folder that has been deleted, nested deeper, or never existed
@@ -33,7 +35,8 @@ module Maker
   #     (spec decision 2 — hiding it also takes it out of the visitor's page and the bundle).
   #   * `views` IS PER PANEL, one of Maker::Project::VIEWS. A key outside the vocabulary or a value
   #     outside VIEWS is dropped rather than raised on, for the reason the rest of this read is
-  #     total. #view_for falls back to .default_view: the browser for a working tree, tiles for
+  #     total. #view_for falls back to the folder's SHELF default (2026-10-20; a value outside VIEWS
+  #     dropped the same way), then to .default_view: the browser for a working tree, tiles for
   #     every other folder and for every fixed key — which is today's page exactly (decision 6).
   #   * `widths`, `titles` AND `intros` ARE PER PANEL TOO (2026-09-09, the page editor): a width in
   #     WIDTHS, else the default that used to be a stylesheet rule (#default_width); plain one-line
@@ -195,7 +198,7 @@ module Maker
     # --- the layout -----------------------------------------------------------------------------
 
     # `folder:<node_id>` — a panel that is one of the project folder's own subfolders rather than
-    # one of the ten fixed keys. THE NODE ID AND NOT THE PATH, AND THE HONEST REASON IS NARROWER
+    # one of the twelve fixed keys. THE NODE ID AND NOT THE PATH, AND THE HONEST REASON IS NARROWER
     # THAN "A RENAME KEEPS THE ID": it does on chunk_remote, where the id is the sync server's and a
     # rename arrives as a move; on share and s3 the scan pairs renamed FILES by content and never
     # DIRECTORIES (Library::Reconciler#vanished_nodes is `kind: "file"`), so a Finder rename of a
@@ -247,7 +250,15 @@ module Maker
     # so a stray entry under one in a hand-written column is dropped rather than honoured — a
     # hidden or half-width tab is not a page anything could render. `titles` holds a tab's NAME,
     # which is what #tab_name_for reads.
-    Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids, :block_kinds) do
+    #
+    # `shelf_views` AND `shelf_groups` ARE THE FOLDERS' SHELVES (2026-10-20), keyed by folder key:
+    # a shelf's default view (only values in Maker::Project::VIEWS) and its group's name. Neither is
+    # the maker's choice on this project, so neither is in `views` — #view_for asks `views` first.
+    Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids, :block_kinds,
+                         :shelf_views, :shelf_groups) do
+      # SHELVES ARE OPTIONAL (2026-10-20): a caller with no shelves passes none.
+      def initialize(shelf_views: {}, shelf_groups: {}, **rest) = super(shelf_views:, shelf_groups:, **rest)
+
       def visible = order - hidden
       # `to_s` like `folder?` and `view_for` below, so a Symbol asks the same question a String does.
       def visible?(key) = order.include?(key.to_s) && !hidden.include?(key.to_s)
@@ -285,9 +296,15 @@ module Maker
       # The maker's choice, else the default for what this panel IS. The `folder?` guard is not
       # decoration: without it a fixed key is asked whether `repo_ids` holds the string
       # "attachments", which is a question about node ids that only has a right answer by luck.
+      # IN ORDER: the project's choice, the shelf's default, the automatic default (2026-10-20).
       def view_for(key)
-        views[key.to_s] || ProjectKind.default_view(key.to_s, repo: folder?(key) && repo_ids.include?(folder_id(key)))
+        views[key.to_s] || shelf_views[key.to_s] ||
+          ProjectKind.default_view(key.to_s, repo: folder?(key) && repo_ids.include?(folder_id(key)))
       end
+
+      # The name of the group the folder's shelf is in, nil for an ungrouped shelf, a folder no
+      # shelf names, and every key that is not a folder (2026-10-20). What the pages' headings read.
+      def shelf_group_for(key) = shelf_groups[key.to_s]
 
       # THE WIDTH IS DATA, NOT A STYLESHEET RULE (2026-09-09): pages/projects.css used to name
       # `.attachments-panel, .photos-panel, .folder-panel` as the panels that span both columns.
@@ -390,6 +407,12 @@ module Maker
       over = overrides.is_a?(Hash) ? overrides : {}
       folder_keys = Array(folders).map { |id, _repo| folder_key(id) }
       repo_ids = Array(folders).filter_map { |id, repo| id.to_s if repo }
+      # THE FOLDERS' SHELVES (2026-10-20): a default view only from VIEWS, by the totality rule the
+      # stored views run on, and the group's name for the pages' headings.
+      shelf_views = Array(folders).filter_map do |id, _repo, shelf|
+        [ folder_key(id), shelf.view ] if shelf&.view && Maker::Project::VIEWS.include?(shelf.view)
+      end.to_h
+      shelf_groups = Array(folders).filter_map { |id, _repo, shelf| [ folder_key(id), shelf.group ] if shelf&.group }.to_h
       block_keys = Array(blocks).map { |k, _kind| block_key(k) }
       block_kinds = Array(blocks).to_h { |k, kind| [ block_key(k), kind.to_s ] }
       # A TAB IS VOCABULARY BECAUSE THE ORDER SAYS SO (2026-09-09, tabs; spec §3): there is no row to
@@ -413,7 +436,7 @@ module Maker
                  widths: stored_widths(over["widths"], panel_vocabulary),
                  titles: stored_text(over["titles"], vocabulary, TITLE_MAX),
                  intros: stored_text(over["intros"], panel_vocabulary, INTRO_MAX),
-                 repo_ids:, block_kinds:)
+                 repo_ids:, block_kinds:, shelf_views:, shelf_groups:)
     end
 
     # `Array#&` FILTERS, DEDUPS AND KEEPS THE RECEIVER'S ORDER in one operation, which is all three

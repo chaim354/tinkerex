@@ -22,10 +22,13 @@ require "test_helper"
 class CssHygieneTest < ActiveSupport::TestCase
   SHEETS_DIR = Rails.root.join("app/assets/stylesheets")
   LAYOUT = Rails.root.join("app/views/layouts/application.html.erb")
+  # The <head> the layout renders, and the one place the stylesheet links are written (2026-10-21:
+  # shared with this app's turbo_rails/frame layout, see layouts/_head.html.erb).
+  HEAD = Rails.root.join("app/views/layouts/_head.html.erb")
   LAYER_ORDER = "@layer tokens, base, components, shell, pages;".freeze
   OURS = %w[
     application.css components.css shell.css
-    pages/files.css pages/projects.css pages/models.css pages/tools.css pages/preview.css pages/home.css pages/inventory.css pages/settings.css pages/search.css pages/public.css pages/landing.css
+    pages/files.css pages/projects.css pages/models.css pages/tools.css pages/preview.css pages/home.css pages/inventory.css pages/settings.css pages/search.css pages/public.css pages/landing.css pages/spreadsheet.css
   ].freeze
   OVERRIDES = "vendor-overrides.css".freeze
   DELETED = %w[projects.css models.css notes.css].freeze
@@ -36,14 +39,16 @@ class CssHygieneTest < ActiveSupport::TestCase
     .panel-slot .panel-strip .layout-bar .layout-drawer
     .block-panel .block-link-card .page-intro .image-pick
     .panel-slot--tab .tabs .tab-bar .tab-pane .tab-link .tab-heading
+    .render-card dialog.calculator
   ].freeze
 
   def read(name) = SHEETS_DIR.join(name).read
 
   def strip_comments(css) = css.gsub(%r{/\*.*?\*/}m, "")
 
-  # Every rule as [selector_text, enclosing_block_heads]. A block whose head starts with "@" is an
-  # at-rule (layer, media, font-face, keyframes) and is not itself a rule; its children are.
+  # Every rule as [selector_text, enclosing_block_heads, declarations]. A block whose head starts
+  # with "@" is an at-rule (layer, media, container, font-face, keyframes) and is not itself a rule;
+  # its children are. `declarations` is the rule's body, one "property: value;" after another.
   def rules(css)
     out = []
     stack = []
@@ -53,18 +58,19 @@ class CssHygieneTest < ActiveSupport::TestCase
       when "{"
         head = buf.strip
         stack << head
-        out << [ head, stack.dup ] unless head.start_with?("@")
+        out << [ head, stack.dup, +"" ] unless head.start_with?("@")
         buf = +""
-      when "}"
-        stack.pop
-        buf = +""
-      when ";"
+      when "}", ";"
+        # Inside a rule (rules do not nest here), so the open rule is the last one recorded.
+        in_rule = stack.last && !stack.last.start_with?("@")
+        out.last[2] << " " << buf.strip << ";" if in_rule && !buf.strip.empty?
+        stack.pop if ch == "}"
         buf = +""
       else
         buf << ch
       end
     end
-    out
+    out.each { |rule| rule[2].strip! }
   end
 
   def layered?(enclosing) = enclosing.any? { |head| head.start_with?("@layer ") }
@@ -113,8 +119,9 @@ class CssHygieneTest < ActiveSupport::TestCase
   end
 
   test "the layout links our sheets first, lexxy after, and the overrides last" do
-    layout = LAYOUT.read
-    order = %w[application components shell pages/files pages/projects pages/models pages/tools pages/preview pages/home pages/inventory pages/settings pages/search pages/public pages/landing lexxy vendor-overrides]
+    assert_includes LAYOUT.read, %(render "layouts/head"), "the layout no longer renders the shared head"
+    layout = HEAD.read
+    order = %w[application components shell pages/files pages/projects pages/models pages/tools pages/preview pages/home pages/inventory pages/settings pages/search pages/public pages/landing pages/spreadsheet lexxy vendor-overrides]
     positions = order.map { |name| [ name, layout.index(%("#{name}")) ] }
     positions.each { |name, pos| assert pos, "the layout does not link #{name}" }
     assert_equal positions.map(&:last), positions.map(&:last).sort, "link order is #{positions.map(&:first).inspect}; it must be #{order.inspect}"
@@ -213,5 +220,72 @@ class CssHygieneTest < ActiveSupport::TestCase
                                      .map { |decl| "#{Pathname.new(path).basename}: #{decl}" }
     end
     assert_empty hits, "a stylesheet draws an emoji; use a glyph helper (folder_glyph, rail_icon) in the markup"
+  end
+
+  # --- THE `hidden` ATTRIBUTE IS AUTHORITATIVE ONCE, IN `@layer base` (F-S34-2, 2026-10-19) ---------
+  #
+  # Any author `display` outranks the user agent's `[hidden] { display: none }`, so a component that
+  # hid with the attribute needed its own `.x[hidden]` restatement: seven of them in three sheets,
+  # each added after a shipped bug, while the page editor's YAML drawer, which had none, rendered
+  # while hidden. ONE `!important` rule in the early base layer beats every later layer and the
+  # unlayered vendor sheet (important declarations reverse the layer order). So a `[hidden]` selector
+  # anywhere else is refused: it would be inert, and it would teach the next component to write its
+  # own. `until-found` keeps the user agent's behaviour (find-in-page reveals it). The browser's half
+  # is shell_test.rb's probe. Mutation-checked: deleting the base rule reddens this, and so does
+  # putting `.addon-card[hidden]` back in pages/tools.css.
+  HIDDEN_ATTRIBUTE = /\[\s*hidden\s*(?:[~|^$*]?=[^\]]*)?\]/
+  HIDDEN_RULE = [ "application.css", "base", '[hidden]:not([hidden="until-found"])', "display: none !important;" ].freeze
+
+  test "the hidden attribute is styled by one rule, in the base layer" do
+    found = (OURS + [ OVERRIDES ]).flat_map do |sheet|
+      rules(read(sheet)).flat_map do |head, enclosing, declarations|
+        selectors_of(head).grep(HIDDEN_ATTRIBUTE).map { |sel| [ sheet, layer_of(enclosing), sel, declarations ] }
+      end
+    end
+    assert_equal [ HIDDEN_RULE ], found,
+                 "the `hidden` attribute has ONE rule, in application.css's base layer; anything else restates it"
+  end
+
+  # --- THE ICON RAIL IS ONE CONTAINER QUERY ON `.rail` (F-S20-1, 2026-10-19) -----------------------
+  #
+  # "The rail is icons only" has two triggers, the collapse cookie (`body.rail--collapsed`) and a
+  # viewport below 1100px, and each carried its own copy of the rules: a `.rail--collapsed`-prefixed
+  # one, and an UNSCOPED one in the ≤1099px media query that hid `.brand-name` on every `.brand` on the
+  # page, so the sign-in card lost its wordmark. Both triggers now set only the grid TRACK, and the
+  # icon rail is ONE `@container rail` block that asks the rail's own width. So `.rail` is that
+  # container, the body class names one selector (the track rule), and no rule outside the block
+  # hides what the block hides, draws the family-lit mark, or restyles one of the block's selectors
+  # UNSCOPED inside a media query — the old copy's `.brand { justify-content: center; padding: 4px 0 }`
+  # centred every brand on the page without hiding anything. The parts are DERIVED from the block,
+  # never listed, so a rule added there is covered with no edit here. The browser's half is
+  # shell_test.rb. Mutation-checked: restoring the body-class copy reddens this, and so does
+  # restoring the media query's unscoped copy, or only its `.brand` rule.
+  test "the icon rail is defined once, as a container query on the rail" do
+    in_block = ->(enclosing) { enclosing.any? { |head| head.match?(/\A@container\s+rail\b/) } }
+    shell = rules(read("shell.css"))
+    hides = shell.select { |_, enclosing, declarations| in_block.(enclosing) && declarations.match?(/display:\s*none/) }
+                 .flat_map { |head, _, _| selectors_of(head) }
+    styled = shell.select { |_, enclosing, _| in_block.(enclosing) }.flat_map { |head, _, _| selectors_of(head) }
+    assert_includes hides, ".brand-name", "derived #{hides.inspect} from the `@container rail` block; the scan is vacuous"
+    assert_includes styled, ".brand", "derived #{styled.inspect} from the `@container rail` block; the scan is vacuous"
+    assert shell.any? { |head, _, declarations| head == ".rail" && declarations.match?(%r{container:\s*rail\s*/\s*inline-size}) },
+           "`.rail` is not declared the `rail` inline-size container the icon-rail block asks"
+
+    offenders = (OURS + [ OVERRIDES ]).flat_map do |sheet|
+      rules(read(sheet)).reject { |_, enclosing, _| in_block.(enclosing) }.flat_map do |head, enclosing, declarations|
+        selectors_of(head).filter_map do |sel|
+          if sel.include?("rail--collapsed") && sel != "body.app-shell.rail--collapsed"
+            "#{sheet}: `#{sel}` keys the icon rail on the body class"
+          elsif sel.include?("rail-family-lit")
+            "#{sheet}: `#{sel}` draws the family-lit mark outside the icon-rail block"
+          elsif declarations.match?(/display:\s*none/) && hides.any? { |part| sel == part || sel.end_with?(" #{part}") }
+            "#{sheet}: `#{sel}` hides an icon-rail part outside the icon-rail block"
+          elsif styled.include?(sel) && enclosing.any? { |at| at.start_with?("@media") }
+            "#{sheet}: `#{sel}` restyles an icon-rail selector, unscoped, inside a media query"
+          end
+        end
+      end
+    end
+    assert_empty offenders, "the icon rail has a second definition:\n  #{offenders.join("\n  ")}"
   end
 end

@@ -29,11 +29,14 @@ module Maker
       #   2 -> Z-up (tools/stl-thumbnailer's `auto_frame`). Bumped BECAUSE the picture changed;
       #        that is the entire trigger, and it is why this constant exists rather than being
       #        inferred from anything.
+      #   3 -> ink on paper (2026-10-21): a white ground and the palette's material
+      #        (`Maker::Previews::Palette`), was a dark #202228 square with a cool grey material.
+      #        `ThreeMf::THUMBNAIL_REVISION` moved with it — its mesh fallback renders through here.
       #
       # DECLARED HERE RATHER THAN ONLY IN THE RUST CRATE, because it is the RAILS side that has to
       # invalidate a cached artifact — the crate has no idea a `maker_previews` row exists. Rebuilding
       # the binary without bumping this leaves the library exactly as sideways as it was.
-      THUMBNAIL_REVISION = 2
+      THUMBNAIL_REVISION = 3
 
       # This renderer produces no `geometry` payload, so there is one number and `kind` cannot
       # change it. The signature still matches the measurable renderers' so `Enqueue.revision_for`
