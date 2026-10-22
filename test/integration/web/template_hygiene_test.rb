@@ -601,7 +601,10 @@ module Web
         "explore" => public_explore_path,
         # The tag chip's own destination, which is the filtered branch of the same page — its
         # "All" chip renders only when a filter is on.
-        "explore (tag)" => public_explore_path(tag: "laser")
+        "explore (tag)" => public_explore_path(tag: "laser"),
+        # The compose generator (2026-10-21): public/compose/show and its one partial, _text_field,
+        # whose ERB comments name a <form> -- prose, never `%>`.
+        "compose generator" => public_compose_path
       }
     end
 

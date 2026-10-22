@@ -49,6 +49,9 @@ pin "lib/chunk_upload", to: "lib/chunk_upload.js"
 pin "lib/file_chooser", to: "lib/file_chooser.js"
 pin "lib/zip_bundle", to: "lib/zip_bundle.js"
 pin "lib/zip_unpack", to: "lib/zip_unpack.js"
+# The compose generator's builder (/install/compose): the visitor's docker-compose.yml from
+# Tinkerex::ComposeTemplate's derivation of the repo file, entirely in the browser.
+pin "lib/compose_file", to: "lib/compose_file.js"
 
 # The Measure view's to-scale print — pagination and sheet rendering, imported by
 # measure_controller.js. A HOST pin like the two above, so it is drawn into every addon's merged
