@@ -3,8 +3,8 @@ require "support/public_fixture"
 
 module Web
   # THE CALCULATOR IN THE SHELL (2026-10-21; plan 2026-10-21-calculator-modal.md): the modal rendered
-  # once on every signed-in page and on no other, the rail's pinned link, the Tools card and its pin
-  # toggle. What a browser alone can see — opening, Enter, Esc, focus, saving — is
+  # once on every signed-in page and on no other, the rail's pinned link, and the Tools card with its right-click
+  # pin. What a browser alone can see — opening, Enter, Esc, focus, saving — is
   # test/system/calculator_modal_test.rb's.
   class CalculatorShellTest < ActionDispatch::IntegrationTest
     include PublicFixture
@@ -48,19 +48,22 @@ module Web
       assert_select "dialog.calculator", 0
     end
 
-    test "unpinned, the rail has no Calculator link and the Tools card offers the pin" do
+    test "unpinned, the rail has no Calculator link and the Tools card offers the pin on a right click" do
       get tools_path
       assert_select "aside.rail a.rail-calculator", 0
       assert_select "#calculator.calculator-card button[data-calculator-open]", text: "Open calculator"
-      assert_select "#calculator form.calculator-pin-form[action=?][method=post] button", tools_calculator_pin_path,
-                    text: "Pin to sidebar"
-      assert_select "#calculator form.calculator-pin-form input[name=_method]", 0
+      # THE PIN IS A RIGHT CLICK, NOT A BUTTON (2026-10-22): the card carries the menu's data, and
+      # nothing on it is a pin control.
+      assert_select "#calculator.calculator-card[data-action=?][data-tool-pin-url=?][data-tool-pinned=false]",
+                    "contextmenu->toolmenu#open", tools_pin_path("calculator")
+      assert_select "#calculator form", 0
+      assert_select "#calculator button", 1
     end
 
     test "pinning puts a Calculator link in the rail on every page; it opens the modal and lights nothing" do
-      post tools_calculator_pin_path
+      post tools_pin_path("calculator")
       assert_redirected_to tools_path
-      assert @user.reload.calculator_pinned?
+      assert @user.reload.tool_pins.pinned?("calculator")
 
       [ root_path, project_path(@project), tools_path ].each do |path|
         get path
@@ -76,9 +79,11 @@ module Web
       foot = css_select("aside.rail .rail-nav--foot li a").map { |a| a["title"] }
       assert_equal foot.index("Tools") + 1, foot.index("Calculator (Alt+C)")
 
+      # Both doors now offer the UNPIN: the card, and the rail link itself.
       get tools_path
-      assert_select "#calculator form.calculator-pin-form input[name=_method][value=delete]", 1
-      assert_select "#calculator form.calculator-pin-form button", text: "Unpin from sidebar"
+      assert_select "#calculator.calculator-card[data-tool-pinned=true]", 1
+      assert_select "aside.rail a.rail-calculator[data-action=?][data-tool-pin-url=?][data-tool-pinned=true]",
+                    "contextmenu->toolmenu#open", tools_pin_path("calculator")
     end
 
     # THE SHORTCUT IS NAMED WHERE THE CALCULATOR IS OFFERED (calculator_controller.js#shortcut), as the
@@ -88,7 +93,7 @@ module Web
     WINDOWS = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36".freeze
 
     test "the shortcut is named on the card, the pinned link and the panel, in this keyboard's spelling" do
-      @user.update_column(:calculator_pinned, true)
+      @user.tool_pins.pin!("calculator")
       { MAC => "⌥C", WINDOWS => "Alt+C" }.each do |agent, keys|
         get tools_path, headers: { "User-Agent" => agent }
         assert_select "#calculator .calculator-card-keys kbd", { text: keys, count: 1 }, agent
@@ -102,16 +107,16 @@ module Web
     end
 
     test "unpinning takes the link away" do
-      @user.update_column(:calculator_pinned, true)
-      delete tools_calculator_pin_path
+      @user.tool_pins.pin!("calculator")
+      delete tools_pin_path("calculator")
       assert_redirected_to tools_path
-      refute @user.reload.calculator_pinned?
+      refute @user.reload.tool_pins.pinned?("calculator")
       get root_path
       assert_select "aside.rail a.rail-calculator", 0
     end
 
     test "the pin is per user: pinning for one account leaves another's rail alone" do
-      post tools_calculator_pin_path
+      post tools_pin_path("calculator")
       other = make_owner!(handle: "other-#{SecureRandom.hex(3)}")
       delete destroy_user_session_path
       sign_in_as(other)
@@ -124,14 +129,14 @@ module Web
       # still be able to pin, which is why the door writes one column and runs no validation.
       @user.update_column(:handle, "calculations")
       refute @user.reload.valid?
-      post tools_calculator_pin_path
+      post tools_pin_path("calculator")
       assert_redirected_to tools_path
-      assert @user.reload.calculator_pinned?
+      assert @user.reload.tool_pins.pinned?("calculator")
     end
 
     test "signed out, the pin door goes to sign-in" do
       delete destroy_user_session_path
-      post tools_calculator_pin_path
+      post tools_pin_path("calculator")
       assert_redirected_to new_user_session_path
     end
   end

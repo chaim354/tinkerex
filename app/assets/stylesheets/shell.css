@@ -58,7 +58,7 @@
   .rail-group-head { margin: var(--space-3) 10px 2px; font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
   .rail-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .rail-project { min-height: 30px; padding-left: 36px; font-weight: 400; }
-  .rail-pin { font-weight: 400; }
+  .rail-pin, .rail-tool-pin { font-weight: 400; }
   .rail-nav--foot { margin-top: auto; }
 
   .rail-foot { margin-top: 0; display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) 0 0; border-top: 1px solid var(--line); }
@@ -87,9 +87,9 @@
   @container rail (max-width: 120px) {
     .brand { justify-content: center; padding: 4px 0; }
     .brand-name, .rail-label, .rail-user, .rail-btn span,
-    .rail-group-head, .rail-project, .rail-pin { display: none; }
+    .rail-group-head, .rail-project, .rail-pin, .rail-tool-pin { display: none; }
     .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
-    /* The lit project or pin just hid, so its family link (ShellHelper#sidebar_family_lit?) wears the
+    /* The lit project, pin or pinned tool just hid, so its family link (ShellHelper#sidebar_family_lit?) wears the
        lit look instead; otherwise the icon rail shows nothing lit. */
     .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
     .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }

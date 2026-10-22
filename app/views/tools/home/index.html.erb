@@ -1,6 +1,14 @@
 <% content_for :title, "Tools — Tinkerex" %>
 
 <div class="page-head"><h1>Tools</h1></div>
+<%# THE ONE PLACE THE PIN IS NAMED, because a right click is invisible until someone tries it.
+    pages/tools.css hides it at phone width, where there is no sidebar to pin to. %>
+<p class="muted tools-pin-hint">Right-click a tool to pin it to the sidebar.</p>
+
+<%# `toolmenu` (toolmenu_controller.js): every tool here pins or unpins itself from a right click on
+    its card (ShellHelper#tool_menu_data) — the calculator and each addon a manifest made alike. A
+    greyed-out card has no menu: it cannot run here, so a pinned link to it could open nothing. %>
+<div data-controller="toolmenu">
 
 <%#
   BUILT IN, ABOVE THE ADD-ONS (2026-10-21; plan 2026-10-21-calculator-modal.md). The calculator is a
@@ -10,7 +18,7 @@
   test/controllers/tools/home_controller_test.rb counts. Its own grid and heading keep the two
   kinds apart; the inner head/icon/title/description classes are shared for their look.
 
-  The card OPENS the modal (`data-calculator-open`) and offers the sidebar pin. At phone width,
+  The card OPENS the modal (`data-calculator-open`); a right click on it pins it. At phone width,
   where the tab bar keeps its four destinations and there is no rail, this card IS the way to the
   calculator (the Tools tab). `id="calculator"` is where the pinned rail link's href lands when its
   click is not the controller's to handle (a modified click).
@@ -18,7 +26,8 @@
 <section class="tools-section" aria-labelledby="tools-built-in">
   <h2 class="tools-section-head" id="tools-built-in">Built in</h2>
   <div class="tools-grid">
-    <div class="tool-card calculator-card" id="calculator">
+    <%= tag.div class: "tool-card calculator-card", id: "calculator",
+                data: tool_menu_data(Maker::ToolPins::CALCULATOR, "Calculator") do %>
       <span class="addon-card-head">
         <span class="addon-icon"><%= rail_icon(:calculator) %></span>
         <span class="addon-title">Calculator</span>
@@ -27,19 +36,11 @@
         conversions. Save a result to a project. <span class="calculator-card-keys">Opens over any page
         with <kbd><%= calculator_shortcut %></kbd>.</span></span>
       <span class="calculator-card-actions">
+        <%# Plain `.btn`: the accent is not spent on this page (design-system.md rule 13). %>
         <button type="button" class="btn small calculator-card-open" data-calculator-open aria-haspopup="dialog"
                 aria-keyshortcuts="<%= CalculationsHelper::CALCULATOR_KEYS %>">Open calculator</button>
-        <%# A button_to per state, so the label says what the click DOES. Plain `.btn`: the accent
-            is not spent on this page (design-system.md rule 13). %>
-        <% if current_user.calculator_pinned? %>
-          <%= button_to "Unpin from sidebar", tools_calculator_pin_path, method: :delete,
-                        class: "btn small calculator-pin", form_class: "calculator-pin-form" %>
-        <% else %>
-          <%= button_to "Pin to sidebar", tools_calculator_pin_path, method: :post,
-                        class: "btn small calculator-pin", form_class: "calculator-pin-form" %>
-        <% end %>
       </span>
-    </div>
+    <% end %>
   </div>
 </section>
 
@@ -98,7 +99,7 @@
 <div class="tools-grid">
   <% @addons.each do |addon| %>
     <% if addon.available? %>
-      <%= link_to tools_addon_path(addon.key), class: "addon-card" do %>
+      <%= link_to tools_addon_path(addon.key), class: "addon-card", data: tool_menu_data(addon.key, addon.title) do %>
         <span class="addon-card-head">
           <span class="addon-icon"><%= addon.icon %></span>
           <span class="addon-title"><%= addon.title %></span>
@@ -125,4 +126,5 @@
       it migrated to a bundle and the block went with it. Every card above comes from a manifest,
       which is what makes publishing a bundle the whole deploy. A card that has to be written here
       is the signal that an addon has not actually migrated. %>
+</div>
 </div>

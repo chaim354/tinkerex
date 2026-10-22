@@ -152,7 +152,7 @@ module ShellHelper
 
   # THE ONE ANSWER TO "WHICH LINK IS LIT", so exactly one is. A key, compared by sidebar_aria:
   #   [:home] [:library] [:pin, node_id] [:project, id] [:all_projects] [:models] [:inventory]
-  #   [:tools] [:trash] [:settings] [:help]
+  #   [:tools] [:tool, key] [:trash] [:settings] [:help]
   # The Library's 3D models view (`files/models`) lights [:models], not Library, though its section
   # is files (slice 5).
   # On the Files page AND a file's own page the DEEPEST pinned folder on the breadcrumb wins over
@@ -177,7 +177,11 @@ module ShellHelper
         id && sidebar_projects.any? { |p| p.id == id } ? [ :project, id ] : [ :all_projects ]
       when "models" then [ :models ]
       when "inventory" then [ :inventory ]
-      when "tools" then [ :tools ]
+      when "tools"
+        # A PINNED ADDON'S OWN PAGE LIGHTS ITS PINNED LINK, as a pinned folder beats Library. The
+        # calculator never lights: it is a modal over the page, not a page.
+        key = params[:key].to_s if controller_path == "tools/addons"
+        key && key != Maker::ToolPins::CALCULATOR && current_user.tool_pins.pinned?(key) ? [ :tool, key ] : [ :tools ]
       when "trash" then [ :trash ]
       when "settings" then [ :settings ]
       when "help" then [ :help ]
@@ -186,11 +190,22 @@ module ShellHelper
 
   def sidebar_aria(key) = sidebar_current == key ? "page" : nil
 
-  # COLLAPSED — and below 1100px whatever the cookie says — project and pin links hide with their
-  # labels (shell.css), so a lit one would leave the rail with nothing lit to see. Its family link
-  # carries the mark there instead: Library for a pin, All projects for a project. A CLASS, never
+  # THE RIGHT-CLICK MENU ON A TOOL (toolmenu_controller.js): the card in the Tools gallery, or the
+  # tool's pinned link in the rail. The server writes the URL and the state, so the menu says what a
+  # click DOES ("Pin to sidebar" / "Unpin from sidebar") and never assembles a path. Merged into a
+  # link's own `data:` by the caller, which is why `extra` exists (the calculator's opener).
+  def tool_menu_data(key, label, extra = {})
+    pinned = current_user.tool_pins.pinned?(key)
+    { action: "contextmenu->toolmenu#open", tool_pin_url: tools_pin_path(key), tool_pinned: pinned.to_s,
+      tool_name: label }.merge(extra)
+  end
+
+  # COLLAPSED — and below 1100px whatever the cookie says — project, pin and pinned-addon links hide
+  # with their labels (shell.css), so a lit one would leave the rail with nothing lit to see. Its
+  # family link carries the mark there instead: Library for a pin, All projects for a project, Tools
+  # for a pinned addon (they all wear the Tools glyph, so icons alone could not tell them apart). A CLASS, never
   # aria-current, so the markup still lights exactly one link; shell.css draws it only when narrow.
-  def sidebar_family_lit?(family) = { pin: :library, project: :all_projects }[sidebar_current&.first] == family
+  def sidebar_family_lit?(family) = { pin: :library, project: :all_projects, tool: :tools }[sidebar_current&.first] == family
 
   # The phone tab bar: four destinations, each lit by the same answer the sidebar uses.
   def tabbar_links
@@ -202,7 +217,7 @@ module ShellHelper
       # lights the model pages ModelsController still serves.
       [ "Library", files_path, :files, %i[library pin models].include?(current) ],
       [ "Projects", projects_path, :projects, %i[project all_projects].include?(current) ],
-      [ "Tools", tools_path, :tools, current == :tools ]
+      [ "Tools", tools_path, :tools, %i[tools tool].include?(current) ]
     ]
   end
 

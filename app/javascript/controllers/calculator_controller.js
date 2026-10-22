@@ -19,7 +19,7 @@ import { evaluate, formatInches } from "lib/calc"
 //
 // HISTORY AND THE INCH DISPLAY ARE PER BROWSER (localStorage), every read and write in try/catch: a
 // private window or blocked storage costs the history and nothing else. The SIDEBAR PIN is not here
-// — it is the maker's, so it is a user column (Tools::CalculatorPinsController).
+// — it is the maker's, so it lives on the user with every pinned tool (Maker::ToolPins).
 const HISTORY_KEY = "tinkerex:calculator:history"
 const FRACTION_KEY = "tinkerex:calculator:fraction"
 const HISTORY_MAX = 20

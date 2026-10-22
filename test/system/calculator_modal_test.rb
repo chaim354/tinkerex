@@ -82,7 +82,7 @@ class CalculatorModalTest < ApplicationSystemTestCase
   # back to the input rather than doing nothing; and Esc still hands focus back to where it began.
   test "Alt+C opens the modal from the page, and pressed inside it puts focus back in the input" do
     visit tools_path
-    focus("#calculator .calculator-pin")
+    focus("aside.rail .rail-help")
     press_alt_c
     assert_selector "dialog.calculator[open]"
     assert_equal "calculator-input", focused, "focus lands in the input"
@@ -97,7 +97,7 @@ class CalculatorModalTest < ApplicationSystemTestCase
 
     find("#calculator-input").send_keys(:escape)
     refute dialog_open?
-    assert_includes focused.to_s, "calculator-pin", "focus goes back to where the shortcut was pressed"
+    assert_includes focused.to_s, "rail-help", "focus goes back to where the shortcut was pressed"
 
     # A REAL MAC'S ⌥C ARRIVES AS key "ç" with code "KeyC", which no driver here synthesises (both send
     # "c"), so that event is dispatched by hand. The letter wins over the key's position wherever the
@@ -138,7 +138,7 @@ class CalculatorModalTest < ApplicationSystemTestCase
       refute dialog_open?, "#{field}: the shortcut fired while typing"
     end
 
-    focus("#calculator .calculator-pin")
+    focus("aside.rail .rail-help")
     press_alt_c
     assert_selector "dialog.calculator[open]"
   end
@@ -338,9 +338,13 @@ class CalculatorModalTest < ApplicationSystemTestCase
 
   test "pinned, the rail link opens the modal over any page without navigating" do
     visit tools_path
-    within("#calculator") { click_on "Pin to sidebar" }
+    # A RIGHT CLICK ON THE CARD, not a button (2026-10-22; toolmenu_controller.js).
+    find("#calculator").right_click
+    find(".file-menu button", text: "Pin to sidebar").click
     assert_selector "aside.rail a.rail-calculator"
-    within("#calculator") { assert_selector "button", text: "Unpin from sidebar" }
+    find("#calculator").right_click
+    assert_selector ".file-menu button", text: "Unpin from sidebar"
+    find(".file-menu button").send_keys(:escape)
 
     [ files_path, project_path(@project) ].each do |path|
       visit path
