@@ -162,13 +162,28 @@ export default class extends Controller {
       // the stage's own computed colour instead keeps the viewer on the page's palette in both
       // themes without duplicating a hex value that a restyle would leave behind (§14m).
       backgroundColor: this.stageColor(OV),
-      defaultColor: new OV.RGBColor(150, 160, 170), // used only where the file names no colour
+      // THE PALETTE'S MESH MATERIAL, `--model-material`, used only where the file names no colour.
+      // It was a cool blue-grey literal. The token is ONE value in both themes on purpose: it
+      // clears 3:1 on --raised in Paper and in Graphite (application.css carries the numbers), so a
+      // theme switch has only the background to repaint, and the STL and F3D thumbnails are drawn
+      // in the same material (Maker::Previews::Palette::MATERIAL, held equal to the token).
+      defaultColor: this.materialColor(OV),
       edgeSettings: new OV.EdgeSettings(false, new OV.RGBColor(0, 0, 0), 1),
       onModelLoaded: () => engine.settle.resolve(),
       onModelLoadFailed: () => engine.settle.reject(new Error("the importer could not read this file"))
     })
     engine.observer = new ResizeObserver(() => engine.viewer.Resize())
     engine.observer.observe(this.canvasTarget)
+    // A THEME SWITCH REPAINTS AN OPEN VIEWER. The ground is read from the stage's computed colour
+    // (above), and that is the one colour here that flips with the theme, so the record watches the
+    // two things that can flip it: theme_controller.js writing `html[data-theme]`, and the OS
+    // scheme changing under `system`. Both are released with the engine, in release().
+    const repaint = () => engine.viewer.GetViewer()?.SetBackgroundColor(this.stageColor(OV))
+    engine.themeObserver = new MutationObserver(repaint)
+    engine.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] })
+    engine.schemeQuery = window.matchMedia("(prefers-color-scheme: dark)")
+    engine.schemeListener = repaint
+    engine.schemeQuery.addEventListener("change", repaint)
     return engine
   }
 
@@ -188,6 +203,8 @@ export default class extends Controller {
     if (engine) {
       engine.settle?.reject(new Error("released"))
       engine.observer.disconnect()
+      engine.themeObserver?.disconnect()
+      engine.schemeQuery?.removeEventListener("change", engine.schemeListener)
       engine.viewer.Destroy()
     }
     // Destroy() disposes the renderer but leaves its <canvas> (and any progress text) in the DOM.
@@ -213,6 +230,17 @@ export default class extends Controller {
       return new OV.RGBAColor(+parts[0], +parts[1], +parts[2], 255)
     }
     return new OV.RGBAColor(247, 248, 250, 255)
+  }
+
+  // `--model-material` off the element, as "#rrggbb". A custom property is not resolved into a
+  // colour by getComputedStyle (it comes back as the authored string), so the hex is parsed here.
+  // A value we cannot read (no stylesheet, a detached element) falls back to the engine-neutral
+  // mid grey rather than to the engine's own default, which is the blue-grey this replaced.
+  materialColor(OV) {
+    const hex = getComputedStyle(this.element).getPropertyValue("--model-material").trim()
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex)
+    if (m) return new OV.RGBColor(parseInt(m[1], 16), parseInt(m[2], 16), parseInt(m[3], 16))
+    return new OV.RGBColor(128, 128, 128)
   }
 
   // Reached only from load(), after its own generation check, so the engine it reads is current.
@@ -383,7 +411,18 @@ export default class extends Controller {
     if (button) button.disabled = true
     this.say("Saving preview…")
     try {
-      const dataUrl = three.GetImageAsDataUrl(PREVIEW_SIZE, PREVIEW_SIZE, false)
+      // THE PICTURE IS TAKEN ON THE RENDER PAPER, NOT ON THE THEME'S STAGE. Every thumbnail keeps a
+      // pure-white ground that the page multiplies onto its card (design-system.md rule 5); one
+      // saved from a Graphite stage would be a dark square on that card for good, and one saved
+      // from Paper's --raised a grey one. So the ground goes white for the capture and back after,
+      // in the same task, so nothing on screen flickers.
+      three.SetBackgroundColor(new this.OV.RGBAColor(255, 255, 255, 255))
+      let dataUrl
+      try {
+        dataUrl = three.GetImageAsDataUrl(PREVIEW_SIZE, PREVIEW_SIZE, false)
+      } finally {
+        three.SetBackgroundColor(this.stageColor(this.OV))
+      }
       const body = new FormData()
       body.append("image", dataUrlToBlob(dataUrl), "preview.png")
       const response = await fetch(this.previewUrlValue, {

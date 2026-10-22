@@ -92,6 +92,12 @@ pin "lib/codemirror_languages", to: "lib/codemirror_languages.js", preload: fals
 # rejects — which in these three controllers degrades silently to the plain <pre>.
 pin "lib/codemirror_theme", to: "lib/codemirror_theme.js", preload: false
 
+# Which theme the page is showing (html[data-theme], and the OS under "system"), for the one viewer
+# that takes its theme as a NAME rather than following the tokens: KiCanvas. Imported statically by
+# kicanvas_controller.js; a few lines, so it is preloaded like lib/svg_pan_zoom. A HOST pin; a
+# bundle must NOT import it.
+pin "lib/ui_theme", to: "lib/ui_theme.js"
+
 # THE ADDON SDK — a HOST pin, which is the whole point: merged_importmap draws every host pin before
 # the addon's own, so a bundle imports "@maker/addon-sdk" without declaring anything in its manifest
 # and without the host shipping a copy per addon. Unlike lib/file_chooser directly above (which a
