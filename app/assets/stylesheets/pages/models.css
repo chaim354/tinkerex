@@ -90,4 +90,8 @@
   .dropzone { display: block; padding: 18px; border: 1px dashed var(--line-strong); border-radius: var(--radius-panel); background: var(--surface); text-align: center; cursor: pointer; }
   .dropzone:hover { border-color: var(--fg); }
   .dropzone input[type="file"] { display: block; margin: 10px auto 0; }
+
+  /* A MODEL'S PROJECTS ROW (2026-10-21): on the strip it sits under the head; on the model page, in
+     its Details pane under the metadata. */
+  .model-strip .model-projects, .model-details .model-projects { margin-top: 8px; }
 }

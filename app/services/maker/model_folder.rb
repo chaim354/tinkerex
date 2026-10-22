@@ -21,7 +21,7 @@ module Maker
     def model_in(user, folder_node_id)
       user.maker_models.catalogued.includes(:file_attachments)
           .where(folder_node_id:).order(:id)
-          .detect { |model| !(model.auto? && model.file_attachments.empty?) }
+          .detect { |model| !model.hollow? }
     end
   end
 end

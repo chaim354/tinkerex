@@ -47,20 +47,21 @@ module Maker
     # preset, and `other` is the column default, so a migration alone changes no page (spec §4).
     #
     # ADD A PANEL HERE OR IT RENDERS FOR NOBODY. projects/show.html.erb loops over
-    # `Maker::Project#visible_panels` and renders `projects/_<key>`; a tenth partial dropped into
+    # `Maker::Project#visible_panels` and renders `projects/_<key>`; a new partial dropped into
     # the view directory with no entry here is a file no page reaches, and a `render` appended
     # under the loop is a panel the chooser cannot list — one question with two answers (§14a).
     # The key IS the partial's basename; keep them equal.
     #
-    # `publish` IS THE TENTH AND LAST MEMBER because S4-4 landed `projects/_publish.html.erb`
-    # (amendment 9's first branch, checked by `ls` at Task A step 1): the panel exists, so it goes
-    # through the loop rather than being rendered under it.
+    # `publish` IS THE LAST MEMBER (the tenth then; `models` made eleven) because S4-4 landed
+    # `projects/_publish.html.erb` (amendment 9's first branch, checked by `ls` at Task A step 1):
+    # the panel exists, so it goes through the loop rather than being rendered under it.
     #
     # NOTHING OUTSIDE THIS CONSTANT MAY REACH THE LOOP. Maker::ProjectKind.layout_for intersects
     # every stored override with it and Projects::PanelsController intersects every write, so a
     # crafted request cannot put an unknown key in the `panels` column and `render` can never be
     # handed a partial name that does not exist.
-    PANELS = %w[attachments photos schematics build_log tasks bom wiring releases sheets publish].freeze
+    # `models` (2026-10-21): the project's 3D models as cards — projects/_models, Maker::ProjectModels.
+    PANELS = %w[attachments photos models schematics build_log tasks bom wiring releases sheets publish].freeze
 
     # HOW ONE PANEL DRAWS WHAT IT HOLDS (2026-09-08, folder panels; spec decision 6). Per panel and
     # persisted in `panels["views"]`, which is what retired the page-wide `project_view` cookie: a
@@ -75,13 +76,13 @@ module Maker
     VIEWS = %w[tiles list browser].freeze
 
     # What the chooser calls each one. Its own map rather than `key.humanize`, because three of the
-    # ten disagree with what humanize would say: `attachments` is "Files" (the panel has been
+    # eleven disagree with what humanize would say: `attachments` is "Files" (the panel has been
     # headed Files since S2-2 — the key is the partial's name, and renaming the partial would touch
     # eight call sites), `bom` is "Bill of materials", and `build_log` is "Build log", not
     # "Build Log". A chooser whose labels differ from the headings above them is a chooser nobody
     # trusts. Totality pinned in project_kind_test.rb.
     PANEL_LABELS = {
-      "attachments" => "Files", "photos" => "Photos", "schematics" => "Schematics",
+      "attachments" => "Files", "photos" => "Photos", "models" => "Models", "schematics" => "Schematics",
       "build_log" => "Build log", "tasks" => "Tasks", "bom" => "Bill of materials",
       "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "publish" => "Publish"
     }.freeze

@@ -47,6 +47,8 @@ pin "lib/chunk_upload", to: "lib/chunk_upload.js"
 # merged importmap too — but a bundle must NOT import it by this specifier: the contract is the
 # ctx function, so that this path stays the host's to change without republishing a bundle.
 pin "lib/file_chooser", to: "lib/file_chooser.js"
+pin "lib/zip_bundle", to: "lib/zip_bundle.js"
+pin "lib/zip_unpack", to: "lib/zip_unpack.js"
 
 # The Measure view's to-scale print — pagination and sheet rendering, imported by
 # measure_controller.js. A HOST pin like the two above, so it is drawn into every addon's merged

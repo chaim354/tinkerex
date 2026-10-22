@@ -89,8 +89,9 @@ module Maker
     #
     # THERE IS DELIBERATELY NO SECOND, SMALLER CAP. Maker::ProjectIntake carries MAX_MOVES AND
     # EAGER_MAX_MOVES because it has an entry point that runs inside a browser request. This class
-    # does not: nothing in a web request sweeps. If a nudge is ever added it needs its own cap, for
-    # the reason §14f states at both of those constants.
+    # does not: nothing in a web request sweeps. If an IN-REQUEST nudge is ever added it needs its
+    # own cap, for the reason §14f states at both of those constants. Files::UnpacksController#finish
+    # only ENQUEUES Maker::ModelIntakeJob, so it owes none (docs/invariants/model-intake.md).
     MAX_MODELS = 200
 
     # A BAD OVERRIDE FALLS BACK; IT DOES NOT CRASH THE JOB. `Integer("-5")` SUCCEEDS, so the rescue

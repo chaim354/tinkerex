@@ -124,6 +124,8 @@
     <dt>Added</dt><dd><%= @model.created_at.strftime("%Y-%m-%d") %></dd>
   </dl>
 
+  <%= render "models/projects", model: @model, choices: @project_choices %>
+
   <% if @model.print_settings.present? %>
     <section class="model-print-settings">
       <h2>Print settings</h2>

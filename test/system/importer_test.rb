@@ -34,19 +34,20 @@ require "zip"
 #     `belongs_to :node`) -- resolving a name/parent from an attachment goes through a
 #     node_id-keyed lookup, not `attachment.node`.
 #
-# MUTATION-CHECKED, both against a cleared tmp/dev-chunks* (README's warning: a stale
-# content-addressed blob can make a broken mutation read green):
-#   - Removing the dotfile guard (`if (!name) continue`, dropping `|| name.startsWith(".")`)
-#     goes RED, but not at `refute_includes names, ".DS_Store"` -- it times out (30s) at the
-#     EARLIER `file_attachments.reload.count == 3` wait, because a 4th file (.DS_Store) now
-#     attaches and the count never reaches 3. The task doc anticipated exactly this ("RED on
-#     refute_includes ... (and on the count)"): the count assertion runs first in this file and
-#     is itself sensitive to the guard, so it catches the mutation before the name-list
-#     assertion gets a chance to.
-#   - Flattening the nesting (`dir: parts.join("/")` -> `dir: ""`) goes RED at EXACTLY ONE
-#     assertion -- `assert_equal "tail_segments", @user.nodes.find_by!(...).name` -- with the
-#     other 10 assertions in the same run green, confirming the flattening bug is invisible to
-#     every other assertion in the file, which is why that one is written separately.
+# MUTATION-CHECKED. The unzip moved out of importer_controller.js into lib/zip_bundle.js on
+# 2026-10-21 (shared with the top bar's Upload), so both mutations were RE-RUN there, on the
+# share library this file now installs:
+#   - Dropping the dot-segment half of the clutter rule (`isClutter` keeping only
+#     `seg === "__MACOSX"`) goes RED at `assert_no_console_errors`, NOT at the count or at
+#     `refute_includes names, ".DS_Store"`: share refuses the reserved dot-name as
+#     FileLayer::NotFound, so its POST /files answers 404 (the browser logs it), the importer
+#     skips that one file under its per-file rule, and the count still reaches 3. (On the
+#     embedded chunk library this file used before, .DS_Store attached and the count wait timed
+#     out instead.)
+#   - Flattening the nesting (`entries.push({ name: f.name, dir, … })` -> `dir: ""`) goes RED at
+#     EXACTLY ONE assertion in this test -- `assert_equal "tail_segments", @user.nodes.find_by!(...).name`
+#     -- confirming the flattening bug is invisible to every other assertion here, which is why
+#     that one is written separately. (The wrapper test below goes red too, on `"parts"`.)
 class ImporterTest < ApplicationSystemTestCase
   setup do
     # A hermetic share library, where this pinned embedded chunk. The subject is the in-browser
@@ -98,9 +99,10 @@ class ImporterTest < ApplicationSystemTestCase
     names = model.file_attachments.map { |a| nodes_by_id.fetch(a.node_id).name }.sort
     assert_equal [ "dragon.stl", "instructions.pdf", "tail.stl" ], names
 
-    # THE DOTFILE WAS SKIPPED. The controller drops entries whose basename starts with "." — macOS
-    # puts __MACOSX/._foo in almost every real-world zip, and attaching those would litter every
-    # imported model. Asserting the count alone would not catch it; asserting the names does.
+    # THE DOTFILE WAS SKIPPED. lib/zip_bundle.js drops any entry with a path segment starting with
+    # "." — macOS puts __MACOSX/._foo in almost every real-world zip, and attaching those would
+    # litter every imported model. On share the port refuses the name anyway, so a broken rule
+    # shows here as a logged 404 (assert_no_console_errors below) — see the header's mutation note.
     refute_includes names, ".DS_Store"
 
     # ROLES COME FROM THE SERVER, not from the browser. importer_controller.js has its own
@@ -121,6 +123,41 @@ class ImporterTest < ApplicationSystemTestCase
     assert_equal "tail_segments", @user.nodes.find_by!(node_id: tail.parent_node_id).name
 
     assert_no_console_errors
+  end
+
+  # THE WRAPPER FOLDER IS DROPPED (lib/zip_bundle.js, shared with the top bar since 2026-10-21): a
+  # zip whose every entry sits under one top-level directory imports without that level, so the
+  # model's folder does not hold a single folder of the same name. MUTATION-CHECKED: forcing
+  # `wrapped = false` in zip_bundle.js reddens the parent assertion below (the STL lands one level
+  # deeper, under `widget/`).
+  test "a zip wrapped in one folder imports without the wrapper" do
+    zip = Tempfile.new([ "widget", ".zip" ])
+    zip.close
+    Zip::File.open(zip.path, create: true) do |z|
+      z.get_output_stream("widget/widget.stl")       { |io| io.write("solid w\nendsolid\n") }
+      z.get_output_stream("widget/parts/knob.stl")   { |io| io.write("solid k\nendsolid\n") }
+      z.get_output_stream("__MACOSX/widget/._x.stl") { |io| io.write("junk") }
+    end
+
+    visit new_model_path
+    fill_in "Title", with: "Widget"
+    attach_file(zip.path)
+    assert_selector "[data-importer-target='summary']", text: "2 model files · 0 images · 0 PDF"
+    click_on "Create model"
+
+    model = nil
+    assert_eventually("the model was never created") do
+      model = @user.maker_models.find_by(title: "Widget")
+      model.present? && model.file_attachments.reload.count == 2
+    end
+    # By the model's folder ID, never by name: unwrapped or not, the parent would be CALLED `widget`.
+    widget = @user.nodes.find_by!(node_id: model.file_attachments.map(&:node_id), name: "widget.stl")
+    assert_equal model.reload.folder_node_id, widget.parent_node_id
+    knob = @user.nodes.find_by!(node_id: model.file_attachments.map(&:node_id), name: "knob.stl")
+    assert_equal "parts", @user.nodes.find_by!(node_id: knob.parent_node_id).name
+    assert_no_console_errors
+  ensure
+    zip&.close!
   end
 
   private

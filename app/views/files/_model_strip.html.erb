@@ -1,4 +1,4 @@
-<%# locals: (model:, cover_live:, covers:, print_runs:, printers:, materials:) %>
+<%# locals: (model:, cover_live:, covers:, print_runs:, printers:, materials:, projects:) %>
 <%# THE MODEL STRIP (structural redesign §5.4, slice 5). A catalogued model's folder carries the head
     of what the model page shows: cover, status, details, print settings and the print log. The
     folder's own files, the inspector and the workspace show the rest, so the page's viewer, gallery
@@ -56,6 +56,7 @@
       <% end %>
     </div>
   </div>
+  <%= render "models/projects", model: model, choices: projects %>
   <% if model.print_settings.present? %>
     <dl class="meta model-strip-settings">
       <% model.print_settings.each do |key, value| %>

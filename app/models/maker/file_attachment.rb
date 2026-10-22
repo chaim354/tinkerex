@@ -190,6 +190,12 @@ module Maker
     # hash, so a hand-posted node id is refused whatever the picker showed.
     IMAGE_EXTS = ROLE_BY_EXT.filter_map { |ext, role| ext if role == "image" }.freeze
 
+    # WHAT THE TOP BAR'S UPLOAD CALLS A MODEL when it decides whether a zip unpacks (2026-10-21,
+    # lib/zip_unpack.js) — DERIVED, like IMAGE_EXTS above, so a model extension added to ROLE_BY_EXT
+    # makes a zip holding it unpack with no second edit. The importer's own five-entry MODEL_EXT
+    # (importer_controller.js) is display-only and is not this.
+    MODEL_EXTS = ROLE_BY_EXT.filter_map { |ext, role| ext if role == "model" }.freeze
+
     # WHAT A BROWSER CAN SHOW AS `<img>` BYTES — NOT THE `image` ROLE, and since 2026-09-08
     # (tinkerex#285) the two lists differ: `.heic`/`.heif`/`.tif`/`.tiff` are images by role and no
     # browser this app targets renders them inline, while `ico` renders inline and is nobody's image.

@@ -6,6 +6,10 @@
     wrong one ships a button whose door answers 501), and both carry the destination as the
     `parent_node_id` the doors already accept.
 
+    A ZIP HOLDING A MODEL FILE UNPACKS (2026-10-21; docs/superpowers/specs/
+    2026-10-20-zip-upload-unpacks-models-design.md): both flows carry the two unpack doors and the
+    server's model extensions, and lib/zip_unpack.js does the rest in the browser.
+
     A PAGE WITH NO FOLDER (Recent, Tools, Settings, Search) asks with the library's folder chooser
     before the file picker opens (upload_pick_controller.js), and never guesses one. Its targets are
     the two places the two flows read their destination from: the form's hidden field, or the chunk
@@ -25,25 +29,34 @@
                             upload_pick_create_url_value: library_folders_path } : {}) do %>
   <% if capabilities.port_writable? %>
     <%# Share/S3: no chunk store to presign into, so the bytes come up in one multipart POST. %>
+    <%# THE ZIP-UPLOAD CONTROLLER (2026-10-21) submits this form exactly as the inline `onchange` it
+        replaced did, for every selection without a model zip; a selection holding one is unpacked
+        in the browser instead (zip_upload_controller.js, lib/zip_unpack.js). %>
     <%= form_with url: files_path, method: :post, class: "uploader",
-                  data: { turbo: false }, html: { multipart: true } do |f| %>
+                  data: { turbo: false, controller: "zip-upload",
+                          zip_upload_create_url_value: files_path,
+                          zip_upload_unpack_url_value: files_unpack_folder_path,
+                          zip_upload_unpacked_url_value: files_unpacked_path,
+                          zip_upload_model_exts_value: Maker::FileAttachment::MODEL_EXTS },
+                  html: { multipart: true } do |f| %>
       <%= hidden_field_tag :parent_node_id, parent_value, id: nil,
-                           data: (pick ? { upload_pick_target: "parent" } : {}) %>
+                           data: { zip_upload_target: "parent", upload_pick_target: ("parent" if pick) } %>
       <%= tag.label class: btn_class, title: btn_title,
                     data: (pick ? { action: "click->upload-pick#pick" } : {}) do %>
         <%# `include_hidden: false` IS LOAD-BEARING. `f.file_field` with `multiple: true` renders a
             companion `<input name="file[]" type="hidden" value="">` so an empty selection still
             submits the key, which put a bare "" at the head of `params[:file]`, and the server
             called `original_filename` on a String and 500'd. Nothing needs that marker here: the
-            field's own `onchange` is the only thing that submits this form, so it never fires with
-            an empty selection. Found by uploading four real files through the real form; the
+            field's own change handler is the only thing that submits this form, so it never fires
+            with an empty selection. Found by uploading four real files through the real form; the
             Rack::Test suites POSTed a Ruby array and never sent the marker at all, which is §14d's
             "assert the rendered field name" with a different attribute (upload_batch_test.rb). %>
-        <%= f.file_field :file, multiple: true, include_hidden: false, id: "topbar_upload_file",
-                         onchange: "this.form.requestSubmit()", hidden: true,
-                         data: (pick ? { upload_pick_target: "input" } : {}) %>
+        <%= f.file_field :file, multiple: true, include_hidden: false, id: "topbar_upload_file", hidden: true,
+                         data: { zip_upload_target: "input", action: "change->zip-upload#change",
+                                 upload_pick_target: ("input" if pick) } %>
         <span>Upload</span>
       <% end %>
+      <span class="upload-status" data-zip-upload-target="status"></span>
     <% end %>
   <% else %>
     <%# Chunk: the browser hashes, we presign the missing chunks, the browser PUTs them (§15). The
@@ -54,6 +67,9 @@
                             uploader_begin_url_value: begin_upload_files_path,
                             uploader_finalize_url_value: finalize_upload_files_path,
                             uploader_parent_node_id_value: parent_value,
+                            uploader_unpack_url_value: files_unpack_folder_path,
+                            uploader_unpacked_url_value: files_unpacked_path,
+                            uploader_model_exts_value: Maker::FileAttachment::MODEL_EXTS,
                             upload_pick_target: ("uploader" if pick) } do %>
       <%= tag.label class: btn_class, title: btn_title,
                     data: (pick ? { action: "click->upload-pick#pick" } : {}) do %>

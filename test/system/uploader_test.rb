@@ -1,5 +1,6 @@
 require "application_system_test_case"
 require "support/chunk_remote_journey"
+require "zip"
 
 # The chunk two-phase presigned upload, driven through a real browser.
 #
@@ -48,7 +49,9 @@ class UploaderTest < ApplicationSystemTestCase
     skip "needs a chunk-family backend (bin/ci test-chunk-remote boots one)" \
       unless ChunkRemoteJourney.configured? && LibraryBackendCheck.configured == "chunk_remote"
 
-    @user = sign_in_as("uploader@example.com")
+    # A FRESH EMAIL PER TEST: on chunk_remote, signing up provisions a sync-server library per email
+    # and refuses a reused one, and this file has two tests since 2026-10-21.
+    @user = sign_in_as("uploader-#{SecureRandom.hex(4)}@example.com")
   end
 
   teardown { FileUtils.remove_entry(@attach_dir) if @attach_dir }
@@ -122,6 +125,36 @@ class UploaderTest < ApplicationSystemTestCase
     assert_equal expected, FileLayer.current.read(@user, node_id: node.node_id),
                  "the node exists but its bytes did not land — the presigned PUT or finalize failed"
 
+    assert_no_console_errors
+  end
+
+  # THE TOP BAR UNPACKS A MODEL ZIP ON THE PRESIGNED FLOW TOO (2026-10-21). lib/zip_unpack.js is the
+  # same code the share flow's topbar_zip_upload_test.rb drives; what only this test reaches is
+  # uploader_controller.js's branch into it and uploadChunkFile as the per-file door. It runs only
+  # where this file runs — with a sync server configured — so CI's share-only system leg skips it.
+  test "a model zip chosen in the top bar unpacks through the presigned flow" do
+    visit files_path
+    @attach_dir = Dir.mktmpdir("uploader_zip")
+    zip_path = File.join(@attach_dir, "kit.zip")
+    Zip::File.open(zip_path, create: true) do |zip|
+      zip.get_output_stream("kit/part.stl")  { |io| io.write("solid p\nendsolid\n") }
+      zip.get_output_stream("kit/notes.txt") { |io| io.write("n") }
+    end
+    attach_file("topbar_upload_file", zip_path, make_visible: true)
+
+    folder = nil
+    assert_eventually("the zip was never unpacked") do
+      folder = @user.nodes.find_by(name: "kit", kind: "dir", deleted: false)
+    end
+    part = nil
+    assert_eventually("part.stl never landed") do
+      part = @user.nodes.find_by(name: "part.stl", parent_node_id: folder.node_id, deleted: false)
+    end
+    assert_equal "solid p\nendsolid\n", FileLayer.current.read(@user, node_id: part.node_id)
+    refute @user.nodes.exists?(name: "kit.zip", deleted: false)
+    # The run ENDS by opening the unpacked folder; reading the console before then would miss
+    # anything logged by the last upload or the catalog nudge.
+    assert_current_path files_path(folder: folder.node_id), wait: 30
     assert_no_console_errors
   end
 

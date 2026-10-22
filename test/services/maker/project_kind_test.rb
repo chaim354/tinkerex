@@ -137,8 +137,9 @@ module Maker
       refute laser.visible?("releases")
       assert laser.visible?("build_log")
 
+      # `models` (2026-10-21) is third in PANELS, so it is the first key after the lifted pair.
       electronics = Maker::ProjectKind.layout_for(kind: "electronics", overrides: nil)
-      assert_equal %w[attachments photos schematics wiring build_log], electronics.visible.first(5)
+      assert_equal %w[attachments photos schematics wiring models build_log], electronics.visible.first(6)
     end
 
     test "an unknown kind falls back to other's preset rather than raising" do
@@ -404,8 +405,8 @@ module Maker
       assert_equal Maker::Project::PANELS, other.order
       assert_equal [], other.hidden
       assert_equal Maker::Project::PANELS, other.visible
-      assert_equal %w[attachments photos schematics wiring build_log],
-                   Maker::ProjectKind.layout_for(kind: "electronics", overrides: nil, folders: []).visible.first(5)
+      assert_equal %w[attachments photos schematics wiring models build_log],
+                   Maker::ProjectKind.layout_for(kind: "electronics", overrides: nil, folders: []).visible.first(6)
     end
 
     # --- what a panel offers --------------------------------------------------------------------

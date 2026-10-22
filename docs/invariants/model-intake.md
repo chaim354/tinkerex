@@ -232,7 +232,16 @@
 - **ONE CAP, NOT TWO, AND THE SECOND IS OWED BY WHOEVER ADDS A NUDGE.** `MAX_MODELS` bounds an
   unattended run's churn and is absolute rather than a percentage, because the intended first run
   catalogues 100% of what is there. `Maker::ProjectIntake` carries a second, smaller cap only
-  because it has an entry point inside a browser request; nothing here does. **A nonsense override
+  because it has an entry point inside a browser request; nothing here does. **The top bar's unpack
+  nudge (`Files::UnpacksController#finish`, 2026-10-21) owes no second cap:** it only ENQUEUES
+  `Maker::ModelIntakeJob` and never sweeps in the request, so the run is the ordinary job — bounded
+  by `MAX_MODELS`, and a nudge while another run holds the job's `limits_concurrency` slot is
+  discarded. It CAN overlap a share/s3 scan: `Library::ScanJob` runs its catalog step as
+  `ModelIntakeJob.perform_now`, which that limit (applied at enqueue) never sees, so two runs for
+  one user can race to create the same auto model. The unique indexes (`(user_id, auto_node_id)`,
+  `(user_id, slug)`) make the loser raise `RecordNotUnique` rather than write a duplicate — the
+  scan's rescue logs it, the nudged job fails with no retry — and the next scan or nudge catalogues
+  what the loser left. **A nonsense override
   falls back rather than crashing:** `Integer("-5")` SUCCEEDS, so the rescue never sees a negative —
   it reaches `todo.first(-5)` and raises "negative array size" from inside the recurring job, far
   from the typo that caused it.

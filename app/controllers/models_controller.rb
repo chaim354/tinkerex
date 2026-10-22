@@ -225,6 +225,9 @@ class ModelsController < ApplicationController
     @viewable_3d_default = @viewable_3d.find { |f| f[:node_id] == @model.cover_node_id } || @viewable_3d.first
     @print_runs = @model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
     @printers, @materials = Maker::PrintRun.composer_choices(current_user)
+    # THE "IN PROJECTS" ROW (2026-10-21, attach-a-model spec), Details' like the rest of this list —
+    # the folder strip renders the same partial off the same object, so the two offer the same projects.
+    @project_choices = Maker::ModelProjectChoices.for(current_user, @model)
   end
 
   # { "" => <Models/slug node>, "sub/dir" => <node>, ... }. Always includes the model root.

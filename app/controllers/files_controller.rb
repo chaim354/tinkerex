@@ -1662,7 +1662,8 @@ class FilesController < ApplicationController
 
   # What the strip shows beyond the row itself: the cover (only when its node is live — the cover is a
   # raw column nothing validates, and a dead one would spin forever, the case models/_hero_poster
-  # guards), the print log, and the composer's choices. None grows with the folder or the model: one
+  # guards), the print log, the composer's choices, and its projects row
+  # (Maker::ModelProjectChoices — constant too). None grows with the folder or the model: one
   # liveness check, one node's thumbnail, the print log in one query, and the composer's two plucks.
   def load_model_strip(model)
     cover = model.cover_node_id
@@ -1670,6 +1671,7 @@ class FilesController < ApplicationController
     @strip_covers = Maker::Previews::ThumbnailMap.for(current_user, @strip_cover_live ? [ cover ] : [])
     @strip_print_runs = model.print_runs.reorder(printed_on: :desc, id: :desc).to_a
     @strip_printers, @strip_materials = Maker::PrintRun.composer_choices(current_user)
+    @strip_projects = Maker::ModelProjectChoices.for(current_user, model)
   end
 
   # `params[:folder]` is USER INPUT in a URL. Accept it ONLY when it names a `dir` the
