@@ -58,11 +58,11 @@ export default class extends Controller {
   }
 
   // CONNECT RESTS THE ELEMENT, as the 3D, board and Measure viewers' do (files-preview.md). A page Turbo
-  // restores from its cache holds the last editor's DEAD DOM and no fallback, because mount() removes
-  // the <pre> — so connect found no target and threw "Missing target element", leaving a CodeMirror
-  // that answers nothing. Reachable by Back to any text file's page, and by Back through the model
-  // page's pane (test/system/model_page_test.rb). The stale editor goes, a fresh fallback takes its
-  // place, and the load below runs as on a first visit.
+  // restores from its cache has no fallback, because mount() removed the <pre> — so connect found no
+  // target, threw "Missing target element", and the code area stayed blank (measured: no
+  // `.cm-content` after Back). Reachable by Back to any source file's page (code_viewer_test.rb) and
+  // through the model page's pane (model_page_test.rb). Anything left of the last editor goes, a fresh
+  // fallback takes its place, and the load below runs as on a first visit.
   rest() {
     if (this.hasFallbackTarget) return
     this.element.querySelectorAll(".cm-editor").forEach((el) => el.remove())
