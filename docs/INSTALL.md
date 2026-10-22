@@ -248,10 +248,17 @@ section 9.)
 - **Add an account**: an email, a password you choose and pass on to the person (at least 10
   characters, shown as you type it), and whether it is an admin too. It is confirmed on the spot.
   Every account on a folder or bucket library sees the same files, and can change and delete them.
-- **On an account's own page**: set a new password (this also confirms the account and unlocks it
-  after too many wrong passwords, and signs it out of every browser; a desktop app already signed in
-  keeps syncing), make it an admin or stop it being one, or delete it, by typing its address. Deleting
-  removes its projects, notes, tags and its copy of the catalog; every file in the library stays.
+- **On an account's own page**: set a new password (this also confirms the account and signs it
+  out of every browser and every desktop app), sign out one of its desktop apps, make it an admin or
+  stop it being one, or delete it, by typing its address. Deleting removes its projects, notes, tags
+  and its copy of the catalog; every file in the library stays. On a sync-server library, a desktop
+  app that is signed out keeps its separate sync key, so its files keep syncing until that key is
+  removed on the sync server.
+
+**Your own desktop apps** are listed under **Settings → Devices**, where you can sign any of them out.
+A new password signs out all of them, and one unused for `DEVICE_IDLE_DAYS` (90 by default) is signed
+out on its own. Wrong passwords never lock an account; repeated attempts from one place are slowed
+down instead.
 
 Your own account is changed on the Account page, behind your current password, and the only admin
 cannot delete their account while other accounts exist. An install from before admins existed made
@@ -373,6 +380,7 @@ file sets the ones marked *set by compose*; the rest come from `.env`.
 | `TINKEREX_PASSWORD` | for the console tasks | — | The password `bin/rails tinkerex:owner` / `tinkerex:password` read, so that it never sits on a command line. |
 | `OMNIAUTH_ENABLED` | no | off | Any value turns on OpenID Connect login. |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | with `OMNIAUTH_ENABLED` | — | The provider's issuer URL (discovery is used), the client credentials, and the callback URL registered with the provider. |
+| `DEVICE_IDLE_DAYS` | no | `90` | Days a desktop app may go without using the maker API before its sign-in expires and it must sign in again. Its file sync uses a separate key on the sync server, which this does not touch. `0` keeps every device signed in until it is signed out under Settings → Devices or its account's password changes. |
 | **The Tools gallery** (section 2) | | | |
 | `ADDON_SOURCE_URL` | *set by compose* (`http://addons`) | — | The addon bundle server. Takes precedence over the path below. |
 | `ADDON_SOURCE_PATH` | no | `/rails/public/addons` in the image (empty) | A directory of addon bundles on disk, the alternative to a bundle server. Empty means an empty gallery. |

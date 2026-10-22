@@ -428,5 +428,32 @@ module Maker
 
     validates :node_id, presence: true
     validates :role, inclusion: { in: ROLES }
+    validate :node_belongs_to_user, if: :will_save_change_to_node_id?
+
+    private
+
+    # The *_belongs_to_user rule (CLAUDE.md §14d; pentest I2c, tinkerex#467). Before this, the v1 API
+    # wrote any posted node_id. That leaked nothing, because every node lookup is user-scoped, but it
+    # left rows pointing at another tenant's id or at nothing at all. Every web door already resolves
+    # the node through `current_user` first. The bulk `insert_all` doors (Maker::ProjectIntake,
+    # Maker::AttachToProject#attach_bundle, Maker::ModelIntake) skip validations and draw their ids
+    # from the user's own catalog by construction.
+    #
+    # ON A CHANGE TO node_id ONLY, NEVER ON EVERY SAVE, AND THAT IS §14d's DANGLING-ID LOCK. A node
+    # row CAN go: Library::Reset wipes the catalog, and Maker::AttachmentReaper waits out a grace
+    # window before it reaps the attachment. A check run on every save would make such a row refuse
+    # an edit to its label or position until the reaper came. Tombstoned nodes still count, because
+    # the question is whose node it is, not whether it is live: a tombstone is one undo away from
+    # being the same file again.
+    #
+    # chunk_remote: the id must already be in the local mirror, which trails the sync server by up
+    # to two minutes (§14a). A device that attaches a file it synced seconds ago can be refused once,
+    # and the same request succeeds after the next pull. Closing that gap with a pull here would be
+    # the synchronous WAN round trip §2 forbids.
+    def node_belongs_to_user
+      return if node_id.blank? || Node.exists?(user_id:, node_id:)
+
+      errors.add(:node_id, "must be a file in your own library")
+    end
   end
 end

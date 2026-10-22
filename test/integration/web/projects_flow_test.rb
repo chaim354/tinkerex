@@ -228,6 +228,7 @@ module Web
 
     test "cover_node_id prefers image, then model, then first attachment, else nil" do
       user = sign_in
+      %w[m1 i1 src m2].each { |id| user.nodes.create!(node_id: id, name: "#{id}.bin", kind: "file") }
       project = user.maker_projects.create!(name: "Lamp")
       assert_nil project.cover_node_id
 

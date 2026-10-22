@@ -1,7 +1,7 @@
 # ACCOUNTS, FOR AN ADMIN (2026-10-21; docs/superpowers/specs/2026-10-21-admin-users-design.md). The
 # browser twin of the console doors in lib/tasks/tinkerex.rake: list every account, add one confirmed
 # with a password the admin types, and on each other account's page reset its password, make or
-# unmake it an admin, or delete it.
+# unmake it an admin, sign out one of its desktop devices, or delete it.
 #
 # EVERY ACCOUNT ON THE SERVER, NOT current_user's OWN ROWS: the one controller whose subject is other
 # accounts, which is why its lookups are User.find and the gate comes first. A non-admin -- and the
@@ -15,7 +15,7 @@
 module Settings
   class UsersController < ApplicationController
     before_action :require_account_manager!
-    before_action :set_user, only: %i[edit reset_password set_admin destroy]
+    before_action :set_user, only: %i[edit reset_password set_admin revoke_device destroy]
 
     def index
       @users = User.order(:id).to_a
@@ -43,9 +43,10 @@ module Settings
     def edit; end
 
     # PATCH /settings/users/:id/reset_password {user: {password}}. Also confirms the account and
-    # clears a lock, since a locked-out person is the usual reason to be here. Devise keeps the
-    # password's salt in the session, so the account's other browser sessions end; its desktop
-    # devices keep their tokens, which the page says.
+    # clears a lock left from before 2026-10-22, when failed attempts still locked accounts. Devise
+    # keeps the password's salt in the session, so the account's other browser sessions end, and the
+    # new password signs out its desktop devices too (User#revoke_devices_after_password_change),
+    # which the page says.
     #
     # A REFUSED RESET PUTS THE ROW BACK BEFORE THE PAGE RE-RENDERS (found in review): the unlock and
     # the confirmation are assigned in memory before Devise validates the password, so without the
@@ -76,6 +77,17 @@ module Settings
       @user.update_column(:admin, admin)
       redirect_to edit_settings_user_path(@user), status: :see_other,
                   notice: admin ? "#{@user.email} is now an admin." : "#{@user.email} is no longer an admin."
+    end
+
+    # DELETE /settings/users/:id/devices/:device_id: signs one of this account's desktop devices out
+    # (pentest H1b), the admin's twin of Settings::DevicesController#destroy. Found through @user, so
+    # a device of any OTHER account 404s, and set_user has already sent the signed-in account to its
+    # own pages. Deleting the row is the whole revocation (Device).
+    def revoke_device
+      device = @user.devices.find(params[:device_id])
+      device.destroy!
+      redirect_to edit_settings_user_path(@user), status: :see_other,
+                  notice: "Signed #{device.name} out of #{@user.email}."
     end
 
     # DELETE /settings/users/:id {confirm_email}. The account's whole cascade (User's dependent: list,

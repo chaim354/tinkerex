@@ -103,6 +103,20 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     assert u.valid_password?(PASSWORD)
   end
 
+  # THE FOURTH DOOR THAT SETS A PASSWORD (pentest H1b; the other three are driven in
+  # test/integration/web/password_change_revokes_devices_test.rb). Someone at the console resetting a
+  # password is usually doing it because a laptop went missing.
+  test "password signs out every desktop device of that account, and only that account" do
+    u = User.create!(email: "lost@example.com", password: "old password here!!", confirmed_at: Time.current)
+    other = User.create!(email: "kept@example.com", password: "old password here!!", confirmed_at: Time.current)
+    2.times { |i| Device.register!(user: u, name: "laptop #{i}") }
+    kept = Device.register!(user: other, name: "theirs")
+
+    invoke!("tinkerex:password", "lost@example.com")
+    assert_equal 0, u.devices.count
+    assert_equal kept, Device.authenticate(kept.plaintext_token)
+  end
+
   # --- Admins (Settings → Users) -------------------------------------------------------------------
 
   test "owner makes the first account an admin and a later one not" do

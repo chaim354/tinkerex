@@ -24,6 +24,13 @@
 # bodies were identical modulo indentation and one blank line. Read against the Rust 2026-10-14:
 # the same steps — strip an optional `Bearer `, trim, refuse a blank token, look the SHA256 digest
 # up in `devices.token_digest`, stamp `last_seen_at`.)
+#
+# THE TWO COPIES NOW DIFFER ON PURPOSE, IN ONE STEP (2026-10-22, pentest H1b, tinkerex#465):
+# Device.authenticate here refuses a token idle for longer than DEVICE_IDLE_DAYS, and the sync
+# server's has no expiry. Revoking a device here deletes this app's row only; the sync server has no
+# revoke door. Both are follow-ups for that repository, which the change here was not allowed to
+# edit (docs/superpowers/plans/2026-10-22-device-token-lifecycle.md). Until they land, a device's
+# SYNC token outlives its maker token.
 module V1
   module Authentication
     extend ActiveSupport::Concern

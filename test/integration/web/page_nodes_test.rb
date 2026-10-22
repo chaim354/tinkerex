@@ -107,7 +107,7 @@ module Web
     test "the models page says how many attachments are gone rather than hiding them silently" do
       model = @user.maker_models.create!(title: "Bench", slug: "bench")
       model.file_attachments.create!(user: @user, node_id: file!("m-live", "jig.stl"), role: "model")
-      model.file_attachments.create!(user: @user, node_id: "m-gone", role: "model", label: "ghost.stl")
+      ghost_attachment!(model, user: @user, node_id: "m-gone", role: "model", label: "ghost.stl")
 
       get model_path(model)
       assert_select ".attachments-missing", text: /1 attached file no longer in your library/

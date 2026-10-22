@@ -76,7 +76,7 @@ module Maker
     end
 
     test "a row whose node is gone is left alone, not crashed on" do
-      ghost = @project.file_attachments.create!(user: @user, node_id: "ghost", role: "other")
+      ghost = ghost_attachment!(@project, user: @user, node_id: "ghost", role: "other")
 
       assert_equal 0, classify
       assert_equal "other", ghost.reload.role
@@ -108,7 +108,7 @@ module Maker
     test "a name is read off the row's own user's node, never another user's node with the same id" do
       other = User.create!(email: "classify-other-#{SecureRandom.hex(4)}@example.com")
       other.nodes.create!(node_id: "same-id", name: "board.gbr", kind: "file", mtime: 1, size: 1)
-      dangling = @project.file_attachments.create!(user: @user, node_id: "same-id", role: "other")
+      dangling = ghost_attachment!(@project, user: @user, node_id: "same-id", role: "other")
 
       assert_equal 0, classify
       assert_equal "other", dangling.reload.role

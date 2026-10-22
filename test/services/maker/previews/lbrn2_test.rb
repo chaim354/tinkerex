@@ -95,6 +95,36 @@ module Maker
         assert_equal "#000000", Maker::Previews::Lbrn2.normalize_color(nil)
       end
 
+      # PENTEST L3 (tinkerex#468): a `#`-prefixed value used to come back VERBATIM and was then
+      # interpolated into the SVG's `stroke="…"`, so `#000"/><script>…` closed the attribute. Only
+      # the two hex spellings pass, UNCHANGED (case and length kept, so a valid colour renders the
+      # bytes it always did and no PAYLOAD_REVISION moves); anything else is the default stroke.
+      test "normalize_color passes #rgb and #rrggbb through unchanged and refuses every other #-string" do
+        lb = Maker::Previews::Lbrn2
+        %w[#abc #ABC #a1B2c3 #000000].each { |ok| assert_equal ok, lb.normalize_color(ok), ok }
+        assert_equal "#abc", lb.normalize_color("  #abc  "), "surrounding whitespace is not part of a colour"
+        [ %(#000"/><script>alert(1)</script>), "#12", "#1234", "#12345", "#1234567", "#12345g",
+          "#red", "#", "#abc ;x", "#abcdef\n<x/>" ].each do |bad|
+          assert_equal lb::DEFAULT_STROKE, lb.normalize_color(bad), bad.inspect
+        end
+      end
+
+      test "a crafted colour cannot leave the stroke attribute in the SVG, the panel or the payload" do
+        evil = %(#000"/><script>alert(1)</script><x a=")
+        xml = %(<LightBurnProject><CutSetting type="Cut"><index Value="0"/>) +
+              %(<color Value="#{evil.encode(xml: :attr)[1..-2]}"/></CutSetting>) +
+              %(<Shape Type="Rect" CutIndex="0" W="5" H="5"><XForm>1 0 0 1 0 0</XForm></Shape></LightBurnProject>)
+        assert_equal evil, Nokogiri::XML(xml).at_xpath("//color")["Value"], "precondition: the file carries it"
+
+        svg = Maker::Previews::Lbrn2.to_svg(xml)
+        assert_not_includes svg, "<script"
+        assert_includes svg, %(stroke="#{Maker::Previews::Lbrn2::DEFAULT_STROKE}")
+        assert_equal Maker::Previews::Lbrn2::DEFAULT_STROKE,
+                     Maker::Previews::LbrnMetadata.parse(xml)["layers"].first["color"]
+        assert_equal({ "0" => Maker::Previews::Lbrn2::DEFAULT_STROKE },
+                     Maker::Previews::Lbrn2.cut_colors(Maker::Previews::Lbrn2.parse_document(xml)))
+      end
+
       test "an empty project still produces a valid SVG (does not crash)" do
         empty = %(<?xml version="1.0"?><LightBurnProject></LightBurnProject>)
         svg = Maker::Previews::Lbrn2.to_svg(empty)

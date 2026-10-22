@@ -90,7 +90,7 @@ module Web
       # the emptied-model filter below, confounding this test with that one (mutation-checked:
       # dropping `.catalogued` for `.all` stayed GREEN here until this attachment was added, because
       # the fixture had no file_attachments and the OTHER rule quietly did the hiding instead).
-      model.file_attachments.create!(user: @user, node_id: "f-gone", role: "model")
+      ghost_attachment!(model, user: @user, node_id: "f-gone", role: "model")
       get files_models_path
       assert_response :success
       # DEVIATION FROM THE PLAN: the card partial (app/views/models/_card.html.erb) renders
@@ -109,7 +109,7 @@ module Web
       get files_models_path
       assert_select ".model-name", text: "Emptied", count: 0
 
-      model.file_attachments.create!(user: @user, node_id: "f-1", role: "model")
+      ghost_attachment!(model, user: @user, node_id: "f-1", role: "model")
 
       get files_models_path
       assert_select ".model-name", text: "Emptied", count: 1
@@ -120,7 +120,7 @@ module Web
     # second, and told a user their model was being deleted when the row was about to survive.
     test "the auto model's own page offers Remove from catalog, not Delete" do
       model = @user.maker_models.create!(title: "Enclosure", origin: "auto", auto_node_id: "d-b")
-      model.file_attachments.create!(user: @user, node_id: "f-2", role: "model")
+      ghost_attachment!(model, user: @user, node_id: "f-2", role: "model")
 
       get model_path(model)
 

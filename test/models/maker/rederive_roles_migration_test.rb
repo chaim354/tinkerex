@@ -52,7 +52,7 @@ class RederiveRolesMigrationTest < ActiveSupport::TestCase
   end
 
   test "an attachment whose node is missing is left alone rather than raising" do
-    orphan = @project.file_attachments.create!(user: @user, node_id: "gone", role: "other")
+    orphan = ghost_attachment!(@project, user: @user, node_id: "gone", role: "other")
     assert_nothing_raised { run_migration }
     assert_equal "other", orphan.reload.role
   end

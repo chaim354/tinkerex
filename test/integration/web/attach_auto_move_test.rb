@@ -321,6 +321,7 @@ module Web
                            password: PASSWORD, confirmed_at: Time.current)
       theirs = other.maker_projects.create!(name: "Theirs")
       theirs.ensure_library_folder!(other)
+      other.nodes.create!(node_id: "f-1", name: "theirs.stl", kind: "file") # their own node, under the same id
       foreign = theirs.file_attachments.create!(user: other, node_id: "f-1", role: "model")
 
       get file_path("f-1", move_conflict: foreign.id)

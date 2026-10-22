@@ -15,15 +15,21 @@ module V1
     # credentials, not a device token — so skip the Bearer gate here.
     skip_before_action :authenticate_device!, only: :login
 
-    # PER-IP, ON TOP OF Devise :lockable, which is per-ACCOUNT — the same numbers as the web
-    # login (users/sessions_controller.rb) so the two human-credential doors agree. Lockable stops
-    # 10 guesses at one address; this stops one guess each at ten thousand addresses, and it stops
-    # an attacker from locking a known account over and over (the lock also blocks web sign-in).
-    # It gates the ACTION, not just failures: a correct guess on attempt 11 is still refused.
-    # Counts in config.action_controller.cache_store (Solid Cache in production). Pinned by
-    # test/integration/v1/device_login_throttle_test.rb.
-    rate_limit to: 10, within: 3.minutes, only: :login,
-               with: -> { render json: { error: "too_many_attempts" }, status: :too_many_requests }
+    # THE SAME TWO THROTTLES AS THE WEB SIGN-IN (users/sessions_controller.rb), from the same
+    # numbers (Tinkerex::SignInThrottle), so the two human-credential doors agree: per SOURCE, and per
+    # ACCOUNT PER SOURCE. THEY REPLACED DEVISE :lockable's LOCK, AND THIS COMMENT USED TO CLAIM THE
+    # PER-IP LIMIT ALONE STOPPED "an attacker from locking a known account over and over". It did
+    # not. The limit allowed ten attempts per window, and the lock fired at ten, so one IP locked
+    # any known account, here and on the web, and could re-lock it every hour (pentest M4b). Nothing
+    # locks now, and a stranger's misses cost only the stranger's own source. They gate the ACTION,
+    # not just failures: a correct guess on attempt 11 is still refused. Pinned by
+    # test/integration/v1/device_login_throttle_test.rb and device_login_test.rb.
+    TOO_MANY = -> { render json: { error: "too_many_attempts" }, status: :too_many_requests }
+    rate_limit(**Tinkerex::SignInThrottle::PER_SOURCE, only: :login, name: "per-source",
+               by: -> { Tinkerex::SignInThrottle.source(request.remote_ip) }, with: TOO_MANY)
+    rate_limit(**Tinkerex::SignInThrottle::PER_ACCOUNT, only: :login, name: "per-account",
+               by: -> { Tinkerex::SignInThrottle.account_key(params[:email], request.remote_ip) },
+               with: TOO_MANY)
 
     # A GRANT THAT CANNOT BE BROKERED ANSWERS 503 AND MINTS NO MAKER DEVICE -- the sync server
     # unreachable, erroring, or rejecting a credential, all FileLayer::FetchError (SyncGrant#call).
@@ -38,26 +44,24 @@ module V1
     # whole v1 API that outlives the visitor's browser session until the nightly reset destroys the
     # row, and on a syncable deployment enrolling brokers a sync grant onto a library every visitor
     # shares. Refused on both doors BEFORE anything is brokered or minted -- and, at login, before the
-    # password is even checked, so a stranger cannot spend the demo's lockable attempts here. 403
+    # password is even checked, so a stranger learns nothing about the demo's password here. 403
     # with its own code rather than the generic 401: the demo address is public, so naming it hides
     # nothing, and a client can tell the visitor why. Pinned by device_login_test.rb.
     DEMO_REFUSAL = { error: "demo_account" }.freeze
 
     # POST /v1/devices/login { email, password, device_name } -> a device token, the library it
     # opens, and a sync grant where there is something to sync.
-    # Authenticates the human credentials via Devise (confirmable + lockable enforced),
-    # then mints a Device. One generic 401 for unknown/bad/unconfirmed/locked (no
-    # enumeration). The password crosses the wire once (TLS); the client stores only the
-    # returned token.
+    # Authenticates the human credentials via Devise (confirmable enforced; no account locks), then
+    # mints a Device. One generic 401 for unknown/bad/unconfirmed (no enumeration). The password
+    # crosses the wire once (TLS); the client stores only the returned token.
     def login
       email    = params.require(:email)
       password = params.require(:password)
       user = User.find_for_authentication(email: email)
       return render(json: DEMO_REFUSAL, status: :forbidden) if Tinkerex::Demo.demo?(user)
 
-      # valid_for_authentication? runs the password check AND the lockable bookkeeping
-      # (increments failed_attempts on a miss; locks at maximum_attempts). active_for_
-      # authentication? enforces confirmable (and not-locked). Both must pass.
+      # valid_for_authentication? runs the password check (lockable's bookkeeping is off:
+      # lock_strategy :none). active_for_authentication? enforces confirmable. Both must pass.
       authed =
         user&.valid_for_authentication? { user.valid_password?(password) } &&
         user.active_for_authentication?
@@ -69,7 +73,8 @@ module V1
       # authenticate -> grant -> register -> render. The order is the 503 rule above.
       name = params[:device_name].presence || "device"
       sync = sync_grant_for(user, name)
-      device = Device.register!(user:, name:)
+      # The sibling's id is kept so a later revoke can reach the sync server (Device.register!).
+      device = Device.register!(user:, name:, sync_device_id: sync&.fetch(:device_id))
       render json: {
         user_id: user.id, device_id: device.id,
         device_token: device.plaintext_token, head_seq: user.head_seq,
@@ -84,7 +89,7 @@ module V1
 
       name = params[:name].presence || "device"
       sync = sync_grant_for(current_user, name)
-      device = Device.register!(user: current_user, name:)
+      device = Device.register!(user: current_user, name:, sync_device_id: sync&.fetch(:device_id))
       render json: { device_id: device.id, device_token: device.plaintext_token, library: library_info, sync: },
              status: :created
     end

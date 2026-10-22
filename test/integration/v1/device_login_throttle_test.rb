@@ -1,10 +1,10 @@
 require "test_helper"
 
 module V1
-  # Per-IP throttle on the one v1 endpoint that takes HUMAN credentials. Lockable (10 misses, one
-  # hour) bounds guesses at ONE account; this bounds one guess each at ten thousand accounts, and
-  # it stops anyone who knows an address from locking that account over and over — the lock also
-  # blocks web sign-in. Mirrors users/sessions_controller.rb's numbers so the two doors agree.
+  # The throttles on the one v1 endpoint that takes HUMAN credentials, by the numbers the web
+  # sign-in uses too (Tinkerex::SignInThrottle). Per source, it bounds one guess each at ten
+  # thousand accounts; per account per source, ten an hour at one. Nothing locks an account any more
+  # (pentest M4b): device_login_test.rb proves a stranger's misses cannot keep the owner out.
   #
   # THE COUNTER LIVES IN ActionController::API's cache_store — NOT Base's: each controller base
   # class builds its own MemoryStore from config.action_controller.cache_store (test_helper.rb
@@ -36,12 +36,29 @@ module V1
 
     test "a throttled IP cannot enrol even with the CORRECT password of an UNLOCKED account" do
       # Gates the ACTION, not just failures: the correct guess on attempt 12 must not be let
-      # through. A second account, so lockable's own 401 on the first cannot stand in for the
-      # throttle's 429 — without the throttle this request would mint a device and answer 201.
+      # through. A second account, so the per-account limit on the first cannot stand in for the
+      # per-source one -- without it this request would mint a device and answer 201.
       11.times { login(@target.email, "wrong") }
       assert_no_difference -> { Device.count } do
         login(@another.email, PASSWORD)
         assert_response :too_many_requests
+      end
+    end
+
+    # The per-account limit outlives the per-source window: four minutes on, the source may enrol
+    # for anyone else but may not try this account again this hour. Mutation-checked: without the
+    # `per-account` rate_limit the eleventh login below mints a device.
+    test "one source gets ten logins an hour at one account and no more, even with its password" do
+      10.times do
+        login(@target.email, "wrong")
+        assert_response :unauthorized
+      end
+      travel 4.minutes do
+        assert_no_difference -> { Device.count } do
+          login(@target.email.upcase, PASSWORD)
+          assert_response :too_many_requests
+          assert_equal "too_many_attempts", JSON.parse(response.body)["error"]
+        end
       end
     end
   end

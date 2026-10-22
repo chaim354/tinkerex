@@ -24,7 +24,7 @@ module Maker
       entry = @project.build_log_entries.create!(user: @user, body: "step", logged_at: Time.current)
       entry.file_attachments.create!(user: @user, node_id: "z", role: "image")
       entry.file_attachments.create!(user: @user, node_id: "a", role: "image")    # also in the folder: once
-      entry.file_attachments.create!(user: @user, node_id: "gone", role: "image") # not live: dropped
+      ghost_attachment!(entry, user: @user, node_id: "gone", role: "image")        # not live: dropped
 
       listing = Maker::ProjectFolderListing.new(@user, @project)
       entries = @project.build_log_entries.includes(:file_attachments).to_a
