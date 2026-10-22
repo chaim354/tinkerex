@@ -40,9 +40,11 @@ function isMap(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
 }
 
-// JSON's string syntax is YAML's double-quoted syntax for everything JSON.stringify emits; the line
-// and paragraph separators, the C1 controls, DEL and the byte-order mark are escaped as well, because
-// YAML 1.1 counts the first two as line breaks and the rest as unprintable.
+// JSON's string syntax is YAML's double-quoted syntax for everything JSON.stringify emits. It leaves
+// DEL, the C1 controls (NEL among them) and the byte-order mark raw, and YAML refuses those
+// unescaped ("control characters are not allowed", Psych, measured), so they are escaped here too.
+// The line and paragraph separators are escaped for the reader rather than the parser: Psych keeps
+// them raw (measured), but an editor may break the line there.
 export function quote(text) {
   return JSON.stringify(text).replace(/[\u007f-\u009f\u2028\u2029\ufeff]/g,
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`)

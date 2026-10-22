@@ -49,7 +49,8 @@ module Web
 
     # THE PRIVACY RULE, AS MARKUP. Enter in a field inside a form submits it, and a GET form puts the
     # values in the query string -- an SMB password in a URL, a server log and the browser history.
-    # The page must hold no form at all, the layout's included.
+    # The page must hold no form at all, the layout's included. Mutation-checked: an empty <form>
+    # added to the view goes red here.
     test "the page has no form, so nothing typed into it can be submitted" do
       get public_compose_path
       assert_select "form", 0

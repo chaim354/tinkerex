@@ -95,6 +95,22 @@ Three tests carry it:
    (valid YAML), U+2028/U+2029 and C1 controls escaped too. Every `$` is written `$$` (compose
    interpolation); a comma in the SMB password is written `,,` (the `o` list).
 
+10. **The phone gutter is the shell's 12px, not 16px.** The brief asked for 16px, but `shell.css`
+    gives `main.container` 12px of side padding below 720px on every page; this page follows it
+    rather than standing out. The system test asserts both panels stay inside that gutter.
+11. **`.dockerignore` re-includes `docker-compose.yml`.** The image excluded every compose file, so
+    reading it at render time would have been a 500 on every deployment while every test (run from a
+    checkout) stayed green. Only the base file comes back.
+
+## Verified by hand (not in CI)
+
+`docker compose config` (Compose v5.5.0, this Mac) accepted five generated files (defaults, a
+folder with `$`/`#`/quotes, an SMB share with a comma/`$`/`${HOME}`/backslash password and Tools
+off, a guest share, mail with `on` as a HELO name) and read every typed value back exactly. Note
+that `config` prints a literal `$` as `$$` (its output is itself a compose file), measured with a
+control file; the comparison undoes that one escape. Not in CI because the runners have no Docker
+CLI requirement and the Psych comparison carries the same claim.
+
 ## Tasks
 
 1. `Tinkerex::ComposeTemplate` + unit test (TDD), `.dockerignore` re-include + guard.

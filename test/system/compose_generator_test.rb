@@ -22,7 +22,9 @@ require "yaml"
 #      test goes red (image, port and the library bind lose their defaults).
 #   2. `emit` printing no leading comments: the drift test's comment comparison goes red.
 #   3. `composeEscape` returning its input: the matrix goes red on every `$` case ("lone $").
-#   4. `quote` no longer escaping U+2028: the matrix goes red on the line-separator password.
+#   4. `quote` no longer escaping DEL and the C1 controls: the matrix goes red on the password holding
+#      NEL and DEL ("control characters are not allowed"). Leaving U+2028 raw instead stays GREEN:
+#      Psych keeps it inside double quotes, so that escape is for an editor's sake, not the parser's.
 #   5. `isPort` answering true: the validation test goes red (port 0 builds a file).
 #   6. compose_controller.js `update` calling fetch("/up?" + port): the no-network test goes red.
 #   7. pages/public.css's phone rule `.compose-layout` back to `1fr` without minmax: the 375px test
@@ -277,18 +279,18 @@ class ComposeGeneratorSystemTest < ApplicationSystemTestCase
   test "an invalid value names itself, and there is no file to download or copy until it is fixed" do
     open_page
     {
-      "compose-port" => [ "0", "A port is a whole number from 1 to 65535." ],
-      "compose-puid" => [ "abc", "A user id is a whole number" ],
-      "compose-tag" => [ "bad tag", "A tag is letters, digits, dots, dashes and underscores" ],
-      "compose-folder-path" => [ "/mnt/a:b", "A colon can only follow a Windows drive letter" ]
-    }.each do |id, (value, message)|
+      "compose-port" => [ "0", "A port is a whole number from 1 to 65535.", "Port" ],
+      "compose-puid" => [ "abc", "A user id is a whole number", "PUID" ],
+      "compose-tag" => [ "bad tag", "A tag is letters, digits, dots, dashes and underscores", "Image tag" ],
+      "compose-folder-path" => [ "/mnt/a:b", "A colon can only follow a Windows drive letter", "Folder" ]
+    }.each do |id, (value, message, label)|
       original = find_field(id).value
       fill_in id, with: value
       assert_selector "##{id}-error", text: message
       assert_selector "##{id}[aria-invalid=true]"
       assert_button "Download", disabled: true
       assert_button "Copy", disabled: true
-      assert_selector ".compose-status", text: "Fix the highlighted fields"
+      assert_selector ".compose-status", exact_text: "Fix #{label} to see the file."
       assert_no_selector ".compose-preview", visible: true
       assert_equal "", page.evaluate_script("document.querySelector('[data-controller~=compose]').dataset.copyTextValue")
       fill_in id, with: original

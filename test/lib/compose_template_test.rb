@@ -6,6 +6,11 @@ require "yaml"
 # browser half (test/system/compose_generator_test.rb) holds the OUTPUT to the file. Every test here
 # reads the real file, so a change to docker-compose.yml that the derivation no longer understands
 # fails here first, naming the line, rather than reaching a visitor as a wrong file.
+#
+# MUTATION-CHECKED (§15), each run red and restored: not recording the generator markers (the
+# comment count goes red), owning a closing comment by the open sequence item (`ind <= at`: the
+# share derivation raises, finding no example), and accepting a service the app does not reach (the
+# refusal test goes red).
 class ComposeTemplateTest < ActiveSupport::TestCase
   SOURCE = Rails.root.join("docker-compose.yml")
 

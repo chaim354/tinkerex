@@ -49,7 +49,7 @@ class DeployHygieneTest < ActiveSupport::TestCase
   # 2026-10-21), so the image must carry it -- and every test runs from a checkout, where the file is
   # always there, so nothing else would notice the image losing it: /install/compose would answer 500
   # on every deployment behind a green suite. Only the base file is re-included; the build and sync
-  # overlays describe a clone's setup and stay out.
+  # overlays describe a clone's setup and stay out. Mutation-checked: deleting the `!` line goes red.
   test "the image carries docker-compose.yml for the compose generator, and only that compose file" do
     refute dockerignored?("docker-compose.yml"), "add `!/docker-compose.yml` to .dockerignore after `/docker-compose*.yml`"
     assert_equal Tinkerex::ComposeTemplate::SOURCE, ROOT.join("docker-compose.yml")

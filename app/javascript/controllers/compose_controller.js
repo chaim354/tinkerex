@@ -70,7 +70,9 @@ export default class extends Controller {
     let yaml = ""
     let status = ""
     if (Object.keys(errors).length > 0) {
-      status = "Fix the highlighted fields to see the file."
+      // NAMED, because on a phone this line sits under the whole form, far from the field it is about.
+      const names = Object.keys(errors).map((name) => this.field(name)?.labels?.[0]?.textContent.trim() || name)
+      status = `Fix ${names.join(", ")} to see the file.`
     } else {
       try {
         yaml = generate(this.templateValue, choices, { source: `${location.origin}${location.pathname}`, guide: this.guideValue })
