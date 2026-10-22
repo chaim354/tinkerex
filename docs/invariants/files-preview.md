@@ -450,8 +450,9 @@ broken, not one per page.
 
 **THE EIGHT VIEWER PARTIALS ARE SHARED BY A SESSION-AUTHED PAGE AND A SESSIONLESS ONE, SO EVERY URL
 AND EVERY USER-SCOPED OBJECT ARRIVES AS A STRICT LOCAL** (`app/views/files/viewers/_image _pdf
-_kicanvas _gerber _code _model3d _measure _static`, rendered by `files/show.html.erb` and by
-`public/files/view.html.erb`; the branch that picks one is `FilePreview#preview_kind`, a CONCERN
+_kicanvas _gerber _code _model3d _measure _static`, rendered by the maker's chain
+`files/_viewer.html.erb` — which `files/show.html.erb` renders, fed by `FileViewer#viewer_state_for`
+— and by `public/files/view.html.erb`; the branch that picks one is `FilePreview#preview_kind`, a CONCERN
 rather than a shared superclass because the two controllers deliberately have none — §14d). **No
 route helper and no `current_user`/`capabilities` call is permitted inside one.** A partial must not
 be able to tell which page it is on; that is the whole reason one copy can serve both, and it is
