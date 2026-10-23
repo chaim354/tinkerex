@@ -60,25 +60,44 @@
     </ul>
   </nav>
 
-  <nav class="rail-nav rail-nav--foot" aria-label="Tools and trash">
+  <%# `toolmenu` for the pinned tools' right-click Unpin (toolmenu_controller.js). %>
+  <nav class="rail-nav rail-nav--foot" aria-label="Tools and trash" data-controller="toolmenu">
     <ul>
       <li>
-        <%= link_to tools_path, class: "rail-link", title: "Tools", "aria-current": sidebar_aria([ :tools ]) do %>
+        <%= link_to tools_path, class: class_names("rail-link", "rail-family-lit": sidebar_family_lit?(:tools)),
+                    title: "Tools", "aria-current": sidebar_aria([ :tools ]) do %>
           <%= rail_icon(:tools) %><span class="rail-label">Tools</span>
         <% end %>
       </li>
-      <%# THE PINNED CALCULATOR (2026-10-21; Tools::CalculatorPinsController). It OPENS THE MODAL rather
-          than going anywhere (`data-calculator-open`, calculator_controller.js), so it never carries
-          aria-current and the one-lit-link rule is untouched. A real href all the same: a modified
-          click, or a page whose script failed, lands on the Tools card that opens it.
-          `calculator_pinned?` reads the user row the request already loaded, so the pin costs the
-          rail no query. Its title, the collapsed rail's tooltip, names the keyboard shortcut. %>
-      <% if current_user.calculator_pinned? %>
+      <%# THE PINNED TOOLS, under Tools in the order they were pinned (2026-10-22; Maker::ToolPins).
+          Pinned and unpinned by a right click on the tool, here or on its Tools card. They are read
+          from the user row the request already loaded, so they cost the rail no query, and NEVER
+          from the addon registry (an addon's title was copied in when it was pinned).
+
+          THE CALCULATOR OPENS THE MODAL rather than going anywhere (`data-calculator-open`,
+          calculator_controller.js), so it never carries aria-current and the one-lit-link rule is
+          untouched. A real href all the same: a modified click, or a page whose script failed,
+          lands on the Tools card that opens it. Its title, the collapsed rail's tooltip, names the
+          keyboard shortcut. It has its own glyph, so it stays in the icon rail.
+
+          AN ADDON is a link to its page, lit there (sidebar_current's [:tool, key]). It wears the
+          Tools glyph and not its manifest's icon, which is an emoji, and the interface draws none
+          (design-system.md rule 13); so, like a pinned folder, it hides in the icon rail
+          (`.rail-tool-pin`, shell.css) and Tools wears the lit mark for it there. %>
+      <% current_user.tool_pins.each do |pin| %>
         <li>
-          <%= link_to tools_path(anchor: "calculator"), class: "rail-link rail-calculator",
-                      title: "Calculator (#{calculator_shortcut})", "aria-haspopup": "dialog",
-                      "aria-keyshortcuts": CalculationsHelper::CALCULATOR_KEYS, data: { calculator_open: "" } do %>
-            <%= rail_icon(:calculator) %><span class="rail-label">Calculator</span>
+          <% if pin.calculator? %>
+            <%= link_to tools_path(anchor: "calculator"), class: "rail-link rail-calculator",
+                        title: "Calculator (#{calculator_shortcut})", "aria-haspopup": "dialog",
+                        "aria-keyshortcuts": CalculationsHelper::CALCULATOR_KEYS,
+                        data: tool_menu_data(pin.key, pin.label, calculator_open: "") do %>
+              <%= rail_icon(:calculator) %><span class="rail-label">Calculator</span>
+            <% end %>
+          <% else %>
+            <%= link_to tools_addon_path(pin.key), class: "rail-link rail-tool-pin", title: pin.label,
+                        "aria-current": sidebar_aria([ :tool, pin.key ]), data: tool_menu_data(pin.key, pin.label) do %>
+              <%= rail_icon(:tools) %><span class="rail-label"><%= pin.label %></span>
+            <% end %>
           <% end %>
         </li>
       <% end %>

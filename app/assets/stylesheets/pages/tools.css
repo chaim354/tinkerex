@@ -19,8 +19,10 @@
   .tools-section { margin-bottom: var(--space-5); }
   .tools-section-head { margin: 0 0 var(--space-3); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
   .calculator-card .addon-icon .rail-icon { width: 22px; height: 22px; }
+  /* How to pin (toolmenu_controller.js). A phone has no sidebar, and no right click. */
+  .tools-pin-hint { margin: calc(-1 * var(--space-2)) 0 var(--space-4); font-size: 13px; }
+  @media (max-width: 719px) { .tools-pin-hint { display: none; } }
   .calculator-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
-  .calculator-card-actions form { display: inline; }
   /* The shortcut, drawn the way the top bar draws its ⌘K (shell.css .topbar-kbd). */
   .calculator-card-keys { white-space: nowrap; }
   .calculator-card-keys kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }

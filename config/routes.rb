@@ -503,12 +503,13 @@ root to: "home#index"
   # read as an addon key.
   get "tools/new_menu", to: "tools/home#new_menu", as: :tools_new_menu
 
-  # THE CALCULATOR'S SIDEBAR PIN (2026-10-21; plan 2026-10-21-calculator-modal.md). The calculator
-  # is a CORE feature that opens as a modal on every signed-in page, not an addon, so it has no
-  # `tools/:key` page; this is the one write its Tools card makes. Three segments, so `tools/:key`
-  # (two) cannot shadow it, and above that block anyway, as its comment asks of every /tools route.
-  post "tools/calculator/pin", to: "tools/calculator_pins#create", as: :tools_calculator_pin
-  delete "tools/calculator/pin", to: "tools/calculator_pins#destroy"
+  # A TOOL'S SIDEBAR PIN (2026-10-22; Tools::PinsController). Any tool: an addon by its key, or
+  # `calculator`, the built-in modal, which has no `tools/:key` page of its own — this path was its
+  # alone first (2026-10-21) and keeps its URL. Three segments, so `tools/:key` (two) cannot shadow
+  # it, and above that block anyway, as its comment asks of every /tools route; the only other
+  # three-segment one, `tools/:key/states`, is GET and names a different literal.
+  post "tools/:key/pin", to: "tools/pins#create", as: :tools_pin
+  delete "tools/:key/pin", to: "tools/pins#destroy"
 
   # The params behind ANY addon state, as a download. ONE route for every addon: `Maker::AddonState`
   # is addon-agnostic (`data` IS each addon's own shape), so there is nothing per-addon to branch on.
