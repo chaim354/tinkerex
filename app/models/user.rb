@@ -223,12 +223,6 @@ class User < ApplicationRecord
   # Memoised on the user, so the rail and the Tools page read the one row the request loaded.
   def tool_pins = @tool_pins ||= Maker::ToolPins.new(self)
 
-  # THE CALCULATOR'S OLD ONE-TOOL FLAG, superseded by `pinned_tools` (whose migration copied it) and
-  # IGNORED rather than dropped in the same deploy: the container being replaced reads it on every
-  # page while the new one migrates. Ignoring it now is also what makes the later drop safe, since a
-  # model that still knows the column writes it on every INSERT.
-  self.ignored_columns += %w[calculator_pinned]
-
   # THE ONE SPELLING OF "when did a library scan last finish" (stage 4, S4-3). The page renders it
   # into a data attribute and scanreload_controller.js compares the poll's answer to it as a
   # STRING, so the two sides must format identically or the comparison is either never equal (a
