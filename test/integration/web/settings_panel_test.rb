@@ -60,9 +60,11 @@ module Web
       get file_path(node.node_id)
       assert_response :success
       assert_select "h2", text: "CNC settings"
-      assert_select "th", text: "Spindle"
-      assert_select "td", text: /1\.5 mm endmil/
-      assert_select "td", text: /20000 rpm/
+      assert_select "th", text: /\ASpindle\s+rpm\z/
+      # The tool is a second line under its operation (2026-10-25), with its diameter, rather than
+      # a column of its own that the side column's width truncated.
+      assert_select "td.lbrn-op .lbrn-tool", text: "1.5 mm endmil · 1.5 mm"
+      assert_select "td", text: "20000"
       # "100 × 60", not "100.0 × 60.0": a whole number's trailing zero is noise. The decimals a
       # value actually HAS are preserved — pinned by the test below, which is the half that broke.
       assert_select "dd", text: "100 × 60 mm"
@@ -101,10 +103,54 @@ module Web
 
       get file_path(node.node_id)
       assert_response :success
-      assert_select "td", text: "6.67 mm/s"
+      # The unit is in the column heading (2026-10-25); the cell is the number alone.
+      assert_select "th", text: /\ASpeed\s+mm\/s\z/
+      assert_select "td", text: "6.67"
       assert_select "td", text: /42\.5%/
       assert_select "td", text: /12\.25%/
       assert_select "dd", text: "292.1 × 144.6 mm"
+    end
+
+    # THE PANEL HEADS THE SIDE COLUMN (2026-10-25, at the user's request): it used to share the main
+    # column with the preview, half each. The preview row must hold the viewer alone, and the panel
+    # must sit ABOVE the file's facts — first in the column, which is what `:first-child` pins.
+    test "the recipe panel heads the side column, above the facts, and the preview keeps the main column" do
+      user = sign_in("placement@example.com")
+      node = node_with_metadata(user, "cut.lbrn2", { "layers" => [ { "index" => "0", "name" => "C00" } ] })
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select ".workspace.has-recipe"
+      assert_select ".workspace-main .lbrn-settings", count: 0
+      assert_select ".workspace-side > .lbrn-settings:first-child + dl.meta"
+    end
+
+    test "a page with no recipe keeps the ordinary side column" do
+      user = sign_in("no-recipe@example.com")
+      node = node_with_metadata(user, "plain.lbrn2", nil)
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select ".workspace"
+      assert_select ".workspace.has-recipe", count: 0
+      assert_select ".workspace-side > dl.meta:first-child"
+    end
+
+    # THE TEXT STARTS CLOSED (2026-10-25, at the user's request): a sheet of labels has dozens of text
+    # shapes, and their strings as one long line pushed the settings out of view. Closed means no
+    # `open` attribute on the <details>; the count is in the summary and each string is its own item.
+    test "a LightBurn file's text strings are a closed list under a count" do
+      user = sign_in("text@example.com")
+      meta = { "layers" => [ { "index" => "0", "name" => "C00" } ], "text" => [ "x 1/1", "x 2/1", "Lid" ] }
+      node = node_with_metadata(user, "labels.lbrn2", meta)
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select ".lbrn-settings details.lbrn-text:not([open])" do
+        assert_select "summary", text: /\AText\s+3 strings\z/
+        assert_select "li", 3
+        assert_select "li", text: "Lid"
+      end
     end
 
     # A multi-page file (LightBurn 2.2) has a size per page and no single job size: its pages share

@@ -820,6 +820,15 @@ them would cost a visitor the one thing the public Measure view is for. Absent t
 `measure_controller.js#refreshPrintBar`'s `has*Target` guards are for: unguarded, the throw comes
 out of `draw()` and Measure is dead on that page, which no integration test can see.
 
+**THE RECIPE PANEL HEADS THE SIDE COLUMN, AND THE VIEWER HAS THE MAIN COLUMN TO ITSELF (2026-10-25,
+at the user's request).** `files/_lbrn_settings` / `_mage_settings` render first in `.workspace-side`,
+above `dl.meta`; they sat beside the preview at half the main column, which squeezed the Measure
+stage into a small square. `.workspace.has-recipe` widens the side column to 380px on those pages
+only. To fit that width, the units sit in the column headings (Power keeps its `%` in each cell,
+being a max / min pair), MillMage's tool is a line under its operation rather than a column, and a
+LightBurn file's text strings are a `<details>` that **starts closed**: one file had 77 of them.
+`settings_panel_test.rb` pins the order, the closed list and the tool line.
+
 ## A file's connections are rows, not a computation
 
 **A FILE'S CONNECTIONS ARE ROWS, NOT A COMPUTATION (stage 4, S4-8).** `maker_file_links` holds two

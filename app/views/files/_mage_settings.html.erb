@@ -1,9 +1,14 @@
-<%# MillMage CNC "recipe" panel, shown beside the preview on a .mage file page — the sibling of
-    _lbrn_settings. `meta` is the parsed Hash from Maker::Previews::MageMetadata (string keys).
-    Every field is optional: render only what's present, exactly as the LightBurn panel does.
+<%# MillMage CNC "recipe" panel, at the head of the file page's side column on a .mage file — the
+    sibling of _lbrn_settings. `meta` is the parsed Hash from Maker::Previews::MageMetadata (string
+    keys). Every field is optional: render only what's present, exactly as the LightBurn panel does.
 
     Reuses the .lbrn-* class names on purpose — this is the same panel in the same slot with the
-    same layout, and forking the CSS to rename "laser" to "cnc" would buy nothing. %>
+    same layout, and forking the CSS to rename "laser" to "cnc" would buy nothing.
+
+    THE TOOL IS A SECOND LINE UNDER ITS OPERATION, NOT A COLUMN (2026-10-25): in a 380px column a
+    tool column truncated MillMage's own long names ("1/8" 2 Flute Endmill (copy)") to nothing,
+    and dropping Spindle to make room would lose a setting. Units go in the headings, as in the
+    LightBurn panel and for the same reason. %>
 <section class="lbrn-settings">
   <div class="lbrn-head">
     <h2>CNC settings</h2>
@@ -13,23 +18,30 @@
   <% if meta["operations"].present? %>
     <table class="lbrn-layers">
       <thead>
-        <tr><th>Operation</th><th>Tool</th><th class="num">Feed</th><th class="num">Spindle</th><th class="num">Depth</th></tr>
+        <tr>
+          <th>Operation</th>
+          <th class="num">Feed <span class="lbrn-unit">mm/s</span></th>
+          <th class="num">Spindle <span class="lbrn-unit">rpm</span></th>
+          <%# final depth is the whole cut; pass depth is one bite of it — both matter, so the cell
+              shows the pair rather than picking one, and the heading says which is which. %>
+          <th class="num" title="Final depth / depth per pass">Depth <span class="lbrn-unit">mm</span></th>
+        </tr>
       </thead>
       <tbody>
         <% meta["operations"].each do |op| %>
           <tr>
-            <td><%= op["name"].presence || op["type"] %></td>
-            <td>
-              <%= op["tool"] %>
-              <% if op["tool_diameter"] %><span class="muted"><%= recipe_num(op["tool_diameter"]) %> mm</span><% end %>
+            <td class="lbrn-op">
+              <%= op["name"].presence || op["type"] %>
+              <% if op["tool"].present? || op["tool_diameter"] %>
+                <span class="lbrn-tool muted"><%= [ op["tool"].presence,
+                                                    ("#{recipe_num(op["tool_diameter"])} mm" if op["tool_diameter"]) ].compact.join(" · ") %></span>
+              <% end %>
             </td>
-            <td class="num"><%= "#{recipe_num(op["feed_rate"])} mm/s" if recipe_num(op["feed_rate"]) %></td>
-            <td class="num"><%= "#{recipe_num(op["spindle_speed"])} rpm" if recipe_num(op["spindle_speed"]) %></td>
+            <td class="num"><%= recipe_num(op["feed_rate"]) %></td>
+            <td class="num"><%= recipe_num(op["spindle_speed"]) %></td>
             <td class="num">
-              <%# final depth is the whole cut; pass depth is one bite of it — both matter, so
-                  show the pair rather than picking one. %>
-              <%= recipe_num(op["final_depth"]) ? "#{recipe_num(op["final_depth"])} mm" : nil %>
-              <% if op["pass_depth"] %><span class="muted">/ <%= recipe_num(op["pass_depth"]) %> per pass</span><% end %>
+              <%= recipe_num(op["final_depth"]) %>
+              <% if op["pass_depth"] %><span class="muted">/ <%= recipe_num(op["pass_depth"]) %></span><% end %>
             </td>
           </tr>
         <% end %>
