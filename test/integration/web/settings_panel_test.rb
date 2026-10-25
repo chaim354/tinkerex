@@ -106,5 +106,34 @@ module Web
       assert_select "td", text: /12\.25%/
       assert_select "dd", text: "292.1 × 144.6 mm"
     end
+
+    # A multi-page file (LightBurn 2.2) has a size per page and no single job size: its pages share
+    # one coordinate space, so a size over all of them measures nothing anyone will cut.
+    test "a multi-page LightBurn file lists each page with its own size instead of one job size" do
+      user = sign_in("pages@example.com")
+      meta = Maker::Previews::LbrnMetadata.parse(File.binread(Rails.root.join("test/fixtures/files/pages.lbrn2")))
+      node = node_with_metadata(user, "pages.lbrn2", meta)
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select ".lbrn-settings th", text: "Page"
+      assert_select ".lbrn-settings tr", text: /Page 1\s+205 × 50 mm/
+      assert_select ".lbrn-settings tr", text: /Back \(in preview\)\s+50 × 50 mm/
+      assert_select ".lbrn-settings tr", text: /Page 3\s+empty/
+      assert_select ".lbrn-settings dt", { text: "Job size", count: 0 }
+    end
+
+    test "a multi-page MillMage file lists its pages the same way" do
+      user = sign_in("mage-pages@example.com")
+      meta = Maker::Previews::MageMetadata.parse(File.binread(Rails.root.join("test/fixtures/files/pages.mage")))
+      node = node_with_metadata(user, "pages.mage", meta)
+
+      get file_path(node.node_id)
+      assert_response :success
+      assert_select "h2", text: "CNC settings"
+      assert_select ".lbrn-settings tr", text: /Top \(in preview\)\s+100 × 60 mm/
+      assert_select ".lbrn-settings tr", text: /Bottom\s+20 × 20 mm/
+      assert_select ".lbrn-settings dt", { text: "Job size", count: 0 }
+    end
   end
 end

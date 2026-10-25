@@ -225,6 +225,29 @@ module Maker
       # be added without picking up the shared term above.
       REVISIONED_BY = %w[LbrnGeometry DxfGeometry SvgGeometry].freeze
 
+      # A running bbox, in mm, reported as the payload's job box. One per document, and one per
+      # page when a format has pages.
+      class Box
+        def initialize
+          @min_x = @min_y = Float::INFINITY
+          @max_x = @max_y = -Float::INFINITY
+        end
+
+        def add(x0, y0, x1, y1)
+          @min_x = x0 if x0 < @min_x
+          @min_y = y0 if y0 < @min_y
+          @max_x = x1 if x1 > @max_x
+          @max_y = y1 if y1 > @max_y
+        end
+
+        def job
+          return { "w" => 0.0, "h" => 0.0, "x" => 0.0, "y" => 0.0 } if @min_x == Float::INFINITY
+
+          { "w" => (@max_x - @min_x).round(PRECISION), "h" => (@max_y - @min_y).round(PRECISION),
+            "x" => @min_x.round(PRECISION), "y" => @min_y.round(PRECISION) }
+        end
+      end
+
       # Collects one contour at a time from a format's traversal. Not a bare Array because it also
       # tracks the running document bbox, which must be computed from FULL-RESOLUTION points.
       class Collector
@@ -232,8 +255,8 @@ module Maker
 
         def initialize
           @shapes = []
-          @min_x = @min_y = Float::INFINITY
-          @max_x = @max_y = -Float::INFINITY
+          @box = Box.new
+          @page_boxes = Hash.new { |boxes, page| boxes[page] = Box.new }
         end
 
         # One measurable contour. `points` are [[x, y], ...] in mm.
@@ -242,16 +265,17 @@ module Maker
         # (a zero-length line, a Rect with no W/H) is ordinary in a real file and must not fail the
         # whole render. It still consumed its object_id, which is why ids are never dense — see
         # `Lbrn2.each_geometry`.
-        def add(layer:, points:, closed:, object_id:, image: false, curve: nil)
+        #
+        # `page:` is which page of a multi-page file the contour is on, or nil for a format or
+        # file without pages — and nil writes no `"pg"` key, so a one-page payload is unchanged.
+        def add(layer:, points:, closed:, object_id:, image: false, curve: nil, page: nil)
           return if points.length < 2
 
           xs = points.map(&:first)
           ys = points.map(&:last)
           x0, y0, x1, y1 = xs.min, ys.min, xs.max, ys.max
-          @min_x = x0 if x0 < @min_x
-          @min_y = y0 if y0 < @min_y
-          @max_x = x1 if x1 > @max_x
-          @max_y = y1 if y1 > @max_y
+          @box.add(x0, y0, x1, y1)
+          @page_boxes[page].add(x0, y0, x1, y1) unless page.nil?
 
           entry = {
             "o" => object_id,
@@ -271,16 +295,14 @@ module Maker
           # ABSENT RATHER THAN NULL when a format has no exact primitive to offer — which is most
           # shapes in most files. See Geometry.ellipse_curve for what this is and is not.
           entry["g"] = curve if curve
+          entry["pg"] = page unless page.nil?
 
           @shapes << entry
         end
 
-        def job_box
-          return { "w" => 0.0, "h" => 0.0, "x" => 0.0, "y" => 0.0 } if @min_x == Float::INFINITY
-
-          { "w" => (@max_x - @min_x).round(PRECISION), "h" => (@max_y - @min_y).round(PRECISION),
-            "x" => @min_x.round(PRECISION), "y" => @min_y.round(PRECISION) }
-        end
+        # The whole document's box, or one page's. A page nothing was drawn on reports the same
+        # zero box an empty document does.
+        def job_box(page: nil) = page.nil? ? @box.job : @page_boxes[page].job
 
         # The distinct layer keys this document actually drew, in first-seen order — what a
         # `colors:` resolver is asked about. Asking about USED layers rather than every layer the
@@ -319,7 +341,15 @@ module Maker
       # EMPTY hash and its own traversal fills it while the block runs (see `DxfGeometry.build`),
       # so a "tidier" version that snapshots the argument at the top of this method emits nothing,
       # on every file, with no error and no failing shape assertion anywhere to notice.
-      def build(colors: nil, unreadable: nil)
+      #
+      # `pages:` IS A MULTI-PAGE FILE'S PAGE NAMES, in order, and `page:` the one it was saved on.
+      # The payload then carries `"pages"` — each page's name and its own job box — and `"page"`,
+      # and every shape its `"pg"` index (see Collector#add). The top-level `"job"` stays the
+      # union of every shape, so the payload's bboxes still union to it. ABSENT for a format or file
+      # without pages, like `"u"`: a one-page payload is byte-for-byte what it was, and a client
+      # that ignores the keys draws every page stacked, exactly as before they existed. Additive,
+      # so not a SCHEMA_VERSION bump; a format that passes pages bumps its own revision.
+      def build(colors: nil, unreadable: nil, pages: nil, page: nil)
         out = Collector.new
         yield out
 
@@ -328,6 +358,10 @@ module Maker
                     "colors" => (colors&.call(out.layers) || {}).compact,
                     "shapes" => out.shapes }
         payload["u"] = unreadable if unreadable&.any?
+        if pages && pages.length > 1
+          payload["pages"] = pages.each_with_index.map { |name, i| { "name" => name, "job" => out.job_box(page: i) } }
+          payload["page"] = page || 0
+        end
         payload
       end
 

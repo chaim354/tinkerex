@@ -313,7 +313,11 @@ module Web
       # branch on the KEY, not the extension (`operations` → MillMage, else LightBurn). Without
       # both rows, `files/_lbrn_settings` and `files/_mage_settings` are unreachable from any
       # request and would have to be excluded from the coverage assertion instead of covered.
-      recipe!("n-bak", "layers" => [ { "name" => "Score", "color" => "#ff0000", "speed" => 100 } ])
+      # Two PAGES on the LightBurn row, one sized and one empty, so `files/_recipe_pages` renders
+      # both of its arms — it is reached only from a multi-page file's metadata.
+      recipe!("n-bak", "layers" => [ { "name" => "Score", "color" => "#ff0000", "speed" => 100 } ],
+                       "pages" => [ { "name" => "Front", "job" => { "width" => 10.0, "height" => 5.0 }, "current" => true },
+                                    { "name" => "Back" } ])
       recipe!("n-mill", "operations" => [ { "name" => "Pocket", "tool" => "3mm flat" } ])
       # STAGE 2, S2-3: one item with a posted ledger row, so the show page's composer AND its
       # ledger table both render (an item with no transactions would leave `table.ledger`'s tbody

@@ -166,7 +166,10 @@ module Maker
       #   2  an absent <numPasses> reports 1 pass rather than nothing (see LbrnMetadata#layers)
       #   3  layers carry their LightBurn palette colour, so the panel can show a swatch
       #   4  layers carry a colour NAME, so an unnamed layer reads "Blue" not "C01"
-      THUMBNAIL_REVISION = 4
+      #   5  multi-page files (LightBurn 2.2): the panel lists each page and its size, the job size is
+      #      the saved page's, and the outline fallback draws that page alone rather than every page
+      #      stacked. A one-page file's bytes do not move; the bump is for the files that have pages.
+      THUMBNAIL_REVISION = 5
 
       def payload_revision(kind)
         kind == "geometry" ? Maker::Previews::LbrnGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION
@@ -220,6 +223,11 @@ module Maker
 
       # lbrn2 XML → an SVG string. Geometry is mapped into a viewBox sized to the shapes'
       # bounding box (with a Y-flip, since LightBurn is Y-up and SVG is Y-down).
+      #
+      # ONE PAGE, THE ONE THE FILE WAS SAVED ON — the page LightBurn's own embedded thumbnail
+      # depicts (verified on a 2.2.00 save: CurrentPage="1" embedded a picture of page 2 alone).
+      # Pages share one coordinate space, so drawing them all stacks unrelated designs on top of
+      # each other; this fallback must picture what the embedded path would have.
       def to_svg(lbrn2_bytes, size: 512)
         doc = parse_document(lbrn2_bytes)
         raise ParseError, "not a LightBurn project" if doc.root.nil?
@@ -228,7 +236,7 @@ module Maker
         elements = []
         bbox = BBox.new
 
-        each_geometry(doc) do |cut_index, points, closed, ellipse, image|
+        each_geometry(doc, page: current_page(doc)) do |cut_index, points, closed, ellipse, image|
           points.each { |(x, y)| bbox.add(x, y) }
           stroke = colors[cut_index.to_s] || DEFAULT_STROKE
           # `image` FIRST: a placed photo replaces its outline rather than being drawn under one.
@@ -253,9 +261,13 @@ module Maker
       # THE one traversal, shared with LbrnMetadata so the thumbnail and the reported job size
       # can never disagree. Yields every drawable leaf as
       #   (cut_index, [[x, y], ...], closed?, ellipse_or_nil, image_or_nil, object_id,
-      #    path_segments_or_nil)
+      #    path_segments_or_nil, page_index)
       # with the points AND the path segments already transformed into SVG space (composed affine,
       # then Y-flipped).
+      #
+      # `page:` limits the walk to one page (see `pages`); nil walks every page. The page index
+      # is always the LAST value yielded, so a caller that ignores pages ignores it by taking fewer
+      # block parameters, as every caller did before pages existed.
       #
       # The ellipse, the image and the segments are RICHER RENDERINGS OF THE SAME POINTS, never a
       # substitute for them: a measuring caller (`job_size`) reads only the points and is correct
@@ -278,23 +290,109 @@ module Maker
       # a Rect/Bitmap missing W/H, an Ellipse missing Rx/Ry, or a Text with no BackupPath — each
       # such shape still spends an id nothing ever uses. A real document can yield ids as sparse
       # as `[3]`. A caller that groups by object_id (Task 3) may rely on equality only, never on
-      # contiguity.
-      def each_geometry(doc, &block)
+      # contiguity. The counter runs across pages, so ids stay distinct over the whole document;
+      # a `page:` walk counts only the page it walks, so its ids match no other call's.
+      #
+      # ONE GeometryIndex FOR EVERY PAGE, NEVER ONE PER PAGE. Instancing crosses pages — a 2.2.00
+      # save that duplicated a page wrote the copy's circle as a bare `VertID="0"` pointing back at
+      # page 1's `<VertList>` — so a per-page index would drop every copied shape, silently.
+      def each_geometry(doc, page: nil, &block)
         return if doc.root.nil?
 
-        walk_shapes(doc.root, IDENTITY, GeometryIndex.new(doc), hidden_cuts(doc), Counter.new, &block)
+        index = GeometryIndex.new(doc)
+        hidden = hidden_cuts(doc)
+        counter = Counter.new
+        pages(doc).each do |pg|
+          next if page && pg.index != page
+          next if pg.node.nil?
+
+          walk_shapes(pg.node, pg.xform, index, hidden, counter, pg.index, &block)
+        end
       end
 
       # The drawn extent in mm, or nil when there is no geometry. Lives HERE, beside the walk it
       # measures, so the thumbnail and the reported size can never be computed from different
       # geometry — `LbrnMetadata` used to keep a private second copy of the traversal, and that
       # copy independently inherited every dialect bug the parse had. Both metadata modules call
-      # this one.
-      def job_size(doc)
+      # this one. `page: nil` measures every page together, which is only meaningful for a
+      # one-page file; see `page_sizes` for the per-page answer.
+      def job_size(doc, page: nil)
         bbox = BBox.new
-        each_geometry(doc) { |_cut, points, _closed, _ellipse| points.each { |(x, y)| bbox.add(x, y) } }
+        each_geometry(doc, page:) { |_cut, points, _closed, _ellipse| points.each { |(x, y)| bbox.add(x, y) } }
+        size_of(bbox)
+      end
+
+      # { page_index => job size or nil } for every page, from ONE walk. Measuring page by page
+      # through `job_size` would build the GeometryIndex — the parse of every `<VertList>`, the
+      # measured hot path on a large file — once per page.
+      def page_sizes(doc)
+        boxes = pages(doc).to_h { |pg| [ pg.index, BBox.new ] }
+        each_geometry(doc) do |_cut, points, _closed, _ellipse, _image, _id, _segments, page|
+          points.each { |(x, y)| boxes[page].add(x, y) }
+        end
+        boxes.transform_values { |bbox| size_of(bbox) }
+      end
+
+      def size_of(bbox)
         w, h = bbox.dimensions
         w && { "width" => w.round(1), "height" => h.round(1) }
+      end
+
+      # PAGES — LightBurn 2.2 and MillMage 0.9 (October 2026) hold several designs in one file.
+      # Measured on a real LightBurn 2.2.00 save rather than assumed:
+      #
+      #   * The FIRST page is the root's own `<Shape>` children, exactly where every older file keeps
+      #     its shapes — so a one-page file reads as it always did. Its name is the root's
+      #     `Page0Name` attribute.
+      #   * Every OTHER page is a root-level `<Shape Type="Group" SubType="Page" Name="…">` whose
+      #     `<Children>` hold that page's shapes. An empty page is `<Children/>`.
+      #   * `CurrentPage` on the root is the 0-based index of the page open when the file was saved,
+      #     and the embedded `<Thumbnail>` pictures THAT page alone.
+      #   * Layers (`<CutSetting>`) stay at the root and are shared by every page.
+      #
+      # Before this, the walker read a page as an ordinary Group and drew every page on top of the
+      # first — they share one coordinate space — so the outline thumbnail, the job size and the
+      # Measure view all described a pile of unrelated designs. MillMage's binary carries the same
+      # attribute names (`CurrentPage`, `Page0Name`, `SubType`); its saved form is not yet confirmed
+      # by a real export, which is why `pages.mage` says it is hand-written.
+      Page = Struct.new(:index, :name, :node, :xform)
+
+      def page_group?(shape) = shape["Type"] == "Group" && shape["SubType"] == "Page"
+
+      def pages(doc)
+        root = doc.root
+        return [] if root.nil?
+
+        first = Page.new(0, root["Page0Name"].presence || "Page 1", root, IDENTITY)
+        rest = root.xpath("./Shape[@Type='Group'][@SubType='Page']").each_with_index.map do |group, i|
+          Page.new(i + 1, group["Name"].presence || "Page #{i + 2}", group.at_xpath("./Children"), shape_xform(group))
+        end
+        [ first, *rest ]
+      end
+
+      # The page the file was saved on, falling back to the first for an older file (no attribute)
+      # or a value that names no page — a stale index must not make a thumbnail draw nothing.
+      def current_page(doc)
+        i = Integer(doc.root&.[]("CurrentPage").to_s, exception: false)
+        i && i >= 0 && i < pages(doc).length ? i : 0
+      end
+
+      # `<Shape>` elements, less the page groups — a page is a container the user never drew, and
+      # counting it made a three-page file report two shapes it does not have.
+      def shape_count(doc) = doc.xpath("//Shape").count { |s| !page_group?(s) }
+
+      # The two metadata modules' page facts, from one walk: the saved page's job size (what the
+      # thumbnail beside the panel pictures), and — for a file with more than one page — each
+      # page's name and size, the saved one marked `current`. nil for a one-page file, so its
+      # metadata is byte-for-byte what it was.
+      def page_metadata(doc)
+        sizes = page_sizes(doc)
+        current = current_page(doc)
+        list = pages(doc)
+        summary = if list.length > 1
+          list.map { |pg| { "name" => pg.name, "job" => sizes[pg.index], "current" => (true if pg.index == current) }.compact }
+        end
+        [ sizes[current], summary ]
       end
 
       # A mutable counter threaded through the recursive walk, `walk_shapes`' only user. A plain
@@ -350,13 +448,18 @@ module Maker
       # usually identity-transformed coordinates. A flat `//Shape` sweep sees the children but
       # drops the transform that positions them, and separately hands the Group itself every
       # descendant vertex (via `.//VertList` or `shape.text`), drawing a scribble through them.
-      def walk_shapes(parent, parent_xform, index, hidden, counter, &block)
+      #
+      # A PAGE GROUP IS SKIPPED, NOT RECURSED INTO: it is a page of its own, walked from `pages`,
+      # and recursing here is exactly what drew every page on top of the first.
+      def walk_shapes(parent, parent_xform, index, hidden, counter, page, &block)
         parent.xpath("./Shape").each do |shape|
+          next if page_group?(shape)
+
           world = compose(parent_xform, shape_xform(shape))
 
           if shape["Type"] == "Group"
             kids = shape.at_xpath("./Children")
-            walk_shapes(kids, world, index, hidden, counter, &block) if kids
+            walk_shapes(kids, world, index, hidden, counter, page, &block) if kids
             next
           end
 
@@ -364,7 +467,7 @@ module Maker
           next if hidden.include?(cut_key(shape["Type"], layer_index(shape)))
 
           object_id = counter.succ!
-          emit_shape(shape, world, index, object_id, &block)
+          emit_shape(shape, world, index, object_id, page, &block)
 
           # A Text stores its rendered outline in `<BackupPath>`. Two things about it:
           #
@@ -382,11 +485,14 @@ module Maker
           # It also reuses its Text's object_id here rather than taking a fresh one — see
           # each_geometry's doc comment above for why.
           bp = shape.at_xpath("./BackupPath")
-          emit_shape(bp, shape_xform(bp), index, object_id, &block) if bp
+          emit_shape(bp, shape_xform(bp), index, object_id, page, &block) if bp
         end
       end
 
-      def emit_shape(shape, world, index, object_id)
+      # EVERY ARM YIELDS ALL EIGHT VALUES, nil where an arm has nothing, so the page index always
+      # lands in the eighth parameter. A Rect yielding six would hand its page to a caller's
+      # `segments`.
+      def emit_shape(shape, world, index, object_id, page)
         cut = layer_index(shape)
 
         case shape["Type"]
@@ -398,7 +504,7 @@ module Maker
           corners = [ [ -w / 2, -h / 2 ], [ w / 2, -h / 2 ], [ w / 2, h / 2 ], [ -w / 2, h / 2 ] ]
           pts = corners.map { |(x, y)| apply(world, x, y) }
           image = shape["Type"] == "Bitmap" ? bitmap_image(shape, world, pts) : nil
-          yield cut, pts + [ pts.first ], true, nil, image, object_id
+          yield cut, pts + [ pts.first ], true, nil, image, object_id, nil, page
         when "Ellipse"
           rx = num(shape["Rx"]); ry = num(shape["Ry"])
           return if rx.nil? || ry.nil?
@@ -411,7 +517,8 @@ module Maker
             t = i * (2 * Math::PI / ELLIPSE_SAMPLES)
             apply(world, rx * Math.cos(t), ry * Math.sin(t))
           end
-          yield cut, pts + [ pts.first ], true, (axis_aligned?(world) ? ellipse_from(pts) : nil), nil, object_id
+          yield cut, pts + [ pts.first ], true, (axis_aligned?(world) ? ellipse_from(pts) : nil), nil, object_id,
+                nil, page
         when "Path", "Line"
           verts, prims = index.geometry_for(shape)
           polylines(verts, prims).each do |pts, closed, segments|
@@ -422,7 +529,7 @@ module Maker
             # carries the Y-flip, so even under the identity XForm every one of these six numbers
             # per cubic has to go through it.
             yield cut, pts.map { |(x, y)| apply(world, x, y) }, closed, nil, nil, object_id,
-                  segments && place_segments(segments, world)
+                  segments && place_segments(segments, world), page
           end
         end
       end

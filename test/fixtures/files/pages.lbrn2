@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A MULTI-PAGE LightBurn project, in the form LightBurn 2.2.00 ACTUALLY WRITES (see Lbrn2.pages).
+
+     Saved by LightBurn 2.2.00 on 2026-10-25 from a two-shape file: page 1 duplicated with the
+     Pages panel, the rectangle deleted from the copy, and an empty third page added. Three edits
+     by hand, and only these:
+       * the 9 KB <Thumbnail> is removed, so `render` takes the outline fallback this pins;
+       * the copy's circle instance is moved from x 250 to x 400, so page 2 does not sit inside
+         page 1's box and a per-page size cannot pass by coinciding with the stacked one;
+       * the copy is renamed "Back" (LightBurn named it "Page 1 (1)").
+     <VariableText>/<UIPrefs> and the CutSettings' extra fields are trimmed; nothing reads them.
+
+     What the real save showed, and each of these is load-bearing:
+       * page 1 is the root's own <Shape> children, where every older file keeps its shapes, named
+         by the root's Page0Name;
+       * every other page is a root-level <Shape Type="Group" SubType="Page" Name="…">, and an
+         EMPTY page is <Children/>;
+       * CurrentPage is the 0-based page open at save, and the embedded thumbnail pictures it alone;
+       * the copied circle has NO <VertList> — VertID="0" instances page 1's, ACROSS pages.
+
+     Geometry, in mm:
+       page 1  "Page 1"  Rect 60 x 40 at (100, 200) + circle r 25 at (250, 200)  ->  205 x 50
+       page 2  "Back"    the same circle at (400, 200)                             ->   50 x 50
+       page 3  "Page 3"  empty
+       every page stacked                                                         ->  355 x 50
+-->
+<LightBurnProject AppVersion="2.2.00" DeviceName="GRBL" FormatVersion="1" MaterialHeight="0" MirrorX="False" MirrorY="False" AskForSendName="True" CurrentPage="1" Page0Name="Page 1">
+    <CutSetting type="Cut">
+        <index Value="0"/>
+        <name Value="C00"/>
+        <maxPower Value="80"/>
+        <speed Value="20"/>
+    </CutSetting>
+    <CutSetting type="Cut">
+        <index Value="2"/>
+        <name Value="C02"/>
+        <maxPower Value="60"/>
+        <speed Value="35"/>
+    </CutSetting>
+    <Shape Type="Rect" CutIndex="0" W="60" H="40" Cr="0">
+        <XForm>1 0 0 1 100 200</XForm>
+    </Shape>
+    <Shape Type="Path" CutIndex="2" VertID="0" PrimID="0">
+        <XForm>1 0 0 1 250 200</XForm>
+        <VertList>V25 0c0x25c0y13.8c1x25c1y-13.8V0 25c0x-13.8c0y25c1x13.8c1y25V-25 0c0x-25c0y-13.8c1x-25c1y13.8V0 -25c0x13.8c0y-25c1x-13.8c1y-25</VertList>
+        <PrimList>B0 1B1 2B2 3B3 0</PrimList>
+    </Shape>
+    <Shape Type="Group" SubType="Page" Name="Back">
+        <XForm>1 0 0 1 0 0</XForm>
+        <Children>
+            <Shape Type="Path" CutIndex="2" VertID="0" PrimID="0">
+                <XForm>1 0 0 1 400 200</XForm>
+            </Shape>
+        </Children>
+    </Shape>
+    <Shape Type="Group" SubType="Page" Name="Page 3">
+        <XForm>1 0 0 1 0 0</XForm>
+        <Children/>
+    </Shape>
+    <Notes ShowOnLoad="0" Notes=""/>
+</LightBurnProject>

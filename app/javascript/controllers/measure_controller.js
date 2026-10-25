@@ -90,7 +90,7 @@ export default class extends Controller {
   // declare — the trap `name` records above — and the converse costs nothing but is still a lie
   // about what this surface needs, so a value that no method reads does not get declared.
   static targets = ["stage", "dims", "fallback", "paper", "printButton", "svgButton",
-                    "savePrintButton", "saveSvgButton", "unitButton"]
+                    "savePrintButton", "saveSvgButton", "unitButton", "page"]
 
   // ONE LOAD GENERATION FOR THE LIFE OF THIS CONTROLLER, and the one owner of the stage: a load
   // paints only while its own number is the latest. Set in `initialize`, never in `connect`,
@@ -170,7 +170,7 @@ export default class extends Controller {
     this.element.classList.remove("measure-view--ready")
     this.stageTarget.replaceChildren()
     this.setStatus("")
-    this.hovered = this.svg = this.allShapes = null
+    this.hovered = this.svg = this.allShapes = this.payload = this.pageIndex = null
     // THE SELECTION, AND SINCE 2026-09-03 THE ONLY SELECTION STATE THERE IS. Membership is by
     // IDENTITY on the payload's own shape objects, reached through node.__shape — so nothing about
     // the wire format has to change to give a contour an id.
@@ -230,18 +230,27 @@ export default class extends Controller {
     return new Promise((resolve) => { setTimeout(resolve, ms) })
   }
 
-  draw(payload) {
+  // `page` is the page to show, for a payload with pages; null shows the one the file was saved on.
+  draw(payload, page = null) {
+    this.payload = payload
     this.colors = payload.colors || {}
     // WHAT THE SERVER'S TRAVERSAL COULD NOT READ, `{ type: count }` or absent. Set BEFORE the
     // empty-shapes return below, because that branch is exactly the case it exists for.
     this.unreadable = payload.u || null
+    // ONE PAGE ON THE STAGE, NEVER EVERY PAGE. A multi-page file's pages share one coordinate space,
+    // so drawing them together stacks unrelated designs on top of each other. Everything below
+    // reads `shapes` and `job` for this page, so measuring, Print and the exports all act on the
+    // page in view, the same way they act on the whole of a one-page file.
+    this.pageIndex = this.pageToShow(payload, page)
+    const shapes = this.pageIndex == null ? payload.shapes : payload.shapes.filter((s) => s.pg === this.pageIndex)
+    const job = this.pageIndex == null ? payload.job : payload.pages[this.pageIndex].job
     this.byObject = new Map()
-    for (const s of payload.shapes) {
+    for (const s of shapes) {
       if (!this.byObject.has(s.o)) this.byObject.set(s.o, [])
       this.byObject.get(s.o).push(s)
     }
 
-    if (!payload.shapes.length) {
+    if (!shapes.length) {
       // "No measurable geometry in this file" IS A LIE ABOUT A FILE THAT IS ENTIRELY GEOMETRY,
       // and it was the observed harm rather than a hypothetical one: a real .dxf of four SPLINEs
       // read exactly this, having measured none of itself. The clause is what makes the empty
@@ -253,9 +262,8 @@ export default class extends Controller {
     }
 
     const svg = document.createElementNS(SVG_NS, "svg")
-    const pad = Math.max(payload.job.w, payload.job.h) * 0.02
-    this.home = [payload.job.x - pad, payload.job.y - pad,
-                 payload.job.w + pad * 2, payload.job.h + pad * 2]
+    const pad = Math.max(job.w, job.h) * 0.02
+    this.home = [job.x - pad, job.y - pad, job.w + pad * 2, job.h + pad * 2]
     // THE viewBox ITSELF IS WRITTEN BY installPanZoom, through the `bindInteractions` call at the
     // bottom of this method — it sets `home` as it installs. That runs AFTER `replaceChildren` has
     // put the element in the document, and it is still fine, because nothing between here and
@@ -269,7 +277,7 @@ export default class extends Controller {
     // SMALLEST CONTOUR WINS, VIA PAINT ORDER. Appending in DESCENDING bbox-area order puts small
     // shapes on top, so the browser's own topmost-wins hit dispatch selects the hole rather than
     // the plate it sits in. That is the entire selection algorithm — no point-in-polygon code.
-    const ordered = [...payload.shapes].sort((a, b) => this.area(b) - this.area(a))
+    const ordered = [...shapes].sort((a, b) => this.area(b) - this.area(a))
     for (const s of ordered) {
       const top = this.contourNode(s)
       svg.appendChild(top)
@@ -279,7 +287,7 @@ export default class extends Controller {
       // would inherit, so the contour keeps its layer colour while the class sits one level up.
       this.nodeByShape.set(s, top.__visible || top)
     }
-    this.allShapes = payload.shapes
+    this.allShapes = shapes
 
     this.stageTarget.replaceChildren(svg)
     this.svg = svg
@@ -290,7 +298,10 @@ export default class extends Controller {
     // blocked or partitioned storage context — and draw() has already inserted the SVG and applied
     // --ready by this point, so a throw here USED to leave a drawn, ready-looking Measure view with
     // no hover, click, pan or zoom, from a preference-remembering nicety. Binding first means the
-    // worst case costs the paper picker, not measuring. Neither call needs the listeners.
+    // worst case costs the paper picker, not measuring. Neither call needs the listeners. The page
+    // picker goes FIRST for the same reason: it reads no storage, and a throw from the paper must
+    // not leave a multi-page file with no way off the page it opened on.
+    this.populatePages(payload)
     this.populatePaper()
     // AND THE PRINT BAR, LAST, written from the selection this drawing starts with. Since
     // 2026-10-19 (F-S09-1) that is the empty set rest() leaves (see there), so this writes the
@@ -347,6 +358,72 @@ export default class extends Controller {
 
   paperChanged() {
     localStorage.setItem(PAPER_KEY, this.paperTarget.value)
+  }
+
+  // --- Pages (LightBurn 2.2, MillMage 0.9) -----------------------------------------------
+  //
+  // A multi-page file's payload names its pages (`pages`, each with its own job box), the page it
+  // was saved on (`page`), and each shape's page (`pg`); a one-page payload carries none of them,
+  // and every method here then answers "no pages" and changes nothing. Format-agnostic like the
+  // rest of this file: it reads those keys, never a file type.
+
+  // THE PAGE TO DRAW: the one asked for, else the saved one, else the first with any shape on it —
+  // an EMPTY page is never drawn, because the empty-stage branch in draw() would leave no bar, and
+  // so no picker to leave by. A file saved while its empty page was open is the case that reaches
+  // the third arm. Nothing ever ASKS for an empty page — populatePages disables those options — so
+  // `requested` is taken as given. null for a payload without pages, or one with no shapes at all.
+  pageToShow(payload, requested) {
+    if (!payload.pages) return null
+    if (requested != null) return requested
+    const filled = this.filledPages(payload)
+    if (filled.has(payload.page)) return payload.page
+    const first = payload.pages.findIndex((_, i) => filled.has(i))
+    return first === -1 ? null : first
+  }
+
+  filledPages(payload) {
+    return new Set(payload.shapes.map((s) => s.pg))
+  }
+
+  // REWRITTEN ON EVERY DRAW, unlike the paper's list: a different file's payload names different
+  // pages. An empty page is listed but disabled, so the picker says what the file holds without
+  // offering a page with nothing to measure. The name is the file's own text, so it goes in as
+  // textContent — never markup.
+  populatePages(payload) {
+    const select = this.pageTarget
+    select.hidden = this.pageIndex == null
+    if (select.hidden) return select.replaceChildren()
+
+    const filled = this.filledPages(payload)
+    select.replaceChildren(...payload.pages.map((page, i) => {
+      const option = document.createElement("option")
+      option.value = String(i)
+      option.textContent = filled.has(i) ? page.name : `${page.name} (empty)`
+      option.disabled = !filled.has(i)
+      option.selected = i === this.pageIndex
+      return option
+    }))
+  }
+
+  // A NEW PAGE IS A NEW DRAWING, SO IT STARTS FROM rest() — the one lifecycle reset of the
+  // selection (§14h). A part marked on page 1 is not on page 2's stage, so carrying the set across
+  // would have Print promise parts the view no longer shows. rest() drops the payload with
+  // everything else, so it is held here across the call. No paint happens between the two: both
+  // run in this one task, so the bar does not flicker.
+  pageChanged() {
+    const payload = this.payload
+    const page = Number(this.pageTarget.value)
+    this.rest()
+    this.draw(payload, page)
+  }
+
+  // A FILE NAME FOR AN EXPORT: the source's base name, plus the page for a multi-page file, so
+  // saving two pages writes two files rather than the second refusing as a name already taken.
+  // The page's NUMBER, not its name: a name is the file's own text and may hold a `/`, which the
+  // upload doors refuse.
+  exportBase() {
+    const base = this.nameValue.replace(/\.[^.]+$/, "")
+    return this.pageIndex == null ? base : `${base}-page${this.pageIndex + 1}`
   }
 
   // `Object.hasOwn`, NOT `UNITS[saved] ?` the way populatePaper asks PAPERS: a stored
@@ -440,7 +517,7 @@ export default class extends Controller {
       // The SOURCE file's base name plus a suffix, never the source name itself: exporting a
       // subset of `plate.svg` to a file also called `plate.svg` is a download that silently
       // shadows the original in the browser's download folder.
-      a.download = `${this.nameValue.replace(/\.[^.]+$/, "")}-parts.svg`
+      a.download = `${this.exportBase()}-parts.svg`
       a.click()
     } catch (e) {
       // REACHES THE READOUT, not just the console — exportSvg throws before any file exists, so a
@@ -475,8 +552,7 @@ export default class extends Controller {
   saveSvg() {
     const shapes = this.targetShapes()
     if (!shapes || !shapes.length) return
-    const base = this.nameValue.replace(/\.[^.]+$/, "")
-    this.saveAll([ { name: `${base}-parts.svg`, body: exportSvg(shapes, { colors: this.colors }) } ],
+    this.saveAll([ { name: `${this.exportBase()}-parts.svg`, body: exportSvg(shapes, { colors: this.colors }) } ],
                  this.saveSvgButtonTarget)
   }
 
@@ -487,7 +563,7 @@ export default class extends Controller {
   savePrint() {
     const shapes = this.targetShapes()
     if (!shapes || !shapes.length) return
-    const base = this.nameValue.replace(/\.[^.]+$/, "")
+    const base = this.exportBase()
     let bodies
     try {
       bodies = sheetDocuments(shapes, this.sheetPaper(), this.sheetMeta())
@@ -746,7 +822,8 @@ export default class extends Controller {
   // highlighted to own it.
   restingStatus() {
     const missing = this.unreadableLabel()
-    return `${this.allShapes.length} shapes${missing ? ` · ${missing}` : ""} · click one to measure`
+    const where = this.pageIndex == null ? "" : " on this page"
+    return `${this.allShapes.length} shapes${where}${missing ? ` · ${missing}` : ""} · click one to measure`
   }
 
   // "2 SPLINE not readable", or "" when the whole file was read. THE ONE PLACE THIS SENTENCE IS
@@ -812,7 +889,7 @@ export default class extends Controller {
 
   selectionStatus() {
     const n = this.marked.size
-    if (!n) return "nothing selected · Print all prints the whole file"
+    if (!n) return `nothing selected · Print all prints ${this.pageIndex == null ? "the whole file" : "this page"}`
     return `${n} part${n === 1 ? "" : "s"} · ${this.dims(unionBox([...this.marked]))}`
   }
 
@@ -860,7 +937,9 @@ export default class extends Controller {
 
   sheetMeta() {
     return {
-      name: this.nameValue,
+      // THE PAGE IN THE HEADER of a multi-page file's sheet, so a page found on the bench says which
+      // page of the file it is. The header is built as nodes (§14h), so the page's name is safe there.
+      name: this.pageIndex == null ? this.nameValue : `${this.nameValue} · ${this.payload.pages[this.pageIndex].name}`,
       // LOCAL, NOT UTC. `toISOString()` stamps an evening print in the Americas with TOMORROW's
       // date, on a sheet whose header exists so a page found on a bench next week can be trusted.
       date: new Date().toLocaleDateString("en-CA"),

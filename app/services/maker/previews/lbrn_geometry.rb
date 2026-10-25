@@ -45,7 +45,11 @@ module Maker
       #      bump, though the wire form is `Geometry.path_curve`'s: see `Geometry::SHARED_REVISION`,
       #      which spells out why an ADDITIVE helper is versioned by its callers and not by the
       #      file it lives in.
-      FORMAT_REVISION = 5
+      #   6  multi-page files (LightBurn 2.2, MillMage 0.9) carry `"pages"`/`"page"` and a `"pg"` per
+      #      shape, so the Measure view shows one page at a time instead of every page stacked. A
+      #      one-page payload's bytes do not move. NOT a shared bump: `Geometry.build`'s `pages:` is
+      #      additive, and only this format passes it.
+      FORMAT_REVISION = 6
 
       # What `Enqueue` actually reads. The shared term is added rather than remembered — see
       # `Geometry::SHARED_REVISION`. Mage delegates to THIS constant, so .mage moves with it too.
@@ -68,7 +72,13 @@ module Maker
         # for it. Keep the two distinct; do not collapse an empty project into a parse failure.
         raise Lbrn2::ParseError, "not a LightBurn project" if doc.root.nil?
 
-        Geometry.build(colors: colors_for(doc)) do |out|
+        # A one-page file passes no pages, so its shapes carry no `"pg"` and its payload is what it
+        # always was; `Geometry.build` would drop a one-name list anyway, but `"pg" => 0` on every
+        # shape would not be dropped.
+        names = Lbrn2.pages(doc).map(&:name)
+        paged = names.length > 1
+
+        Geometry.build(colors: colors_for(doc), pages: (names if paged), page: Lbrn2.current_page(doc)) do |out|
           # `ellipse` IS ALREADY IN CLIENT SPACE and needs no conversion, unlike DxfGeometry's.
           # `Lbrn2.each_geometry` yields points with the composed affine and the Y-flip already
           # applied, and `Lbrn2.ellipse_from` derives the descriptor from those same points — so
@@ -82,10 +92,11 @@ module Maker
           # shape for which this chooses. It is written as a fallthrough anyway because a THIRD
           # form arriving with an ordering question would then have to answer it here, where the
           # comment is, rather than silently in whichever arm ran last.
-          Lbrn2.each_geometry(doc) do |cut, points, closed, ellipse, image, object_id, segments|
+          Lbrn2.each_geometry(doc) do |cut, points, closed, ellipse, image, object_id, segments, page|
             out.add(layer: cut, points:, closed:, image: !image.nil?, object_id:,
                     curve: (ellipse && Geometry.ellipse_curve(*ellipse)) ||
-                           (segments && Geometry.path_curve(segments)))
+                           (segments && Geometry.path_curve(segments)),
+                    page: (page if paged))
           end
         end
       end

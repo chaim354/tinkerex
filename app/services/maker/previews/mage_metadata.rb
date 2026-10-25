@@ -23,13 +23,18 @@ module Maker
         root = doc.root
         return nil if root.nil? || root.name != "MillMageProject"
 
+        # Pages exactly as LbrnMetadata reads them — the same walk, so the two panels cannot
+        # disagree about what a page is (see Lbrn2.pages).
+        job, pages = Lbrn2.page_metadata(doc)
+
         {
           "app_version"     => root["AppVersion"],
           "format_version"  => root["FormatVersion"],
           "machine"         => root["DeviceName"].presence,
           "material_height" => Lbrn2.num(root["MaterialHeight"]),
-          "job"             => Lbrn2.job_size(doc),
-          "shape_count"     => doc.xpath("//Shape").length,
+          "job"             => job,
+          "pages"           => pages,
+          "shape_count"     => Lbrn2.shape_count(doc),
           "operations"      => operations(doc).presence
         }.compact.presence
       rescue StandardError

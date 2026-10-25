@@ -48,12 +48,12 @@ module Maker
         "a.iges"  => 2, # Mesh       — 14 (obj/step/stp/iges/igs/brep/gltf/…); 2 = ink on paper
         "a.pdf"   => 1, # Pdf
         "a.svg"   => 1, # Svg
-        "a.mage"  => 1, # Mage       — its own renderer for thumbnails, unlike its geometry leg
+        "a.mage"  => 2, # Mage       — its own renderer for thumbnails, unlike its geometry leg; 2 = pages
         "a.stl"   => 3, # Stl        — 3 = ink on paper (2026-10-21)
         "a.dxf"   => 3, # Dxf
         "a.3mf"   => 3, # ThreeMf    — in lockstep with Stl (its mesh fallback)
-        "a.lbrn"  => 4, # Lbrn2
-        "a.lbrn2" => 4, # Lbrn2 again — see the delegation note above
+        "a.lbrn"  => 5, # Lbrn2      — 5 = pages (LightBurn 2.2)
+        "a.lbrn2" => 5, # Lbrn2 again — see the delegation note above
         "a.gtl"   => 1, # Gerber     — every pcb extension but gbrjob (23 of them)
         "a.zip"   => 1  # GerberZip
       }.freeze

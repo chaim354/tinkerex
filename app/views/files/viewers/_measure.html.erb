@@ -80,6 +80,14 @@
     </span>
     <span class="measure-actions">
       <%#
+        THE PAGE PICKER, for a multi-page LightBurn or MillMage file. Hidden and empty at rest; the
+        controller fills it from the payload's own page list and shows it only when there is more
+        than one page, so a one-page file's bar is what it always was. Rendered on BOTH pages,
+        outside the save branch, because a visitor measures pages too.
+      %>
+      <select class="measure-page" aria-label="Page" hidden
+              data-measure-target="page" data-action="measure#pageChanged"></select>
+      <%#
         THERE IS NO "Select parts" TOGGLE HERE ANY MORE (2026-09-03, at the user's request).
         Selecting is what a click DOES — every click on a contour marks it, a second click on the
         same contour drops it, and a click on empty space clears the lot — so the button that used
