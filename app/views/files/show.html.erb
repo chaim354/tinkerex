@@ -73,8 +73,15 @@
     the file's facts beside it — the facts, its projects, its connections and its notes, outward-in
     as the page always read them. pages/preview.css lays the two columns out from 1280px and stacks
     them below that. The blocks inside are MOVED here, not edited; the page head and the
-    move-conflict prompt stay above. %>
-<div class="workspace">
+    move-conflict prompt stay above.
+
+    A LASER OR CNC FILE'S RECIPE PANEL HEADS THE SIDE COLUMN (2026-10-25, at the user's request). It
+    sat beside the preview inside the main column, each taking half, which left the Measure view a
+    narrow square beside a table mostly made of whitespace. The viewer now has the whole main column
+    and the recipe sits above the facts. `has-recipe` widens the side column for these pages only,
+    because a five-column layer table does not fit the 340px every other file page keeps. %>
+<% recipe = @thumbnail&.metadata.presence %>
+<div class="workspace<%= " has-recipe" if recipe %>">
 <div class="workspace-main">
 <%# THE PAGE FINISHES ITS OWN PREVIEW (stage 4, S4-3). One `thumbs` controller on the row covers
     every branch below — the Measure poster, the 3D poster, the Gerber poster and the plain
@@ -88,7 +95,7 @@
     charge of markup the ERB owns, in four shapes. And the picture is not the only thing waiting on
     that render: the Laser Settings and CNC panels are drawn from @thumbnail.metadata, and Size and
     Modified come from the same stat. A reload is one mechanism and the honest one. %>
-<div class="preview-row<%= " has-settings" if @thumbnail&.metadata.present? %>"
+<div class="preview-row"
      data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
      data-thumbs-reload-value="true">
   <%# THE POLL SET, DECLARED RATHER THAN INFERRED. Grid cells announce themselves as pending by
@@ -122,17 +129,6 @@
   <% end %>
   <%= render "files/viewer", viewer: @viewer, editable: @editable, save: true %>
   </div>
-  <%# Which recipe panel: MillMage writes "operations" (an endmill, feeds, depths), LightBurn
-      writes "layers" (speed/power/passes). Branch on the key rather than on the file extension —
-      the metadata is what the panel actually renders, and a .mage that parsed no operations has
-      nothing for the CNC panel to show either way. %>
-  <% if @thumbnail&.metadata.present? %>
-    <% if @thumbnail.metadata["operations"].present? %>
-      <%= render "files/mage_settings", meta: @thumbnail.metadata %>
-    <% else %>
-      <%= render "files/lbrn_settings", meta: @thumbnail.metadata %>
-    <% end %>
-  <% end %>
 </div>
 
 <%# THE HISTORY PANEL, FOR ANY FILE INSIDE A REPOSITORY THIS BOX CAN READ -- not only a text one.
@@ -176,6 +172,18 @@
 </div>
 
 <aside class="workspace-side" aria-label="About this file">
+<%# Which recipe panel: MillMage writes "operations" (an endmill, feeds, depths), LightBurn
+    writes "layers" (speed/power/passes). Branch on the key rather than on the file extension —
+    the metadata is what the panel actually renders, and a .mage that parsed no operations has
+    nothing for the CNC panel to show either way. FIRST in the column, above the facts: on a laser
+    or CNC file it is what the page is opened for. %>
+<% if recipe %>
+  <% if recipe["operations"].present? %>
+    <%= render "files/mage_settings", meta: recipe %>
+  <% else %>
+    <%= render "files/lbrn_settings", meta: recipe %>
+  <% end %>
+<% end %>
 <%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>
 <%# RENAME OR MOVE, under the facts it changes rather than in the page head: an open composer there
     would stretch the head's row of buttons. FILES ONLY, and not inside a git working tree (the same

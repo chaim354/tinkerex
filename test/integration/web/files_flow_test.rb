@@ -372,7 +372,7 @@ module Web
       assert_match(/No inline preview/, response.body)
     end
 
-    test "a LightBurn file's detail page shows the laser-settings panel beside the preview" do
+    test "a LightBurn file's detail page shows the laser-settings panel at the head of the side column" do
       user = sign_in
       bytes = File.binread(Rails.root.join("test/fixtures/files/laser-settings.lbrn2"))
       node_id = upload("cut.lbrn2", bytes)
@@ -386,8 +386,7 @@ module Web
 
       get file_path(node_id)
       assert_response :success
-      assert_select ".preview-row.has-settings"
-      assert_select ".lbrn-settings"
+      assert_select ".workspace.has-recipe .workspace-side > .lbrn-settings"
       assert_select ".lbrn-settings table tbody tr", 2          # two used layers
       assert_select ".lbrn-settings", text: /C00/
       assert_select ".lbrn-settings", text: /Fill/               # Scan -> Fill
@@ -404,7 +403,7 @@ module Web
       get file_path(node_id)
       assert_response :success
       assert_select ".lbrn-settings", count: 0
-      assert_select ".has-settings", count: 0
+      assert_select ".has-recipe", count: 0
     end
 
     test "a malicious layer colour is not injected into the swatch style" do

@@ -315,7 +315,9 @@ module Web
       # request and would have to be excluded from the coverage assertion instead of covered.
       # Two PAGES on the LightBurn row, one sized and one empty, so `files/_recipe_pages` renders
       # both of its arms — it is reached only from a multi-page file's metadata.
+      # A "text" list too, so the panel's closed Text disclosure renders under the text-node check.
       recipe!("n-bak", "layers" => [ { "name" => "Score", "color" => "#ff0000", "speed" => 100 } ],
+                       "text" => [ "Lid" ],
                        "pages" => [ { "name" => "Front", "job" => { "width" => 10.0, "height" => 5.0 }, "current" => true },
                                     { "name" => "Back" } ])
       recipe!("n-mill", "operations" => [ { "name" => "Pocket", "tool" => "3mm flat" } ])

@@ -1,6 +1,10 @@
-<%# LightBurn laser "recipe" panel, shown beside the preview on a .lbrn/.lbrn2 file page.
-    `meta` is the parsed Hash from Maker::Previews::LbrnMetadata (string keys). Every field is
-    optional — render only what's present. %>
+<%# LightBurn laser "recipe" panel, at the head of the file page's side column on a .lbrn/.lbrn2
+    file. `meta` is the parsed Hash from Maker::Previews::LbrnMetadata (string keys). Every field is
+    optional — render only what's present.
+
+    THE UNIT IS IN THE HEADING, NOT IN EVERY CELL (2026-10-25): the panel lives in a 380px column
+    now, and "169.33 mm/s" five times over is what made the table wider than it. Power keeps its %
+    per cell because it is a pair (max / min), where a bare "42.5 / 12.25" would read as a ratio. %>
 <section class="lbrn-settings">
   <div class="lbrn-head">
     <h2>Laser settings</h2>
@@ -10,7 +14,7 @@
   <% if meta["layers"].present? %>
     <table class="lbrn-layers">
       <thead>
-        <tr><th>Layer</th><th>Mode</th><th class="num">Speed</th><th class="num">Power</th><th class="num">Passes</th></tr>
+        <tr><th>Layer</th><th>Mode</th><th class="num">Speed <span class="lbrn-unit">mm/s</span></th><th class="num">Power</th><th class="num">Passes</th></tr>
       </thead>
       <tbody>
         <% meta["layers"].each do |layer| %>
@@ -36,7 +40,7 @@
             </td>
             <td><%= layer["mode"] %></td>
             <%# recipe_num, never `.to_i` — that truncated 6.67 mm/s to "6". See FilesHelper. %>
-            <td class="num"><%= "#{recipe_num(layer["speed"])} mm/s" if recipe_num(layer["speed"]) %></td>
+            <td class="num"><%= recipe_num(layer["speed"]) %></td>
             <td class="num">
               <% if recipe_num(layer["power_max"]) %>
                 <%= recipe_num(layer["power_max"]) %>%<% if layer["power_min"] && layer["power_min"] != layer["power_max"] %> <span class="muted">/ <%= recipe_num(layer["power_min"]) %>%</span><% end %>
@@ -61,7 +65,16 @@
     <% if meta["shape_count"] %><dt>Layers / shapes</dt><dd><%= Array(meta["layers"]).size %> / <%= meta["shape_count"] %></dd><% end %>
   </dl>
 
+  <%# THE TEXT STARTS CLOSED (2026-10-25, at the user's request). It is every text shape's string, and
+      a box-joint or label sheet has dozens of them — 77 on one real file — which as one quoted,
+      comma-joined line was the longest thing in the panel and pushed the settings out of view. A
+      <details> holds the count, which is the useful fact at a glance; the strings are one click away. %>
   <% if meta["text"].present? %>
-    <p class="lbrn-text muted">Text: <%= meta["text"].map { |t| "“#{t}”" }.join(", ") %></p>
+    <details class="lbrn-text">
+      <summary>Text <span class="muted"><%= pluralize(meta["text"].size, "string") %></span></summary>
+      <ul class="lbrn-text-list">
+        <% meta["text"].each do |text| %><li><%= text %></li><% end %>
+      </ul>
+    </details>
   <% end %>
 </section>
