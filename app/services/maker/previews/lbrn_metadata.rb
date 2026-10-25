@@ -19,14 +19,16 @@ module Maker
         return nil if root.nil? || root.name != "LightBurnProject"
 
         used = doc.xpath("//Shape").filter_map { |s| s["CutIndex"] }.to_set
+        job, pages = Lbrn2.page_metadata(doc)
 
         {
           "app_version"     => root["AppVersion"],
           "format_version"  => root["FormatVersion"],
           "machine"         => device_name(root),
           "material_height" => Lbrn2.num(root["MaterialHeight"]),
-          "job"             => job_size(doc),
-          "shape_count"     => doc.xpath("//Shape").length,
+          "job"             => job,
+          "pages"           => pages,
+          "shape_count"     => Lbrn2.shape_count(doc),
           "text"            => text_strings(doc).presence,
           "layers"          => layers(doc, used).presence
         }.compact.presence
@@ -109,11 +111,11 @@ module Maker
       end
 
       # Job size = the shapes' bounding box in mm, measured by the SAME walk that draws the
-      # thumbnail (`Lbrn2.job_size`) rather than a private second copy. The copy this replaced is
-      # exactly why the two could disagree: it re-derived per-shape points and so inherited every
-      # dialect bug independently — a file could render one way and report a size computed from
-      # different geometry, with nothing to catch it.
-      def job_size(doc) = Lbrn2.job_size(doc)
+      # thumbnail (`Lbrn2.page_metadata`, over `each_geometry`) rather than a private second copy.
+      # The copy this replaced is exactly why the two could disagree: it re-derived per-shape
+      # points and so inherited every dialect bug independently — a file could render one way and
+      # report a size computed from different geometry, with nothing to catch it. On a multi-page
+      # file it is the SAVED page's size, the page the thumbnail beside the panel pictures.
     end
   end
 end

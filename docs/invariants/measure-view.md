@@ -224,6 +224,19 @@
   measure-after-thinning bug: any per-shape error some other shape already bounds disappears into
   it. It stayed green on three separate fixtures. The guard with teeth is **per-shape**, on a
   fixture whose ellipse is not shadowed by a larger Rect.
+- **A MULTI-PAGE FILE IS MEASURED, DRAWN AND SIZED ONE PAGE AT A TIME (LightBurn 2.2 / MillMage 0.9,
+  2026-10-25).** A real 2.2.00 save keeps page 1 as the root's own shapes and every other page as a
+  root-level `<Shape Type="Group" SubType="Page">`, all in ONE coordinate space — so the walker that
+  read a page as an ordinary Group drew every page stacked on the first. `Lbrn2.pages` is the one
+  reading; `walk_shapes` skips a page group rather than recursing into it. Four rules ride on it:
+  **one `GeometryIndex` for every page**, because instancing crosses pages (a duplicated page's
+  shapes are bare `VertID`s pointing at page 1's lists); **the outline fallback draws the saved page
+  (`CurrentPage`)**, because that is what the embedded thumbnail pictures; **`"pages"`/`"page"`/`"pg"`
+  are ABSENT on a one-page payload**, like `"u"`, so those bytes did not move and the shared term did
+  not bump; and **the union rule holds per page** — a page's shapes union to its own job box, and to
+  the panel's size for that page. Switching pages in the view goes through `rest()`, the one lifecycle
+  reset of the selection. MillMage's page form is inferred from its binary, not from a save:
+  `pages.mage` says so, and is the file to replace when a real one exists.
 - **CIRCULARITY NEEDS THE 12-POINT FLOOR, NOT JUST THE RADIUS TEST.** A square's four corners are
   all equidistant from its centre — as are any regular polygon's vertices — so radius variance
   alone calls every square round. Measured: a `Rect` emits 5 points with radial spread **0.00000**

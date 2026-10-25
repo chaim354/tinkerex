@@ -37,8 +37,13 @@
     </table>
   <% end %>
 
+  <% if meta["pages"].present? %>
+    <%= render "files/recipe_pages", pages: meta["pages"] %>
+  <% end %>
+
   <dl class="lbrn-summary">
-    <% if meta.dig("job", "width") %><dt>Job size</dt><dd><%= recipe_num(meta["job"]["width"]) %> × <%= recipe_num(meta["job"]["height"]) %> mm</dd><% end %>
+    <%# A multi-page file has a size per page, in the table above, and no single job size. %>
+    <% if meta["pages"].blank? && meta.dig("job", "width") %><dt>Job size</dt><dd><%= recipe_num(meta["job"]["width"]) %> × <%= recipe_num(meta["job"]["height"]) %> mm</dd><% end %>
     <% if meta["material_height"] %><dt>Material</dt><dd><%= recipe_num(meta["material_height"]) %> mm</dd><% end %>
     <% if meta["machine"].present? %><dt>Machine</dt><dd><%= meta["machine"] %></dd><% end %>
     <% if meta["shape_count"] %><dt>Operations / shapes</dt><dd><%= Array(meta["operations"]).size %> / <%= meta["shape_count"] %></dd><% end %>

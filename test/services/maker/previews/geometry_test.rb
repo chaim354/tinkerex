@@ -96,7 +96,7 @@ module Maker
       # `plate.dxf`'s stayed still. The shared term still has not moved, which is the claim this
       # paragraph exists to defend. Left in the past tense rather than deleted because the argument
       # for the additive helper is what a reviewer arrives here asking about.
-      GEOMETRY_REVISIONS = { "a.lbrn2" => 6, "a.lbrn" => 6, "a.mage" => 6, "a.dxf" => 4, "a.svg" => 3 }.freeze
+      GEOMETRY_REVISIONS = { "a.lbrn2" => 7, "a.lbrn" => 7, "a.mage" => 7, "a.dxf" => 4, "a.svg" => 3 }.freeze
 
       test "a format's geometry revision moves only when this pin moves with it" do
         GEOMETRY_REVISIONS.each do |filename, expected|

@@ -1,0 +1,25 @@
+<%# locals: (pages:) %>
+<%# A multi-page LightBurn or MillMage file's pages, each with its own size (Lbrn2.page_metadata).
+    ONE PARTIAL FOR BOTH RECIPE PANELS, which otherwise differ, because a page is the same thing in
+    both apps. Each page gets its own size instead of one Job size because pages share one
+    coordinate space, so one size over every page measures nothing anyone will cut. The saved page
+    is marked: it is the page the preview beside this panel shows. %>
+<table class="lbrn-layers">
+  <thead>
+    <tr><th>Page</th><th class="num">Size</th></tr>
+  </thead>
+  <tbody>
+    <% pages.each do |page| %>
+      <tr>
+        <td><%= page["name"] %><% if page["current"] %> <span class="muted">(in preview)</span><% end %></td>
+        <td class="num">
+          <% if page.dig("job", "width") %>
+            <%= recipe_num(page["job"]["width"]) %> × <%= recipe_num(page["job"]["height"]) %> mm
+          <% else %>
+            <span class="muted">empty</span>
+          <% end %>
+        </td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>

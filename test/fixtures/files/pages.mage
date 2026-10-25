@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- A MULTI-PAGE MillMage project — HAND-WRITTEN, NOT A REAL EXPORT, and that matters.
+
+     MillMage 0.9 added pages alongside LightBurn 2.2, and its binary carries the same attribute
+     names LightBurn writes them with (CurrentPage, Page0Name, SubType — found as UTF-16 strings in
+     MillMage 0.9.00 and 0.9.02, the same way they are found in LightBurn 2.2.00, whose real save is
+     pages.lbrn2). So this assumes MillMage writes pages exactly as LightBurn does: page 1 is the
+     root's own shapes, every other page a root-level <Shape Type="Group" SubType="Page">. Replace
+     it with a real two-page MillMage save when one exists; if the two differ, Lbrn2.pages is wrong
+     for MillMage and this file is where that will show.
+
+     Geometry, in mm (both pages within one 100 x 60 box, so only a per-page walk tells them apart):
+       page 1  "Top"     Rect 100 x 60 at the origin                ->  100 x 60   (saved page)
+       page 2  "Bottom"  Ellipse r 10 at (20, 0)                    ->   20 x 20
+-->
+<MillMageProject AppVersion="0.9.02" DeviceName="lowrider v4" FormatVersion="1" MaterialHeight="12" MirrorX="False" MirrorY="False" CurrentPage="0" Page0Name="Top">
+    <Operation type="Pocket" Shapes="0">
+        <ToolDef>
+            <name Value="1.5 mm endmil"/>
+            <type Value="End Mill"/>
+            <diameter Value="1.5"/>
+        </ToolDef>
+        <name Value="Pocket"/>
+        <finalDepth Value="2"/>
+    </Operation>
+    <Operation type="Profile" Shapes="1">
+        <ToolDef>
+            <name Value="3 mm endmil"/>
+            <type Value="End Mill"/>
+            <diameter Value="3"/>
+        </ToolDef>
+        <name Value="Profile"/>
+        <finalDepth Value="12"/>
+    </Operation>
+    <Shape Type="Rect" OpIndex="0" LayerIndex="0" W="100" H="60" Cr="0">
+        <XForm>1 0 0 1 0 0</XForm>
+    </Shape>
+    <Shape Type="Group" SubType="Page" Name="Bottom">
+        <XForm>1 0 0 1 0 0</XForm>
+        <Children>
+            <Shape Type="Ellipse" OpIndex="1" LayerIndex="1" Rx="10" Ry="10">
+                <XForm>1 0 0 1 20 0</XForm>
+            </Shape>
+        </Children>
+    </Shape>
+</MillMageProject>

@@ -46,7 +46,9 @@ module Maker
       # to prevent.
       #
       #   1  original (thumbnail)
-      THUMBNAIL_REVISION = 1
+      #   2  multi-page files (MillMage 0.9): pages and per-page sizes in the panel, and the outline
+      #      fallback draws the saved page alone — see Lbrn2.pages
+      THUMBNAIL_REVISION = 2
 
       def payload_revision(kind)
         kind == "geometry" ? Maker::Previews::LbrnGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION

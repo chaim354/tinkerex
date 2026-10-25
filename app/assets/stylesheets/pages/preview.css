@@ -291,7 +291,7 @@
      were (0,2,1) and this one was later, so without it a drag while selecting showed `copy` instead
      of `grabbing`. There is no selecting class to key on now; the stage is `crosshair` at rest and
      `grabbing` while panning, and nothing else. */
-  .measure-paper { font-size: 13px; }
+  .measure-paper, .measure-page { font-size: 13px; }
 
   /* --- LightBurn laser-settings panel (beside the preview on a .lbrn/.lbrn2 file page) --- */
   .preview-row.has-settings { display: flex; gap: 20px; align-items: flex-start; flex-wrap: wrap; }
