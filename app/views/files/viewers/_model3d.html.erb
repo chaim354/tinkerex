@@ -46,7 +46,8 @@
         `named_url`'s reason one comment up plus one of its own: `url_for(thumbnail.asset)` is a blob
         URL with no expiry, so a visitor's poster kept answering after the project went private. %>
     <% if thumbnail&.showable? %>
-      <div class="render-card"><img src="<%= thumbnail_url %>" alt="Preview of <%= name %>" class="preview-image" data-modelviewer-target="poster"></div>
+      <%= render "files/viewers/zoomable", src: thumbnail_url, alt: "Preview of #{name}", name: name, card: true,
+                 img_data: { modelviewer_target: "poster" } %>
     <% end %>
     <p class="muted">Click <strong>View in 3D</strong> to load an interactive preview, or download the file.</p>
     <%= link_to "Download #{name}", download_url, class: "btn" %>
