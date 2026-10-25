@@ -1,0 +1,40 @@
+<%# locals: (src:, alt:, name:, card:, img_data: {}) %>
+<%#
+  A RESTING PICTURE THAT OPENS BIG AND ZOOMABLE (2026-10-25). See image_zoom_controller.js.
+
+  ONE PARTIAL FOR EVERY PICTURE A FILE PAGE RESTS ON: the :image branch (`card: false`, the photo on
+  the page as it always sat) and the server-rendered posters in _static, _measure, _model3d and
+  _gerber (`card: true`, the ink-on-paper `.render-card`, design-system.md rule 5). The markup those
+  five spelled out before is unchanged — the same wrapper, the same `img.preview-image`, its alt — so
+  the tests and the addon bundles that know `.render-card` and `.preview-image` see what they saw;
+  the picture only gains a way in. `img_data` is for a caller's own target on the picture (the 3D
+  viewer's `poster`, whose src "Use this view as preview" swaps).
+
+  SHARED BY BOTH FILE PAGES, like the viewers that render it, so the picture's URL arrives as the
+  strict local `src` and nothing here names a route (architecture_invariants_test.rb scans this
+  directory). The overlay fetches nothing of its own: it shows the bytes the poster already loaded.
+
+  THE DIALOG SITS INSIDE THE CARD AND COSTS IT NOTHING: shut, a <dialog> is display:none and takes
+  no flex slot; open, showModal() puts it in the top layer, which the card's `overflow: hidden` and
+  `isolation` do not reach. The STAGE takes the card's ground when the picture came from a card, so
+  a render is ink on the same paper big as small, and a photo keeps the page's ground.
+%>
+<div class="<%= card ? "render-card" : "image-zoom-frame" %>" data-controller="image-zoom">
+  <%= tag.img src: src, alt: alt, class: "preview-image zoomable", tabindex: 0, role: "button",
+              title: "Click to enlarge", aria: { haspopup: "dialog" },
+              data: { image_zoom_target: "source",
+                      action: "click->image-zoom#open keydown.enter->image-zoom#open keydown.space->image-zoom#open" }.merge(img_data) %>
+  <dialog class="image-zoom" aria-label="<%= name %>" data-image-zoom-target="dialog"
+          data-action="close->image-zoom#closed">
+    <div class="image-zoom-bar">
+      <span class="image-zoom-name"><%= name %></span>
+      <span class="image-zoom-actions">
+        <button type="button" class="btn small ghost" data-action="image-zoom#zoomOut" aria-label="Zoom out" title="Zoom out">−</button>
+        <button type="button" class="btn small ghost" data-action="image-zoom#zoomIn" aria-label="Zoom in" title="Zoom in">+</button>
+        <button type="button" class="btn small ghost" data-action="image-zoom#reset">Reset</button>
+        <button type="button" class="btn small" data-action="image-zoom#close" title="Close (Esc)" autofocus>✕ Close</button>
+      </span>
+    </div>
+    <div class="image-zoom-stage<%= " image-zoom-stage--card" if card %>" data-image-zoom-target="stage"></div>
+  </dialog>
+</div>

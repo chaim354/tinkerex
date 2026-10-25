@@ -288,12 +288,31 @@ cursor, the `xMidYMid meet` letterbox conversion, the `[span/500, span*4]` clamp
 pan slop, the pointer capture) and moved out on 2026-09-06 so the Gerber stage could have the same
 hands; both controllers now install the one module (§14d, "a verb more than one controller performs
 gets a named service"). Two consequences a later editor can undo by accident: the module needs
-`preserveAspectRatio="xMidYMid meet"` on the element it is handed, which is why BOTH callers set it
+`preserveAspectRatio="xMidYMid meet"` on the element it is handed, which is why EVERY caller sets it
 and the module does not; and `.gerber-viewer .model-viewer-stage svg` carries **`touch-action:
 none`**, without which the
 browser claims a two-finger gesture for its own scroll and the pinch handler never receives the
 second pointer — not degraded, never fired. **No Measure system test drives a wheel or a drag**, so
 `test/system/gerber_test.rb`'s zoom, pan and Fit cases are the only pin the shared maths has.
+
+**A RESTING PICTURE OPENS BIG ON THE SAME MODULE — the third caller, never a lightbox library**
+(2026-10-25). Every picture a file page rests on (the `:image` branch, `_static`'s render, and the
+posters of `_measure`, `_model3d` and `_gerber`) is rendered by ONE sub-partial,
+`files/viewers/_zoomable.html.erb`, which keeps the wrapper (`.render-card`, or `.image-zoom-frame`
+for a photo) and the `img.preview-image` the tests and the addon bundles know, and adds a click,
+Enter or Space that opens a native `<dialog>` the size of the window (`image_zoom_controller.js`).
+The picture goes on the stage as an SVG `<image>` whose user space is the poster's LAID-OUT box,
+so `installPanZoom` moves it unchanged; `zoomBy` (the + and − buttons) was added to the module
+for it, under the wheel's clamp. Four things not to undo: **the overlay reads the poster's src at
+open and fetches nothing** (it follows "Use this view as preview", and on a visitor's page it names
+no URL — the partial takes `src` as a strict local and sits under the seam guard's scan of this
+directory); **a render's stage takes the card's ground, isolation and multiply** (design-system.md
+rule 5), a photo's the page's; **`touch-action: none` on `.image-zoom-stage svg`**, for the pinch;
+and **connect rests the element** — a Back with the overlay open leaves Turbo a clone whose dialog
+carries `open`. A broken poster does not open: `decode()` says so, where a 0 x 0 natural size
+cannot (the spec gives a viewBox-only SVG none either). The pictures are what the page already
+loaded, so a server render is its 512 px thumbnail enlarged, not a sharper one.
+`test/system/image_zoom_test.rb` drives real wheel and drag input and the visitor's page.
 
 **A LAYER TOGGLE RE-COMPOSES FROM THE ONE `renderLayers` RESULT AND NEVER RE-FETCHES.**
 `gerber_controller.js` keeps that result and hands `renderBoard` a **filtered `layers` list**

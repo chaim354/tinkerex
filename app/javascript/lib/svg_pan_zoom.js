@@ -6,8 +6,9 @@
 // EVERYTHING IS IN THE SVG'S OWN USER UNITS, converted from screen pixels through the element's
 // letterbox: `preserveAspectRatio="xMidYMid meet"` scales by the SMALLER axis ratio and centres the
 // other, and ignoring that makes the cursor drift on a non-square drawing (measure_controller.js
-// learned this first, on files that are rarely square). Both callers set that attribute on the
-// element they hand over, so the maths below is not making an assumption it cannot see.
+// learned this first, on files that are rarely square). Every caller (Measure, the board, and the
+// file page's image zoom overlay since 2026-10-25) sets that attribute on the element it hands
+// over, so the maths below is not making an assumption it cannot see.
 //
 // THE PAN SLOP IS SCREEN PIXELS, NOT USER UNITS, and the two are not interchangeable: zoomed in,
 // one mm is many pixels, so a user-space threshold calls an ordinary click a drag and silently
@@ -154,6 +155,13 @@ export function installPanZoom(svg, { home, onChange = null } = {}) {
     reset: () => setViewBox(home),
     view: () => [ ...view ],
     set: (next) => setViewBox(next),
+    // ZOOM ABOUT THE MIDDLE OF THE VIEW, for a caller's + and − buttons (the image zoom overlay's):
+    // the same clamp as a wheel notch, so a button cannot zoom past where a wheel stops. `factor`
+    // scales the view's width, so a factor below 1 zooms IN.
+    zoomBy(factor) {
+      const [ x, y, w, h ] = view
+      zoomAbout(x + w / 2, y + h / 2, factor)
+    },
     // `didPan` is "the gesture that just ended moved far enough to be a pan", read by a click
     // handler that must not treat a drag as a selection. It is cleared by the NEXT pointerdown, so
     // a reader never has to clear it and two readers of one gesture agree.
