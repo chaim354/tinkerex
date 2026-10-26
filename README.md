@@ -73,6 +73,11 @@ the last against a sibling checkout of `tinkerex-sync` — and the three must re
 counts. `CLAUDE.md` is the architecture: the port between the app and whatever holds the bytes, the
 data model, and the invariants that a change must not undo.
 
+## Security
+
+Found a vulnerability? Report it privately through the repository's Security tab, as
+[`SECURITY.md`](SECURITY.md) describes, rather than in a public issue.
+
 ## Licence
 
 Copyright 2026 Charles Schwartz. Licensed under the Apache License, Version 2.0 (`LICENSE`); you may
