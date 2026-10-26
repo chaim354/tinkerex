@@ -383,6 +383,31 @@ class DeployHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  # CLOUDFLARE_ONLY REFUSES EVERY REQUEST WHOSE PEER IS NOT A CLOUDFLARE EDGE, so it belongs on the one
+  # destination Cloudflare fronts. Dropped from OVH, tinkerex.com answers anyone who asks the box
+  # directly again, with nothing failing; set on an Unraid box, whose peer is the LAN proxy, every
+  # page there answers 403.
+  test "the Cloudflare-only guard is set on OVH and on no other destination" do
+    require "kamal"
+    clears = LIBRARY_DESTINATIONS.to_h { |destination|
+      [ destination, at(Kamal::Configuration.create_from(
+        config_file: ROOT.join("config/deploy.yml"), destination: destination
+      ).raw_config, "env", "clear").to_h ]
+    }
+
+    assert_equal "1", clears.fetch("ovh")["CLOUDFLARE_ONLY"].to_s,
+                 "ovh sits behind Cloudflare: deploy.ovh.yml's env.clear must set CLOUDFLARE_ONLY, " \
+                 "or the origin serves tinkerex.com to anyone who reaches its address directly"
+
+    clears.except("ovh").each do |destination, clear|
+      label = destination || "base"
+      assert clear.key?("LIBRARY_BACKEND"), "#{label}: raw_config shape changed?"
+      refute clear.key?("CLOUDFLARE_ONLY"),
+             "#{label} resolves CLOUDFLARE_ONLY=#{clear['CLOUDFLARE_ONLY'].inspect}: behind the LAN " \
+             "proxy no request comes from Cloudflare, so every page would answer 403"
+    end
+  end
+
   test "every GPL sidecar image carries its own licence text" do
     # CLAUDE.md §9: we build these images and push them to a registry, which is REDISTRIBUTION —
     # so the licence has to be INSIDE the image, not merely beside the Dockerfile in this repo.

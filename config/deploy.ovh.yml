@@ -201,6 +201,13 @@ env:
     # THE PUBLIC DEMO (docs/DEPLOY.md §5): one click signs visitors into this shared account, made once
     # by `bin/rails tinkerex:demo:setup`; the nightly reset replaces the ONE library all accounts share.
     DEMO_ACCOUNT_EMAIL: demo@tinkerex.com
+    # ANSWER ONLY CLOUDFLARE (2026-10-26). This box's address is public (this file, and the DNS-only
+    # mail host beside it), and kamal-proxy served tinkerex.com to anyone who asked it directly, past
+    # Cloudflare's shield. The guard refuses any request whose real peer is not a Cloudflare edge
+    # (config/initializers/trusted_proxies.rb). In the app rather than the host firewall because the
+    # box's other sites share 80/443 and one of them is not behind Cloudflare. OVH ALONE: behind the
+    # Unraid boxes' LAN proxy it would refuse everything (test/deploy_hygiene_test.rb).
+    CLOUDFLARE_ONLY: "1"
 
     # ENABLE_TEST_SIGNUP: SET NOWHERE SINCE 2026-10-12. This overlay blanked it on 2026-10-12
     # morning because deploy.yml's base env.clear set it and Kamal deep-merges env.clear; the same

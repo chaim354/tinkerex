@@ -15,11 +15,13 @@ class InstallDocsTest < ActiveSupport::TestCase
     TEST_LIBRARY_PATH CI CI_RUNNERS GITHUB_ACTIONS GITHUB_ENV GITHUB_OUTPUT KAMAL_REGISTRY_PASSWORD
     OP_SERVICE_ACCOUNT_TOKEN TINKEREX_SYNC_DIR SYNC_IMPL SYNC_PORT LOG_SPOOL_DIR LOG_BRANCH KANEO_URL
     KANEO_WORKSPACE KANEO_PROJECT GH_BIN DRY_RUN APPLY HOME PATH TMPDIR LANG
-    BUNDLE_GEMFILE
+    BUNDLE_GEMFILE HTTP_X_FORWARDED_FOR
   ].freeze
   # BUNDLE_GEMFILE is the Rails scaffold's own `config/boot.rb` line (`ENV["BUNDLE_GEMFILE"] ||=`),
   # bundler's knob and not this app's; CLAUDE.md §14j is where it matters, and only to a developer
-  # spawning a second bundled process.
+  # spawning a second bundled process. HTTP_X_FORWARDED_FOR is not an environment variable at all:
+  # it is the Rack request header CloudflareOnly reads as `env["…"]` on the request's env hash
+  # (config/initializers/trusted_proxies.rb), the same spelling the scan looks for.
 
   # `env` as well as `ENV`, and `.fetch(` as well as `[`: FileLayer::S3.from_env reads its five
   # LIBRARY_S3_* knobs as `env.fetch("...")` on an injected hash, and a pattern that only knew
