@@ -119,7 +119,6 @@ class MeasurePagesTest < ApplicationSystemTestCase
 
     def open_measure_view(node_id)
       visit file_path(node_id)
-      click_on "Measure"
       # --ready reveals the stage; without waiting for it the assertions race the fetch.
       assert_selector ".measure-view--ready"
     end

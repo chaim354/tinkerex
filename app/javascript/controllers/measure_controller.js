@@ -28,8 +28,13 @@ import { installPanZoom } from "lib/svg_pan_zoom"
 // the ONE definition shared with the print sheet and the exporter; SVG_NS is imported from there
 // too, so the namespace string is not spelled twice.
 //
-// Lazy by design: nothing is fetched until Measure is clicked. The payload reaches 281 KB gzipped
-// on the densest real files, and most pages are never measured.
+// OPENED ON ARRIVAL SINCE 2026-10-25, at the user's request; it was lazy until then ("nothing is
+// fetched until Measure is clicked … most pages are never measured"). The picture it replaces is a
+// raster — LightBurn's own thumbnail of the whole bed with the design small inside it, a 512 px
+// server render for DXF — so it could neither fill the stage nor zoom without going soft, and the
+// drawing does both. The price is the payload on every visit, up to 1.3 MB gzipped on the densest
+// real file (§14h). The poster stays at rest while the payload loads, and for good when the
+// drawing would show less than it does (see `open`).
 
 // Must match Maker::Previews::Geometry::SCHEMA_VERSION — ONE number for all four formats, since
 // this parser is one parser.
@@ -120,6 +125,10 @@ export default class extends Controller {
     // out of restingStatus(). Resting puts the poster back, and the drawing is one click away as
     // it was. measure_print_test.rb drives the Back.
     this.rest()
+    // NOT IN A TURBO PREVIEW. Following a link to a page Turbo has cached shows the cached copy
+    // first and connects a controller in it, then swaps in the real page, which connects another.
+    // Opening from the preview starts a download for an element that is about to be thrown away.
+    if (!document.documentElement.hasAttribute("data-turbo-preview")) this.open({ arriving: true })
   }
 
   // A PAGE THAT GOES AWAY OWNS NOTHING, so the bump is the whole of this. The poll is NOT cancelled
@@ -141,13 +150,24 @@ export default class extends Controller {
   //
   // A SUPERSEDED LOAD REPORTS NOTHING EITHER. With the fetch shared, its rejection reaches every
   // load that joined it, and only the one that owns the stage may put the reason on screen.
-  async load() {
+  //
+  // THE PAGE'S OWN OPENING ON ARRIVAL IS THE SAME LOAD, so a click while it is still downloading
+  // joins it the same way a second click does, and supersedes it.
+  load() {
+    return this.open({ arriving: false })
+  }
+
+  async open({ arriving }) {
     const gen = ++this.generation
     this.setStatus("Loading geometry…")
     try {
       this.pending ||= this.fetchPayload().finally(() => { this.pending = null })
       const payload = await this.pending
       if (gen !== this.generation || !payload) return
+      // A PAGE OF NOTHING BUT BITMAPS KEEPS ITS PICTURE ON ARRIVAL. A photo engraving draws as a
+      // dashed box where the poster shows the photo, so opening it would put a worse picture in
+      // place of a better one. Measure still opens it on a click: the box's size is what it is for.
+      if (arriving && this.onlyBitmaps(payload)) return this.setStatus("")
       this.draw(payload)
     } catch (e) {
       if (gen !== this.generation) return
@@ -182,9 +202,9 @@ export default class extends Controller {
     // and the toggle target are absent rather than merely unused. See §14h.
     //
     // EMPTIED HERE, AND draw() DOES NOT EMPTY IT AGAIN. A drawing always starts from the empty set
-    // this leaves. The launch button is the one way to a load, and it shows only while `--ready`
-    // is off, which is from here until the next draw(). So a second drawing has to come through
-    // ✕ Image, and therefore through here. A double click on the button still draws once, because
+    // this leaves. There are two ways to a load: connect(), which rests first, and the launch
+    // button, which shows only while `--ready` is off, from here until the next draw(). So a second
+    // drawing has to come through ✕ Image, and therefore through here. A double click on the button still draws once, because
     // the generation in load() lets only the latest load paint. With nothing drawn there is
     // nothing to click, so nothing can be selected in between. A leak here would be silent: a set
     // left populated goes on being promised by the print button, and printed, over shapes that
@@ -242,7 +262,7 @@ export default class extends Controller {
     // reads `shapes` and `job` for this page, so measuring, Print and the exports all act on the
     // page in view, the same way they act on the whole of a one-page file.
     this.pageIndex = this.pageToShow(payload, page)
-    const shapes = this.pageIndex == null ? payload.shapes : payload.shapes.filter((s) => s.pg === this.pageIndex)
+    const shapes = this.pageShapes(payload, this.pageIndex)
     const job = this.pageIndex == null ? payload.job : payload.pages[this.pageIndex].job
     this.byObject = new Map()
     for (const s of shapes) {
@@ -383,6 +403,17 @@ export default class extends Controller {
 
   filledPages(payload) {
     return new Set(payload.shapes.map((s) => s.pg))
+  }
+
+  // The shapes draw() puts on the stage for `pageIndex`: every shape for a payload without pages.
+  pageShapes(payload, pageIndex) {
+    return pageIndex == null ? payload.shapes : payload.shapes.filter((s) => s.pg === pageIndex)
+  }
+
+  // Whether the page draw() would show holds bitmaps and nothing else. `i` marks a bitmap's box.
+  onlyBitmaps(payload) {
+    const shapes = this.pageShapes(payload, this.pageToShow(payload, null))
+    return shapes.length > 0 && shapes.every((s) => s.i)
   }
 
   // REWRITTEN ON EVERY DRAW, unlike the paper's list: a different file's payload names different

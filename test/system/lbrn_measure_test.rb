@@ -44,6 +44,13 @@ class LbrnMeasureTest < ApplicationSystemTestCase
   # <circle cx="50" cy="-30" r="10"> once the Y-flip is applied.
   SAMPLE = "sample.lbrn2".freeze
 
+  # A PHOTO ENGRAVING AND NOTHING ELSE: one Bitmap holding a real 1 x 1 PNG, which is what makes the
+  # payload flag it `"i"` (lbrn_geometry_test.rb). Written by the one test that needs it.
+  PHOTO = "photo.lbrn2".freeze
+  PHOTO_XML = %(<LightBurnProject AppVersion="1.6.00">) +
+              %(<Shape Type="Bitmap" CutIndex="0" W="10" H="10" Data="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="><XForm>1 0 0 1 0 0</XForm></Shape>) +
+              %(</LightBurnProject>)
+
   setup do
     @root = Pathname.new(Dir.mktmpdir("measure-view"))
     # The fixture lands BEFORE the first page render on purpose: FileLayer::Share reads an EMPTY
@@ -67,6 +74,84 @@ class LbrnMeasureTest < ApplicationSystemTestCase
   teardown do
     FileLayer.reset!
     FileUtils.remove_entry(@root) if @root&.exist?
+  end
+
+  # THE DRAWING OPENS ON ARRIVAL (2026-10-25, at the user's request): a vector that fills the stage
+  # and zooms, in place of a raster poster. Every other test in the Measure suites now reaches the
+  # stage this way, but none of them says so — this is the one that fails by name.
+  # MUTATION (§15): connect() without its `this.open({ arriving: true })` reds the `--ready` wait.
+  test "a LightBurn file page opens on its drawing without a click" do
+    visit file_path(@nested_id)
+
+    assert_selector ".measure-view--ready"
+    assert_selector ".measure-stage .measure-contour", count: 2
+    assert_no_selector ".measure-fallback", visible: true
+    assert_no_selector ".measure-launch button", visible: true
+    assert_no_console_errors
+  end
+
+  # A PHOTO ENGRAVING KEEPS ITS PICTURE ON ARRIVAL. Its bitmap draws as a dashed box, so opening the
+  # drawing would put a worse picture where a better one was. A click still opens it — the box's
+  # size is what Measure is for.
+  #
+  # THE WAIT IS FOR THE ARRIVAL'S LOAD TO FINISH, which nothing on the page shows when it keeps the
+  # poster: the geometry poll has been made, the shared fetch has settled, and the status line is
+  # empty again ("Loading geometry…" until then). Only then does "not --ready" mean "chose not to".
+  # MUTATION (§15): open() without its `onlyBitmaps` return draws the box, and the wait reds on a
+  # status line that reads "1 shapes · click one to measure" instead of nothing.
+  test "a page of nothing but a bitmap stays on its picture until Measure is clicked" do
+    File.write(@root.join(PHOTO), PHOTO_XML)
+    Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
+    id = @user.nodes.find_by!(storage_path: PHOTO).node_id
+    render_geometry!(id, PHOTO)
+
+    visit file_path(id)
+    wait_until(message: "the arrival's load never finished") do
+      page.evaluate_script(<<~JS)
+        (() => {
+          const el = document.querySelector(".measure-view")
+          const c = window.Stimulus && window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+          const polled = performance.getEntriesByType("resource").some((e) => e.name.includes(#{"/files/#{id}/geometry".to_json}))
+          return !!c && polled && c.pending == null && document.querySelector(".measure-dims").textContent === ""
+        })()
+      JS
+    end
+    assert_no_selector ".measure-view--ready"
+    assert_selector ".measure-fallback"
+
+    click_on "Measure"
+    assert_selector ".measure-view--ready"
+    assert_selector ".measure-stage .measure-bitmap", count: 1
+    assert_no_console_errors
+  end
+
+  # NOT FROM A TURBO PREVIEW. A Turbo visit to a page it has cached paints the cached copy first and
+  # connects a controller in it, then swaps in the real page, which connects another. Opening from
+  # the copy would poll and download for an element about to be thrown away, so the count of
+  # geometry polls is what tells the two apart: one for the real page, none for the preview.
+  # MUTATION (§15): dropping connect()'s `data-turbo-preview` check reds the count, 2 for 1.
+  test "a Turbo visit back to a cached file page loads its drawing once" do
+    visit file_path(@nested_id)
+    assert_selector ".measure-view--ready"
+    page.execute_script("performance.setResourceTimingBufferSize(2000)")
+    page.execute_script("Turbo.visit(#{trash_index_path.to_json})")
+    assert_current_path trash_index_path
+    before = geometry_polls(@nested_id)
+
+    page.execute_script("Turbo.visit(#{file_path(@nested_id).to_json})")
+    assert_current_path file_path(@nested_id)
+    wait_until(message: "the real page never drew") do
+      page.evaluate_script(<<~JS)
+        (() => {
+          const el = document.querySelector(".measure-view")
+          const c = el && window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+          return !document.documentElement.hasAttribute("data-turbo-preview") && !!(c && c.svg && c.svg.isConnected)
+        })()
+      JS
+    end
+
+    assert_equal before + 1, geometry_polls(@nested_id), "the Turbo preview opened the drawing too"
+    assert_no_console_errors
   end
 
   test "clicking a square contour reports its bounding box in mm" do
@@ -223,7 +308,6 @@ class LbrnMeasureTest < ApplicationSystemTestCase
   # the traversal handed both of them.
   test "an Ellipse draws as a real circle rather than a polygon" do
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
 
     assert_selector ".measure-stage circle.measure-contour"
@@ -239,7 +323,6 @@ class LbrnMeasureTest < ApplicationSystemTestCase
   # when the measurement highlight and the print set merged into one red state.
   test "a curve contour is clickable and still recolours on selection" do
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
 
     find(".measure-stage circle.measure-contour").click
@@ -282,9 +365,16 @@ class LbrnMeasureTest < ApplicationSystemTestCase
       assert_equal "ready", preview.reload.status, "the geometry payload must be ready to measure"
     end
 
+    # Requests the page has made to the geometry endpoint for this node, from the resource timeline,
+    # which a Turbo visit does not reset.
+    def geometry_polls(node_id)
+      page.evaluate_script(<<~JS)
+        performance.getEntriesByType("resource").filter((e) => e.name.includes(#{"/files/#{node_id}/geometry".to_json})).length
+      JS
+    end
+
     def open_measure_view(node_id = @node_id)
       visit file_path(node_id)
-      click_on "Measure"
       # The --ready class is what reveals the stage and hides the poster; without waiting for it the
       # clicks below race the fetch and land on a display:none SVG.
       assert_selector ".measure-view--ready"

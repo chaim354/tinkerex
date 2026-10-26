@@ -161,16 +161,16 @@ class MeasureFormatsTest < ApplicationSystemTestCase
     assert_equal "rgb(0, 0, 255)", hole.style("stroke")["stroke"], "layer Engrave is ACI 5 (blue)"
   end
 
-  # AN SVG'S POSTER IS THE FILE ITSELF, and the Measure view still supersedes it on click. This is
-  # the one measurable format the browser can display raw, so it is the one place the poster is
-  # not a server-rendered thumbnail.
-  test "an svg posters itself and still opens the measure view" do
+  # AN SVG'S POSTER IS THE FILE ITSELF, and the Measure view supersedes it on arrival. This is the
+  # one measurable format the browser can display raw, so it is the one place the poster is not a
+  # server-rendered thumbnail — and ✕ Image is the way back to it.
+  test "an svg posters itself and opens on its drawing" do
     visit file_path(@nodes["plate.svg"])
 
-    assert_selector ".measure-fallback img"
-    click_on "Measure"
     assert_selector ".measure-view--ready"
     assert_no_selector ".measure-fallback img", visible: true
+    click_on "✕ Image"
+    assert_selector ".measure-fallback img[src*='plate.svg'], .measure-fallback img[src*='/blob']"
   end
 
   # THE HONESTY BACKSTOP, DRIVEN THROUGH A BROWSER BECAUSE NOTHING ELSE CAN SEE IT. The payload
@@ -202,7 +202,6 @@ class MeasureFormatsTest < ApplicationSystemTestCase
   # not wait for --ready.
   test "a dxf of nothing but unreadable entities says so instead of blaming the file" do
     visit file_path(@nodes.fetch("only-ellipses.dxf"))
-    click_on "Measure"
 
     assert_selector ".measure-dims",
                     exact_text: "No measurable geometry in this file · 2 ELLIPSE not readable"
@@ -253,7 +252,6 @@ class MeasureFormatsTest < ApplicationSystemTestCase
 
     def open_measure_view(fixture)
       visit file_path(@nodes.fetch(fixture))
-      click_on "Measure"
       # The --ready class is what reveals the stage and hides the poster; without waiting for it
       # the clicks below race the fetch and land on a display:none SVG.
       assert_selector ".measure-view--ready"

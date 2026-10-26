@@ -311,7 +311,10 @@ rule 5), a photo's the page's; **`touch-action: none` on `.image-zoom-stage svg`
 and **connect rests the element** — a Back with the overlay open leaves Turbo a clone whose dialog
 carries `open`. A broken poster does not open: `decode()` says so, where a 0 x 0 natural size
 cannot (the spec gives a viewBox-only SVG none either). The pictures are what the page already
-loaded, so a server render is its 512 px thumbnail enlarged, not a sharper one.
+loaded, so a server render is its 512 px thumbnail enlarged, not a sharper one. **The Measure
+poster is on screen far less since the same day**: the drawing opens on arrival and replaces it,
+so it shows only while the payload loads, after ✕ Image, on a failure, and for a page of nothing
+but bitmaps (measure-view.md).
 `test/system/image_zoom_test.rb` drives real wheel and drag input and the visitor's page.
 
 **A LAYER TOGGLE RE-COMPOSES FROM THE ONE `renderLayers` RESULT AND NEVER RE-FETCHES.**
@@ -655,7 +658,8 @@ addon-shared `.model-viewer-stage > div` and was left out of F-S22-1. A test tha
 **THE RESTORE IS PINNED FOR ALL THREE LAUNCHABLE VIEWERS** (the board, this one and the Measure view)
 by one helper, `WebHelpers#back_through_turbo_cache`. It proves the page came out of Turbo's cache
 before anything is asserted about it, because a Back that re-fetched the page would pass every
-"rests at the poster" assertion against a page that was never open.
+"rests at the poster" assertion against a page that was never open. The Measure view then opens a
+fresh drawing on its own, so its test holds the geometry poll to see the rest at all.
 
 **BOTH CODE VIEWERS REST TOO (2026-10-21).** `codeview_controller.js` and `editor_controller.js` each
 remove their fallback `<pre>` in `mount` once CodeMirror is up, so a snapshot Turbo restores has no

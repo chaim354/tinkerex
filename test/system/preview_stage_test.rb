@@ -74,7 +74,6 @@ class PreviewStageTest < ApplicationSystemTestCase
     %w[light dark].each do |theme|
       with_theme(theme) do
         visit file_path(node_id)
-        click_on "Measure"
         assert_selector ".measure-view--ready"
         assert_equal CARD[theme],
                      page.evaluate_script("getComputedStyle(document.querySelector('.measure-stage')).backgroundColor"),

@@ -2,9 +2,10 @@
 <%#
   The interactive Measure view — .lbrn/.lbrn2, .mage, .dxf, .svg. See measure_controller.js.
 
-  Mirrors the 3D viewer's lazy pattern: nothing is fetched until the user clicks Measure, which
-  matters because the payload reaches 281 KB gzipped on the densest real files and most pages are
-  never measured.
+  OPENS ITSELF ON ARRIVAL (2026-10-25). It used to follow the 3D viewer's lazy pattern, fetching
+  nothing until Measure was clicked. The poster below is what the page shows while the payload
+  loads, what ✕ Image returns to, and what stays when the drawing cannot be built or would show
+  less than the picture (a page of nothing but bitmaps). See measure_controller.js#open.
 
   ONE PARTIAL FOR ALL FOUR FORMATS, with only the POSTER differing (below). The controller is
   format-agnostic — it reads a wire contract, not a file type — so a per-format partial would be

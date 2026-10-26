@@ -71,7 +71,6 @@ class MeasureUnitsTest < ApplicationSystemTestCase
     choose_unit "in"
 
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready"
 
     assert_unit_pressed "in"
@@ -87,7 +86,6 @@ class MeasureUnitsTest < ApplicationSystemTestCase
     page.execute_script("localStorage.setItem('measure.unit', 'constructor')")
     # AGAIN, because the unit is read on connect — the visit above connected before the write.
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready"
 
     assert_unit_pressed "mm"
@@ -156,7 +154,6 @@ class MeasureUnitsTest < ApplicationSystemTestCase
     # this says so where it matters instead of relying on it silently.
     def open_measure_view
       visit file_path(@sample_id)
-      click_on "Measure"
       assert_selector ".measure-view--ready"
       assert_unit_pressed "mm"
     end
