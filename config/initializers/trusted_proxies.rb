@@ -29,7 +29,57 @@
 # this setting when the stack is built.
 require "ipaddr"
 
+# CLOUDFLARE_ONLY: AN ORIGIN BEHIND CLOUDFLARE ANSWERS NOTHING THAT DID NOT COME THROUGH IT
+# (2026-10-26, before the repos went public). The OVH box answered tinkerex.com straight at its own
+# address, so Cloudflare's DDoS and firewall shield was one `--resolve` away, and the address is in
+# config/deploy.ovh.yml (and, since the mail host on that box is DNS-only, in public DNS too).
+#
+# HERE AND NOT IN THE HOST FIREWALL, because the box is shared: kamal-proxy serves four other sites
+# on the same 80/443, and mail.charlesjschwartz.com is not behind Cloudflare at all (its clients and
+# its Let's Encrypt renewals arrive directly). A port rule cannot tell tinkerex's traffic from
+# theirs; this can, and it binds only the app that sets it.
+#
+# THE PEER IS THE RIGHT-MOST X-Forwarded-For ENTRY, for the reason the trusted-proxy note above
+# gives: kamal-proxy appends the TCP peer it accepted, which no client can forge, and Cloudflare is
+# that peer for everything it forwards. Anything else in the chain is the client's to write. A
+# request with NO chain did not come through kamal-proxy at all (its own health check, a
+# `kamal app exec curl`), since the container publishes no port, so it passes.
+#
+# A REFUSAL IS A 403 WITH NOTHING OF THE APP IN IT, ahead of every other middleware, so a direct
+# visitor learns no session, redirect or page. Cloudflare adding a range means refreshing the pin
+# (`bin/rails trusted_proxies:refresh`); until then its new edges would be refused, loudly.
+# Pinned in test/lib/cloudflare_only_test.rb; set per destination, and on OVH alone
+# (test/deploy_hygiene_test.rb), because behind any other proxy every request is refused.
+class CloudflareOnly
+  REFUSAL = [ 403, { "content-type" => "text/plain", "cache-control" => "no-store" }, [ "Forbidden\n" ] ].freeze
+
+  def initialize(app, ranges)
+    @app = app
+    @ranges = ranges
+  end
+
+  def call(env)
+    peer = env["HTTP_X_FORWARDED_FOR"].to_s.split(",").last&.strip
+    return @app.call(env) if peer.blank? || cloudflare?(peer)
+
+    status, headers, body = REFUSAL
+    [ status, headers.dup, body ]
+  end
+
+  private
+    # `native` turns an IPv4-mapped IPv6 peer (::ffff:104.16.0.1) back into IPv4, which is the family
+    # the IPv4 ranges answer for; IPAddr#include? across families is always false.
+    def cloudflare?(address)
+      ip = IPAddr.new(address).native
+      @ranges.any? { |range| range.family == ip.family && range.include?(ip) }
+    rescue IPAddr::Error
+      false
+    end
+end
+
 pinned = YAML.safe_load_file(Rails.root.join("config/cloudflare_ips.yml"))
 cloudflare = (pinned.fetch("ipv4") + pinned.fetch("ipv6")).map { |range| IPAddr.new(range) }
 Rails.application.config.action_dispatch.trusted_proxies =
   ActionDispatch::RemoteIp::TRUSTED_PROXIES + cloudflare
+Rails.application.config.x.cloudflare_ranges = cloudflare
+Rails.application.config.middleware.insert_before 0, CloudflareOnly, cloudflare if ENV["CLOUDFLARE_ONLY"].present?
