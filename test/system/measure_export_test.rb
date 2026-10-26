@@ -185,7 +185,6 @@ class MeasureExportTest < ApplicationSystemTestCase
   # so the circle is on top and a click at its own centre selects it rather than the Rect.
   test "the SVG button exports exactly the marked parts" do
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
 
     page.execute_script(<<~JS)
@@ -230,7 +229,6 @@ class MeasureExportTest < ApplicationSystemTestCase
   # when the target changes is the accessible name.
   test "the button's accessible name names the set it will export, and its text does not" do
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
 
     assert_selector "[data-measure-target='svgButton'][aria-label='Download all as SVG']"
@@ -245,7 +243,6 @@ class MeasureExportTest < ApplicationSystemTestCase
 
   test "the exported blob is typed as an SVG image" do
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
 
     page.execute_script(<<~JS)
@@ -277,7 +274,6 @@ class MeasureExportTest < ApplicationSystemTestCase
     id = second_copy_in!("laser")
 
     visit file_path(id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
     find(".measure-stage circle.measure-contour").click
     assert_text "1 part"
@@ -310,7 +306,6 @@ class MeasureExportTest < ApplicationSystemTestCase
     Library::Scanner.call(@user, root: @root.to_s, max_delete_pct: 100)
 
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
 
     find("[data-measure-target='saveSvgButton']").click
@@ -324,7 +319,6 @@ class MeasureExportTest < ApplicationSystemTestCase
   # which is the trap `renderSheet`'s own `xmlns` attribute sets for a serialiser.
   test "Save sheet writes a paper-sized, well-formed sheet" do
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
     page.execute_script("document.querySelector('.measure-paper').value = 'A4'")
 
@@ -355,7 +349,6 @@ class MeasureExportTest < ApplicationSystemTestCase
   # page the link POST has already answered. Asserting the bare filename would race it.
   test "a saved export records where it came from, and both pages say so" do
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
     find(".measure-stage circle.measure-contour").click
     assert_text "1 part"
@@ -379,7 +372,6 @@ class MeasureExportTest < ApplicationSystemTestCase
   # describe a set its Download twin does not act on.
   test "the save buttons' accessible names track the same target the downloads do" do
     visit file_path(@sample_id)
-    click_on "Measure"
     assert_selector ".measure-view--ready", wait: 10
 
     assert_selector "[data-measure-target='saveSvgButton'][aria-label='Save all as SVG in the library']"

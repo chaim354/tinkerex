@@ -177,14 +177,15 @@ module FilePreview
 
   def preview_kind(name)
     ext = File.extname(name).downcase.delete(".")
-    # BEFORE the :image branch, which .svg would otherwise take. An SVG is still shown as an image
-    # at rest — the Measure branch uses it as its own poster (see files/viewers/_measure.html.erb)
-    # — so this reorders which branch OWNS the page, not what the page displays when nothing is
-    # clicked.
+    # BEFORE the :image branch, which .svg would otherwise take. An SVG is still its own poster —
+    # the Measure branch shows it as an image, sized to fill the stage, until Measure is clicked
+    # (see files/viewers/_measure.html.erb).
     #
-    # Measure SUPERSEDES the static preview the way :model3d does for meshes, and for the same
-    # reason: it is a button, not a replacement. The resting picture stays whatever the format's
-    # own render is (LightBurn's and MillMage's are in colour; ours are outlines).
+    # Measure SUPERSEDES the static preview, and since 2026-10-25 it REPLACES a render's picture on
+    # arrival rather than waiting behind a button: the drawing is a vector that fills the stage and
+    # zooms, where the format's own render (LightBurn's and MillMage's in colour, a 512 px server
+    # render for DXF) is a raster of fixed size. The picture stays one click away, as ✕ Image. An
+    # SVG's picture is already a vector and carries the text the drawing omits, so it stays.
     return :measure if MEASURABLE_EXTS.include?(ext)
 
     # THE BROWSER'S LIST, NOT THE ROLE (tinkerex#285): a `.heic` is an image by role and falls

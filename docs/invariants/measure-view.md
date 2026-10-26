@@ -555,6 +555,40 @@
   marks and keeps the drawing, while `rest()` takes the drawing down with them. Routing a Reset
   through `rest()` would wipe the stage.
 
+- **THE DRAWING OPENS ON ARRIVAL, AND THE POSTER IS WHAT SHOWS WHEN IT DOES NOT (2026-10-25, at the
+  user's request).** Until then nothing was fetched before Measure was clicked, so a LightBurn page
+  rested on LightBurn's thumbnail of the whole bed with the design small inside it, and a DXF on a
+  512 px server render; neither filled the stage, and the zoom overlay could only enlarge them.
+  `connect()` now rests and then, for every format but SVG (below), calls `open({ arriving: true })`,
+  the same load the button runs, so
+  a click during the arrival's download joins it (one fetch, one draw, by the two rules above).
+  The price is the payload on every visit to one of these pages, up to 1.3 MB gzipped on the
+  densest real file. Four things not to undo, each pinned in `lbrn_measure_test.rb` or
+  `measure_print_test.rb` and mutation-checked:
+  - **The poster stays while the payload loads, on any failure, and on a page of nothing but
+    bitmaps.** A photo engraving draws as a dashed box where its poster shows the photo, so the
+    arrival leaves it there (`onlyBitmaps`, on the page `draw` would show). Measure still opens it.
+  - **No arrival from a Turbo preview.** A Turbo visit to a cached page connects a controller in
+    the cached copy before the real page arrives; opening there polls and downloads for an
+    element about to be discarded (2 geometry polls for 1, measured).
+  - **`rest()` on connect still matters, though a drawing that lands hides its absence.** The
+    arrival's draw replaces a Turbo-restored stage whether or not it was rested, so the Back test
+    holds the geometry poll to see the restored page in between — the state a page whose drawing
+    is still generating, failed, or is all bitmaps stays in.
+  - **The paper is read on the first draw, which now follows the visit at once.** A test that
+    sets or clears `measure.paper` does it before `visit`, not after; `populatePaper` never
+    re-reads it on a later draw.
+
+  **AN SVG DOES NOT OPEN ON ARRIVAL, AND RESTS ON THE FILE ITSELF FILLING THE STAGE (2026-10-26, at
+  the user's request).** `SvgGeometry` draws no `<text>` and no `<use>`, and 20 of the demo
+  library's 25 SVGs label their parts with text, so the drawing would have dropped the labels from
+  the default view; the file is already a vector, and the drawing's only advantage over it was
+  size. The partial reads `own_poster` ONCE (the `.svg` test the poster branch already made) and
+  passes `openOnArrival: false`, so the controller still never names a file type. The poster sits
+  in `.measure-own-poster`, which gives its card `.measure-stage`'s box (`min(100%, 78vh)` square)
+  and the image `object-fit: contain`; the zoom overlay letterboxes into that same box.
+  `measure_formats_test.rb` asserts both halves in one look and is mutation-checked on each.
+
 - **`pick` COMPOSES `contourLabel` WITH `selectionStatus()`, WHICH IS WHAT SAVED THE ⌥ HINT.**
   `"part of a 2-contour object (⌥ for 30 × 10 mm)"` is the ONLY place the app says alt-click
   exists, and until 2026-09-03 it was shown only OUTSIDE select mode — i.e. exactly where marking

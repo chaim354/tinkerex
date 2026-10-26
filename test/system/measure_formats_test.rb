@@ -161,13 +161,45 @@ class MeasureFormatsTest < ApplicationSystemTestCase
     assert_equal "rgb(0, 0, 255)", hole.style("stroke")["stroke"], "layer Engrave is ACI 5 (blue)"
   end
 
-  # AN SVG'S POSTER IS THE FILE ITSELF, and the Measure view still supersedes it on click. This is
+  # AN SVG'S POSTER IS THE FILE ITSELF, AND IT STAYS (2026-10-26, at the user's request). This is
   # the one measurable format the browser can display raw, so it is the one place the poster is
-  # not a server-rendered thumbnail.
-  test "an svg posters itself and still opens the measure view" do
+  # not a server-rendered thumbnail — and the one the drawing does not replace on arrival, because
+  # the file carries what the drawing cannot (text). Every other format opens on its drawing.
+  #
+  # NOTHING IS LOADED, AND ONE LOOK SAYS SO. open() sets `pending` and the "Loading geometry…" line
+  # in the same task as connect(), and only a finished draw clears the one and sets --ready, so
+  # once the controller exists there is no instant at which an opening view reads as all three
+  # absent.
+  #
+  # THE FILE FILLS THE DRAWING'S FOOTPRINT: square, and as wide as the stage would be. plate.svg
+  # declares 100 x 60 mm, which at that size lays out at 378 x 227 px (measured, rules dropped).
+  # MUTATIONS (§15): the partial's `openOnArrival` written as "true" for every format reds the
+  # one-look assertion; dropping `.measure-own-poster`'s rules reds the square.
+  test "an svg rests on the file itself, filling the stage, and Measure opens its drawing" do
     visit file_path(@nodes["plate.svg"])
+    wait_until(message: "the measure controller never connected") do
+      page.evaluate_script(<<~JS)
+        !!(window.Stimulus && window.Stimulus.getControllerForElementAndIdentifier(
+          document.querySelector(".measure-view"), "measure"))
+      JS
+    end
 
-    assert_selector ".measure-fallback img"
+    state = page.evaluate_script(<<~JS)
+      (() => {
+        const el = document.querySelector(".measure-view")
+        const c = window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+        return [c.pending == null, document.querySelector(".measure-dims").textContent,
+                el.classList.contains("measure-view--ready")]
+      })()
+    JS
+    assert_equal [ true, "", false ], state, "the svg page started loading its drawing"
+
+    poster = find(".measure-own-poster .render-card img.preview-image")
+    assert_includes poster[:src], "/blob"
+    w, h = page.evaluate_script("(() => { const r = arguments[0].getBoundingClientRect(); return [r.width, r.height] })()", poster)
+    assert_in_delta w, h, 1, "the poster must fill a square, not take the file's 5:3 size"
+    assert_operator w, :>, 400, "the poster must be scaled up to the stage, not left at its declared 378 px"
+
     click_on "Measure"
     assert_selector ".measure-view--ready"
     assert_no_selector ".measure-fallback img", visible: true
@@ -202,7 +234,6 @@ class MeasureFormatsTest < ApplicationSystemTestCase
   # not wait for --ready.
   test "a dxf of nothing but unreadable entities says so instead of blaming the file" do
     visit file_path(@nodes.fetch("only-ellipses.dxf"))
-    click_on "Measure"
 
     assert_selector ".measure-dims",
                     exact_text: "No measurable geometry in this file · 2 ELLIPSE not readable"
@@ -253,7 +284,9 @@ class MeasureFormatsTest < ApplicationSystemTestCase
 
     def open_measure_view(fixture)
       visit file_path(@nodes.fetch(fixture))
-      click_on "Measure"
+      # AN SVG RESTS ON THE FILE ITSELF and opens its drawing on a click; every other format here
+      # opens it on arrival (2026-10-25/26).
+      click_on "Measure" if fixture.end_with?(".svg")
       # The --ready class is what reveals the stage and hides the poster; without waiting for it
       # the clicks below race the fetch and land on a display:none SVG.
       assert_selector ".measure-view--ready"

@@ -2,9 +2,20 @@
 <%#
   The interactive Measure view — .lbrn/.lbrn2, .mage, .dxf, .svg. See measure_controller.js.
 
-  Mirrors the 3D viewer's lazy pattern: nothing is fetched until the user clicks Measure, which
-  matters because the payload reaches 281 KB gzipped on the densest real files and most pages are
-  never measured.
+  OPENS ITSELF ON ARRIVAL WHEN ITS POSTER IS A RENDER (2026-10-25). It used to follow the 3D
+  viewer's lazy pattern, fetching nothing until Measure was clicked. A LightBurn, MillMage or DXF
+  poster is a raster of fixed size, so the drawing replaces it: the poster is then what the page
+  shows while the payload loads, what ✕ Image returns to, and what stays when the drawing cannot
+  be built or would show less than the picture (a page of nothing but bitmaps). See
+  measure_controller.js#open.
+
+  AN SVG IS ITS OWN POSTER AND KEEPS IT (2026-10-26, at the user's request): the file itself is
+  already a vector, and it carries what the drawing cannot (SvgGeometry draws no <text> and no
+  <use>, and 20 of the demo library's 25 SVGs label their parts with text). It rests in the
+  drawing's own footprint instead (`.measure-own-poster`, pages/preview.css), so it fills the stage
+  the way the drawing does, and Measure is a click away. `own_poster` is the ONE reading of that,
+  shared by the poster branch below and the controller's `openOnArrival` value, so the controller
+  never learns a file type.
 
   ONE PARTIAL FOR ALL FOUR FORMATS, with only the POSTER differing (below). The controller is
   format-agnostic — it reads a wire contract, not a file type — so a per-format partial would be
@@ -28,10 +39,12 @@
   `hasSaveSvgButtonTarget` for exactly this branch — the guard is real here, unlike the ones its
   own comment refuses for the always-rendered controls beside them.
 %>
+<% own_poster = File.extname(name).downcase == ".svg" %>
 <div class="measure-view"
      data-controller="measure"
      data-measure-url-value="<%= geometry_url %>"
      data-measure-name-value="<%= name %>"
+     data-measure-open-on-arrival-value="<%= !own_poster %>"
      <%#
        SAVE TO LIBRARY (stage 4, S4-3; story 2.12). Everything Measure produced was a browser
        download and nothing landed on the share, so an exported outline lived in ~/Downloads while
@@ -158,8 +171,8 @@
   </div>
   <div class="measure-fallback" data-measure-target="fallback">
     <%#
-      THE POSTER: what the page shows at rest, before Measure is clicked, and what ✕ Image
-      returns to.
+      THE POSTER: what the page shows at rest (an SVG's until Measure is clicked, a render's while
+      its drawing loads), and what ✕ Image returns to.
 
       AN SVG IS ITS OWN POSTER — served from the byte route into an img tag, exactly as the
       :image branch does. That is NOT a relaxation of the rule that this app never inlines user
@@ -173,8 +186,10 @@
       local `thumbnail_url`, never `url_for(thumbnail.asset)` (hardening, 2026-09-08; tinkerex#278):
       a blob URL never expires, so a visitor's poster outlived the project's publication.
     %>
-    <% if File.extname(name).downcase == ".svg" %>
-      <%= render "files/viewers/zoomable", src: blob_url, alt: name, name: name, card: true %>
+    <% if own_poster %>
+      <div class="measure-own-poster">
+        <%= render "files/viewers/zoomable", src: blob_url, alt: name, name: name, card: true %>
+      </div>
     <% elsif thumbnail&.showable? %>
       <%= render "files/viewers/zoomable", src: thumbnail_url, alt: "Preview of #{name}", name: name, card: true %>
     <% elsif thumbnail&.in_flight? %>

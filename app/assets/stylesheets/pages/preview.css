@@ -290,6 +290,14 @@
      one centring is how one of them stops being the one that works. files_layout_test.rb measures
      it. The bare `.preview-image` is still never restyled (shared with the addon bundles). */
   .measure-fallback .render-card, .model-viewer-fallback .render-card { margin-bottom: var(--space-3); }
+  /* AN SVG RESTS ON THE FILE ITSELF, IN THE DRAWING'S FOOTPRINT (2026-10-26). Left to `.render-card
+     img`, an SVG took its own declared size: a sheet declared in mm ran off the bottom of the
+     screen, and a 50 mm part sat small in a wide card. This is `.measure-stage`'s box, square and
+     never taller than the viewport, and `contain` scales the file to fit it, which a vector does
+     without going soft. The zoom overlay reads this laid-out box and its <image> letterboxes the
+     same way, so the picture keeps its shape when it opens big. */
+  .measure-own-poster .render-card { width: min(100%, 78vh); aspect-ratio: 1; margin-inline: auto; }
+  .measure-own-poster .render-card img { width: 100%; height: 100%; object-fit: contain; }
   /* The controller adds --ready on a successful render: reveal the outline stage, hide the poster. */
   .measure-view--ready .measure-stage { display: block; }
   .measure-view--ready .measure-fallback { display: none; }

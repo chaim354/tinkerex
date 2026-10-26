@@ -2838,6 +2838,10 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # relaunch recipe. Only the payload's own URL is held, so the geometry poll answers at once and
   # the window is the download alone. `draw` is counted on the live controller.
   #
+  # IT GOES IN AFTER ✕ IMAGE, because the view opens itself on arrival (2026-10-25): the drawing the
+  # page opened with is downloaded and drawn before the stub exists, so both counts are of the
+  # relaunch alone.
+  #
   # THE MARK IS MADE BEFORE A LATE DRAW COULD LAND, AND THE POLL AFTER IT IS THE PART TO KEEP. A
   # superseded draw replaces the SVG without an event of its own, so the loop gives one every
   # chance to arrive (it returns the moment a second draw is counted) before the selection is
@@ -2854,14 +2858,8 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # download count (2 for 1); dropping load()'s `gen !== this.generation` return reds the draw count
   # (2 for 1).
   test "a second Measure click while the payload loads joins the first fetch and draws once" do
-    visit file_path(@nested_id)
-    page.execute_script("localStorage.removeItem('measure.paper')")
-    wait_until(message: "the measure controller never connected") do
-      page.evaluate_script(<<~JS)
-        !!(window.Stimulus && window.Stimulus.getControllerForElementAndIdentifier(
-          document.querySelector(".measure-view"), "measure"))
-      JS
-    end
+    open_measure_view(@nested_id)
+    click_on "✕ Image"
     page.execute_script(<<~JS)
       window.__payloadFetches = 0
       window.__draws = 0
@@ -2897,25 +2895,41 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # BACK TO A FILE PAGE WHOSE MEASURE VIEW WAS OPEN RESTS AT THE POSTER. Turbo restores its snapshot
-  # of the page, which carries `--ready`, the drawn SVG, the `--marked` classes, "Print 1 part" and
+  # BACK TO A FILE PAGE WHOSE MEASURE VIEW WAS OPEN DRAWS IT AFRESH. Turbo restores its snapshot of
+  # the page, which carries `--ready`, the drawn SVG, the `--marked` classes, "Print 1 part" and
   # the readout, and connects a fresh controller that drew none of it. Before the fix that
   # controller had no shapes, no SVG and no pan handle. Contours, pan and zoom were dead, Print,
   # Download and Save did nothing while the label promised a part, and Reset threw a TypeError out
   # of restingStatus(). `connect()` now rests the element, which is gerber_controller.js's rule
-  # (docs/invariants/files-preview.md).
+  # (docs/invariants/files-preview.md), and since 2026-10-25 opens a drawing of its own, the way any
+  # arrival does — so what comes back is a live drawing with nothing marked.
   #
-  # THE RELAUNCH AND RESET ARE THE SECOND HALF. They show the poster is a working one: Measure draws
-  # again, and Reset, the control that used to throw, runs clean under the console guard.
+  # THE RETURN'S GEOMETRY POLL IS HELD, AND THAT IS WHAT KEEPS THIS A TEST OF THE REST. A drawing
+  # that lands replaces the snapshot's stage whether or not connect() rested it, so without the hold
+  # dropping `this.rest()` stays green (measured). What the rest is for is the time no drawing
+  # comes — still generating, a failure, a page of bitmaps — and the hold is that time.
+  #
+  # THE CONTROLLER'S OWN SVG IS THE WAIT AFTER THE RELEASE, NOT `--ready`, which the snapshot also
+  # carried. `c.svg` is set by draw() alone. Reset, the control that used to throw, then runs clean
+  # under the console guard.
   #
   # RED BEFORE THE FIX, on the `--ready` assertion: the snapshot's open view survived the connect.
   # MUTATION (§15; run for real, output in the PR, then reverted): `connect()` without its
   # `this.rest()` call (the selection still initialised there, as before the fix) reds it on the
   # same assertion.
-  test "Back to a file page whose Measure view was open rests at the poster" do
+  test "Back to a file page whose Measure view was open rests, then draws it afresh" do
     open_measure_view(@nested_id)
     click_plate
     assert_selector "[data-measure-target='printButton']", exact_text: "Print 1 part"
+    # The document survives a Turbo visit and a Back, and so does this wrapper.
+    page.execute_script(<<~JS)
+      const gate = new Promise((resolve) => { window.__release = resolve })
+      const real = window.fetch
+      window.fetch = (...args) => {
+        const url = String(args[0] && args[0].url ? args[0].url : args[0])
+        return url.includes("/geometry") ? gate.then(() => real(...args)) : real(...args)
+      }
+    JS
 
     back_through_turbo_cache
 
@@ -2923,10 +2937,14 @@ class MeasurePrintTest < ApplicationSystemTestCase
     assert_no_selector ".measure-stage svg", visible: :all
     assert_selector ".measure-launch button", exact_text: "Measure"
     assert_selector "[data-measure-target='printButton']", exact_text: "Print all", visible: :all
-    assert_equal "", page.evaluate_script("document.querySelector('.measure-dims').textContent")
 
-    click_on "Measure"
+    page.execute_script("window.__release()")
+    wait_until(message: "the restored page never drew a drawing of its own") do
+      in_measure_controller("!!(c && c.svg && c.svg.isConnected)")
+    end
     assert_selector ".measure-view--ready"
+    assert_no_selector ".measure-contour--marked", visible: :all
+    assert_selector "[data-measure-target='printButton']", exact_text: "Print all"
     click_on "Reset"
 
     assert_selector ".measure-dims", exact_text: "2 shapes · click one to measure"
@@ -3188,9 +3206,9 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # answers its FIRST option — A4, because that is where PAPERS starts — so a stale key from an
   # older build, or a hand-edited one, silently changes the paper instead of being ignored.
   test "a remembered paper this build no longer offers falls back to the default" do
-    visit file_path(@nested_id)
+    # BEFORE THE VISIT: the view draws on arrival, and the paper is read once, on the first draw.
     page.execute_script("localStorage.setItem('measure.paper', 'Foolscap')")
-    click_on "Measure"
+    visit file_path(@nested_id)
     assert_selector ".measure-view--ready"
 
     assert_equal "Letter", find("[data-measure-target='paper']").value
@@ -3224,8 +3242,13 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # what it costs is not nothing: buildSheets is handed null and the readout fills with "Cannot read
   # properties of null (reading 'length')", a raw TypeError presented to the user as the answer to
   # a button press.
-  test "printing before the geometry has loaded says nothing and spools nothing" do
-    visit file_path(@nested_id)
+  #
+  # ✕ IMAGE IS HOW THE TEST GETS THERE SINCE THE VIEW OPENS ON ARRIVAL (2026-10-25). It used to
+  # call print() straight after the visit, before anything was drawn, and the drawing now lands
+  # within moments of the visit. rest() leaves the identical state: nothing drawn, no shapes.
+  test "printing with nothing drawn says nothing and spools nothing" do
+    open_measure_view(@nested_id)
+    click_on "✕ Image"
     stub_print!
     page.execute_script(<<~JS)
       const el = document.querySelector(".measure-view")
@@ -3246,12 +3269,18 @@ class MeasurePrintTest < ApplicationSystemTestCase
   # draw() populates the select and reveals the button in the same breath. Without the fallback
   # `buildSheets` is handed `undefined` for its paper and dies in contentBox, so a deployment that
   # ever loses populatePaper loses Print with it instead of degrading to Letter.
+  #
+  # THE SELECT IS EMPTIED BY HAND since the view opens on arrival (2026-10-25): the arrival's draw
+  # populates it moments after the visit, and the paper list is never emptied again (populatePaper's
+  # `options.length` return), so no page state reaches an empty picker any more.
   test "an empty paper picker still prints, on the default paper" do
-    visit file_path(@nested_id)
+    open_measure_view(@nested_id)
+    click_on "✕ Image"
     stub_print!
     page.execute_script(<<~JS)
       const el = document.querySelector(".measure-view")
       const c = window.Stimulus.getControllerForElementAndIdentifier(el, "measure")
+      c.paperTarget.replaceChildren()
       c.allShapes = [{ b: [0, 0, 60, 40], k: 1, i: 0, o: 1,
                        p: [[0, 0], [60, 0], [60, 40], [0, 40], [0, 0]] }]
       c.print()
@@ -3280,14 +3309,16 @@ class MeasurePrintTest < ApplicationSystemTestCase
   private
 
     def open_measure_view(node_id, reset_paper: true)
-      visit file_path(node_id)
       # LOCALSTORAGE OUTLIVES A TEST, and the paper choice is deliberately persisted (Task 11).
       # Selenium reuses ONE Chrome for the whole file, so without the reset the paper test leaks
       # "A4" into every test that runs after it — and Rails randomizes test order, so it leaks
       # INTERMITTENTLY, failing a scale assertion that has nothing to do with paper. Same shape as
       # the browser log buffer application_system_test_case.rb drains for exactly this reason.
+      #
+      # BEFORE THE VISIT, because the view draws on arrival and reads the paper on its first draw.
+      # Setup's sign-in has already put the browser on this origin, whose storage this is.
       page.execute_script("localStorage.removeItem('measure.paper')") if reset_paper
-      click_on "Measure"
+      visit file_path(node_id)
       # --ready is what reveals the stage and hides the poster; without waiting for it the clicks
       # below race the fetch and land on a display:none SVG.
       assert_selector ".measure-view--ready"
