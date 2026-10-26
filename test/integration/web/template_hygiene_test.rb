@@ -554,6 +554,10 @@ module Web
         "project preview" => preview_project_path(@project),
         "project new" => new_project_path,
         "project edit" => edit_project_path(@project),
+        # 2026-10-26: the edit area's Publishing tab, the ONE page that reaches projects/publishing
+        # and (since the Publish panel left the project page) projects/_publish. @user has a handle,
+        # so the visibility form renders rather than the inline claim.
+        "project publishing" => publishing_project_path(@project),
         "project attachment new" => new_project_attachment_path(@project),
         # 2026-10-21: the Add-model picker. @model ("Bracket") is catalogued, so the results arm
         # renders, not the empty one.

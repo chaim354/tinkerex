@@ -53,19 +53,37 @@ module Web
       assert_select ".project-stats", text: /1 sheet\b/
     end
 
-    test "the head's actions are buttons, with Archive in the ⋯ menu" do
+    # ONE WAY INTO EDITING (2026-10-26, the edit area; spec 2026-10-26-project-edit-area §2). The
+    # owner asked for every customisation "condensed to one button": the page is a view, and Edit —
+    # which opens the edit area's Details tab — is its one door. Every door it replaced is asserted
+    # ABSENT BY ITS TARGET, not by its old class, so a control that comes back under a new name is
+    # still caught: the layout editor, the Publishing tab, the old #publish anchor, the ⋯ menu, the
+    # Publish panel, and Archive's DELETE form. The published project carries the most controls
+    # (badge, Public page link), so it is the case to assert over.
+    test "the project page has exactly one way into editing" do
+      @user.update!(handle: "chaim")
+      @project.update!(visibility: "public")
+
       get project_path(@project)
-      assert_select ".head-actions a.btn[href=?]", edit_project_path(@project), text: "Edit"
-      assert_select ".head-actions details.project-menu form[action=?] button.menu-item.danger",
-                    project_path(@project), text: "Archive"
-      assert_select ".head-actions > form", 0, "no act is a head button any more: they live in the menu"
+
+      assert_select ".head-actions a.btn[href=?]", edit_project_path(@project), { count: 1, text: "Edit" }
+      # NOT a page-wide count of Edit: the Files panel's "Turn it on" hint (autofile off) links to
+      # the same Details tab — the same door, named where the setting matters, not a second one.
+      assert_select "a[href=?]", edit_layout_project_path(@project), 0
+      assert_select "a[href=?]", publishing_project_path(@project), 0
+      assert_select "a[href='#publish'], #publish, section.publish-panel, details.project-menu", 0
+      assert_select "form[action=?]", project_path(@project), 0, "Archive moved to the Details tab"
+      assert_select "form[action=?]", unarchive_project_path(@project), 0
+      assert_select ".head-actions > form", 0
+      assert_select ".project-head a.public-link", 1, "state and the way out stay: the Public page link"
     end
 
     # THE HUB'S HEAD (structural redesign §6, slice 6): the cover and the name in one head, a PROJECT
-    # eyebrow ABOVE the h1 and never inside it (projects_flow_test.rb pins the h1's exact text), and a
-    # ⋯ menu opening on Publish settings. `.page-head` keeps its two slots; template_hygiene_test.rb
-    # is the guard for that, this is the guard for what the first slot holds.
-    test "the head carries the cover, the PROJECT eyebrow outside the h1, and a ⋯ menu" do
+    # eyebrow ABOVE the h1 and never inside it (projects_flow_test.rb pins the h1's exact text).
+    # `.page-head` keeps its two slots; template_hygiene_test.rb is the guard for that, this is the
+    # guard for what the first slot holds. (The ⋯ menu that sat in the second went behind Edit on
+    # 2026-10-26; the test above pins its absence.)
+    test "the head carries the cover and the PROJECT eyebrow outside the h1" do
       folder = Maker::ProjectFolderListing.new(@user, @project).folder_id
       @user.nodes.create!(node_id: "n-cover", name: "lamp.png", kind: "file", parent_node_id: folder,
                           size: 1, mtime: 1_000_000_000)
@@ -83,10 +101,6 @@ module Web
       eyebrow, h1 = css_select(".project-head .eyebrow, .project-head h1")
       assert_equal %w[span h1], [ eyebrow&.name, h1&.name ], "the eyebrow comes before the name"
       assert_select ".project-hero", 1, "the cover moved into the head; it is not drawn twice"
-      assert_select ".head-actions details.project-menu[data-controller=?]", "menu" do
-        assert_select "summary.btn.icon[aria-label=?]", "More actions"
-        assert_select ".menu-list > .menu-item:first-child[href=?]", "#publish", text: "Publish settings"
-      end
     end
 
     # THE FILES PANEL'S "RECENTLY CHANGED" ROW (structural redesign §6, slice 6). NINE files in nested
@@ -290,7 +304,7 @@ module Web
       css_select(".head-actions details.add-panel .menu-list a.menu-item").map { |a| [ a.text.strip, a["href"] ] }
     end
 
-    test "a fresh project shows Files and Publish, and offers the empty panels to add" do
+    test "a fresh project shows Files, and offers the empty panels to add" do
       fresh = @user.maker_projects.create!(name: "Blank")
 
       get project_path(fresh)
@@ -300,17 +314,17 @@ module Web
         assert_select "section.#{name}-panel", count: 0
       end
       assert_select "section.attachments-panel"
-      assert_select "section.publish-panel#publish"
       assert_select ".head-actions details.add-panel .menu-list a.menu-item[href=?]",
                     project_path(fresh, add: "tasks", anchor: "project-tasks"), text: "Tasks"
       # EVERY ABSENT PANEL, IN ON_DEMAND ORDER, EACH TO ITS OWN ?add= AND ITS OWN ANCHOR — the whole
       # list rather than one link, so a key the menu drops or an anchor it misspells is a failure here.
       assert_equal(ADD_MENU.map { |key, (label, anchor)| [ label, project_path(fresh, add: key, anchor:) ] },
                    add_menu_links)
-      # Between Customise page and the ⋯ menu, inside .head-actions: the head stays two slots.
+      # After Edit, inside .head-actions: the head stays two slots, and Edit stays first.
       actions = css_select(".page-head > .head-actions > *").map { |el| el["class"].to_s }
-      assert_operator actions.index { |c| c.include?("customise-link") }, :<, actions.index { |c| c.include?("add-panel") }
-      assert_operator actions.index { |c| c.include?("add-panel") }, :<, actions.index { |c| c.include?("project-menu") }
+      assert_equal 2, actions.size, actions.inspect
+      assert_includes actions.first, "edit-link"
+      assert_includes actions.last, "add-panel"
     end
 
     test "?add= opens one empty panel, quiet, with its composer, and nothing else" do
@@ -368,7 +382,7 @@ module Web
     test "?add= with an unknown key is ignored" do
       fresh = @user.maker_projects.create!(name: "Blank")
 
-      get project_path(fresh, add: "publish")
+      get project_path(fresh, add: "photos")
       assert_response :success
       assert_equal ADD_MENU.size, add_menu_links.size, "a key that is not on demand opens nothing and closes nothing"
       get "#{project_path(fresh)}?add[]=tasks"

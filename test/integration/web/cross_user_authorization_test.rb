@@ -78,6 +78,12 @@ module Web
       assert_unreadable edit_project_path(@project)
     end
 
+    # The edit area's other two tabs (2026-10-26): set_project scopes both, like Details.
+    test "cannot open another user's Publishing or Page layout tab" do
+      assert_unreadable publishing_project_path(@project)
+      assert_unreadable edit_layout_project_path(@project)
+    end
+
     test "cannot update another user's project" do
       patch project_path(@project), params: { project: { name: "Stolen" } }
       assert_not response.successful?

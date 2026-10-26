@@ -42,7 +42,8 @@ module Web
         assert_select "div.layout-bar form.layout-save[action=?] input[name=layout]", project_panels_path(@project)
         assert_select "div.project-panels.layout-editing div.panel-slot", order.size
         assert_select "div.panel-slot[data-key=tasks].panel-slot--hidden[data-hidden=true]", 1
-        assert_select "div.panel-slot[data-key=publish].panel-slot--pinned", 1
+        # NO PUBLISH SLOT SINCE 2026-10-26: it is the edit area's Publishing tab, not a panel.
+        assert_select "div.panel-slot[data-key=publish], .panel-slot--pinned", 0
         assert_select "div.panel-slot[data-key=?][data-width=full]", models_key, 1
         assert_select "div.panel-slot[data-key=tasks][data-width=half]", 1
         assert_select "aside.layout-drawer[hidden] textarea[data-layout-editor-target=yaml]", 1
@@ -137,7 +138,25 @@ module Web
       # cover render as the page's own prose here, not as a card with a picker in it.
       assert_select "div.page-intro", count: 0
       assert_select "template[data-layout-editor-target=blockTemplate]", count: 0
-      assert_select "a.customise-link[href=?]", edit_layout_project_path(@project), text: "Customise page"
+      # The editor is the edit area's Page layout tab since 2026-10-26, reached from Edit; the page
+      # itself links to it nowhere (project_page_test.rb pins the one door).
+      assert_select "a[href=?]", edit_layout_project_path(@project), 0
+    end
+
+    # THE EDITOR IS THE EDIT AREA'S THIRD TAB (2026-10-26; spec 2026-10-26-project-edit-area §3): the
+    # same head Details and Publishing wear, with Page layout current, IN PLACE OF the project head —
+    # no second h1, no ⋯ menu, no Edit button pointing at the area the maker is already in.
+    test "the edit page wears the edit area's head, with Page layout current" do
+      get edit_layout_project_path(@project)
+
+      assert_select ".page-head", 1
+      assert_select ".edit-head h1", text: @project.name
+      assert_select ".project-head", 0
+      assert_select "nav.edit-tabs a.tab-link.is-active[aria-current=page][href=?]", edit_layout_project_path(@project),
+                    { count: 1, text: "Page layout" }
+      assert_select "nav.edit-tabs a.tab-link[href=?]", edit_project_path(@project), text: "Details"
+      assert_select "nav.edit-tabs a.tab-link[href=?]", publishing_project_path(@project), text: "Publishing"
+      assert_select "title", text: /\AEdit #{@project.name}/
     end
 
     # THE FLAG IS THE ROUTE'S, NOT THE QUERY STRING'S (found in review): the chrome must come only
@@ -252,7 +271,7 @@ module Web
       assert_equal "full", panels["widths"]["tasks"]
       assert_equal({ models_key => "Prints" }, panels["titles"])
       assert_equal({ models_key => "Sliced." }, panels["intros"])
-      assert_equal "publish", panels["order"].last
+      refute_includes panels["order"], "publish"
     end
 
     test "Save drops a folder key that left the vocabulary, with a notice, and refuses a bad document" do

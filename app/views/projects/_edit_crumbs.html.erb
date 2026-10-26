@@ -1,0 +1,12 @@
+<%# The edit area's breadcrumb (2026-10-26): the project page's own, plus "Edit", on all three tabs.
+    The name links back, as Done does; the current step is plain text (design-system.md rule 9).
+    Locals: project. %>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Project path">
+    <%= link_to "Projects", projects_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to project.name_in_database, project_path(project) %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">Edit</span>
+  </nav>
+<% end %>

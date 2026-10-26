@@ -1,0 +1,4 @@
+<% content_for :title, "Publishing #{@project.name} — Tinkerex" %>
+<%= render "projects/edit_crumbs", project: @project %>
+<%= render "projects/edit_head", project: @project, current: :publishing %>
+<%= render "projects/publish", project: @project, folder_path: @folder_path %>

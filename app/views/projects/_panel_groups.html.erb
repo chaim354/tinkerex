@@ -5,14 +5,15 @@
   around the panels is written once.
 
   THE NO-TABS BRANCH IS TODAY'S MARKUP, UNCHANGED (decision 9): one `.project-panels` grid with
-  every key, Publish included, and the caller's tail (the public page's repository cards) inside
+  every key and the caller's tail (the public page's repository cards) inside
   it. Every existing project takes this branch. The one addition is a SHELF GROUP's heading
   (2026-10-20, ProjectsHelper#panels_with_group_heads), drawn only before panels whose folder's
   shelf is in a group -- a user with no groups gets exactly the markup above.
 
   WITH TABS: the top group's grid (omitted when empty), then `div.tabs` with a bar and one pane per
-  tab, then Publish in its own grid -- with the tail before it -- so both are on view whichever tab
-  is open (decision 3). A PANE IS RENDERED ONLY IF SOMETHING IN IT RENDERS: the bodies are captured
+  tab, then the tail in its own grid, so it is on view whichever tab is open (decision 3; Publish
+  sat in that foot too until it left the page for the edit area's Publishing tab, 2026-10-26).
+  A PANE IS RENDERED ONLY IF SOMETHING IN IT RENDERS: the bodies are captured
   first, exactly as the public page has always omitted an empty panel, and the bar lists only the
   panes that survived. Each key is yielded ONCE.
 
@@ -25,7 +26,7 @@
   shows its heading -- the page reads as sections. tabs_controller.js hides the rest (decision 8).
 
   SHELF-GROUP HEADINGS ARE PER GRID (2026-10-20): the top group and each pane are each one call to
-  ProjectsHelper#panels_with_group_heads (the foot holds only the tail and Publish, never in a
+  ProjectsHelper#panels_with_group_heads (the foot holds only the tail, never in a
   group), so a run of a group's panels gets one heading in each grid it lands in.
 
   Locals: groups (Maker::ProjectKind::Groups); layout (the Maker::ProjectKind::Layout the groups
@@ -34,7 +35,6 @@
 <% if groups.tabs.empty? %>
   <div class="project-panels" data-controller="masonry">
     <%= panels_with_group_heads(groups.top, layout) { |key| yield key } %>
-    <%= yield "publish" %>
     <%= tail %>
   </div>
 <% else %>
@@ -66,8 +66,7 @@
       <% end %>
     </div>
   <% end %>
-  <% foot = capture do %><%= tail %><%= yield "publish" %><% end %>
-  <% if foot.present? %>
-    <div class="project-panels" data-controller="masonry"><%= foot %></div>
+  <% if tail.present? %>
+    <div class="project-panels" data-controller="masonry"><%= tail %></div>
   <% end %>
 <% end %>

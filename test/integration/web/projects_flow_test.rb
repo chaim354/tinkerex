@@ -451,29 +451,62 @@ module Web
       FileLayer.reset!
     end
 
-    # --- the detail page's action bar tracks the archived state ---
+    # --- the Details tab's Danger zone tracks the archived state ---
+    #
+    # IN THE EDIT AREA since 2026-10-26 (spec 2026-10-26-project-edit-area §3): the ⋯ menu on the
+    # project page held these, and they moved behind Edit VERBATIM — the same button_to, routes and
+    # confirms. Scoped to `.danger-zone` because the Details form above it ALSO posts to
+    # project_path (PATCH through the hidden `_method`), so an unscoped form[action] counts it.
 
-    test "an archived project's detail page offers unarchive, not archive" do
+    test "an archived project's Details tab offers unarchive, not archive" do
       user = sign_in
       project = user.maker_projects.create!(name: "Old Rig", status: "archived")
 
-      get project_path(project)
+      get edit_project_path(project)
       assert_response :success
-      # IN THE ⋯ MENU since slice 6, the same button_to it always was.
-      assert_select ".head-actions details.project-menu form[action=?] button.menu-item",
-                    unarchive_project_path(project), text: "Unarchive"
+      assert_select ".danger-zone form[action=?] button.btn", unarchive_project_path(project), text: "Unarchive"
       # The Archive button posts DELETE to the project itself; it must not render here.
-      assert_select "form[action=?][method=?]", project_path(project), "post", count: 0
+      assert_select ".danger-zone form[action=?]", project_path(project), count: 0
     end
 
-    test "a live project's detail page offers archive, not unarchive" do
+    test "a live project's Details tab offers archive, not unarchive" do
       user = sign_in
       project = user.maker_projects.create!(name: "Desk Lamp", status: "active")
 
-      get project_path(project)
-      assert_select ".head-actions details.project-menu form[action=?] button.menu-item.danger",
-                    project_path(project), text: "Archive"
-      assert_select "form[action=?]", unarchive_project_path(project), count: 0
+      get edit_project_path(project)
+      assert_select ".danger-zone form[action=?] input[name=_method][value=delete]", project_path(project), 1
+      assert_select ".danger-zone form[action=?] button.btn.danger", project_path(project), text: "Archive"
+      assert_select ".danger-zone form[action=?]", unarchive_project_path(project), count: 0
+    end
+
+    test "the Details tab wears the edit area's head with its own tab current, over fields the controller permits" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp")
+
+      get edit_project_path(project)
+
+      assert_select ".edit-head h1", text: "Desk Lamp"
+      assert_select "nav.edit-tabs a.tab-link.is-active[aria-current=page][href=?]", edit_project_path(project),
+                    { count: 1, text: "Details" }
+      assert_select "nav.edit-tabs a[aria-current]", 1
+      assert_select "nav.edit-tabs a.tab-link[href=?]", publishing_project_path(project), text: "Publishing"
+      assert_select "nav.edit-tabs a.tab-link[href=?]", edit_layout_project_path(project), text: "Page layout"
+      # §14d: AS RENDERED, never through a nested-hash POST.
+      assert_select "form.project-form input[name=?]", "project[name]"
+      assert_select "form.project-form textarea[name=?]", "project[description]"
+    end
+
+    # THE HEAD NAMES THE SAVED PROJECT, NOT THE REFUSED FORM: a blank name re-renders Details with
+    # the field empty, and an empty h1 (or "Edit  — Tinkerex") would read as the project's name.
+    test "a refused Details save keeps the saved name in the head" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Desk Lamp")
+
+      patch project_path(project), params: { project: { name: "" } }
+
+      assert_response :unprocessable_entity
+      assert_select ".edit-head h1", text: "Desk Lamp"
+      assert_select "title", text: /\AEdit Desk Lamp/
     end
 
     # --- the New badge, first open, and "Not a project" (stage 4, S4-6) ----------
@@ -526,10 +559,9 @@ module Web
       auto = user.maker_projects.create!(name: "Tray")
       auto.update_columns(discovered_at: 1.hour.ago)
 
-      get project_path(auto)
-      assert_select ".head-actions details.project-menu form[action=?] button.menu-item", project_path(auto, dismiss: 1),
-                    text: "Not a project"
-      assert_select ".head-actions details.project-menu form[data-turbo-confirm*=?]", "won't adopt it as a project again"
+      get edit_project_path(auto)
+      assert_select ".danger-zone form[action=?] button.btn", project_path(auto, dismiss: 1), text: "Not a project"
+      assert_select ".danger-zone form[data-turbo-confirm*=?]", "won't adopt it as a project again"
 
       delete project_path(auto, dismiss: 1)
       assert_equal "archived", auto.reload.status
@@ -541,9 +573,9 @@ module Web
       user = sign_in
       project = user.maker_projects.create!(name: "By Hand")
 
-      get project_path(project)
+      get edit_project_path(project)
       assert_select "form[action=?]", project_path(project, dismiss: 1), count: 0
-      assert_select ".head-actions details.project-menu form[data-turbo-confirm=?]", "Archive By Hand?"
+      assert_select ".danger-zone form[data-turbo-confirm=?]", "Archive By Hand?"
 
       delete project_path(project)
       assert_match(/\AArchived By Hand\./, flash[:notice].to_s)

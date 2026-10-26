@@ -6,7 +6,7 @@
 # page. This controller stays on the maker side of the FileLayer port — it only READS file
 # metadata (never writes/moves/deletes bytes), so none of the §10 tripwire surfaces are touched.
 class ProjectsController < ApplicationController
-  before_action :set_project, only: %i[show edit update destroy unarchive preview]
+  before_action :set_project, only: %i[show edit update destroy unarchive preview publishing]
 
   # ?move_conflict=<id> — the prompt an attach leaves behind when the auto-move into this
   # project's folder hit a name collision. The same prompt renders on the file page; an attach can
@@ -29,7 +29,7 @@ class ProjectsController < ApplicationController
 
   # ON-DEMAND PANELS (structural redesign §6, slice 6): absent from the maker's normal page while
   # empty, unless this request opens one with ?add=<key> ("+ Add panel"). Nothing else is on demand:
-  # Files and Publish always show, Photos and Schematics already render nothing when empty, and an
+  # Files always shows, Photos and Schematics already render nothing when empty, and an
   # empty folder panel stays quiet (docs/invariants/design-system.md rule 14).
   # Calculations (2026-10-21) joined because a saved result is its only way in: an empty panel
   # would be a heading over nothing, and its quiet state says how to fill it.
@@ -139,7 +139,12 @@ class ProjectsController < ApplicationController
     @listing = Maker::ProjectFolderListing.new(current_user, @project)
     # Upload targets the project's folder (spec §6). A folder in the trash or unreachable this render
     # gives no destination, and the top bar asks with the chooser rather than guess the root.
-    use_folder_destination(@listing.folder_id, path: @listing.path, primary: true) if @listing.available?
+    # PRIMARY ON THE PAGE, QUIET IN THE EDITOR (2026-10-26, the edit area): edit mode is the edit
+    # area's Page layout tab, whose one primary is Save, so Upload keeps its destination and gives up
+    # the accent there (design-system.md rule 13; accent_spend_test.rb pins both renders). The path
+    # parameter is read here directly because @editing is set further down, after the layout.
+    use_folder_destination(@listing.folder_id, path: @listing.path,
+                           primary: request.path_parameters[:editing] != "1") if @listing.available?
 
     # THE PAGE'S PANEL LIST (stage 4, S4-7; story 6.5): this project's kind's preset with its own
     # overrides on top, over a vocabulary that now includes this folder's own depth-one subfolders
@@ -511,13 +516,13 @@ class ProjectsController < ApplicationController
   #
   # NO HANDLE, NO PREVIEW. Every URL on the page is /u/<handle>/<slug>, and `public_file_path(nil,
   # …)` raises UrlGenerationError against the route's own handle constraint. Maker::Project already
-  # refuses to PUBLISH without a handle; refusing to preview is the same rule, and the alert points
-  # at the panel that claims one rather than at a dead end.
+  # refuses to PUBLISH without a handle; refusing to preview is the same rule, and the refusal lands
+  # ON the edit area's Publishing tab, whose form claims one, rather than at a dead end.
   def preview
     if current_user.handle.blank?
-      return redirect_to project_path(@project),
+      return redirect_to publishing_project_path(@project),
                          alert: "Choose a handle first — a public page lives at /u/<handle>/#{@project.slug}. " \
-                                "You can claim one in the Publish panel."
+                                "You can claim one here."
     end
 
     @pub = Maker::PublicProject.new(@project)
@@ -539,23 +544,41 @@ class ProjectsController < ApplicationController
 
   def edit; end
 
+  # GET /projects/:id/publishing — the edit area's Publishing tab (2026-10-26; spec
+  # 2026-10-26-project-edit-area §3), the Publish panel's settings on a page of their own.
+  #
+  # THE FOLDER PATH COMES FROM THE TREE, NOT FROM ROOT + SLUG, for the reason projects/_publish
+  # names it at all: permission is granted from the folder NODE (Maker::PublicProject#permits?), and
+  # a discovered project keeps its folder's own name (`Projects/Desk Lamp`) where the slug is
+  # `desk-lamp`. ONE query (Maker::LibraryTree loads the dirs), and no listing: this page shows no
+  # files, so a Maker::ProjectFolderListing would walk and count a folder for one string. nil when
+  # the project has no folder or it is in the trash — the partial then says "the project's library
+  # folder", as the panel always did.
+  def publishing
+    id = @project.folder_node_id.presence
+    tree = id && Maker::LibraryTree.new(current_user)
+    @folder_path = tree&.dir?(id) ? tree.path_for(id) : nil
+  end
+
   # ASSIGN, THEN ASK, THEN SAVE -- `update` in two steps so the demo's refusal below sees the state
   # the save would leave and can stop it reaching the database. What `update` adds is a transaction
   # around the assignment, and assigning these attributes writes nothing (a tag list is held until
   # after save, Maker::Taggable).
   def update
     @project.assign_attributes(project_params)
+    # THE PUBLISHING TAB POSTS HERE TOO (stage 4, S4-4; its own page since 2026-10-26), and it is not
+    # the Details form — a refusal that re-rendered :edit would bounce a maker off the tab they
+    # clicked on, into a form whose visibility field does not exist. So it says where it came from,
+    # and BOTH outcomes return there: a success lands on the tab that now shows the new link to copy.
+    # `return_to` is NOT a URL: it is the literal string "publishing", resolved here to THIS
+    # project's own tab, so there is nothing to sanitise and no open redirect to get wrong (the same
+    # reason ApplicationHelper#back_target_path refuses to take a URL param, §14d).
+    from_publishing = params[:return_to] == "publishing"
     if demo_may_publish?(@project) && @project.save
-      redirect_to project_path(@project), notice: publish_notice
+      redirect_to (from_publishing ? publishing_project_path(@project) : project_path(@project)), notice: publish_notice
     else
-      # THE PANEL POSTS THE SAME TWO FIELDS AS THE EDIT FORM (stage 4, S4-4), and there is no edit
-      # page behind it — a refusal that re-rendered :edit would bounce a maker off the page they
-      # clicked on, into a form whose visibility field no longer exists. `return_to` is NOT a URL:
-      # it is the literal string "project", resolved here to THIS project's own path, so there is
-      # nothing to sanitise and no open redirect to get wrong (the same reason
-      # ApplicationHelper#back_target_path refuses to take a URL param, §14d).
-      return redirect_to project_path(@project), alert: @project.errors.full_messages.to_sentence if
-        params[:return_to] == "project"
+      return redirect_to publishing_project_path(@project), alert: @project.errors.full_messages.to_sentence if
+        from_publishing
 
       render :edit, status: :unprocessable_entity
     end
@@ -598,7 +621,7 @@ class ProjectsController < ApplicationController
 
   # THE SHARED DEMO PUBLISHES NOTHING (Tinkerex::Demo), so this server never hosts a visitor's project
   # at /u/demo/... -- refused on create (a hand-posted value; the new form has no visibility field)
-  # and on update (the Publish panel and the edit form), through the same failure branch a validation
+  # and on update (the Publishing tab and the Details form), through the same failure branch a validation
   # error takes, so each surface shows the sentence where it shows any other refusal. It asks about
   # the state the save would LEAVE, not about the change: a demo project published by any other route
   # cannot be edited while it stays published, and saving it private always works. Every other

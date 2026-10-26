@@ -35,6 +35,12 @@
 
   /* --- Show: head, stats, panels --- */
   .project-head { align-items: flex-start; }
+  /* THE ACTIONS KEEP TO THE RIGHT EVEN WHEN THE HEAD WRAPS (2026-10-26, the edit area). "+ Add panel"
+     is the last of them since the ⋯ menu went behind Edit, and its list hangs from the summary's RIGHT
+     edge (components.css `.menu-list`): wrapped to the left of a 375px page, the list started 61px off
+     the page (shell_test.rb measured it). `margin-left: auto` puts a wrapped row at the right, where
+     the ⋯ menu used to push it. */
+  .project-head .head-actions { margin-left: auto; }
   /* THE HUB'S HEAD (structural redesign §6, slice 6): the cover, then a text column holding the
      PROJECT eyebrow on its own line and the name, badges and links wrapping after it. Two boxes side
      by side — never wrapping, so the cover stays beside the name at 375px — and `min-width: 0` on
@@ -398,4 +404,20 @@
   .publish-url .mono, .publish-unlisted .mono { font-size: 12px; overflow-wrap: anywhere; }
   .publish-unlisted p { flex-basis: 100%; margin: 0; font-size: 12px; }
   .publish-unlisted form { margin: 0; }
+
+  /* --- The edit area (2026-10-26; spec 2026-10-26-project-edit-area §3): one head and a bar of three
+     tabs over Details, Publishing and Page layout. The bar IS the page tabs' `.tab-bar` / `.tab-link`
+     (components.css); only its spacing is set here, on its own class, never on the component's
+     selector (design-system rule 3). The Danger zone is a `.panel` with a danger rule round it,
+     because Archive is the one irreversible-looking act on these pages and should look it. --- */
+  /* `.page-head.edit-head`, two classes: pages/files.css lays every `.page-head .page-title` out as a
+     row, and the eyebrow sits ABOVE the name here, as it does in the project head. */
+  .page-head.edit-head .page-title { display: block; min-width: 0; }
+  .edit-head .eyebrow { display: block; font: 600 11px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
+  .edit-head h1 { overflow-wrap: anywhere; }
+  .edit-tabs { margin: calc(-1 * var(--space-2)) 0 var(--space-5); }
+  .danger-zone { margin-top: var(--space-7); border-color: var(--danger); max-width: 640px; }
+  .danger-zone-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
+  .danger-zone-actions form { margin: 0; }
+  .danger-zone-actions p { margin: 0; font-size: 12px; }
 }

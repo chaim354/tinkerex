@@ -624,6 +624,9 @@ class ShellTest < ApplicationSystemTestCase
       # SLICE 5: THE MODEL STRIP, THE SAME GATE-ON-A-PATH ARGUMENT. A folder that stopped showing its
       # model would leave this sweep measuring a plain folder a second time and saying nothing.
       saw_model_strip = false
+      # 2026-10-26: THE PUBLISHING TAB, the same gate-on-a-path argument: the Publish panel's
+      # presence check moved there with the panel, and a path dropped from the list would lose it.
+      saw_publishing = false
       [ root_path, files_path(view: "list"), files_path(view: "grid"),
         # STAGE 4, S4-6: THE FOLDER VIEW, which the two `view:` entries above are not — they are the
         # flat library, where `@folder` is nil and the overflow menu's project items never render.
@@ -634,6 +637,10 @@ class ShellTest < ApplicationSystemTestCase
         # separately — the public page in the second loop below, the app shell everywhere in this
         # one — and neither says what happens when they are laid out on top of each other at 375px.
         preview_project_path(project),
+        # 2026-10-26, THE EDIT AREA: Details and Publishing, each under the shared head and its bar of
+        # three tabs, the widest new row these pages carry. (Page layout is measured in the project
+        # page's branch below, where it always was.)
+        edit_project_path(project), publishing_project_path(project),
         file_path(long.node_id), file_path(kicad.node_id), file_path(gerbers[:gtl].node_id), tools_path, files_models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
         project_bom_path(project),
@@ -690,11 +697,12 @@ class ShellTest < ApplicationSystemTestCase
           assert_selector ".project-hero img.project-hero-img"
           assert_selector "section.photos-panel .photo-cell", minimum: 1
           # SLICE 6: THE HUB'S HEAD AND ITS RECENT ROW, both new markup. The cover now sits BESIDE the
-          # name with the ⋯ menu after the actions, and the Files panel opens on a row of the folder's
-          # newest files — each laid out at 375px, and measured against the page's CLIENT width (the
-          # model strip's rule below: CI's Linux Chrome draws a scrollbar the Mac's does not).
+          # name with Edit after it (the ⋯ menu that followed went behind Edit, 2026-10-26), and the
+          # Files panel opens on a row of the folder's newest files — each laid out at 375px, and
+          # measured against the page's CLIENT width (the model strip's rule below: CI's Linux Chrome
+          # draws a scrollbar the Mac's does not).
           assert_selector ".project-head .page-title > .project-hero img.project-hero-img"
-          assert_selector ".project-head details.project-menu > summary", visible: true
+          assert_selector ".project-head a.edit-link", visible: true
           assert_selector ".attachments-panel .recent-files .attachment-tile", minimum: 1
           right = page.evaluate_script(
             "Math.max.apply(null, Array.from(document.querySelectorAll('.project-head, .project-head *, .recent-files, .recent-files *'))" \
@@ -712,24 +720,15 @@ class ShellTest < ApplicationSystemTestCase
           assert_operator list_right, :<=, client, "the + Add panel list runs past the page at 375px (right edge #{list_right})"
           find(".project-head details.add-panel > summary").click
           assert_no_selector ".project-head details.add-panel[open]"
-          # STAGE 4, S4-4: THE PUBLISH PANEL AND THE README EDITOR, both new to this page and both
-          # invisible to the overflow check until they are actually here and actually open. The
+          # STAGE 4, S4-4: THE README EDITOR, new to this page and invisible to the overflow check until
+          # it is actually here and actually open (the Publish panel beside it is the Publishing tab's
+          # since 2026-10-26, and its branch below carries the measurement note that follows). The
           # editor mounts CodeMirror on toggle, so a closed <details> measures a summary button and
           # nothing else — and opening it is what caught the real defect this branch shipped with:
           # a 140-character README line made `.attachments-panel` 1192px wide at 375px, fixed by
           # `.project-panels > .panel { min-width: 0 }` in pages/projects.css. This folder holds no
           # README, so the editor opens on the TEMPLATE with no fetch, which is what makes the
           # `.cm-editor` wait deterministic here.
-          #
-          # THE PANEL ASSERTION IS PRESENCE, NOT WIDTH, AND THE DISTINCTION IS MEASURED. Its public
-          # URL is the page's one unbreakable token, so `overflow-wrap: anywhere` on
-          # `.publish-url .mono` looks like something this sweep covers — it does NOT. Under Capybara
-          # the URL is `http://127.0.0.1:<port>/u/sweep/desk-lamp`: 40 characters, 288px inside the
-          # 306px row, so flipping that rule to `normal` leaves this test GREEN (run, 2026-09-07).
-          # A deployment host and a real handle are what make it wrap; proving the rule here would
-          # need a fixture whose handle and slug are that long, and this comment is the record that
-          # it does not have one rather than a claim that it does.
-          assert_selector "section.publish-panel#publish"
           find(".readme-editor summary").click
           assert_selector ".readme-editor .cm-editor"
           opened_readme = true
@@ -751,6 +750,23 @@ class ShellTest < ApplicationSystemTestCase
           # assertions below run on whatever page this branch leaves behind, and the edit page is
           # not the one this iteration is measuring.
           visit path
+        end
+        if path == publishing_project_path(project)
+          # THE PUBLISHING TAB (2026-10-26; the project page's Publish panel until then), under the
+          # edit area's head and its bar of three tabs, both laid out at 375px by the overflow check
+          # above.
+          #
+          # THE PANEL ASSERTION IS PRESENCE, NOT WIDTH, AND THE DISTINCTION IS MEASURED. Its public
+          # URL is the page's one unbreakable token, so `overflow-wrap: anywhere` on
+          # `.publish-url .mono` looks like something this sweep covers — it does NOT. Under Capybara
+          # the URL is `http://127.0.0.1:<port>/u/sweep/desk-lamp`: 40 characters, 288px inside the
+          # 306px row, so flipping that rule to `normal` leaves this test GREEN (run, 2026-09-07).
+          # A deployment host and a real handle are what make it wrap; proving the rule here would
+          # need a fixture whose handle and slug are that long, and this comment is the record that
+          # it does not have one rather than a claim that it does.
+          assert_selector "section.publish-panel"
+          assert_selector "nav.edit-tabs a.tab-link", count: 3
+          saw_publishing = true
         end
         if path == file_path(long.node_id)
           # STAGE 4, S4-8: BOTH LIST BRANCHES AND THE PHOTO GRID ARE ON THIS PAGE, or the overflow
@@ -801,6 +817,7 @@ class ShellTest < ApplicationSystemTestCase
       assert visited_folder_view, "the sweep never reached the Files folder view, so its overflow menu was never measured"
       assert saw_connections, "the sweep never reached the connected file page, so the Connected panel's two layouts were never measured"
       assert saw_search_groups, "the sweep never reached the search page, so the Notes and Folders groups were never measured"
+      assert saw_publishing, "the sweep never reached the Publishing tab, so the publish form was never laid out at 375px"
       assert saw_model_strip, "the sweep never reached a model's folder, so the model strip was never laid out at 375px"
 
       # STAGE 3, S3-4: THE PUBLIC PAGES, IN THEIR OWN LOOP BECAUSE THEIR SHELL IS THE OTHER ONE.

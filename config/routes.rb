@@ -235,6 +235,11 @@ root to: "home#index"
     # with a banner, never a bypass in Public::BaseController. `controller_path` is still
     # "projects", so ShellHelper::SECTIONS needs no entry and the rail still lights Projects.
     get :preview, on: :member
+    # THE EDIT AREA'S PUBLISHING TAB (2026-10-26; spec 2026-10-26-project-edit-area §3): what the
+    # Publish panel held, on a page of its own beside Details (`edit`) and Page layout (`layout`). A
+    # member GET on this controller for `preview`'s reason: `controller_path` is "projects", so the
+    # rail lights Projects with no ShellHelper::SECTIONS entry. Its form posts to #update.
+    get :publishing, on: :member
     resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
       # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
       # SCOPED TO THE PROJECT, and still its own door now that general ones exist: this one can only

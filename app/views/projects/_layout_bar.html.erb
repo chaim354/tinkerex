@@ -37,8 +37,8 @@
         <% end %>
       </div>
     </details>
-    <%# ADD TAB (2026-09-09, tabs; spec §2): a new, empty tab lands at the BOTTOM, just above the pinned
-        Publish — a new separator at the top would swallow every panel into one tab. Disabled at
+    <%# ADD TAB (2026-09-09, tabs; spec §2): a new, empty tab lands at the BOTTOM — a new separator at
+        the top would swallow every panel into one tab. Disabled at
         Maker::ProjectKind::TAB_CAP with the door's own number, like Add block. %>
     <% tabs_at_cap = @panel_layout.tabs.size >= Maker::ProjectKind::TAB_CAP %>
     <button type="button" class="btn small" data-action="layout-editor#addTab" <%= "disabled" if tabs_at_cap %>

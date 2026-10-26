@@ -1,3 +1,48 @@
-<% content_for :title, "Edit #{@project.name} — Tinkerex" %>
-<div class="page-head"><h1>Edit project</h1></div>
+<% content_for :title, "Edit #{@project.name_in_database} — Tinkerex" %>
+<%= render "projects/edit_crumbs", project: @project %>
+<%= render "projects/edit_head", project: @project, current: :details %>
 <%= render "form", project: @project %>
+
+<%#
+  THE DANGER ZONE (2026-10-26, the edit area; spec 2026-10-26-project-edit-area §3). Archive,
+  Unarchive and Not a project lived in the project page's ⋯ menu; the owner moved them behind Edit
+  with the other customisations, so the page is a view. They moved VERBATIM — the same button_to,
+  routes and confirms — with `btn` for the menu-item class (Archive keeps `danger`). Below the form
+  and outside it: a button_to is a form of its own, and a form inside a form is invalid HTML.
+
+  ARCHIVE'S OWN CONFIRM SAYS THE UNDOCUMENTED HALF (stage 4, S4-6; story 1.6): for a project the app
+  adopted, archiving is also what stops it being adopted again. A local rather than a helper — one
+  call site, and the sentence belongs at the point of the click.
+
+  NOT A PROJECT (stage 4, S4-6; story 1.6). The app made this row from a folder, so the maker needs a
+  way to say it was wrong — and archiving already IS that mechanism, silently: the claim lookup is
+  unscoped, so an archived project keeps its folder_node_id and the sweep passes over that folder
+  forever. This names the act instead of leaving it to be discovered. ONE WRITE, TWO SENTENCES — see
+  ProjectsController#destroy; a second route would be two ways to do one thing. Only for a
+  discovered project: a project you made by hand was never adopted, so there is nothing for "not a
+  project" to mean.
+%>
+<% name = @project.name_in_database %>
+<% archive_confirm = if @project.discovered_at.present?
+     "Archive #{name}? Its folder stays in your library, and the app won't adopt it as a project again."
+   else
+     "Archive #{name}?"
+   end %>
+<section class="panel danger-zone">
+  <h2>Danger zone</h2>
+  <div class="danger-zone-actions">
+    <% if @project.status_in_database == "archived" %>
+      <%= button_to "Unarchive", unarchive_project_path(@project), method: :patch, class: "btn small" %>
+      <p class="muted">Return it to your projects list.</p>
+    <% else %>
+      <% if @project.discovered_at.present? %>
+        <%= button_to "Not a project", project_path(@project, dismiss: 1), method: :delete,
+                      class: "btn small",
+                      form: { data: { turbo_confirm: "“#{name}” is not a project? Its folder stays in your library, and the app won't adopt it again." } } %>
+      <% end %>
+      <%= button_to "Archive", project_path(@project), method: :delete, class: "btn small danger",
+                    form: { data: { turbo_confirm: archive_confirm } } %>
+      <p class="muted">Its folder and files stay in your library either way.</p>
+    <% end %>
+  </div>
+</section>

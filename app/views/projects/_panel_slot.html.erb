@@ -35,7 +35,7 @@
 <% if @editing %>
   <% hidden = @panel_layout.hidden?(key) %>
   <% offered = Maker::ProjectKind.offered_views(key) %>
-  <div class="panel-slot panel--<%= width %><%= " panel-slot--hidden" if hidden %><%= " panel-slot--pinned" if key == "publish" %>"
+  <div class="panel-slot panel--<%= width %><%= " panel-slot--hidden" if hidden %>"
        data-layout-editor-target="slot" data-key="<%= key %>" data-hidden="<%= hidden %>" data-width="<%= width %>"
        <% if offered.any? %>data-view="<%= @panel_layout.view_for(key) %>"<% end %>
        <%# A BLOCK'S CONTENT IS DRAFT STATE LIKE EVERY OTHER FIELD (2026-09-09, content blocks):
