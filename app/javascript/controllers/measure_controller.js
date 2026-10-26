@@ -33,7 +33,9 @@ import { installPanZoom } from "lib/svg_pan_zoom"
 // raster — LightBurn's own thumbnail of the whole bed with the design small inside it, a 512 px
 // server render for DXF — so it could neither fill the stage nor zoom without going soft, and the
 // drawing does both. The price is the payload on every visit, up to 1.3 MB gzipped on the densest
-// real file (§14h). The poster stays at rest while the payload loads, and for good when the
+// real file (§14h). AN SVG DOES NOT OPEN (2026-10-26): its poster is the file itself, already a
+// vector, and carries the text the drawing leaves out; `openOnArrival` is how the partial says so.
+// The poster stays at rest while the payload loads, and for good when the
 // drawing would show less than it does (see `open`).
 
 // Must match Maker::Previews::Geometry::SCHEMA_VERSION — ONE number for all four formats, since
@@ -84,6 +86,10 @@ export default class extends Controller {
   // error, no warning, just an empty filename on every printed sheet.
   static values = {
     url: String, name: String,
+    // WHETHER connect() OPENS THE DRAWING. The partial decides, from whether the poster is the
+    // file itself (an SVG, which keeps it) or a render (which the drawing replaces), so nothing
+    // here branches on file type. Absent reads false: a page that does not say stays on its poster.
+    openOnArrival: Boolean,
     portWritable: Boolean, createUrl: String, beginUrl: String, finalizeUrl: String,
     parentNodeId: String,
     // WHERE A SAVED EXPORT CAME FROM (stage 4, S4-8). Both are rendered only inside the partial's
@@ -128,7 +134,9 @@ export default class extends Controller {
     // NOT IN A TURBO PREVIEW. Following a link to a page Turbo has cached shows the cached copy
     // first and connects a controller in it, then swaps in the real page, which connects another.
     // Opening from the preview starts a download for an element that is about to be thrown away.
-    if (!document.documentElement.hasAttribute("data-turbo-preview")) this.open({ arriving: true })
+    if (this.openOnArrivalValue && !document.documentElement.hasAttribute("data-turbo-preview")) {
+      this.open({ arriving: true })
+    }
   }
 
   // A PAGE THAT GOES AWAY OWNS NOTHING, so the bump is the whole of this. The poll is NOT cancelled

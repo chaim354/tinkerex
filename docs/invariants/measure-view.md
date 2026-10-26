@@ -559,7 +559,8 @@
   user's request).** Until then nothing was fetched before Measure was clicked, so a LightBurn page
   rested on LightBurn's thumbnail of the whole bed with the design small inside it, and a DXF on a
   512 px server render; neither filled the stage, and the zoom overlay could only enlarge them.
-  `connect()` now rests and then calls `open({ arriving: true })`, the same load the button runs, so
+  `connect()` now rests and then, for every format but SVG (below), calls `open({ arriving: true })`,
+  the same load the button runs, so
   a click during the arrival's download joins it (one fetch, one draw, by the two rules above).
   The price is the payload on every visit to one of these pages, up to 1.3 MB gzipped on the
   densest real file. Four things not to undo, each pinned in `lbrn_measure_test.rb` or
@@ -578,9 +579,15 @@
     sets or clears `measure.paper` does it before `visit`, not after; `populatePaper` never
     re-reads it on a later draw.
 
-  SVG text is the visible cost: `SvgGeometry` draws no `<text>` and no `<use>`, so an SVG's labels
-  are absent from the drawing that now opens by default (Boxes.py's part names, for one). The file
-  itself is one click away, as ✕ Image.
+  **AN SVG DOES NOT OPEN ON ARRIVAL, AND RESTS ON THE FILE ITSELF FILLING THE STAGE (2026-10-26, at
+  the user's request).** `SvgGeometry` draws no `<text>` and no `<use>`, and 20 of the demo
+  library's 25 SVGs label their parts with text, so the drawing would have dropped the labels from
+  the default view; the file is already a vector, and the drawing's only advantage over it was
+  size. The partial reads `own_poster` ONCE (the `.svg` test the poster branch already made) and
+  passes `openOnArrival: false`, so the controller still never names a file type. The poster sits
+  in `.measure-own-poster`, which gives its card `.measure-stage`'s box (`min(100%, 78vh)` square)
+  and the image `object-fit: contain`; the zoom overlay letterboxes into that same box.
+  `measure_formats_test.rb` asserts both halves in one look and is mutation-checked on each.
 
 - **`pick` COMPOSES `contourLabel` WITH `selectionStatus()`, WHICH IS WHAT SAVED THE ⌥ HINT.**
   `"part of a 2-contour object (⌥ for 30 × 10 mm)"` is the ONLY place the app says alt-click

@@ -312,9 +312,10 @@ and **connect rests the element** — a Back with the overlay open leaves Turbo 
 carries `open`. A broken poster does not open: `decode()` says so, where a 0 x 0 natural size
 cannot (the spec gives a viewBox-only SVG none either). The pictures are what the page already
 loaded, so a server render is its 512 px thumbnail enlarged, not a sharper one. **The Measure
-poster is on screen far less since the same day**: the drawing opens on arrival and replaces it,
-so it shows only while the payload loads, after ✕ Image, on a failure, and for a page of nothing
-but bitmaps (measure-view.md).
+poster is on screen far less since the same day**: for a LightBurn, MillMage or DXF file the
+drawing opens on arrival and replaces it, so it shows only while the payload loads, after ✕ Image,
+on a failure, and for a page of nothing but bitmaps. An SVG keeps its poster, the file itself,
+sized to fill the stage's square (measure-view.md).
 `test/system/image_zoom_test.rb` drives real wheel and drag input and the visitor's page.
 
 **A LAYER TOGGLE RE-COMPOSES FROM THE ONE `renderLayers` RESULT AND NEVER RE-FETCHES.**
