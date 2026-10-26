@@ -39,11 +39,24 @@ require "ipaddr"
 # its Let's Encrypt renewals arrive directly). A port rule cannot tell tinkerex's traffic from
 # theirs; this can, and it binds only the app that sets it.
 #
-# THE PEER IS THE RIGHT-MOST X-Forwarded-For ENTRY, for the reason the trusted-proxy note above
-# gives: kamal-proxy appends the TCP peer it accepted, which no client can forge, and Cloudflare is
-# that peer for everything it forwards. Anything else in the chain is the client's to write. A
-# request with NO chain did not come through kamal-proxy at all (its own health check, a
-# `kamal app exec curl`), since the container publishes no port, so it passes.
+# THE ENTRY TO JUDGE IS THE ONE kamal-proxy APPENDED: the TCP peer it accepted, which no client can
+# forge, and which is Cloudflare's edge for everything Cloudflare forwards. Anything to its left is
+# the client's to write. It is NOT the right-most entry, and the first version of this guard took
+# it to be and failed its first deploy: the image runs Thruster in front of Puma, Thruster appends
+# ITS peer too (kamal-proxy's container, 172.18.0.3), and every request including the deploy's own
+# health check answered 403 (measured on OVH, 2026-10-26; kamal kept the old container serving).
+#
+# REMOTE_ADDR IS WHAT SAYS WHETHER THAT EXTRA HOP IS THERE, because nothing upstream can forge it:
+# loopback means a proxy inside this container (Thruster) handed the request to Puma, so the
+# right-most entry is its addition and is dropped; anything else means kamal-proxy talked to Puma
+# directly and its entry is already last. NEVER "skip private addresses from the right" instead:
+# the box has a public IPv6 address and Docker relays IPv6 to the container from its own gateway,
+# so a direct IPv6 request reaches kamal-proxy from 172.18.0.1 (measured), and skipping privates
+# would judge whatever the client wrote further left — a forged Cloudflare address, waved through.
+#
+# NO ENTRY LEFT means the request never went through kamal-proxy's forwarding: its own health
+# probe (which Thruster then tags, so it arrives as one private entry over loopback) or a
+# `kamal app exec curl`. The container publishes no port, so that passes.
 #
 # A REFUSAL IS A 403 WITH NOTHING OF THE APP IN IT, ahead of every other middleware, so a direct
 # visitor learns no session, redirect or page. Cloudflare adding a range means refreshing the pin
@@ -59,14 +72,21 @@ class CloudflareOnly
   end
 
   def call(env)
-    peer = env["HTTP_X_FORWARDED_FOR"].to_s.split(",").last&.strip
-    return @app.call(env) if peer.blank? || cloudflare?(peer)
+    hops = env["HTTP_X_FORWARDED_FOR"].to_s.split(",").map(&:strip).reject(&:empty?)
+    hops.pop if loopback?(env["REMOTE_ADDR"])
+    return @app.call(env) if hops.empty? || cloudflare?(hops.last)
 
     status, headers, body = REFUSAL
     [ status, headers.dup, body ]
   end
 
   private
+    def loopback?(address)
+      IPAddr.new(address.to_s).loopback?
+    rescue IPAddr::Error
+      false
+    end
+
     # `native` turns an IPv4-mapped IPv6 peer (::ffff:104.16.0.1) back into IPv4, which is the family
     # the IPv4 ranges answer for; IPAddr#include? across families is always false.
     def cloudflare?(address)
