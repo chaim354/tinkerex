@@ -415,7 +415,13 @@
   .page-head.edit-head .page-title { display: block; min-width: 0; }
   .edit-head .eyebrow { display: block; font: 600 11px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
   .edit-head h1 { overflow-wrap: anywhere; }
-  .edit-tabs { margin: calc(-1 * var(--space-2)) 0 var(--space-5); }
+  /* THE RULE IS AN INSET SHADOW, NOT THE COMPONENT'S BORDER: `.tab-link` sits 1px over the bar's
+     bottom border (margin-bottom: -1px) so the current tab's underline covers it, and `.tab-bar` is a
+     scroll container (overflow-x), which clips at its PADDING box — so that 1px is overflow, and a
+     classic-scrollbar browser draws a vertical scrollbar beside the three links (measured: 43 vs 42).
+     A shadow paints under the links instead, and nothing overflows. */
+  .edit-tabs { margin: calc(-1 * var(--space-2)) 0 var(--space-5); border-bottom: 0; box-shadow: inset 0 -1px 0 var(--line); }
+  .edit-tabs .tab-link { margin-bottom: 0; }
   .danger-zone { margin-top: var(--space-7); border-color: var(--danger); max-width: 640px; }
   .danger-zone-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
   .danger-zone-actions form { margin: 0; }

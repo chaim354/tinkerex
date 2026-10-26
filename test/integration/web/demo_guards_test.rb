@@ -157,19 +157,20 @@ module Web
       assert_equal %w[public], @maker.maker_projects.pluck(:visibility)
     end
 
-    test "the demo cannot publish from the Publish panel or the edit form, and saving it private still works" do
+    # THE PUBLISHING TAB since 2026-10-26 (the Publish panel until then): its refusals return to it.
+    test "the demo cannot publish from the Publishing tab or the edit form, and saving it private still works" do
       sign_in_demo!
       project = @demo.maker_projects.create!(name: "Desk Lamp")
-      get project_path(project)
+      get publishing_project_path(project)
       assert_select "form.publish-form" do
         assert_select "input[type=radio][name=?][value=?]", "project[visibility]", "public"
         assert_select "input[type=radio][name=?][value=?]", "project[visibility]", "unlisted"
-        assert_select "input[type=hidden][name=?][value=?]", "return_to", "project"
+        assert_select "input[type=hidden][name=?][value=?]", "return_to", "publishing"
       end
 
       %w[unlisted public].each do |visibility|
-        patch project_path(project), params: { project: { visibility: }, return_to: "project" }
-        assert_redirected_to project_path(project)
+        patch project_path(project), params: { project: { visibility: }, return_to: "publishing" }
+        assert_redirected_to publishing_project_path(project)
         assert_match(/shared demo can't publish/, flash[:alert].to_s, visibility)
         assert_equal "private", project.reload.visibility
       end
@@ -180,16 +181,16 @@ module Web
       assert_select ".form-errors", text: /shared demo can't publish/
       assert_equal "private", project.reload.visibility
 
-      patch project_path(project), params: { project: { visibility: "private", name: "Desk Lamp II" }, return_to: "project" }
-      assert_redirected_to project_path(project)
+      patch project_path(project), params: { project: { visibility: "private", name: "Desk Lamp II" }, return_to: "publishing" }
+      assert_redirected_to publishing_project_path(project)
       assert_equal "Desk Lamp II", project.reload.name
     end
 
-    test "control: an ordinary account's identical Publish panel save publishes" do
+    test "control: an ordinary account's identical Publishing tab save publishes" do
       sign_in_as(@maker)
       project = @maker.maker_projects.create!(name: "Desk Lamp")
-      patch project_path(project), params: { project: { visibility: "public" }, return_to: "project" }
-      assert_redirected_to project_path(project)
+      patch project_path(project), params: { project: { visibility: "public" }, return_to: "publishing" }
+      assert_redirected_to publishing_project_path(project)
       assert_match(/Published at/, flash[:notice].to_s)
       assert_equal "public", project.reload.visibility
     end

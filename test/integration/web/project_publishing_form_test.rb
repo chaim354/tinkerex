@@ -6,7 +6,7 @@ module Web
   # one-question-two-answers rule) — and their rendered-field assertions moved with them to
   # publishing_test.rb. What stays here is `project_params` actually permitting the two, the
   # handle-required refusal on a PATCH that carries no `return_to` (no form in the app produces that
-  # request any more — the panel always sends `return_to=project` — so it is the hand-crafted /
+  # request any more — the Publishing tab always sends `return_to=publishing` — so it is the hand-crafted /
   # API-shaped path, kept because the arm still exists), and the page-head badge.
   class ProjectPublishingFormTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
