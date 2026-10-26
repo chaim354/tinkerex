@@ -146,13 +146,25 @@ module Maker
       assert_equal [ "Files is always shown; `hidden` was ignored." ], result.notes
     end
 
-    test "parse: publish listed anywhere but last is moved to the end with a note" do
-      result = doc.parse("layout: 1\npanels:\n  - panel: publish\n  - panel: tasks\n")
+    # PUBLISH LEFT THE PAGE (2026-10-26, the edit area; spec 2026-10-26-project-edit-area §4). Every
+    # YAML the editor exported before then lists it, and an unknown panel blocks Apply, so it is a
+    # RETIRED key: skipped with one note on both paths, never an error. A misspelling still is one
+    # (the error test below keeps `tsaks`), which is what keeps this a list rather than a loosening.
+    test "parse: a layout exported before Publish left the page applies, skipping it with one note" do
+      result = doc.parse("layout: 1\npanels:\n  - panel: publish\n  - panel: tasks\n  - panel: publish\n    width: full\n")
 
-      assert result.ok?
-      assert_equal "publish", result.draft["panels"].last["key"]
+      assert result.ok?, result.errors.inspect
+      refute_includes result.draft["panels"].map { |e| e["key"] }, "publish"
       assert_equal "tasks", result.draft["panels"].first["key"]
-      assert_equal [ "Publish is always last; it was moved to the end." ], result.notes
+      assert_equal [ "Publishing has its own tab now; that entry was skipped." ], result.notes
+    end
+
+    test "from_draft: a draft naming publish (a page opened before the change) saves without it" do
+      result = doc.from_draft("layout" => 1, "panels" => [ { "key" => "tasks" }, { "key" => "publish", "hidden" => false, "width" => "half" } ])
+
+      assert result.ok?, result.errors.inspect
+      refute_includes result.draft["panels"].map { |e| e["key"] }, "publish"
+      assert_equal [ "Publishing has its own tab now; that entry was skipped." ], result.notes
     end
 
     test "parse: each error names its entry and blocks Apply" do
@@ -542,7 +554,7 @@ module Maker
       created = r.draft["panels"].find { |e| e["kind"] == "tab" && e["key"].start_with?("tab:new-") }
       assert_equal "Photos", created["name"]
       assert_equal [ tk(TAB_A), "build_log", tk(TAB_B), created["key"], "photos" ], keys.first(5)
-      assert_equal "publish", keys.last
+      refute_includes keys, "publish"
     end
 
     test "a tab entry takes tab and id and nothing else, needs a name, and is capped at 30 characters" do
@@ -590,7 +602,7 @@ module Maker
       # carries the firmware folder and every other fixed panel, so the true claim is that the one
       # listed entry leads and everything else — the separators included — keeps its place.
       assert_equal "tasks", col["order"].first
-      assert_equal "publish", col["order"].last
+      refute_includes col["order"], "publish"
       assert_equal [ "photos", tk(TAB_A), "build_log", tk(TAB_B), key(MODELS) ],
                    col["order"][col["order"].index("photos"), 5],
                    "only Tasks moved; it left from between build_log and the second tab"

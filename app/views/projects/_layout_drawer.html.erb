@@ -11,7 +11,10 @@
     <span>
       <button type="button" class="btn small" data-controller="copy" data-copy-text-value=""
               data-action="copy#copy" data-layout-editor-target="copy">Copy</button>
-      <button type="button" class="btn small primary" data-action="layout-editor#apply">Apply</button>
+      <%# QUIET, NOT PRIMARY (2026-10-26): Apply never writes — Save in the bar does — and the edit
+          area spends its accent once per tab, on that Save (design-system.md rule 13; pinned for this
+          page in accent_spend_test.rb, which counts the drawer while it is closed too). %>
+      <button type="button" class="btn small" data-action="layout-editor#apply">Apply</button>
     </span>
   </div>
   <%# `input->yamlTyped` keeps Copy honest against hand-typed text: the copy value would otherwise be

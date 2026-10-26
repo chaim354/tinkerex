@@ -48,24 +48,24 @@ class PageEditorTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  test "dragging a panel by its handle reorders it, and the pinned Publish slot refuses the drop" do
+  test "dragging a panel by its handle reorders it, as far as the very end" do
     open_editor
-    assert_equal "publish", order_on_page.last
     drag(find("#{slot(key(@models))} .panel-strip-handle"), find(slot("tasks")))
 
     assert_operator order_on_page.index(key(@models)), :>, order_on_page.index("photos"),
                     "models dropped after Photos: #{order_on_page.inspect}"
 
-    # PUBLISH IS ALWAYS LAST (spec decision 11), and this is the drag that proves it rather than
-    # observing it: dropping ONTO the pinned slot is what `onMove` refuses, and `filter` is what
-    # keeps Publish from being dragged away itself. Without both, this drop lands models past
-    # Publish — the mutation this assertion exists for.
-    drag(find("#{slot(key(@models))} .panel-strip-handle"), find(slot("publish")))
-    assert_equal "publish", order_on_page.last, "the drop landed past Publish: #{order_on_page.inspect}"
+    # NOTHING IS PINNED ANY MORE (2026-10-26). Publish was always last (spec decision 11) and the
+    # editor refused a drop onto it, so nothing could reach the end of the page; it became the edit
+    # area's Publishing tab, and the last slot is an ordinary panel a drag can land past.
+    assert_no_selector ".panel-slot--pinned, #{slot('publish')}"
+    last = order_on_page.last
+    drag(find("#{slot(key(@models))} .panel-strip-handle"), find(slot(last)))
+    assert_equal key(@models), order_on_page.last, "the drop did not land at the end: #{order_on_page.inspect}"
 
     click_on "Save"
     assert_selector ".flash-notice", text: "Page layout saved."
-    assert_operator @project.reload.panels["order"].index(key(@models)), :>, @project.panels["order"].index("photos")
+    assert_equal key(@models), @project.reload.panels["order"].last
   end
 
   # SORTABLE RUNS `forceFallback: true` (layout_editor_controller.js says why), so it listens for

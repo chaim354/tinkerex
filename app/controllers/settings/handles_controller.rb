@@ -33,7 +33,8 @@ module Settings
       redirect_to return_path, alert: "The shared demo account keeps its handle."
     end
 
-    # WHERE A CLAIM RETURNS TO (stage 4, S4-4). The Publish panel claims a handle inline, and
+    # WHERE A CLAIM RETURNS TO (stage 4, S4-4). The Publishing tab (the project page's Publish panel
+    # until 2026-10-26) claims a handle inline, and
     # bouncing a maker to the Account page mid-publish loses the thing they were doing. The param
     # is a project SLUG, not a path: it is looked up in `current_user`'s own projects and turned
     # into a route here, so an unknown or someone else's slug falls back to the Account page rather
@@ -46,7 +47,7 @@ module Settings
       slug = params[:project_id]
       slug = nil unless slug.is_a?(String) && slug.present?
       project = slug && current_user.maker_projects.find_by(slug:)
-      project ? project_path(project) : edit_user_registration_path
+      project ? publishing_project_path(project) : edit_user_registration_path
     end
     private :return_path
   end

@@ -8,10 +8,12 @@
   the same change: one column with two controls is the shape §14a keeps recording, and only this
   one can carry the meanings.
 
-  THE LAST PANEL, WITH A LINK IN THE PAGE HEAD. The head already carries the visibility badge and
-  the public link, so that is where a maker looks for publishing state; a settings box above the
-  maker's own content on every render would give prime space to a surface most projects never use
-  (spec §2.3). The `id` is what the head's anchor targets.
+  THE EDIT AREA'S PUBLISHING TAB (2026-10-26; spec 2026-10-26-project-edit-area §3), rendered by
+  projects/publishing.html.erb under projects/_edit_head. Until then this was the LAST PANEL of the
+  project page, reached by an anchor in its head; the owner condensed every customisation behind
+  the page's one Edit button, so the page now shows publishing STATE (the visibility badge, the
+  Public page link) and this tab changes it. It is no longer a layout panel, so it takes no title or
+  intro from the layout, and `return_to` names the tab both outcomes of a save come back to.
 
   `scope: :project` — form_with over a NAMESPACED model would otherwise name the fields
   `maker_project[...]`, which ProjectsController's `params.require(:project)` rejects and every
@@ -23,12 +25,11 @@
   not it: Maker::ProjectDiscovery keeps the folder's own name (`Projects/Desk Lamp`) and slugifies
   the slug (`desk-lamp`) — project_folders.rb records the same trap for ProjectIntake#place.
 %>
-<section class="panel publish-panel" id="publish">
+<section class="panel publish-panel">
   <div class="panel-head">
-    <h2><%= panel_title(@panel_layout, "publish") %></h2>
+    <h2>Public page</h2>
     <%= link_to "Preview", preview_project_path(project), class: "linkbtn small" %>
   </div>
-  <%= panel_intro(@panel_layout, "publish") %>
 
   <% if project.user.handle.blank? %>
     <%# A HANDLE BEFORE A URL: the public page lives at /u/<handle>/<slug>, so with none there is
@@ -48,7 +49,7 @@
   <% else %>
     <%= form_with model: project, scope: :project, url: project_path(project), method: :patch,
                   class: "publish-form" do |f| %>
-      <%= hidden_field_tag :return_to, "project" %>
+      <%= hidden_field_tag :return_to, "publishing" %>
       <fieldset class="publish-options">
         <legend>Who can see this</legend>
         <% [ [ "private",  "Private",  "Only you." ],
@@ -88,7 +89,7 @@
         for an unlisted project: the token IS the credential, so a link without `k` 404s exactly
         like a wrong one (publishing_test.rb pins that 404). Handing a maker a URL to copy that
         does not work is worse than showing none; the unlisted block below shows the one that does.
-        The page head's "Public page" link makes the same distinction, the other way round. %>
+        The project page head's "Public page" link makes the same distinction, the other way round. %>
     <% if project.publicly_listed? %>
       <% url = public_project_url(project.user.handle, project.slug) %>
       <%# THE CONTROLLER WRAPS THE VALUE AND THE BUTTON, AND THE VALUE IS THE `source` TARGET —

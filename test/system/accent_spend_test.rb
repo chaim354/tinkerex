@@ -45,8 +45,8 @@ require "application_system_test_case"
 #   2. Deleting the `.btn.primary` background/border/color declarations: every route reports []
 #      against its expectation, so the FLOOR half is not decoration.
 #   3. Dropping `primary: true` from ProjectsController#show's `use_folder_destination`:
-#      /projects/desk-lamp reports ["Save publishing"] alone — the opt-in-forgotten case, which a
-#      ceiling could never have caught.
+#      /projects/desk-lamp reports [] — the opt-in-forgotten case, which a ceiling could never have
+#      caught. (It reported ["Save publishing"] alone until that moved to the Publishing tab.)
 #   4. Deleting `upload_primary!` from HomeController#index: "/" reports [] — the same
 #      opt-in-forgotten case on the one page whose Upload is its accent without a folder.
 class AccentSpendTest < ApplicationSystemTestCase
@@ -54,10 +54,10 @@ class AccentSpendTest < ApplicationSystemTestCase
     @root = use_fresh_share_library!
     @user = sign_in_as("accent@example.com")
     # THE HANDLE IS NOT DECORATION. `projects/_publish` renders "Claim handle" (quiet) until the
-    # user has one and "Save publishing" (accent) after — so a handle-less fixture would test the
-    # project page at ONE accent control where decision 3 allows it TWO, and the interesting
-    # boundary would never be reached. With the handle the page sits exactly ON its cap, which is
-    # the only state where a regression of one has anywhere to show.
+    # user has one and "Save publishing" (accent) after — so a handle-less fixture would measure the
+    # Publishing tab with NO accent and never reach the control it exists to spend it on. (Until
+    # 2026-10-26 that was the project page's second accent, the one decision 3 allowed; the edit
+    # area moved it to a tab of its own.)
     # An admin, so Settings → Users is on a page this guard measures (2026-10-21).
     @user.update!(handle: "bench", admin: true)
     @project = @user.maker_projects.create!(name: "Desk Lamp")
@@ -98,10 +98,17 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/files/models" => [ "Import model" ],
       "/projects" => [ "New project" ],
       "/inventory" => [ "New item" ],
-      # THE ONE PAGE DECISION 3 ALLOWS TWO, and these are the two it names: the folder this project
-      # keeps its files in (now the top bar's Upload, into that folder) and the switch that makes the
-      # whole thing public. It rendered SEVEN with this fixture and ten with six log entries.
-      "/projects/desk-lamp" => [ "Upload", "Save publishing" ],
+      # THE PROJECT PAGE SPENDS IT ONCE NOW (2026-10-26, the edit area): the top bar's Upload, into
+      # the folder this project keeps its files in. Decision 3 allowed it two, and the second — Save
+      # publishing, the switch that makes the whole thing public — is the Publishing tab's one
+      # accent now, below. It rendered SEVEN with this fixture and ten with six log entries.
+      "/projects/desk-lamp" => [ "Upload" ],
+      # THE EDIT AREA'S THREE TABS, one primary each, and the top bar's Upload quiet on all three —
+      # including Page layout, which is the project page in edit mode and so the one that had to
+      # be told (ProjectsController#show's `primary:`).
+      "/projects/desk-lamp/edit" => [ "Save changes" ],
+      "/projects/desk-lamp/publishing" => [ "Save publishing" ],
+      "/projects/desk-lamp/layout" => [ "Save" ],
       # Pages with no action of their own spend none, and pinning [] is what keeps it that way —
       # /tools in particular is about to grow a first-run state (slice 3).
       "/settings" => [],
@@ -133,6 +140,9 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/files (a model folder)" => files_path(folder: @model_folder.node_id),
       "/projects" => projects_path, "/inventory" => inventory_items_path,
       "/projects/desk-lamp" => project_path(@project), "/settings" => settings_path,
+      "/projects/desk-lamp/edit" => edit_project_path(@project),
+      "/projects/desk-lamp/publishing" => publishing_project_path(@project),
+      "/projects/desk-lamp/layout" => edit_layout_project_path(@project),
       "/tools" => tools_path, "/search" => search_path,
       "/inventory/suppliers" => suppliers_path, "/inventory/locations" => locations_path,
       "/settings/shelves" => settings_shelves_path, "/settings/library" => settings_library_path,

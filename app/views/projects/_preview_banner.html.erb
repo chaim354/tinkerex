@@ -24,6 +24,7 @@
                                       **(project.unlisted? ? { k: project.unlisted_token } : {})),
                   class: "linkbtn small" %>
     <% end %>
-    <%= link_to "Back to the project", project_path(project), class: "linkbtn small" %>
+    <%# Back to where the Preview link is (2026-10-26): the edit area's Publishing tab. %>
+    <%= link_to "Back to publishing", publishing_project_path(project), class: "linkbtn small" %>
   </p>
 </div>

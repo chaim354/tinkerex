@@ -1,5 +1,13 @@
-<% content_for :title, "#{@project.name} — Tinkerex" %>
+<% content_for :title, (@editing ? "Edit #{@project.name} — Tinkerex" : "#{@project.name} — Tinkerex") %>
 
+<%# IN EDIT MODE THIS IS THE EDIT AREA'S PAGE LAYOUT TAB (2026-10-26; spec 2026-10-26-project-edit-area
+    §3), so it wears that area's crumb and head — the same partials Details and Publishing render —
+    in place of the project's own. Everything below the head is the page, as the editor has always
+    shown it. %>
+<% if @editing %>
+  <%= render "projects/edit_crumbs", project: @project %>
+  <%= render "projects/edit_head", project: @project, current: :layout %>
+<% else %>
 <% content_for :crumbs do %>
   <nav class="breadcrumb" aria-label="Project path">
     <%= link_to "Projects", projects_path %>
@@ -18,6 +26,13 @@
   nothing, so the head is the text column alone); pages/projects.css places it on the photo stage
   and sizes it for the head. The text column is its own div because a cover beside a wrapping row
   of name, badges and links is two boxes, not one flex row.
+
+  ONE WAY INTO EDITING (2026-10-26, the edit area; spec 2026-10-26-project-edit-area §2). The owner
+  asked for every customisation "condensed to one button": Customise page, the Publish link, the ⋯
+  menu (Publish settings, Archive, Not a project) and the Publish panel all moved behind Edit, which
+  opens the edit area's Details tab. What stays in this head is STATE — the badges — plus the Public
+  page link (a way out, not a setting) and "+ Add panel", which the owner kept as day-to-day use.
+  project_page_test.rb pins the one door.
 %>
 <div class="page-head project-head">
   <div class="page-title">
@@ -46,25 +61,10 @@
                                         **(@project.unlisted? ? { k: @project.unlisted_token } : {})),
                     class: "linkbtn small public-link" %>
       <% end %>
-      <%# THE DOOR TO THE PANEL (stage 4, S4-4). A plain in-page anchor: the panel is the LAST panel
-          so it does not displace the maker's own content, and the head is where a maker already
-          looks for publishing state. %>
-      <%= link_to (@project.published? ? "Publishing" : "Publish"), "#publish", class: "linkbtn small publish-link" %>
     </div>
   </div>
-  <%# ARCHIVE'S OWN CONFIRM SAYS THE UNDOCUMENTED HALF (stage 4, S4-6; story 1.6): for a project
-      the app adopted, archiving is also what stops it being adopted again. A local rather than a
-      helper — one call site, and the sentence belongs at the point of the click. %>
-  <% archive_confirm = if @project.discovered_at.present?
-       "Archive #{@project.name}? Its folder stays in your library, and the app won't adopt it as a project again."
-     else
-       "Archive #{@project.name}?"
-     end %>
   <div class="head-actions">
-    <%= link_to "Edit", edit_project_path(@project), class: "btn small" %>
-    <%# THE PAGE EDITOR (2026-09-09): the same page with the chrome on. A link, because entering
-        edit mode changes nothing until Save. %>
-    <%= link_to "Customise page", edit_layout_project_path(@project), class: "btn small customise-link" %>
+    <%= link_to "Edit", edit_project_path(@project), class: "btn small edit-link" %>
     <% if Array(@absent_panels).any? %>
       <%#
         "+ ADD PANEL" (structural redesign §6, slice 6): the on-demand panels absent because they are
@@ -84,43 +84,9 @@
         </div>
       </details>
     <% end %>
-    <%#
-      THE ⋯ MENU (structural redesign §6, slice 6): the occasional acts, out of the head's one row.
-      Publish settings is the same in-page anchor the head's Publish link is; Archive, Unarchive and
-      Not a project moved here VERBATIM — the same button_to, routes and confirms, with menu-item for
-      the button class (Archive keeps `danger`). Nothing in here is an accent: the hub's two are the
-      top bar's Upload and the Publish panel's Save publishing (design-system.md rule 13).
-    %>
-    <details class="menu project-menu" data-controller="menu">
-      <summary class="btn small icon" aria-label="More actions" title="More actions">⋯</summary>
-      <div class="menu-list">
-        <%= link_to "Publish settings", "#publish", class: "menu-item" %>
-        <% if @project.status == "archived" %>
-          <%= button_to "Unarchive", unarchive_project_path(@project), method: :patch, class: "menu-item" %>
-        <% else %>
-          <% if @project.discovered_at.present? %>
-            <%#
-              NOT A PROJECT (stage 4, S4-6; story 1.6). The app made this row from a folder, so the
-              maker needs a way to say it was wrong — and archiving already IS that mechanism, silently:
-              the claim lookup is unscoped, so an archived project keeps its folder_node_id and the
-              sweep passes over that folder forever. This names the act instead of leaving it to be
-              discovered. ONE WRITE, TWO SENTENCES — see ProjectsController#destroy; a second route
-              would be two ways to do one thing.
-
-              Only for a discovered project: a project you made by hand was never adopted, so there is
-              nothing for "not a project" to mean.
-            %>
-            <%= button_to "Not a project", project_path(@project, dismiss: 1), method: :delete,
-                          class: "menu-item",
-                          form: { data: { turbo_confirm: "“#{@project.name}” is not a project? Its folder stays in your library, and the app won't adopt it again." } } %>
-          <% end %>
-          <%= button_to "Archive", project_path(@project), method: :delete, class: "menu-item danger",
-                        form: { data: { turbo_confirm: archive_confirm } } %>
-        <% end %>
-      </div>
-    </details>
   </div>
 </div>
+<% end %>
 
 <%= render "projects/move_conflict" %>
 
@@ -172,10 +138,11 @@
   heading and one add control — as an empty folder panel still does. Two questions, and the
   overview's quiet-panel contract is what keeps them two. The editor shows every panel.
 
-  THE LOCALS MAP EXISTS BECAUSE THREE PARTIALS TAKE LOCALS AND SEVEN READ IVARS, and neither group
-  may be converted: projects/_wiring, projects/_releases and projects/_publish take locals so the
-  PUBLIC page can render the same markup without aliasing its own ivars to this page's names --
-  each of those partials says so in its own header. Every value here is an ivar
+  THE LOCALS MAP EXISTS BECAUSE TWO PARTIALS TAKE LOCALS AND THE REST READ IVARS, and neither group
+  may be converted: projects/_wiring and projects/_releases take locals so the PUBLIC page can
+  render the same markup without aliasing its own ivars to this page's names -- each of those
+  partials says so in its own header. (projects/_publish was the third until it became the edit
+  area's Publishing tab, 2026-10-26.) Every value here is an ivar
   ProjectsController#show has already loaded, so building the map costs nothing, including for a
   panel this loop is about to skip.
 
@@ -184,8 +151,7 @@
 <% panel_locals = {
      "wiring"   => { project: @project, connections: @connections, editable: true, layout: @panel_layout },
      "releases" => { project: @project, releases: @releases, current_tokens: @release_tokens,
-                     repos: @release_repos, editable: true },
-     "publish"  => { project: @project, folder_path: (@listing.path if @listing&.available?) }
+                     repos: @release_repos, editable: true }
    } %>
 <%#
   EVERY PANEL RENDERS INSIDE A SLOT (2026-09-09, the page editor; spec §3 and §5): projects/
@@ -223,7 +189,7 @@
   </div>
 <% else %>
   <%# THE GROUPED SHAPE (2026-09-09, tabs; spec §6): projects/_panel_groups renders today's one grid
-      when the layout has no tab, and the top group, the bar, the panes and Publish when it has.
+      when the layout has no tab, and the top group, the bar and the panes when it has.
       MINUS THE ABSENT ON-DEMAND PANELS (slice 6): the keys are narrowed HERE, not in the layout the
       public page shares, so an empty Build log, Tasks, BOM, Wiring, Releases or Sheets is never
       yielded at all. A tab left holding none of its keys drops out with its bar link, because

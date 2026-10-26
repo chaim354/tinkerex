@@ -1,0 +1,38 @@
+<%#
+  THE EDIT AREA'S HEAD (2026-10-26; spec 2026-10-26-project-edit-area §3). The owner asked for every
+  customisation "condensed to one button": the project page's only way in is Edit, and what it
+  opens is three tabs that share THIS head — Details (projects#edit), Publishing
+  (projects#publishing) and Page layout (projects#show in edit mode). One partial, so the three
+  pages cannot disagree about the tabs, their order or their names.
+
+  THE TABS ARE LINKS BETWEEN PAGES, NOT A tabs_controller WIDGET: each tab is its own URL with its
+  own form and its own Save, so a refusal on one can never discard a draft on another (spec §3).
+  The bar borrows the page tabs' `.tab-bar` / `.tab-link` look (components.css) and marks the
+  current page with `is-active` AND `aria-current="page"` — the class is the look, the attribute is
+  what a screen reader announces, and `tabs_controller.js` is never attached, so no `role="tab"`.
+
+  THE NAME IS THE SAVED ONE (`name_in_database`): Details re-renders this head over a refused save,
+  and a blank or half-typed name in the h1 would read as the project's name.
+
+  `.page-head` passes exactly its two slots (template_hygiene_test.rb): the title column and Done.
+
+  Locals: project; current — :details, :publishing or :layout.
+%>
+<% tabs = [ [ :details, "Details", edit_project_path(project) ],
+            [ :publishing, "Publishing", publishing_project_path(project) ],
+            [ :layout, "Page layout", edit_layout_project_path(project) ] ] %>
+<div class="page-head edit-head">
+  <div class="page-title">
+    <span class="eyebrow">Edit</span>
+    <h1><%= project.name_in_database %></h1>
+  </div>
+  <div class="head-actions">
+    <%= link_to "Done", project_path(project), class: "btn small edit-done" %>
+  </div>
+</div>
+<nav class="tab-bar edit-tabs" aria-label="Edit <%= project.name_in_database %>">
+  <% tabs.each do |key, label, path| %>
+    <%= link_to label, path, class: "tab-link#{' is-active' if key == current}",
+                aria: { current: ("page" if key == current) } %>
+  <% end %>
+</nav>

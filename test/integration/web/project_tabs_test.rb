@@ -55,12 +55,11 @@ module Web
         end
         assert_select "section.tab-pane#tab-parts section.bom-panel", 1
       end
-      # PUBLISH IS BELOW THE TABS, IN ITS OWN GRID, and after them in the document (spec decision 3).
-      body = response.body
-      assert_operator body.index('id="publish"'), :>, body.index("tab-parts")
-      assert_select "div.tabs + div.project-panels > div.panel-slot > section#publish", 1
-      assert_select "div.tabs section.tab-pane section#publish", 0
-      assert_select "section#publish", 1, "Publish is rendered once, in the foot"
+      # NOTHING BELOW THE TABS ON THE MAKER'S PAGE SINCE 2026-10-26: Publish sat in its own grid
+      # there (spec decision 3) until it became the edit area's Publishing tab, and the maker's page
+      # passes no tail, so the foot is gone rather than an empty grid.
+      assert_select "section#publish, section.publish-panel", 0
+      assert_select "div.tabs ~ div.project-panels", 0
     end
 
     # A TAB WHOSE PANELS ARE ALL EMPTY ON-DEMAND PANELS DROPS OUT CLEANLY (slice 6): its keys are
@@ -90,11 +89,11 @@ module Web
       assert_select "section.tab-pane#tab-parts section.bom-panel.panel--quiet#project-bom", 1
     end
 
-    test "a project without tabs renders today's markup: one grid, every visible panel, Publish inside it" do
+    test "a project without tabs renders today's markup: one grid, every visible panel" do
       get project_path(@project)
       assert_select "div.tabs", 0
       assert_select "div.project-panels[data-controller=masonry]", 1
-      assert_select "div.project-panels > div.panel-slot > section#publish", 1
+      assert_select "section#publish, section.publish-panel", 0
       assert_select "div.project-panels > div.panel-slot > section.attachments-panel", 1
     end
 
@@ -157,7 +156,7 @@ module Web
       keys = css_select("div.project-panels.layout-editing > div.panel-slot").map { |s| s["data-key"] }
       assert_equal [ "attachments", "photos", tk(TAB_A), "build_log", "tasks", tk(TAB_B), "bom" ],
                    keys.first(7)
-      assert_equal "publish", keys.last
+      refute_includes keys, "publish"
     end
 
     test "Add tab is disabled at the cap" do
@@ -197,7 +196,7 @@ module Web
       assert_match(/\Atab:[0-9a-f]{12}\z/, minted)
       assert_equal "Notes", panels["titles"][minted]
       assert_equal [ "attachments", "photos", minted, "build_log", tk(TAB_B), "bom", "tasks", "models",
-                     "schematics", "wiring", "releases", "sheets", "calculations", "publish" ], panels["order"]
+                     "schematics", "wiring", "releases", "sheets", "calculations" ], panels["order"]
       refute_includes panels["order"], tk(TAB_A), "a tab absent from the posted draft is removed"
       refute panels["titles"].key?(tk(TAB_A))
       refute panels["widths"].key?(minted)
@@ -239,7 +238,7 @@ module Web
       get project_path(@project)
       assert_select "div.tabs", 1
       assert_select "div.project-panels + div.tabs", 0, "no grid, empty or not, above the bar"
-      assert_select "div.project-panels", 2, "the pane's grid and the foot's"
+      assert_select "div.project-panels", 1, "the pane's grid alone: the maker's page has no foot since Publish left it"
 
       @project.update!(panels: { "order" => [ "tasks", tk(TAB_A), "build_log", "publish" ], "titles" => { tk(TAB_A) => "Build" } })
       @project.build_log_entries.create!(user: @user, body: "Glued the base.", logged_at: Time.current)

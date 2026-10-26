@@ -16,8 +16,8 @@ import Sortable from "sortablejs"
 //
 // SORTABLE RUNS IN FALLBACK MODE (`forceFallback: true`): native HTML5 drag events cannot be driven
 // by Selenium, so the browser suite could not prove dragging at all with them, and the fallback is
-// also what makes touch work the same on every platform. The pinned Publish slot is filtered out
-// of dragging and refused as a drop target (spec decision 11).
+// also what makes touch work the same on every platform. (A pinned Publish slot was filtered out of
+// dragging until Publish left the page for the edit area's Publishing tab, 2026-10-26.)
 //
 // CONTENT BLOCKS EXTEND THE SAME IDEA AND ADD NO SECOND STORE (2026-09-09, content blocks; spec §2,
 // §3). A block's heading, body, URL, line, picture and caption are data attributes on its slot,
@@ -37,9 +37,9 @@ import Sortable from "sortablejs"
 // slot, the strip and the editor to drift from the ones a saved block renders.
 //
 // A TAB IS A SEPARATOR SLOT IN THE SAME LIST (2026-09-09, tabs; spec §6): `data-kind="tab"` and
-// `data-name` are its whole draft, it drags by the same handle, and the pinned-Publish rule keeps it
-// above Publish. "Add tab" clones projects/_block_templates' tab template and lands it just ABOVE
-// Publish — a new separator at the top would put every panel into one tab. Delete removes the
+// `data-name` are its whole draft and it drags by the same handle. "Add tab" clones
+// projects/_block_templates' tab template and lands it at the BOTTOM — a new separator at the top
+// would put every panel into one tab. Delete removes the
 // separator alone. The count hint under each tab is recomputed on every change.
 const YAML_DEBOUNCE_MS = 200
 const TOAST_MS = 6000
@@ -62,12 +62,10 @@ export default class extends Controller {
     this.sortable = Sortable.create(this.gridTarget, {
       handle: ".panel-strip-handle",
       draggable: ".panel-slot",
-      filter: ".panel-slot--pinned",
       ghostClass: "panel-slot--ghost",
       forceFallback: true,
       fallbackTolerance: 3,
       animation: 120,
-      onMove: (evt) => !evt.related.classList.contains("panel-slot--pinned"),
       onEnd: () => this.changed()
     })
     this.countTabs()
@@ -126,7 +124,7 @@ export default class extends Controller {
   down(event) { this.step(this.slotOf(event), 1) }
 
   step(slot, delta) {
-    const movable = this.slotTargets.filter((s) => !s.classList.contains("panel-slot--pinned"))
+    const movable = this.slotTargets
     const i = movable.indexOf(slot)
     const j = i + delta
     if (i < 0 || j < 0 || j >= movable.length) return
@@ -364,9 +362,7 @@ export default class extends Controller {
     const slot = this.mintSlot("tab", `tab:new-${this.newCounter}`)
     if (!slot) return
 
-    const pinned = this.slotTargets.find((s) => s.classList.contains("panel-slot--pinned"))
-    if (pinned) pinned.before(slot)
-    else this.gridTarget.appendChild(slot)
+    this.gridTarget.appendChild(slot)
     slot.querySelector("input")?.focus()
     this.changed()
   }
@@ -383,7 +379,7 @@ export default class extends Controller {
     this.changed()
   }
 
-  // "3 panels" / "1 panel" / "empty": the slots between this separator and the next, or Publish,
+  // "3 panels" / "1 panel" / "empty": the slots between this separator and the next, or the end,
   // hidden ones included — a hidden panel is still in the tab.
   countTabs() {
     const slots = this.slotTargets
@@ -391,7 +387,7 @@ export default class extends Controller {
       if (slot.dataset.kind !== "tab") return
       let n = 0
       for (let j = i + 1; j < slots.length; j++) {
-        if (slots[j].dataset.kind === "tab" || slots[j].classList.contains("panel-slot--pinned")) break
+        if (slots[j].dataset.kind === "tab") break
         n++
       }
       const hint = slot.querySelector("[data-layout-editor-target=tabCount]")

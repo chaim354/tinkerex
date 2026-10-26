@@ -10,7 +10,7 @@
   in this app where edit mode changes a panel's BODY rather than only the chrome around it: a
   block's content is its own editor, so there is nothing else for the slot to show.
 
-  Locals: key; extra (the locals map for wiring/releases/publish, an empty hash for every other key).
+  Locals: key; extra (the locals map for wiring/releases, an empty hash for every other key).
 %>
 <% if @panel_layout.block?(key) %>
   <% if @editing %>

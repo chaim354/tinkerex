@@ -97,7 +97,7 @@ module Web
 
       get preview_project_path(@project)
 
-      assert_redirected_to project_path(@project)
+      assert_redirected_to publishing_project_path(@project)
       assert_match(/handle/i, flash[:alert])
     end
 

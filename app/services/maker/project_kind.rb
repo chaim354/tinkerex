@@ -41,9 +41,6 @@ module Maker
   #   * `widths`, `titles` AND `intros` ARE PER PANEL TOO (2026-09-09, the page editor): a width in
   #     WIDTHS, else the default that used to be a stylesheet rule (#default_width); plain one-line
   #     text under TITLE_MAX / INTRO_MAX, else dropped. Same totality, same reason.
-  #   * `publish` IS MOVED TO THE END of `order` whatever the stored column says (2026-09-09, spec
-  #     decision 11): the page head's `#publish` anchor targets it and the editor pins it there, so
-  #     an order the retired chooser saved with it half way up is normalised on the way out.
   #   * A BLOCK (`block:<key>`) IS THE THIRD KIND OF KEY (2026-09-09, content blocks): the caller
   #     supplies `blocks:` as [key, kind] pairs the way it supplies `folders:`; an unnamed block
   #     lands first; a key whose row is gone drops out.
@@ -75,9 +72,9 @@ module Maker
     # two members they share make easy to miss (the same coincidence §14a records for `scannable`
     # and `port_writable` agreeing on three backends). `attachments` is the folder, and the folder
     # is the truth (spec §7). `photos` already omits itself when empty, so hiding it can only ever
-    # be invisible or wrong. `publish` is the target of the page head's `#publish` anchor (S4-4),
-    # and a dead anchor is worse than a panel nobody wanted.
-    ALWAYS = %w[attachments photos publish].freeze
+    # be invisible or wrong. (`publish` was the third until it left the page for the Publishing tab,
+    # 2026-10-26.)
+    ALWAYS = %w[attachments photos].freeze
 
     # ORDER IS DERIVED, NOT SPELLED OUT: `(LEAD + first + PANELS) & PANELS`. Only `electronics`
     # supplies a `first`, so five of the six kinds cannot drift from PANELS at all, and the sixth
@@ -229,8 +226,7 @@ module Maker
     NEW_TAB_KEY = /\Atab:new-\d+\z/
 
     # What the pages render from (spec §3): the keys before the first tab, then one Tab per
-    # separator with the keys up to the next one. `publish` is in neither — it is pinned below the
-    # tabs (decision 3) and the pages render it themselves.
+    # separator with the keys up to the next one.
     Tab = Data.define(:key, :name, :slug, :keys)
     Groups = Data.define(:top, :tabs)
 
@@ -276,13 +272,11 @@ module Maker
       def tab_name_for(key) = titles[key.to_s] || TAB_FALLBACK_NAME
 
       # THE ONE GROUPING READER for the maker's page and the visitor's (spec §3, §6). `keys` is
-      # `visible` for a page and `order` for every group hidden panels included; whichever it is,
-      # `publish` is dropped here because the pages pin it below the tabs, and hidden TAB keys do
-      # not exist (layout_for drops them from `hidden`). Slugs come from the names; see .tab_slugs.
+      # `visible` for a page and `order` for every group hidden panels included; hidden TAB keys do
+      # not exist either way (layout_for drops them from `hidden`). Slugs come from the names; see .tab_slugs.
       def groups(keys = visible)
         top, found = [], []
         keys.each do |k|
-          next if k == "publish"
           if tab?(k) then found << [ k, [] ]
           elsif found.empty? then top << k
           else found.last.last << k
@@ -428,10 +422,7 @@ module Maker
       # "Add block" did a moment ago, and first is where the editor puts a new one.
       order = (block_keys - order) + order
       hidden = (over.key?("hidden") ? known(over["hidden"], panel_vocabulary) : preset[:hidden]) - ALWAYS
-      # PUBLISH IS ALWAYS LAST (2026-09-09, the page editor; spec decision 11): the head's anchor
-      # targets it and the editor pins it, so a stored order from the retired chooser that moved it
-      # up is normalised here on the way out — the same place every other stored oddity is.
-      ordered = ((order & vocabulary) - %w[publish]) + %w[publish]
+      ordered = order & vocabulary
       Layout.new(order: ordered, hidden:, views: stored_views(over["views"], panel_vocabulary),
                  widths: stored_widths(over["widths"], panel_vocabulary),
                  titles: stored_text(over["titles"], vocabulary, TITLE_MAX),

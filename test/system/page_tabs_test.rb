@@ -57,20 +57,20 @@ class PageTabsTest < ApplicationSystemTestCase
     browser.action.move_by((tx - hx).round, (ty - hy - 40).round).move_by(0, 2).release.perform
   end
 
-  test "Add tab lands an empty tab above Publish; a panel dragged under it is in its group after Save" do
-    # TASKS IS PUT LAST SO THE DRAG IS ONE STEP. Add tab lands the separator immediately above the
-    # pinned Publish, so with Tasks second-to-last the two are adjacent in the order and on screen
-    # together, and "Tasks ended up after the separator" is a claim about one move rather than about
-    # how far a ghost travelled.
-    order = @project.panel_layout.order - %w[tasks publish]
-    @project.update!(panels: { "order" => order + %w[tasks publish] })
+  test "Add tab lands an empty tab at the bottom; a panel dragged under it is in its group after Save" do
+    # TASKS IS PUT LAST SO THE DRAG IS ONE STEP. Add tab lands the separator at the very bottom (just
+    # above the pinned Publish until Publish became the edit area's Publishing tab, 2026-10-26), so
+    # with Tasks last the two are adjacent in the order and on screen together, and "Tasks ended up
+    # after the separator" is a claim about one move rather than about how far a ghost travelled.
+    order = @project.panel_layout.order - %w[tasks]
+    @project.update!(panels: { "order" => order + %w[tasks] })
 
     open_editor
     click_on "Add tab"
     assert_selector tab_slot
     keys = slot_keys
-    assert_equal "publish", keys.last
-    assert_equal "tab:new-1", keys[-2], "the new tab sits just above Publish: #{keys.inspect}"
+    assert_equal "tab:new-1", keys.last, "the new tab sits at the bottom: #{keys.inspect}"
+    assert_equal "tasks", keys[-2]
     within(tab_slot) do
       assert_selector ".tab-slot-count", text: "empty"
       # THE PLACEHOLDER, NOT THE `aria-label`: `Capybara.enable_aria_label` defaults to false and
@@ -126,7 +126,6 @@ class PageTabsTest < ApplicationSystemTestCase
     # with the default visibility is "nothing on screen".
     assert_no_selector "h2.tab-heading"
     assert_selector "h2.tab-heading", visible: :hidden, count: 2
-    assert_selector "section#publish"
 
     history_before = page.evaluate_script("history.length")
     click_on "Notes"

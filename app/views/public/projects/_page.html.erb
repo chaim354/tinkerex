@@ -213,7 +213,8 @@
 
   THE GRID AROUND THESE SLOTS IS projects/_panel_groups (2026-09-09, tabs), the same shape the
   maker's page renders: one grid when the layout has no tab, and the top group, the bar, the panes
-  and Publish's grid — with the repository cards before it — when it has.
+  and the repository cards' own grid when it has (it held Publish too until that became the edit
+  area's Publishing tab, 2026-10-26 — the visitor's page never rendered Publish either way).
 %>
 <% cards = capture do %>
   <% pub.repo_cards.each_value do |card| %>

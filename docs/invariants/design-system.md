@@ -166,9 +166,12 @@ stylesheet or script tag goes in `_head`, never in either layout, or the two hea
     never its destination**: Upload there still asks with the chooser. It is a flag of its own
     because a `Destination` with a nil `node_id` would mean the library ROOT, not "ask". Everywhere
     else Upload is a quiet `.btn`. No secondary control
-    is allowed the accent now. A project hub's second accent is its Save publishing, because the hub
-    is the one page the 2026-09-10 cohesion spec's decision 3 allows two; `accent_spend_test.rb`
-    pins every page. Links, selected chips, toggles, tabs, the file-chooser selection and the active
+    is allowed the accent now. The project hub is the one page the 2026-09-10 cohesion spec's
+    decision 3 allows two, and since 2026-10-26 it spends one (Upload): its second, Save publishing,
+    moved with the Publish panel to the edit area's Publishing tab. Each of that area's three tabs
+    (Details, Publishing, Page layout) spends it on its own Save, with Upload quiet on all three
+    (`ProjectsController#show` passes `primary:` false in edit mode, and the YAML drawer's Apply is
+    a quiet `.btn`). `accent_spend_test.rb` pins every page. Links, selected chips, toggles, tabs, the file-chooser selection and the active
     rail item use `--fg`. Status carries its word, never colour alone (`.flash::before`, badge
     labels). Text on an accent fill is
     `--accent-ink` (near-black in the dark theme), never a literal white. `components.css` and
