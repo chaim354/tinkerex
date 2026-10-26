@@ -52,8 +52,9 @@ local registry, no buildx.
 # Docker (only hard requirement). After this, log out/in so the docker group applies.
 curl -fsSL https://get.docker.com | sudo sh
 sudo usermod -aG docker <kamal1|ubuntu>
-# The box must reach ghcr.io to pull the private image; Kamal logs it in during deploy
-# using KAMAL_REGISTRY_PASSWORD. Sanity: docker run hello-world  (no sudo).
+# The box must reach ghcr.io to pull the images; Kamal logs it in during deploy using
+# KAMAL_REGISTRY_PASSWORD (the app image is public since 2026-10-26, the sync accessory's is
+# not). Sanity: docker run hello-world  (no sudo).
 ```
 
 ## 2. Deploy
