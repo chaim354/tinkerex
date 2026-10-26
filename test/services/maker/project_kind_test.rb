@@ -425,7 +425,7 @@ module Maker
       assert_equal "full", Maker::ProjectKind.default_width("attachments")
       assert_equal "full", Maker::ProjectKind.default_width("photos")
       assert_equal "full", Maker::ProjectKind.default_width(key(MODELS))
-      %w[schematics build_log tasks bom wiring releases sheets publish].each do |k|
+      %w[schematics build_log tasks bom wiring releases sheets].each do |k|
         assert_equal "half", Maker::ProjectKind.default_width(k), k
       end
     end
@@ -486,17 +486,20 @@ module Maker
       assert_equal "full", layout.width_for(gone), "the stale key still answers a default, never raises"
     end
 
-    # PUBLISH IS ALWAYS LAST (2026-09-09, the page editor; spec decision 11). The page head's
-    # `#publish` anchor targets it and the editor pins it there, so an order stored by the retired
-    # chooser — which could move it anywhere — is normalised on the way OUT like every other stored
-    # oddity here, rather than left to render a pinned panel in the middle of the page.
-    test "publish is always last, whatever a stored order says" do
+    # PUBLISH LEFT THE PAGE (2026-10-26, the edit area; spec 2026-10-26-project-edit-area §4): its
+    # settings are the Publishing tab now, so it is no longer a panel. A stored order the editor
+    # wrote before then still names it, and must read as if it did not — the same totality every
+    # other stale key here gets, not a special case.
+    test "a stored order naming the retired publish panel reads without it" do
       layout = Maker::ProjectKind.layout_for(kind: "other",
-                                             overrides: { "order" => %w[publish tasks attachments] },
+                                             overrides: { "order" => %w[publish tasks attachments],
+                                                          "titles" => { "publish" => "Share" } },
                                              folders: FOLDERS)
 
-      assert_equal "publish", layout.order.last
-      assert_equal 1, layout.order.count("publish"), "normalising must not duplicate it"
+      refute_includes layout.order, "publish"
+      refute layout.titles.key?("publish")
+      refute_includes Maker::Project::PANELS, "publish"
+      refute_includes Maker::ProjectKind::ALWAYS, "publish"
       assert_equal (Maker::Project::PANELS + [ key(FIRMWARE), key(MODELS) ]).sort, layout.order.sort
     end
 

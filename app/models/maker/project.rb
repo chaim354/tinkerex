@@ -52,9 +52,10 @@ module Maker
     # under the loop is a panel the chooser cannot list — one question with two answers (§14a).
     # The key IS the partial's basename; keep them equal.
     #
-    # `publish` IS THE LAST MEMBER (the tenth then; `models` made eleven, `calculations` twelve) because S4-4 landed
-    # `projects/_publish.html.erb` (amendment 9's first branch, checked by `ls` at Task A step 1):
-    # the panel exists, so it goes through the loop rather than being rendered under it.
+    # `publish` WAS A MEMBER FROM S4-4 UNTIL 2026-10-26 (the edit area; spec
+    # 2026-10-26-project-edit-area §4): its settings moved to the Publishing tab, so it is not a panel.
+    # A stored order that still names it reads without it (Maker::ProjectKind.layout_for intersects),
+    # and a pasted YAML that names it is skipped with a note (Maker::LayoutDocument::RETIRED_PANELS).
     #
     # NOTHING OUTSIDE THIS CONSTANT MAY REACH THE LOOP. Maker::ProjectKind.layout_for intersects
     # every stored override with it and Projects::PanelsController intersects every write, so a
@@ -62,7 +63,7 @@ module Maker
     # handed a partial name that does not exist.
     # `models` (2026-10-21): the project's 3D models as cards — projects/_models, Maker::ProjectModels.
     # `calculations` (2026-10-21): results saved from the calculator modal — projects/_calculations.
-    PANELS = %w[attachments photos models schematics build_log tasks bom wiring releases sheets calculations publish].freeze
+    PANELS = %w[attachments photos models schematics build_log tasks bom wiring releases sheets calculations].freeze
 
     # HOW ONE PANEL DRAWS WHAT IT HOLDS (2026-09-08, folder panels; spec decision 6). Per panel and
     # persisted in `panels["views"]`, which is what retired the page-wide `project_view` cookie: a
@@ -85,8 +86,7 @@ module Maker
     PANEL_LABELS = {
       "attachments" => "Files", "photos" => "Photos", "models" => "Models", "schematics" => "Schematics",
       "build_log" => "Build log", "tasks" => "Tasks", "bom" => "Bill of materials",
-      "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "calculations" => "Calculations",
-      "publish" => "Publish"
+      "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "calculations" => "Calculations"
     }.freeze
 
     has_many :build_log_entries, -> { order(:logged_at) },

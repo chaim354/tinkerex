@@ -51,6 +51,12 @@ module Maker
     BLOCK_COMMON = %w[width hidden].freeze
     BLOCK_FIELDS = { "text" => %w[heading body], "link" => %w[url title line], "image" => %w[file caption] }.freeze
     PAGE_KEYS = %w[description cover].freeze
+    # PANELS THAT LEFT THE PAGE, AND WHAT A LAYOUT THAT STILL NAMES ONE IS TOLD (2026-10-26, the edit
+    # area; spec 2026-10-26-project-edit-area §4). Publish became the Publishing tab, so a YAML copied
+    # out of the editor before then lists `panel: publish` — and an unknown panel is an ERROR, which
+    # would block Apply on a layout this app wrote itself. A retired key is skipped with a NOTE on
+    # both paths instead: a misspelling is still an error, because a misspelling was never a panel.
+    RETIRED_PANELS = { "publish" => "Publishing has its own tab now; that entry was skipped." }.freeze
     COVER_OUTSIDE_NOTE = "# cover: set from a file outside the project folder; the picker cannot name it".freeze
     IMAGE_OUTSIDE_NOTE = "# image block %s: its picture is outside the project folder or gone; left out of this text".freeze
 
@@ -350,11 +356,6 @@ module Maker
       return Result.new(draft: draft, notes: notes, errors: errors) if errors.any?
 
       ordered = listed.map(&:last) + (current.keys - listed.map(&:first)).map { |k| current[k] }
-      if listed.any? { |k, _| k == "publish" } && ordered.last["key"] != "publish"
-        publish = ordered.find { |e| e["key"] == "publish" }
-        ordered = (ordered - [ publish ]) + [ publish ]
-        notes << "Publish is always last; it was moved to the end."
-      end
       # THE CAP IS COUNTED ON THE RESULT, NOT ON WHAT THE TEXT LISTS: the blocks the text does not
       # mention keep their place, so a paste of forty into a project that already holds three is
       # forty-three blocks. An error, never a truncation — which of them to drop is not ours to pick.
@@ -415,6 +416,7 @@ module Maker
       if raw.key?("panel")
         key = raw["panel"].to_s
         return [ key, nil ] if Maker::Project::PANELS.include?(key)
+        return retired(key, notes) if RETIRED_PANELS.key?(key)
 
         errors << "Entry #{n}: unknown panel “#{key}”."
         return nil
@@ -456,6 +458,7 @@ module Maker
         return nil
       end
       return [ key, nil ] if @layout.order.include?(key)
+      return retired(key, notes) if RETIRED_PANELS.key?(key)
 
       if @layout.folder?(key)
         # A FOLDER RENAMED ON DISK MID-EDIT (share/s3 mint a new dir id on rename — the layout's
@@ -472,6 +475,12 @@ module Maker
     # `block:new-1` and `tab:new-2` rather than two entries both allocating 1 and a paste merging
     # them. Save turns each into a real key.
     NEW_KEY = /\A(?:block|tab):new-(\d+)\z/
+
+    # Skips a RETIRED_PANELS key: one note however many entries name it, and no key to resolve.
+    def retired(key, notes)
+      notes << RETIRED_PANELS.fetch(key) unless notes.include?(RETIRED_PANELS.fetch(key))
+      nil
+    end
     def new_key?(key) = key.to_s.match?(/\A(?:block|tab):new-/)
     def next_new_index(keys) = keys.filter_map { |k| k[NEW_KEY, 1]&.to_i }.max || 0
 
