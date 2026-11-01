@@ -35,6 +35,19 @@ class DeployHygieneTest < ActiveSupport::TestCase
     dockerignore_rules.reduce(false) { |out, (negate, pat)| prefixes.any? { |pre| File.fnmatch?(pat, pre, flags) } ? !negate : out }
   end
 
+  # The COPY right before `bundle install` is that layer's cache key. It names the Gemfile and its
+  # lock and nothing else: the scaffold's `vendor` here made every vendored-JS rebuild (CodeMirror,
+  # KiCanvas) reinstall every gem, about four minutes under amd64 emulation (see the Dockerfile).
+  test "the gem install layer is keyed on the Gemfile and its lock alone" do
+    lines = Rails.root.join("Dockerfile").readlines(chomp: true)
+    install = lines.index { |l| l.start_with?("RUN bundle install") }
+    assert install, "Dockerfile has no `RUN bundle install` line"
+    copy = lines[0...install].rindex { |l| l.start_with?("COPY ") }
+    assert copy, "no COPY precedes `RUN bundle install`"
+    assert_equal "COPY Gemfile Gemfile.lock ./", lines[copy],
+                 "the COPY before `bundle install` must bring only the Gemfile and its lock"
+  end
+
   test "every demo seed file survives .dockerignore" do
     files = Dir.glob("db/seeds/demo/**/*", File::FNM_DOTMATCH, base: ROOT)
                .select { |rel| ROOT.join(rel).file? }
