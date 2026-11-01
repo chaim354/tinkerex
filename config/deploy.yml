@@ -64,8 +64,10 @@ proxy:
 # Shared container registry: GitHub Container Registry (ghcr.io). The Mac builds the
 # image once and pushes here; both servers (Unraid + OVH) pull the same image. Auth is a
 # GitHub token with `packages` scope, sourced from the shell via .kamal/secrets (never in
-# git). The image package inherits the repo's visibility (private) — servers pull with the
-# same token (read:packages). See docs/DEPLOY.md.
+# git). A package's visibility is set per package on ghcr.io and does NOT follow the repo's:
+# this image has been public since 2026-10-26 (the repo went public that day), the sync
+# accessory's is still private, and the servers pull both with the same token (read:packages).
+# See docs/DEPLOY.md.
 registry:
   server: ghcr.io
   username: chaim354
