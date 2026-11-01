@@ -54,7 +54,18 @@ RUN apt-get update -qq && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
 # Install application gems
-COPY Gemfile Gemfile.lock vendor ./
+#
+# THE GEMFILE AND ITS LOCK, AND NOTHING ELSE -- `vendor` WAS HERE, FROM THE RAILS SCAFFOLD, AND IT
+# COST A FULL GEM REINSTALL ON EVERY VENDORED-JS CHANGE. This COPY is the cache key for the
+# `bundle install` layer below, and vendor/ holds no gems at all: only .keep and vendor/javascript
+# (CodeMirror, KiCanvas, o3dv and the other pinned bundles). So rebuilding any of those invalidated
+# the gem layer, and on the Mac the amd64 half of that install runs under emulation: 216-249 s of
+# a 251-287 s build, measured 2026-10-22, against 39 s total once the layer came from cache. It also
+# dropped vendor/'s CONTENTS flat into /rails/ (Docker copies a directory's contents, not the
+# directory) -- stray JS that `COPY . .` below then duplicated at the right path
+# (docs/AUDIT-2026-08-26.md). If gems are ever vendored, COPY that one directory by name.
+# Guard: test/deploy_hygiene_test.rb.
+COPY Gemfile Gemfile.lock ./
 # THE PRIVATE-GEM PLUMBING IS GONE (Arc D Part 2). This RUN used to mount a base64 read-only
 # DEPLOY KEY, rewrite https->SSH for github.com through GIT_CONFIG_* scoped to this one command,
 # decode the key and delete it inside the same layer, and scrub bundler's git cache -- all so
