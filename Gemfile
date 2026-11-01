@@ -37,7 +37,7 @@ gem "bcrypt", "~> 3.1.7"
 # (CLAUDE.md §9). It governs ONLY the human layer; the v1 device-token machinery is
 # untouched. OmniAuth keeps the OAuth/OIDC seam open (also MIT).
 gem "devise", ">= 5.0.4", "< 6"
-gem "omniauth", "~> 2.1"
+gem "omniauth", "~> 2.3"
 gem "omniauth-rails_csrf_protection", "~> 2.0"
 gem "omniauth_openid_connect", "~> 0.8", require: false
 
