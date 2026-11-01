@@ -19,7 +19,7 @@ your local checkout, so the working copy is routinely one or more commits behind
 merge, and `kamal` will happily build and ship whatever is on disk.
 
 ```bash
-cd /Users/charlesschwartz/Desktop/tinkerex
+cd /Users/charlesschwartz/Desktop/repos/tinkerex
 git checkout main && git pull --ff-only origin main
 git log --oneline -3
 ```
@@ -71,6 +71,26 @@ Confirm the commits you intend to ship are in that log. Then:
   ssh -o BatchMode=yes kamal1@192.168.1.95 "docker ps --format '{{.Names}}' | grep '^tinkerex-web'"
   ```
   The container names carry the deployed git SHA. Note it.
+- **The share library must be readable before a share deploy, and `/up` cannot tell you.** Run the
+  checkout's mount check on the box (over stdin: nothing is installed, and without `--ping` it never
+  touches the Uptime Kuma monitor, whose heartbeat only cron may refresh):
+  ```bash
+  ssh -o BatchMode=yes kamal1@192.168.1.95 bash -s < ops/library-check.sh
+  ```
+  It must print `ok  share  … entries in /library`. A `!!` line means Tower rebooted under the running
+  container and its CIFS mount is a stale handle (tinkerex#499, three times in ten days): `/up` stays
+  200 over it, and `kamal deploy -d share` then fails at container CREATE (exit 125, `error evaluating
+  symlinks from mount source`) because docker reuses the dead mount. Recover BEFORE step 2. The line
+  says whether Tower's SMB answers yet, which decides the move:
+  - **`SMB … does NOT answer`** — wait for Tower. Do **not** stop the container: the remount would
+    fail and nothing would serve share at all, where now the catalog still does.
+  - **`SMB … answers`** — stop the old container so docker drops the dead mount, confirm it dropped,
+    and the normal share deploy in step 2 mounts it fresh (`kamal app boot -d share` does the same
+    when share is not being deployed):
+    ```bash
+    ssh kamal1@192.168.1.95 "docker stop \$(docker ps -qf name=^tinkerex-web-share-)"
+    ssh kamal1@192.168.1.95 "mount | grep -c '3D Printing'"     # must print 0
+    ```
 
 ## 2. Build once, deploy three times
 
@@ -109,6 +129,13 @@ for h in chunk share s3; do
     ssh kamal1@192.168.1.95 "curl -s -o /dev/null -w '$h.$d %{http_code}\n' -H 'Host: $h.tinkerex.$d' http://localhost/up"
   done
 done
+```
+
+And the share library lists in the NEW container — the pre-check again, because `/up` is green over a
+dead mount:
+
+```bash
+ssh -o BatchMode=yes kamal1@192.168.1.95 bash -s < ops/library-check.sh
 ```
 
 Then prove the **change itself** shipped, not merely that containers booted — booting is
@@ -171,3 +198,5 @@ named exception is gone with it.
   a deliberate per-run override (a non-empty one wins), not a setup step
 - Deploy without `bin/secrets-preflight` — it is the only thing that catches a silent empty
 - Report success from an exit code alone
+- Deploy share over a `!!` from `ops/library-check.sh`, or stop the share container while its SMB
+  host does not answer

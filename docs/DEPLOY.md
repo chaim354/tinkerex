@@ -828,6 +828,78 @@ and only then discovering the tarball is short is the one failure that ordering 
 runs `bin/backup-db` first, since restoring the wrong archive is an ordinary mistake and making it
 unrecoverable is a choice.
 
+## 6b. The share library's mount — watched from the box
+
+**When Tower reboots, the running share container keeps a CIFS mount that is now a stale file
+handle.** `ls /library` fails with `Stale file handle`, every read of a file's bytes answers 503
+(`FileLayer::FetchError`, retryable by design) — and `/up` stays 200, because it never touches the
+library, while the catalog keeps rendering from the local database. It happened on 2026-10-22, 10-26 and 11-01
+(tinkerex#499), and each time it was found only because a deploy failed at container create. So
+`ops/library-check.sh` runs every 5 minutes from cron on the VM, lists `/library` inside each running
+share container, and pings an Uptime Kuma push monitor `up` or `down`:
+
+```sh
+bin/library-check-install                        # install/refresh (idempotent; needs the URL once)
+ssh kamal1@192.168.1.95 '~/tinkerex-ops/library-check.sh'        # ask now; exit 0 ok / 1 not
+ssh kamal1@192.168.1.95 bash -s < ops/library-check.sh           # the same from a checkout, nothing installed
+```
+
+**Install it once:** in Uptime Kuma add a Push monitor, `tinkerex library (share)`, Heartbeat Interval
+**900** (three missed 5-minute runs), Retries **0**, then:
+
+```sh
+PING_LIBRARY_SHARE=http://192.168.1.146:3001/api/push/<token> bin/library-check-install
+```
+
+The URL goes to `~/tinkerex-ops/library-ping.env` (chmod 600, never in git, a separate file from the
+backup's `ping.env` so each has one writer); later runs keep it. **The installer refuses without a
+URL**, where the backup installer only warns: the backup has other ways to be noticed, and a library
+check that tells nobody is the silence it exists to end. It finishes by running the check once, which
+is the heartbeat Kuma should show.
+
+**What reads as `down`:** a listing that errors (the stale handle), one that does not answer within
+20 s, an EMPTY `/library` (an unmounted mount point is an empty directory — the same signal
+`FileLayer::Share#library_present?` uses — and a library volume recreated plain-local reads that way
+too), no running share container, or a docker daemon that does not answer. During a deploy both
+containers are listed. A run that stops pinging at all — cron, the VM, docker wedged — goes red on the
+heartbeat. Only `--ping` (the cron line) touches the monitor; any run by hand reports by exit status.
+
+**Not `/up`, deliberately.** kamal-proxy will not route to a container whose `/up` fails, so a
+library-probing `/up` would turn "the NAS is rebooting" into "the whole app is down and every deploy
+is refused" — a partial outage the catalog survives traded for a total one (CLAUDE.md §14a's boot
+guards refuse a third-party dependency for the same reason).
+
+### Recovering, which the check deliberately does not do for you
+
+The `down` message ends by saying whether Tower's SMB port answers yet. That decides the move:
+
+- **`SMB … does NOT answer`** — Tower is still down or booting. **Wait.** Stopping the container now
+  would make the remount fail at create, leaving nothing serving share at all, where now the catalog
+  still is.
+- **`SMB … answers`** — stop the share container so docker drops the dead mount (docker unmounts a
+  CIFS volume when its last container stops; while one runs, a new container reuses the stale mount
+  and dies at create with `error evaluating symlinks from mount source`, exit 125), confirm it
+  dropped, then boot it fresh from the Mac:
+
+  ```sh
+  ssh kamal1@192.168.1.95 "docker stop \$(docker ps -qf name=^tinkerex-web-share-)"
+  ssh kamal1@192.168.1.95 "mount | grep -c '3D Printing'"     # must print 0
+  kamal app boot -d share                                      # or: kamal deploy -d share --skip-push
+  ssh kamal1@192.168.1.95 '~/tinkerex-ops/library-check.sh'    # ok  share  … entries in /library
+  ```
+
+**Why it alerts and never restarts anything.** The box cannot run that recovery — kamal and its
+secrets live on the Mac — and the box-only substitute, `docker restart`, has never been tried on the
+real failure; an automated recovery that was argued rather than probed is the shape this repo keeps
+paying for. Port 445 answering does not prove the share is exported yet, so a restart racing Tower's
+array start fails its mount and takes share fully down. And a flapping NAS would turn it into a
+restart loop of a production container. Three times, what was missing was the fact, not the minute
+the recovery takes. Revisit if it starts happening while nobody can act on the alert.
+
+**DO NOT `docker volume rm tinkerex_library_3dprinting`** to "reset" a stale mount. The stop above is
+the whole reset. Kamal would recreate a removed volume as a plain empty local one — the same warning,
+same reason, as `tinkerex_backups` above — and the check would then read `/library` as EMPTY.
+
 ---
 
 ## Migrating off the old on-box build

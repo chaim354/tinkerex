@@ -23,8 +23,10 @@ require "tmpdir"
 class OpsBackupTableTest < ActiveSupport::TestCase
   ROOT = Rails.root
   SCRIPT = ROOT.join("ops/backup-db.sh")
-  # Every script that reaches the box over ssh. Each defaults DEPLOY_HOST to the box.
-  BOX_SCRIPTS = %w[bin/backup-db bin/restore-db bin/backup-status bin/backup-cron-install].freeze
+  # Every script that reaches the box over ssh. Each defaults DEPLOY_HOST to the box. The library
+  # check's installer is not a backup script, but it installs onto the same box, and
+  # test/ops_library_check_test.rb derives which deployments it watches from its default.
+  BOX_SCRIPTS = %w[bin/backup-db bin/restore-db bin/backup-status bin/backup-cron-install bin/library-check-install].freeze
 
   # Where the app image keeps its SQLite databases: the image's WORKDIR is /rails (Dockerfile), and
   # config/database.yml puts production's under storage/. The volume mounted HERE is the one a

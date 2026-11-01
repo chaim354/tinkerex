@@ -1,4 +1,7 @@
 Rails.application.routes.draw do
+  # NEVER make this probe the library. A stale share mount is watched from the box
+  # (ops/library-check.sh, docs/DEPLOY.md §6b); kamal-proxy refuses a container whose /up fails, so a
+  # probing /up would turn a rebooting NAS into a down app and a refused deploy (§14a's boot guards).
   get "up" => "rails/health#show", as: :rails_health_check
 
   # Where the browser POSTs CSP violations. NAMED, because the policy's `report_uri` is built from
