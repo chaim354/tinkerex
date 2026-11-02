@@ -4,25 +4,24 @@ module Settings
   # the Filing page (Settings::FilingRulesController#index) and kept its markup classes; the
   # extension chips still post to FilingRulesController. Session-authed (§14d); reads and writes
   # only maker_shelves, maker_shelf_groups and maker_filing_rules -- no port, nothing to gate.
+  #
+  # A REFUSAL RE-RENDERS THE PAGE (UX audit B3): Settings::ShelvesPage loads it for all three of the
+  # page's controllers, and the refused record is shown in the form it came from.
   class ShelvesController < ApplicationController
+    include Settings::ShelvesPage
+
     def index
-      Maker::Shelves.ensure!(current_user)
-      @groups = current_user.maker_shelf_groups.order(:position, :name).to_a
-      shelves = current_user.maker_shelves.order(:position, :name).to_a
-      @ungrouped = shelves.reject(&:shelf_group_id)
-      @by_group = shelves.select(&:shelf_group_id).group_by(&:shelf_group_id)
-      # ONE QUERY, GROUPED IN MEMORY -- a `where(folder:)` per card is a query per shelf
-      # (page_query_budget_test.rb grows shelves to prove it does not).
-      @by_folder = current_user.maker_filing_rules.order(:ext).to_a.group_by(&:folder)
+      load_shelves_page
     end
 
     def create
       shelf = current_user.maker_shelves.new(name: params.require(:shelf).permit(:name)[:name],
                                              position: next_position)
       if shelf.save
-        redirect_to settings_shelves_path, notice: "Shelf #{shelf.name}/ added."
+        redirect_to settings_shelves_path, notice: "Added the shelf #{shelf.name}/."
       else
-        redirect_to settings_shelves_path, alert: shelf.errors.full_messages.to_sentence
+        @new_shelf = shelf
+        render_shelves_refusal
       end
     end
 
@@ -31,15 +30,17 @@ module Settings
     def update
       shelf = current_user.maker_shelves.find(params[:id])
       if shelf.update(params.require(:shelf).permit(:default_view, :shelf_group_id))
-        redirect_to settings_shelves_path, notice: "Shelf #{shelf.name}/ updated."
+        redirect_to settings_shelves_path, notice: "Saved the shelf #{shelf.name}/."
       else
-        redirect_to settings_shelves_path, alert: shelf.errors.full_messages.to_sentence
+        @failed_shelf = shelf
+        render_shelves_refusal
       end
     end
 
     # THE RULES GO WITH THE SHELF, in one transaction: a rule naming a folder with no shelf would
     # recreate the shelf on the next visit (Maker::Shelves.ensure!). Its extensions then file into
-    # `other`, which is why `other` itself cannot go.
+    # `other`, which is why `other` itself cannot go. The page draws no Remove on `other`, so its
+    # refusal stays a redirect: nothing was typed to keep.
     def destroy
       shelf = current_user.maker_shelves.find(params[:id])
       if shelf.fallback?
@@ -52,7 +53,7 @@ module Settings
         shelf.destroy!
       end
       redirect_to settings_shelves_path,
-                  notice: "Shelf #{shelf.name}/ removed. Its extensions file into other now."
+                  notice: "Removed the shelf #{shelf.name}/. Its extensions file into other now."
     end
 
     private

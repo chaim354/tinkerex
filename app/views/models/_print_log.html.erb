@@ -1,18 +1,31 @@
-<%# locals: (model:, print_runs:, printers:, materials:) %>
+<%# locals: (model:, print_runs:, printers:, materials:, open: false, draft: nil) %>
 <%# THE PRINT LOG, SHARED BY THE MODEL PAGE AND THE LIBRARY'S MODEL STRIP (files/_model_strip;
     structural redesign §5.4, slice 5), which is why it takes strict locals instead of reading the
-    page's ivars. The datalist ids stay fixed: there is one composer per page. Logging or deleting
-    a print redirects BACK (Models::PrintRunsController), so from the strip you stay in the folder. %>
-<section class="print-log">
+    page's ivars. The datalist ids and the section's `print-log` anchor stay fixed: there is one
+    composer per page. Logging or deleting a print redirects BACK (Models::PrintRunsController), so
+    from the strip you stay in the folder.
+
+    `open` and `draft` are the model page's alone (UX audit 2026-11-01): Recent's "Log a print" asks
+    for the composer open (`?log=1`), and a refused log re-renders the page (422) with `draft`, the
+    unsaved run, so its errors show here and every field keeps what was typed. The form is built on
+    that run, never on an ivar the scope would pick up by name, so the strip's empty composer and the
+    refusal's filled one are the same form. %>
+<% run = draft || Maker::PrintRun.new(printed_on: Date.current, outcome: "success") %>
+<section class="print-log" id="print-log">
   <h2>Print log <span class="muted">(<%= print_runs.size %>)</span></h2>
 
-  <details class="composer">
+  <details class="composer" <%= "open" if open || draft %>>
     <summary class="btn small">Log a print</summary>
-    <%# scope: :print_run (no model object) -> fields serialize under print_run[...], which the
-        controller's params.require(:print_run) expects. Same reason projects' _form uses scope. %>
-    <%= form_with scope: :print_run, url: model_print_runs_path(model), class: "print-form" do |f| %>
+    <%# scope: :print_run -> fields serialize under print_run[...], which the controller's
+        params.require(:print_run) expects. Same reason projects' _form uses scope. %>
+    <%= form_with model: run, scope: :print_run, url: model_print_runs_path(model), method: :post, class: "print-form" do |f| %>
+      <% if draft&.errors&.any? %>
+        <div class="form-errors flash-alert">
+          <%= draft.errors.map { |e| e.attribute == :printed_on ? "Date #{e.message}" : e.full_message }.to_sentence %>
+        </div>
+      <% end %>
       <div class="row">
-        <label class="field"><span>Date</span><%= f.date_field :printed_on, value: Date.today, required: true %></label>
+        <label class="field"><span>Date</span><%= f.date_field :printed_on, required: true %></label>
         <label class="field"><span>Outcome</span>
           <%= f.select :outcome, Maker::PrintRun::OUTCOMES.map { |o| [ o.capitalize, o ] } %>
         </label>
@@ -36,9 +49,13 @@
     <% end %>
   </details>
 
+  <%# A RUN'S OUTCOME CARRIES ITS WORD (design-system rule 13): the badge the model page uses for the
+      same state, "Printed" or "Failed", where a bare check or cross stood alone. %>
   <% print_runs.each do |run| %>
+    <% status = run.outcome == "success" ? "printed" : "failed" %>
     <div class="print-run">
-      <strong><%= run.outcome == "success" ? "✓" : "✕" %> <%= run.printed_on.strftime("%Y-%m-%d") %></strong>
+      <span class="badge mstatus-<%= status %>"><%= Maker::Model.print_status_label(status) %></span>
+      <strong><%= time_at(run.printed_on, style: :date) %></strong>
       <%= " · #{run.printer}" if run.printer.present? %>
       <div class="muted">
         <%= [ run.material, ("#{run.duration_hours}h" if run.duration_hours),
@@ -46,7 +63,7 @@
       </div>
       <% if run.notes.present? %><div class="muted"><%= run.notes %></div><% end %>
       <%= button_to "Delete", print_run_path(run), method: :delete, class: "linkbtn danger small",
-                    form: { data: { turbo_confirm: "Delete this print?" } } %>
+                    form: { data: { turbo_confirm: "Delete the print from #{run.printed_on.iso8601}?" } } %>
     </div>
   <% end %>
 </section>

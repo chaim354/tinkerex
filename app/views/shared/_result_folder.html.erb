@@ -1,0 +1,9 @@
+<%# locals: (where:) %>
+<%# WHERE A RESULT ROW SITS, under its name (UX audit D11, 2026-11-02). `where` is
+    FilesHelper#result_folders' entry — [folder node_id, library path] — or nil, which draws nothing:
+    a row whose folder is unknown names none rather than claim the library root. The path is DATA,
+    so it is mono (decision 4), and it is a link into that folder, because finding the thing is
+    what a search is for. %>
+<% if where %>
+  <%= link_to where.last.presence || "Library", files_path(folder: where.first), class: "result-path" %>
+<% end %>

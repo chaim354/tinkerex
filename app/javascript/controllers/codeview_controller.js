@@ -32,7 +32,7 @@ export default class extends Controller {
       head = await this.fetchHead()
     } catch (e) {
       if (this.disconnected) return
-      this.fallbackTarget.textContent = `Could not load preview: ${e.message}`
+      this.fallbackTarget.textContent = "This file could not be loaded. Reload the page to try again."
       return
     }
     if (this.disconnected) return

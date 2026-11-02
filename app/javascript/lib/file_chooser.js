@@ -162,7 +162,7 @@ export class FileChooser {
         <div class="filechooser-crumbs"></div>
         <div class="filechooser-cols"></div>
         <div class="filechooser-foot">
-          <div class="filechooser-newwrap"><button type="button" class="btn ghost filechooser-new">＋ New Folder</button></div>
+          <div class="filechooser-newwrap"><button type="button" class="btn ghost filechooser-new">+ New folder</button></div>
           <div class="filechooser-actions">
             <button type="button" class="btn ghost filechooser-back" aria-label="Back">← Back</button>
             <span class="filechooser-sel"></span>
@@ -182,7 +182,7 @@ export class FileChooser {
     this.selEl = this.overlay.querySelector(".filechooser-sel")
     this.chooseBtn = this.overlay.querySelector(".filechooser-choose")
     this.newWrap = this.overlay.querySelector(".filechooser-newwrap")
-    // NO createUrl, NO "New Folder" (K, 2026-10-20): the library-folder chooser lists folders on the
+    // NO createUrl, NO "New folder" (K, 2026-10-20): the library-folder chooser lists folders on the
     // host, which the person makes there; this modal has nowhere to post one. `hidden`, the house idiom
     // (see #render), so the footer keeps its layout.
     if (!this.createUrl) this.newWrap.hidden = true
@@ -401,7 +401,7 @@ export class FileChooser {
   async submitNewFolder(form, input) {
     const name = input.value.trim()
     if (!name) return
-    // FALLS BACK TO `rootId`, NOT TO null. Browse mode never renders New Folder, so this is not
+    // FALLS BACK TO `rootId`, NOT TO null. Browse mode never renders New folder, so this is not
     // reachable today — but a modal caller that ever passes `rootId` would otherwise create its
     // folder at the LIBRARY ROOT while the crumbs said otherwise, which is the two-halves-
     // disagree defect recorded at #open one more time.
@@ -432,7 +432,7 @@ export class FileChooser {
   }
 
   resetNewButton() {
-    this.newWrap.innerHTML = `<button type="button" class="btn ghost filechooser-new">＋ New Folder</button>`
+    this.newWrap.innerHTML = `<button type="button" class="btn ghost filechooser-new">+ New folder</button>`
     this.newWrap.querySelector(".filechooser-new").addEventListener("click", () => this.newFolder())
   }
 

@@ -1,7 +1,8 @@
 require "test_helper"
 
 module Web
-  # The per-project "Scan folder" button: refresh the library from storage NOW, instead of waiting
+  # The per-project "Rescan library" button (it read "Scan folder" until 2026-11-02, though it has
+  # always scanned the whole library — the UX audit's C7): refresh the library from storage NOW, instead of waiting
   # for library_scan's 15 minutes (share/s3) or remote_changelog_pull's 2 (chunk_remote).
   #
   # EVERY TEST FORCES ITS BACKEND rather than reading the ambient LIBRARY_BACKEND, so all of them
@@ -331,7 +332,7 @@ module Web
       get project_path(@project)
       assert_response :success
       assert_select "form[action=?]", project_scan_path(@project) do
-        assert_select "button", text: /scan folder/i
+        assert_select "button", text: "Rescan library"
       end
     ensure
       FileUtils.remove_entry(@root) if @root&.exist?

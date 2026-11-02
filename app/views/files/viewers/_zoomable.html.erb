@@ -21,7 +21,7 @@
 %>
 <div class="<%= card ? "render-card" : "image-zoom-frame" %>" data-controller="image-zoom">
   <%= tag.img src: src, alt: alt, class: "preview-image zoomable", tabindex: 0, role: "button",
-              title: "Click to enlarge", aria: { haspopup: "dialog" },
+              title: "Open larger", aria: { haspopup: "dialog" },
               data: { image_zoom_target: "source",
                       action: "click->image-zoom#open keydown.enter->image-zoom#open keydown.space->image-zoom#open" }.merge(img_data) %>
   <dialog class="image-zoom" aria-label="<%= name %>" data-image-zoom-target="dialog"

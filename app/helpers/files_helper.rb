@@ -46,12 +46,17 @@ module FilesHelper
   # FilesController#index renders contains it, and `selected=` its id. A root file has no parent and
   # `files_path` drops the nil. It takes the NODE, not an id and a name, because it now needs the
   # parent too, and every caller already holds the node.
+  #
+  # `delete_confirm` IS THE QUESTION THE MENU'S Delete ASKS (UX audit B5, 2026-11-02), the same
+  # sentence the row's and the page's Delete buttons ask — #delete_confirm below is its one
+  # definition, so the three doors cannot drift into three phrasings.
   def file_menu_data(node, origin)
     { action: "contextmenu->filemenu#open",
       node_name: node.name,
       note_url: file_notes_path(node.node_id),
       download_url: blob_file_path(node.node_id, download: 1),
       delete_url: file_path(node.node_id),
+      delete_confirm: delete_confirm(node.name, kind: "file"),
       details_url: files_path(folder: node.parent_node_id, selected: node.node_id),
       addon_open_url: origin&.dig(:url),
       addon_open_label: origin&.dig(:label) }
@@ -72,7 +77,59 @@ module FilesHelper
   # an internal sentence with a raw node id. Every backend cascades now, so the payload is
   # unconditional and the branch went with the thing it asked.
   def folder_menu_data(node_id, node_name)
-    { action: "contextmenu->filemenu#open", node_name:, delete_url: file_path(node_id) }
+    { action: "contextmenu->filemenu#open", node_name:, delete_url: file_path(node_id),
+      delete_confirm: delete_confirm(node_name, kind: "dir") }
+  end
+
+  # WHAT EVERY DELETE ASKS, ONE SENTENCE PER KIND (UX audit B5). A FOLDER SAYS IT TAKES ITS CONTENTS
+  # because it does — a directory delete cascades on every backend (CLAUDE.md §14a) — and "Delete
+  # cad?" read like one entry. A file goes to Trash and comes back from there, so its question is
+  # the plain one. The list row, the grid card, the file page, the inspector and the right-click
+  # menu (through `data-delete-confirm`) all ask through here.
+  def delete_confirm(name, kind:)
+    kind.to_s == "dir" ? "Delete the folder #{name} and everything in it?" : "Delete #{name}?"
+  end
+
+  # THE ROW AND CARD ACTIONS' ICONS (UX audit D2, 2026-11-02). Below 480px a list row's Details,
+  # Download and Delete draw as these instead of their words, so three controls fit one line and a
+  # row's Delete never sits on the next row's Download; a grid card always draws them, having no
+  # room for three words. The words stay in the markup as each control's label and the accessible
+  # name says what it acts on, so an icon is never the only thing naming a control. Drawn like the
+  # rail's glyphs (ShellHelper#rail_icon), and `delete` IS the rail's trash, read rather than copied.
+  ACTION_ICON_PATHS = {
+    details: "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2z M8 7.25v3.5 M8 5v.01",
+    download: "M8 2.5v7.5 M4.75 7L8 10.25 11.25 7 M3 13h10",
+    delete: ShellHelper::ICON_PATHS.fetch(:trash)
+  }.freeze
+
+  def action_icon(name)
+    tag.svg(viewBox: "0 0 16 16", class: "action-icon", "aria-hidden": "true") do
+      tag.path(d: ACTION_ICON_PATHS.fetch(name), fill: "none", stroke: "currentColor",
+               "stroke-width": "1.5", "stroke-linejoin": "round", "stroke-linecap": "round")
+    end
+  end
+
+  # WHERE EACH RESULT ROW SITS, for shared/_result_group (UX audit D11, 2026-11-02): `{ record_id =>
+  # [folder_id, path] }` over the rows that will RENDER, with the folder id read off each record by
+  # the caller's block (a node's parent, a model's folder). The path is "" for the library root, and
+  # a row whose folder is unknown or whose chain is broken gets NO key — Maker::LibraryTree#path_for
+  # answers nil there, and the row then names nothing rather than claim the root. A non-node with no
+  # folder at all (a model imported with none) is the same absence. `tree` is the caller's, one per
+  # request, so every group on a page shares one pluck.
+  def result_folders(records, tree:)
+    records.each_with_object({}) do |record, out|
+      folder_id = yield(record)
+      next if folder_id.nil? && !record.is_a?(Node)
+
+      path = tree.path_for(folder_id)
+      out[record.id] = [ folder_id, path ] unless path.nil?
+    end
+  end
+
+  # One action's inside: its icon, then its word. `.row-action-label` is what a narrow row and a
+  # grid card hide (components.css), never the control's accessible name, which the caller sets.
+  def row_action_content(icon, label)
+    safe_join([ action_icon(icon), tag.span(label, class: "row-action-label") ])
   end
 
   # THE POLL CELL'S HALF — what `thumbs_controller.js` reads (`dataset.nodeId`; a cell without one
@@ -136,9 +193,15 @@ module FilesHelper
   # while the key said "stl", so the row sorted into the middle of the STL block. (They still sit
   # in the FILE block rather than with the folders; that is sort_nodes' partition, a separate
   # question.)
+  #
+  # IT READS `kind` AND `name` AND NOTHING ELSE (UX audit D4/D7, 2026-11-02), so the port's own
+  # answers take it as they are: a Node, a FileLayer::FileInfo (the file page's and the inspector's
+  # Type row, which printed the raw MIME type — `application/octet-stream` for a .lbrn2) and a
+  # FileLayer::TrashEntry (Trash's Type column, which printed the raw `file`/`dir`). One label for
+  # one question on every surface that asks it.
   def file_type_label(node)
-    return "Folder" if node.dir?
-    return "Symlink" if node.symlink?
+    return "Folder" if node.kind == "dir"
+    return "Symlink" if node.kind == "symlink"
 
     File.extname(node.name).delete(".").upcase.presence || "—"
   end

@@ -122,6 +122,17 @@ module V1
         assert_not_includes names, "ok"
       end
 
+      # A WIRE-BEHAVIOUR CHANGE (UX audit E5, 2026-11-02): "low" needs a minimum. An item whose
+      # min_quantity is 0 used to be low the moment it was created (0 <= 0), which made every new item
+      # "Low stock"; now low_stock, the scope and the predicate all require min_quantity > 0.
+      test "low_stock skips an item that has no minimum" do
+        create_item({ name: "no-min", min_quantity: 0 })
+        get "/v1/maker/inventory_items/low_stock", headers: auth(@token)
+        assert_response :success
+        names = JSON.parse(response.body)["inventory_items"].map { |i| i["name"] }
+        assert_not_includes names, "no-min"
+      end
+
       test "index is filterable by category" do
         create_item({ name: "bolt", category: "fasteners" })
         create_item({ name: "wire", category: "electronics" })

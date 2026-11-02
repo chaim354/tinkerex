@@ -24,8 +24,8 @@ require "application_system_test_case"
 # IT RENDERS THE FIELD IN `mode: "file"` (the cover-image picker), AND THAT IS NOT A DETAIL TO SKIM
 # PAST. The retired editor used the folder-mode default, so this move changes which arm of
 # lib/file_chooser.js each test drives. Four of the five subjects are mode-independent and are
-# unchanged in substance — the trigger opens the modal, the columns fetch and descend, "＋ New
-# Folder" writes through the real port, a refused name reports inline, Esc commits nothing, and a
+# unchanged in substance — the trigger opens the modal, the columns fetch and descend, "+ New
+# folder" writes through the real port, a refused name reports inline, Esc commits nothing, and a
 # commit has to move the BUTTON LABEL and the HIDDEN INPUT together. What genuinely does not survive
 # is the *seeding* half of the reopen case: `FileChooser#open` seeds a selection only when
 # `mode === "folder"` (`{nodeId: this.value, path: this.label || this.rootLabel}`), because in file
@@ -50,7 +50,7 @@ class FileChooserTest < ApplicationSystemTestCase
     # what keeps this test identical on all three LIBRARY_BACKEND legs. (Contrast the save-door
     # tests, which must go through the real write door because a `nodes.create!` node has a NULL
     # storage_path — §14a.) The folders above still go through Maker::LibraryFolder, because the
-    # "＋ New Folder" test asserts against that same door.
+    # "+ New folder" test asserts against that same door.
     @file = @user.nodes.create!(node_id: SecureRandom.uuid, name: "beacon.stl", kind: "file",
                                 parent_node_id: harbor.node_id)
   end
@@ -160,12 +160,12 @@ class FileChooserTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  test "New Folder creates a real dir through the port and steps into it" do
+  test "New folder creates a real dir through the port and steps into it" do
     open_form
     find(".folder-field-btn").click
     find(".filechooser-row", text: "Projects").click
 
-    click_on "＋ New Folder"
+    click_on "+ New folder"
     find(".filechooser-newform input").set("exports")
     click_on "Create"
 
@@ -189,7 +189,7 @@ class FileChooserTest < ApplicationSystemTestCase
     open_form
     find(".folder-field-btn").click
 
-    click_on "＋ New Folder"
+    click_on "+ New folder"
     find(".filechooser-newform input").set("..")
     click_on "Create"
 

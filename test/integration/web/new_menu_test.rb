@@ -39,7 +39,7 @@ module Web
     end
 
     # THE PHONE'S "+" (spec §4.3, slice 7): the menu's first item is Upload, wired to the controller that
-    # forwards its click to the top bar's upload LABEL. shell.css shows it at 719px and below only —
+    # forwards its click to the top bar's Upload control (a <label> until the UX audit, a <button> since). shell.css shows it at 719px and below only —
     # which a browser sees (test/system/phone_topbar_test.rb); this pins the markup and the wiring, and
     # that it is a button, so a tap never navigates. The summary's name says the "+" carries both.
     test "the New menu carries the phone's Upload item, wired to forward to the top bar's label" do
@@ -49,7 +49,8 @@ module Web
         assert_select ".menu-list > button.menu-item.topbar-new-upload[type=button][data-controller='upload-forward'][data-action='upload-forward#open']:first-child",
                       text: "Upload…"
       end
-      assert_select "header.topbar .topbar-upload label.upload-btn", 1
+      # A <button> since the UX audit (A1 item 6, "Upload is a button"), so a keyboard reaches it.
+      assert_select "header.topbar .topbar-upload button.upload-btn[type=button]", 1
     end
 
     test "on a folder's page, New creates in that folder" do
@@ -97,7 +98,7 @@ module Web
       get tools_new_menu_path
       assert_response :success
       assert_select "turbo-frame#new-menu-tools a.menu-item[href=?]", tools_addon_path("boxes"),
-                    text: "Box Generator…"
+                    text: "Box Generator"
       assert_select "turbo-frame#new-menu-tools a.menu-item[href=?]", tools_addon_path("fixture"),
                     count: 0
     ensure

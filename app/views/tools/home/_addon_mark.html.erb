@@ -1,0 +1,13 @@
+<%# locals: (addon:) %>
+<%#
+  AN ADDON'S MARK IS A MONOGRAM, NEVER ITS MANIFEST `icon` (2026-11-02, UX audit G1). That field is
+  an emoji by convention (docs/addon-api-v1.md), and the interface draws no emoji (design-system.md
+  rule 13) — the rail already drew a pinned addon with the Tools glyph for the same reason. The key
+  stays REQUIRED in a manifest (Registry::REQUIRED): every published bundle sends it, and nothing
+  here reads it any more. The letter is the title's first letter or digit, so the tile follows data
+  the card already shows; a title with neither falls back to the key, then to the Tools glyph.
+  aria-hidden: the title beside it is the name. tools_gallery_test.rb renders the gallery over emoji
+  icons and refuses any emoji in the page.
+%>
+<% letter = addon.title[/[[:alnum:]]/] || addon.key[/[[:alnum:]]/] %>
+<span class="addon-icon addon-monogram" aria-hidden="true"><%= letter ? letter.upcase : rail_icon(:tools) %></span>

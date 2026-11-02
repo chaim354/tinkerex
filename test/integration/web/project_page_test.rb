@@ -188,26 +188,32 @@ module Web
                     attachment_path(@linked_attachment), text: "Detach"
     end
 
-    test "task rows carry a state mark and the composer sits below the list" do
+    # THE COMPOSER IS IN THE HEAD SINCE 2026-11-02 (the UX audit's C4: one composer pattern across
+    # the six panels), a closed `details.composer` above the groups, with a labelled field and an
+    # "Add task" submit where a bare placeholder-only field sat below the list.
+    test "task rows carry a state mark and the composer sits in the head" do
       get project_path(@project)
       assert_select "#project-tasks .tasks-group.status-done .task-row .task-state.task-state--done", count: 1
       assert_select "#project-tasks .tasks-group.status-todo .task-row .task-state.task-state--todo", count: 2
-      children = css_select("#project-tasks > *").map { |el| el["class"].to_s }
-      last_group = children.rindex { |c| c.include?("tasks-group") }
-      form = children.index { |c| c.include?("task-form") }
-      assert form && last_group && form > last_group, "the task form must come after the task groups, got #{children.inspect}"
-      assert_select "#project-tasks form.task-form input[type='text'][name='task[title]']"
+      assert_select "#project-tasks > .panel-head > details.composer.task-add:not([open]) > summary", text: "Add…"
+      assert_select "#project-tasks details.composer form.task-form label.field input[type='text'][name='task[title]']"
+      assert_select "#project-tasks details.composer form.task-form input[type=submit][value=?]", "Add task"
+      assert_select "#project-tasks input[name='task[title]'][placeholder]", 0
     end
 
     test "the build-log composer is a closed details holding the same form" do
       get project_path(@project)
-      assert_select ".build-log-panel details.composer:not([open]) > summary", text: "Add entry"
+      assert_select ".build-log-panel details.composer:not([open]) > summary", text: "Add…"
       assert_select ".build-log-panel details.composer form[action=?] lexxy-editor[attachments='false']",
                     project_build_log_entries_path(@project)
-      # "Save entry" ON THE SUBMIT, "Add entry" ON THE SUMMARY — they both read "Add entry" until
-      # 2026-09-10, two controls 150px apart in one panel naming different actions (§1A.8). Asserted
-      # as a PAIR here, because the defect was only visible as one.
-      assert_select ".build-log-panel details.composer form input[type='submit'][value='Save entry']"
+      # "Add entry" ON THE SUBMIT, "Add…" ON THE SUMMARY — the opener offers the composer and the
+      # submit names the thing it adds (2026-11-02, the UX audit's C4, the six panels' one pattern).
+      # They both read "Add entry" until 2026-09-10, two controls 150px apart in one panel (§1A.8).
+      # Asserted as a PAIR here, because the defect was only visible as one.
+      assert_select ".build-log-panel details.composer form input[type='submit'][value='Add entry']"
+      # A VISIBLE LABEL NAMES THE EDITOR, not its placeholder (§I).
+      assert_select ".build-log-panel details.composer form label.composer-label[for=?]", "build-log-entry-body",
+                    text: "What did you do?"
     end
 
     test "a log entry puts its date in the first column and its body in the second" do
@@ -332,7 +338,7 @@ module Web
 
       get project_path(fresh, add: "tasks")
 
-      assert_select "section.tasks-panel.panel--quiet form.task-form"
+      assert_select "section.tasks-panel.panel--quiet details.composer form.task-form"
       # THE TURBO TARGET IS ON THE PAGE, so the first add's stream replace has something to land on.
       assert_select "#project-tasks", count: 1
       assert_select "#project-tasks .tasks-group", count: 0
@@ -354,7 +360,7 @@ module Web
         assert_select "p.muted", text: /No (entries|connections|releases|sheets) yet/, count: 0
       end
       get project_path(fresh, add: "build_log")
-      assert_select ".build-log-panel details.composer > summary", text: "Add entry"
+      assert_select ".build-log-panel details.composer > summary", text: "Add…"
     end
 
     test "a panel with a row stays without ?add=, and drops out of the add menu" do

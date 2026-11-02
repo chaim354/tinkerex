@@ -1,10 +1,18 @@
 <% content_for :title, "Trash — Tinkerex" %>
 
+<%# THE WAY BACK IS THE BREADCRUMB (design-system.md rule 9; UX audit A4, 2026-11-02): Trash is the
+    Library's, so the top bar reads Library / Trash. A ghost "Back to Files" button in the head was
+    the third way this app had of going up a level, under the place's old name. %>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Library path">
+    <%= link_to "Library", files_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">Trash</span>
+  </nav>
+<% end %>
+
 <div class="page-head">
   <h1>Trash</h1>
-  <div class="page-actions">
-    <%= link_to "← Back to Files", files_path, class: "btn ghost small" %>
-  </div>
 </div>
 
 <%# One sentence true on every backend. It used to say deleted files are kept "along with their
@@ -19,12 +27,22 @@
 <% else %>
   <%# THE SAME `col-*` CLASSES THE FILES LIST CARRIES, so pages/files.css's phone rules drop the
       same columns here (§14m rule 11). They are a layout contract, not decoration: without them
-      this table is the one page that scrolls sideways at 375px. %>
+      this table is the one page that scrolls sideways at 375px.
+
+      TYPE, NOT KIND, AND WHERE IT CAME FROM (UX audit D7, 2026-11-02): the column read the raw
+      `file`/`dir`, where the Library says "STL" and "Folder" (FilesHelper#file_type_label, which
+      takes a TrashEntry as it is); and two deleted README.md files could not be told apart. The
+      origin is TrashController#origins_for's: a live folder links to it, a folder that is in the
+      Trash too says so, because restoring this row is refused until that folder comes back.
+
+      RESTORE IS ALWAYS SHOWN (`row-actions--shown`): it is the page's only action, and a control a
+      maker has to hover to find is one a phone never finds at all. %>
   <table class="files">
     <thead>
       <tr>
         <th class="col-name">Name</th>
-        <th class="col-type">Kind</th>
+        <th class="col-type">Type</th>
+        <th class="col-folder">From</th>
         <th class="num col-size">Size</th>
         <th class="col-modified">Deleted</th>
         <th class="col-actions"></th>
@@ -32,6 +50,7 @@
     </thead>
     <tbody>
       <% @entries.each do |entry| %>
+        <% origin = @origins[entry.node_id] %>
         <tr>
           <td class="col-name">
             <% if entry.kind == "dir" %>
@@ -40,14 +59,26 @@
               <%= entry.name %>
             <% end %>
           </td>
-          <td class="muted col-type"><%= entry.kind %></td>
+          <td class="muted col-type"><%= file_type_label(entry) %></td>
+          <td class="muted col-folder">
+            <% if origin.nil? %>
+              —
+            <% elsif origin.deleted_parent %>
+              <%= origin.deleted_parent %> (in Trash too)
+            <% elsif origin.path.nil? %>
+              —
+            <% else %>
+              <%= link_to origin.path.presence || "Library", files_path(folder: origin.parent_node_id) %>
+            <% end %>
+          </td>
           <%# nil only for a directory, which HAS no size — the one em-dash in this UI that is not
               a backend lie. %>
           <td class="num muted col-size"><%= entry.size ? number_to_human_size(entry.size) : "—" %></td>
-          <td class="muted col-modified"><%= entry.deleted_at&.strftime("%Y-%m-%d %H:%M") || "—" %></td>
-          <td class="row-actions col-actions">
+          <td class="muted col-modified"><%= entry.deleted_at ? time_at(entry.deleted_at) : "—" %></td>
+          <td class="row-actions row-actions--shown col-actions">
             <%= button_to "Restore", restore_trash_path(entry.node_id), method: :post,
-                  form: { data: { turbo_confirm: "Restore #{entry.name}?" } }, class: "btn small" %>
+                  form: { data: { turbo_confirm: "Restore #{entry.name}?" } }, class: "btn small",
+                  aria: { label: "Restore #{entry.name}" } %>
           </td>
         </tr>
       <% end %>

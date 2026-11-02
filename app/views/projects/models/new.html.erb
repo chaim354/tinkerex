@@ -1,4 +1,20 @@
-<% content_for :title, "Add a model — Tinkerex" %>
+<% content_for :title, "Add a model — #{@project.name} — Tinkerex" %>
+
+<%#
+  THE ADD-MODEL PICKER (2026-11-02, the UX audit's C9): breadcrumbs, not a foot "← Back to project"
+  (design-system.md rule 9); one visible label on the search box; and each row shows the model's
+  picture, its formats and its folder (Maker::Model.card_facts), so three models titled "tetra"
+  can be told apart. Attaching a model attaches its files and moves nothing, so the button is Attach.
+%>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Project path">
+    <%= link_to "Projects", projects_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to @project.name, project_path(@project) %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">Add a model</span>
+  </nav>
+<% end %>
 
 <div class="page-head"><h1>Add a model to <%= @project.name %></h1></div>
 
@@ -6,23 +22,36 @@
   <p class="muted"><%= @project.name %> is archived — unarchive it to attach models.</p>
 <% else %>
   <%= form_with url: new_project_model_path(@project), method: :get, class: "picker-search" do |f| %>
-    <%= f.search_field :q, value: @q, placeholder: "Search your models by title…", autofocus: true %>
+    <label class="picker-label" for="picker-q">Search your 3D models by title</label>
+    <%= f.search_field :q, value: @q, id: "picker-q", autofocus: true %>
     <%= f.submit "Search", class: "btn" %>
   <% end %>
 
   <% if @results.empty? %>
     <p class="muted">No models found<%= " for “#{@q}”" if @q %>.</p>
   <% else %>
-    <div class="picker-results">
+    <div class="picker-results" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% @results.each do |model| %>
+        <% facts = @facts[model.id] %>
         <div class="picker-result">
-          <span class="picker-name"><%= model.title %></span>
+          <% if (cover = model.cover_node_id) %>
+            <span class="picker-thumb file-cell" <%= tag.attributes(data: thumb_cell_data(cover, "")) %>>
+              <%= render "files/thumb", thumb: @thumbs.thumb(cover), ext_label: "", url: preview_src(@thumbs.thumb(cover)) %>
+            </span>
+          <% else %>
+            <span class="picker-thumb thumb project-thumb-empty" aria-hidden="true"><%= rail_icon(:models) %></span>
+          <% end %>
+          <span class="picker-text">
+            <span class="picker-name"><%= model.title %></span>
+            <span class="picker-folder mono muted">
+              <%= [ facts&.extensions&.join(" · ").presence, (facts&.folder.nil? ? nil : (facts.folder.presence || "Library")) ].compact.join(" — ") %>
+            </span>
+          </span>
           <%= button_to "Attach", model_projects_path(model),
-                        params: { project_id: @project.slug, return_to: "project" }, class: "btn small" %>
+                        params: { project_id: @project.slug, return_to: "project" }, class: "btn small",
+                        "aria-label": "Attach #{model.title}" %>
         </div>
       <% end %>
     </div>
   <% end %>
 <% end %>
-
-<p><%= link_to "← Back to project", project_path(@project), class: "linkbtn" %></p>

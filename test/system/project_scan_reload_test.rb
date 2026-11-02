@@ -1,6 +1,6 @@
 require "application_system_test_case"
 
-# THE "Scan folder" BUTTON'S ONE-SHOT RELOAD, WHICH ONLY A BROWSER CAN SEE.
+# THE "Rescan library" BUTTON'S ONE-SHOT RELOAD, WHICH ONLY A BROWSER CAN SEE.
 #
 # On share/s3 the scan is a background job — an unbounded NAS walk or bucket listing — so the
 # request that starts it cannot show the result. `projects/_attachments.html.erb` therefore renders
@@ -61,9 +61,12 @@ require "application_system_test_case"
 #      "[data-controller~='scanreload']", found 1 match: ""`.
 #   4. AND `visible: :all` WAS MUTATION-CHECKED TOO, because a guard that cannot fail is worse than
 #      none. With mutation 3 still applied, dropping `visible: :all` from the `assert_no_selector`
-#      turned that RED back to a full GREEN run — Selenium reports the empty <span> as not
-#      displayed, so the default `visible: :visible` makes the absence assertion true whether or
-#      not the element is there. Do not "tidy" those two kwargs away.
+#      turned that RED back to a full GREEN run — the <span> was EMPTY then, Selenium reported it as
+#      not displayed, and the default `visible: :visible` made the absence assertion true whether
+#      or not the element was there. Since 2026-11-02 the controller writes "Still scanning…" into
+#      it while it polls (and "Nothing yet — reload to check again." after), so whether it is
+#      displayed now depends on JavaScript having run — still not a fact these assertions are
+#      about. They ask whether the ELEMENT exists. Do not "tidy" those two kwargs away.
 #
 # MUTATIONS 1, 3 AND 4 ARE INHERITED FROM THE 6000 ms VERSION AND WERE NOT RE-RUN AT S4-3; they are
 # about `connect()`, the view's guard and the kwargs, none of which this change touched. MUTATION 2
@@ -94,9 +97,9 @@ class ProjectScanReloadTest < ApplicationSystemTestCase
 
   test "the scan button's reload fires once, to the url without the marker" do
     visit project_path(@project)
-    assert_button "Scan folder"
+    assert_button "Rescan library"
 
-    click_on "Scan folder"
+    click_on "Rescan library"
 
     # The async branch: Library::ScanJob is enqueued and the page says so. Both of these are
     # request-level facts already pinned by project_scan_button_test.rb — they are here as the
@@ -107,9 +110,10 @@ class ProjectScanReloadTest < ApplicationSystemTestCase
     assert_selector ".flash-notice", text: /Scanning your library/i
 
     # `visible: :all` IS NOT OPTIONAL AND IS NOT TIDINESS — see mutation 4 in the header. The
-    # element is an EMPTY <span>, which Selenium reports as not displayed, so the default
-    # `visible: :visible` makes this assertion unsatisfiable here and — far worse — makes its
-    # `assert_no_selector` twin below pass whether the element is there or not.
+    # element is rendered as an empty <span> and only shows text ("Still scanning…") once
+    # scanreload_controller.js writes it, so with the default `visible: :visible` this assertion
+    # would hang on the script's timing — and its `assert_no_selector` twin below would pass
+    # whenever the span happened to be empty, whether the element is there or not.
     assert_selector "[data-controller~='scanreload']", visible: :all
 
     # THE SCAN FINISHES — IN RUBY, BECAUSE ActiveJob's test adapter never runs what it queues.
@@ -151,7 +155,7 @@ class ProjectScanReloadTest < ApplicationSystemTestCase
   # comparison rather than about timing.
   test "no scan finishing means no reload" do
     visit project_path(@project)
-    click_on "Scan folder"
+    click_on "Rescan library"
     assert_current_path project_path(@project, scanning: 1)
     assert_selector "[data-controller~='scanreload']", visible: :all
 

@@ -40,9 +40,10 @@ export default class extends Controller {
     // GIVING UP RESOLVES THE SPINNERS, IT DOES NOT JUST STOP ASKING. This used to be part of the
     // condition above and simply returned, so any cell still spinning at try 41 spun for as long
     // as the page stayed open — the animation is CSS and does not care that polling ended. The
-    // server now answers "unsupported" for a node with no row, so reaching this line means
-    // something else went wrong (an endpoint erroring, a node appearing mid-session); a static
-    // badge is the honest end state either way, and "forever" stops being reachable at all.
+    // server now answers "unsupported" for a node with no row, so reaching this line means a render
+    // that is still running (a large file, a queue behind a scan) or something else gone wrong (an
+    // endpoint erroring, a node appearing mid-session); a static badge that says the preview is
+    // taking longer is the honest end state for all of them, and "forever" stops being reachable.
     if (this.tries > 40) return this.resolveStragglers()
     this.tries += 1
 
@@ -108,13 +109,19 @@ export default class extends Controller {
   }
 
   // Every cell still holding a spinner becomes a static badge. Used when polling gives up.
+  //
+  // "TAKING LONGER", NEVER "NOT SUPPORTED" (2026-11-02, the UX audit's D8). Giving up is the PAGE
+  // running out of patience (~80 s of polls), not the server saying anything: a big STEP or a queue
+  // behind a library scan outlasts it routinely, and labelling that "Preview not supported" told a
+  // maker their file type had no preview when its render was simply still running. The unsupported
+  // title is kept for the server's own `unsupported` answer, in #poll.
   resolveStragglers() {
     for (const cell of this.cellTargets) {
-      if (cell.querySelector(".thumb-spinner")) this.setIcon(cell)
+      if (cell.querySelector(".thumb-spinner")) this.setIcon(cell, { slow: true })
     }
   }
 
-  setIcon(cell, { failed = false } = {}) {
+  setIcon(cell, { failed = false, slow = false } = {}) {
     const thumb = cell.querySelector(".thumb")
     if (!thumb || thumb.querySelector(".thumb-icon")) return
     const icon = document.createElement("span")
@@ -123,11 +130,14 @@ export default class extends Controller {
     // for an unsupported type), the same `thumb-failed` mark, the same em-dash fallback for a
     // cover cell with no extension. The two must agree: one of them renders on load and the other
     // replaces a spinner, and a user seeing both would otherwise get two different answers to
-    // "why is there no picture".
+    // "why is there no picture". The third, `slow`, has no server twin and needs none: the server
+    // never renders a cell it gave up on, only one still pending, which spins.
     //
     // The mark is a class on the `.thumb` box, not on the cell: a cell can be a whole grid card or
     // table cell, and the mark belongs in the corner of the picture (components.css).
-    icon.title = failed ? "Preview couldn't be rendered" : "Preview not supported"
+    icon.title = failed ? "Preview couldn't be rendered"
+      : slow ? "Preview is taking longer than usual. Reload the page to check again."
+      : "Preview not supported"
     icon.textContent = cell.dataset.ext || "—"
     thumb.innerHTML = ""
     thumb.appendChild(icon)

@@ -237,7 +237,61 @@ module Web
 
       post project_tasks_path(project), params: { task: { title: "Print base" } }
       assert_redirected_to project_path(project)
-      assert_equal "Task added.", flash[:notice]
+      assert_equal "Added the task “Print base”.", flash[:notice]
+    end
+
+    # --- what the panel says after a write (2026-11-02, the UX audit's B7) ---------------------
+
+    # "Task added." was set and then dropped under Turbo: the stream replaced the panel and nothing
+    # drew a flash. The stream now re-renders the layout's own flash stack beside the panel, so the
+    # notice is a toast like any page's — and a status move or a delete says what it did too.
+    test "a turbo_stream add, move or delete draws its notice as a toast" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      post project_tasks_path(project), params: { task: { title: "Print base" } }, as: :turbo_stream
+      assert_select "turbo-stream[action=replace][targets=?]", ".flash-stack", 1
+      assert_select "turbo-stream[targets='.flash-stack'] template", html: /flash-notice/
+      assert_includes response.body, "Added the task “Print base”."
+
+      task = project.tasks.find_by!(title: "Print base")
+      patch task_path(task), params: { task: { status: "done" } }, as: :turbo_stream
+      assert_includes response.body, "Moved “Print base” to Done."
+
+      delete task_path(task), as: :turbo_stream
+      assert_includes response.body, "Deleted the task “Print base”."
+    end
+
+    # A REFUSAL DRAWS NO TOAST AND LOSES NOTHING: the error sits inside the composer, rendered open,
+    # with the field still named for the key the controller requires (§14d). The title here is
+    # blank, so what "keeps the input" pins is the composer open on the field, and the field's name.
+    test "a refused add comes back inside the open composer, and an add leaves it open for the next" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+
+      post project_tasks_path(project), params: { task: { title: "" } }, as: :turbo_stream
+      panel = Nokogiri::HTML5.fragment(css_select("turbo-stream[target=project-tasks] template").first.inner_html)
+      assert panel.at_css("details.composer.task-add[open] .task-error[role=alert]"), "the error is not inside the open composer"
+      assert panel.at_css("details.composer.task-add[open] input[name='task[title]']")
+      assert_select "turbo-stream[targets='.flash-stack']", 0
+
+      post project_tasks_path(project), params: { task: { title: "Print base" } }, as: :turbo_stream
+      panel = Nokogiri::HTML5.fragment(css_select("turbo-stream[target=project-tasks] template").first.inner_html)
+      assert panel.at_css("details.composer.task-add[open]"), "the composer closed after an add"
+      assert_nil panel.at_css("input[name='task[title]']")["value"], "the last title was left in the field"
+    end
+
+    # THE DELETE CONFIRM NAMES THE TASK (§H: "Delete task?" was the one confirm that named nothing),
+    # and the control is the page's one destructive shape.
+    test "a task's delete is a named, confirmed linkbtn danger" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      task = project.tasks.create!(user:, title: "Wire the LED", status: "todo", position: 0)
+
+      get project_path(project)
+
+      assert_select "form[action=?][data-turbo-confirm=?] button.linkbtn.danger.small.task-delete",
+                    task_path(task), "Delete the task “Wire the LED”?", text: "Delete"
     end
   end
 end

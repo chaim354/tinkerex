@@ -17,22 +17,39 @@
                    panel both pages render, and each holds its layout under a different name --
                    @panel_layout on the maker's page, `pub.layout` on the visitor's (2026-09-09,
                    the page editor)
+  Optional (a refused row, Projects::ConnectionsController#update, 2026-11-02):
+    drafts      -- { connection id => the refused Maker::Connection, typed values and all }
+    row_errors  -- { connection id => the sentence it was refused with }
 
   A <form> CANNOT SPAN TABLE CELLS, so each row's <form> sits OUTSIDE the table -- one empty
   form_with per row (nothing inside the block but the CSRF/method-override hidden fields Rails
   always inserts) -- and every field plus the row's Save button point back at it by id via the
   HTML `form=` attribute. project_wiring_test.rb asserts that wiring directly (`input[form=?]`
   against "connection-#{id}"), not merely that the fields render.
+
+  ONE FORM PER ROW MEANS A SAVE KEEPS ONLY ITS OWN ROW, AND THE PAGE SAYS SO (2026-11-02, the UX
+  audit's C10). Saving one row reloads the page, so an edit typed into another row was lost without
+  a word. `wiring_controller.js` marks a row "Unsaved" as it is edited, asks before a Save that
+  would drop another row's edits, and asks before leaving the page with any. Every cell's field has
+  its own label now (visually hidden: the column heading says it to the eye, the label says it to a
+  screen reader, which met four unnamed inputs per row).
 %>
-<%# QUIET AT ZERO (stage 4, S4-1): no connections is the heading and Add connection. The count
-    span goes with the table it counts -- "0 connections" beside a heading is not information --
-    and the sentence that stood where the table does said no more than the empty panel already did.
-    The composer below is untouched: it is the one control an empty panel exists to offer. %>
-<section class="panel wiring-panel<%= " panel--quiet" if connections.empty? %>" id="project-wiring">
+<% drafts = local_assigns.fetch(:drafts, {}) %>
+<% row_errors = local_assigns.fetch(:row_errors, {}) %>
+<%# QUIET AT ZERO (stage 4, S4-1): no connections is the heading and its composer. The count span
+    goes with the table it counts -- "0 connections" beside a heading is not information -- and the
+    sentence that stood where the table does said no more than the empty panel already did. The
+    composer is the one control an empty panel exists to offer; it sits in the head, a direct child
+    of `.panel-head`, like every panel's composer (2026-11-02, the UX audit's C4). %>
+<section class="panel wiring-panel<%= " panel--quiet" if connections.empty? %>" id="project-wiring"
+         <%= tag.attributes(data: { controller: "wiring" }) if editable && connections.any? %>>
   <div class="panel-head">
     <h2><%= panel_title(layout, "wiring") %></h2>
     <% if connections.any? %>
       <span class="mono muted"><%= pluralize(connections.size, "connection") %></span>
+    <% end %>
+    <% if editable %>
+      <%= render "projects/wiring_composer", project: project %>
     <% end %>
   </div>
   <%= panel_intro(layout, "wiring") %>
@@ -41,7 +58,8 @@
     <% if editable %>
       <% connections.each do |connection| %>
         <%= form_with model: connection, scope: :connection, url: connection_path(connection),
-                      method: :patch, id: "connection-#{connection.id}" do %>
+                      method: :patch, id: "connection-#{connection.id}",
+                      data: { action: "submit->wiring#save" } do %>
         <% end %>
       <% end %>
     <% end %>
@@ -53,36 +71,39 @@
           <th class="col-wire">Wire</th>
           <th class="col-note">Note</th>
           <% if editable %>
-            <th class="col-actions"></th>
+            <th class="col-actions"><span class="label-hidden">Actions</span></th>
           <% end %>
         </tr>
       </thead>
       <tbody>
-        <% connections.each do |connection| %>
+        <% connections.each_with_index do |connection, index| %>
           <% form_id = "connection-#{connection.id}" %>
-          <tr class="wiring-row">
+          <% shown = drafts[connection.id] || connection %>
+          <%# A REFUSED ROW IS AN UNSAVED ROW: it holds what was typed and the store does not, so it
+              renders already marked dirty, its "Unsaved" shown, and leaving the page asks about it
+              exactly as it would have before the Save that was refused. %>
+          <% refused = row_errors.key?(connection.id) %>
+          <tr class="wiring-row<%= " wiring-row--refused" if refused %>"
+              <%= tag.attributes(data: { wiring_target: "row", dirty: ("true" if refused) }) if editable %>>
             <% if editable %>
-              <td class="col-from">
-                <%= text_field_tag "connection[from_label]", connection.from_label,
-                                   form: form_id, id: "#{form_id}-from_label" %>
-              </td>
-              <td class="col-to">
-                <%= text_field_tag "connection[to_label]", connection.to_label,
-                                   form: form_id, id: "#{form_id}-to_label" %>
-              </td>
-              <td class="col-wire">
-                <%= text_field_tag "connection[wire]", connection.wire,
-                                   form: form_id, id: "#{form_id}-wire" %>
-              </td>
-              <td class="col-note">
-                <%= text_field_tag "connection[note]", connection.note,
-                                   form: form_id, id: "#{form_id}-note" %>
-              </td>
+              <% { "from_label" => "From", "to_label" => "To", "wire" => "Wire", "note" => "Note" }.each do |field, heading| %>
+                <td class="col-<%= field.delete_suffix("_label") %>">
+                  <label class="label-hidden" for="<%= form_id %>-<%= field %>"><%= heading %>, connection <%= index + 1 %></label>
+                  <%= text_field_tag "connection[#{field}]", shown.public_send(field),
+                                     form: form_id, id: "#{form_id}-#{field}",
+                                     data: { action: "input->wiring#edit" } %>
+                </td>
+              <% end %>
               <td class="col-actions">
                 <%= submit_tag "Save", form: form_id, class: "btn small" %>
                 <%= button_to "Remove", connection_path(connection), method: :delete,
                               class: "linkbtn danger small",
-                              form: { data: { turbo_confirm: "Remove #{connection.from_label} → #{connection.to_label}?" } } %>
+                              form: { data: { turbo_confirm: "Remove #{connection.from_label} → #{connection.to_label}?",
+                                              action: "submit->wiring#save" } } %>
+                <span class="wiring-unsaved muted" <%= "hidden" unless refused %>>Unsaved</span>
+                <% if (row_error = row_errors[connection.id]) %>
+                  <span class="wiring-row-error" role="alert"><%= row_error %></span>
+                <% end %>
               </td>
             <% else %>
               <td class="col-from"><%= connection.from_label %></td>
@@ -94,35 +115,5 @@
         <% end %>
       </tbody>
     </table>
-  <% end %>
-
-  <% if editable %>
-    <%# scope: :connection -- this form has no model object, so scope: is what names the params
-        at all; Projects::ConnectionsController#create requires :connection, which scope: here
-        produces (CLAUDE.md §14d's form-scope rule). %>
-    <details class="composer wiring-add">
-      <summary class="btn small">Add connection</summary>
-      <%= form_with url: project_connections_path(project), scope: :connection, class: "wiring-add-form" do |f| %>
-        <div class="composer-fields">
-          <label class="field">
-            <span>From</span>
-            <%= f.text_field :from_label, placeholder: "e.g. Driver board", required: true %>
-          </label>
-          <label class="field">
-            <span>To</span>
-            <%= f.text_field :to_label, placeholder: "e.g. Stepper motor", required: true %>
-          </label>
-          <label class="field">
-            <span>Wire</span>
-            <%= f.text_field :wire, placeholder: "e.g. 22 AWG, pin 3" %>
-          </label>
-          <label class="field">
-            <span>Note</span>
-            <%= f.text_field :note %>
-          </label>
-        </div>
-        <%= f.submit "Add", class: "btn small" %>
-      <% end %>
-    </details>
   <% end %>
 </section>

@@ -63,8 +63,12 @@
       <% if thumbnail&.showable? %>
         <%= render "files/viewers/zoomable", src: thumbnail_url, alt: "Preview of #{name}", name: name, card: true %>
       <% end %>
-      <p class="muted" data-gerber-target="status">Click <strong><%= single ? "View layer" : "View board" %></strong> to render <%= single ? "this layer" : "the board" %> in the browser, or download the file.</p>
-      <%= link_to "Download #{name}", download_url, class: "btn" %>
+      <%# "Choose", never "Click" (UX audit D8), and a nil `download_url` means the page head offers the
+          Download already (files/_viewer's `poster_download`, D5). %>
+      <p class="muted" data-gerber-target="status">Choose <strong><%= single ? "View layer" : "View board" %></strong> to render <%= single ? "this layer" : "the board" %> in the browser<%= ", or download the file" if download_url %>.</p>
+      <% if download_url %>
+        <%= link_to "Download #{name}", download_url, class: "btn" %>
+      <% end %>
     </div>
   </div>
 <% end %>

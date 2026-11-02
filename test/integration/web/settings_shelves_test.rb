@@ -135,10 +135,36 @@ module Web
       assert_includes css_select(".filing-card .filing-folder").map { |el| el.text.strip }, "renders/"
     end
 
-    test "a bad shelf name is refused with the model's error" do
+    # A REFUSAL RE-RENDERS THE PAGE WITH WHAT WAS TYPED (UX audit B3), where it used to redirect with a
+    # toast and an empty field. MUTATION-CHECKED: putting the redirect back in ShelvesController#create
+    # reddens this (the run's output is in the UX-audit T6 report).
+    test "a bad shelf name is refused in its own form, keeping what was typed" do
       post settings_shelves_path, params: { shelf: { name: "a/b" } }
-      assert_redirected_to settings_shelves_path
-      assert_match(/can't be a folder name/, flash[:alert])
+      assert_response :unprocessable_entity
+      assert_select "form.shelf-new .form-errors[role=alert]", /can't be a folder name/
+      assert_select "form.shelf-new input[name=?][value=?]", "shelf[name]", "a/b"
+      assert_select "form.shelf-group-new input[name=?][value]", "shelf_group[name]", 0,
+                    "the group form must not pick up the refused shelf's name"
+      assert_not @user.maker_shelves.exists?(name: "a/b")
+    end
+
+    test "a bad group name is refused in its own form, keeping what was typed" do
+      post settings_shelf_groups_path, params: { shelf_group: { name: "x" * (Maker::ShelfGroup::NAME_MAX + 1) } }
+      assert_response :unprocessable_entity
+      assert_select "form.shelf-group-new .form-errors[role=alert]"
+      assert_select "form.shelf-group-new input[name=?][value=?]", "shelf_group[name]", "x" * (Maker::ShelfGroup::NAME_MAX + 1)
+      assert_select "form.shelf-new .form-errors", 0
+    end
+
+    test "a refused rename keeps the typed name in that group's field and the saved name in its heading" do
+      group = @user.maker_shelf_groups.create!(name: "Fabrication")
+      patch settings_shelf_group_path(group), params: { shelf_group: { name: "" } }
+      assert_response :unprocessable_entity
+      section = css_select("section.shelf-group").find { |el| el.at_css(".group-head").text.strip == "Fabrication" }
+      assert section, "the group's heading keeps its saved name"
+      assert section.at_css(".form-errors[role=alert]"), "the refusal sits under that group's bar"
+      assert_equal "", section.at_css("form.shelf-group-rename input[name='shelf_group[name]']")["value"].to_s
+      assert_equal "Fabrication", group.reload.name
     end
 
     test "a shelf's view and group are saved" do
@@ -151,13 +177,18 @@ module Web
       assert_equal [ nil, nil ], laser.reload.then { [ _1.default_view, _1.shelf_group_id ] }
     end
 
-    test "another user's group cannot be chosen" do
+    test "another user's group cannot be chosen, and the refusal sits on that shelf's card" do
       Maker::Shelves.ensure!(@user)
       theirs = other_user!.maker_shelf_groups.create!(name: "Theirs")
       laser = @user.maker_shelves.find_by!(name: "laser")
-      patch settings_shelf_path(laser), params: { shelf: { shelf_group_id: theirs.id } }
+      patch settings_shelf_path(laser), params: { shelf: { default_view: "list", shelf_group_id: theirs.id } }
+      assert_response :unprocessable_entity
       assert_nil laser.reload.shelf_group_id
-      assert_match(/isn't one of your groups/, flash[:alert])
+      card = css_select(".filing-card").find { |c| c.at_css(".filing-folder").text.strip == "laser/" }
+      assert_match(/isn't one of your groups/, card.at_css(".form-errors").text)
+      assert_equal "list", card.at_css("select[name='shelf[default_view]'] option[selected]")&.[]("value"),
+                   "the view chosen in the refused form is still chosen"
+      assert_no_match(/Theirs/, response.body)
     end
 
     test "removing a shelf removes its rules, so its extensions file into other" do
@@ -214,7 +245,7 @@ module Web
       assert_redirected_to settings_shelves_path
       rule = @user.maker_filing_rules.find_by!(ext: "iges")
       assert_equal "cad", rule.folder
-      assert_match(/iges added/i, flash[:notice])
+      assert_equal "Added .iges to the cad/ shelf.", flash[:notice]
     end
 
     # `tar.gz`, NOT `kicad_pcb`, SINCE STAGE 4, S4-2. This test posted `kicad_pcb` from S3-1 until
@@ -222,11 +253,17 @@ module Web
     # it was asserting a refusal that had become a feature. A DOT is what KEY_RE still refuses and
     # `Maker::ProjectFolders.ext_of` (everything after the LAST dot) can never produce, so `tar.gz`
     # is the same claim about the same boundary, made where the boundary actually is now.
-    test "a bad extension is refused with the model's error, not a 500" do
+    test "a bad extension is refused in the card it was typed into, open, with the typed text" do
       post settings_filing_rules_path, params: { filing_rule: { ext: "tar.gz", folder: "cad" } }
 
-      assert_redirected_to settings_shelves_path
-      assert_match(/ext is invalid/i, flash[:alert])
+      assert_response :unprocessable_entity
+      card = css_select(".filing-card").find { |c| c.at_css(".filing-folder").text.strip == "cad/" }
+      assert card, "the cad shelf has a card"
+      editor = card.at_css("details.shelf-exts-edit[open]")
+      assert editor, "the card's editor is open again"
+      assert_match(/ext is invalid/i, editor.at_css(".form-errors").text)
+      assert_equal "tar.gz", editor.at_css("input[name='filing_rule[ext]']")["value"]
+      assert_equal 1, css_select("details.shelf-exts-edit[open]").size, "only that card opens"
       assert_nil @user.maker_filing_rules.find_by(ext: "tar.gz")
     end
 
@@ -250,12 +287,15 @@ module Web
       assert_equal "pcb", @user.maker_filing_rules.find_by!(ext: "kicad_wks").folder
     end
 
+    # No card is named `.trash`, so the refusal is said at the head of the page, naming the extension.
     test "a reserved folder name is refused with the model's error, not a 500" do
       post settings_filing_rules_path, params: { filing_rule: { ext: "iges", folder: ".trash" } }
 
-      assert_redirected_to settings_shelves_path
-      assert_match(/folder isn't allowed/i, flash[:alert])
-      assert_nil @user.maker_filing_rules.find_by(ext: "iges")
+      assert_response :unprocessable_entity
+      assert_select ".form-errors[role=alert]", /Could not save the rule for \.iges: .*folder isn't allowed/i
+      # The re-rendered page seeds the default rules (Maker::Shelves.ensure!, as every visit does), so
+      # `.iges` may now exist on its seeded shelf; what must not exist is the refused one.
+      assert_not @user.maker_filing_rules.exists?(folder: ".trash")
     end
 
     test "adding a duplicate extension is refused with the model's error" do
@@ -263,8 +303,8 @@ module Web
 
       post settings_filing_rules_path, params: { filing_rule: { ext: "STL", folder: "prints" } }
 
-      assert_redirected_to settings_shelves_path
-      assert_match(/ext has already been taken/i, flash[:alert])
+      assert_response :unprocessable_entity
+      assert_select ".form-errors[role=alert]", /ext has already been taken/i
       assert_equal "models", @user.maker_filing_rules.find_by!(ext: "stl").folder
     end
 
@@ -278,7 +318,7 @@ module Web
 
       assert_redirected_to settings_shelves_path
       assert_equal "prints", rule.reload.folder
-      assert_match(/stl updated/i, flash[:notice])
+      assert_equal "Moved .stl to the prints/ shelf.", flash[:notice]
     end
 
     test "updating a rule to a reserved folder name is refused with the model's error" do
@@ -287,8 +327,8 @@ module Web
 
       patch settings_filing_rule_path(rule), params: { filing_rule: { folder: ".git" } }
 
-      assert_redirected_to settings_shelves_path
-      assert_match(/folder isn't allowed/i, flash[:alert])
+      assert_response :unprocessable_entity
+      assert_select ".form-errors[role=alert]", /Could not save the rule for \.stl: .*folder isn't allowed/i
       assert_equal "models", rule.reload.folder
     end
 
@@ -313,7 +353,7 @@ module Web
       delete settings_filing_rule_path(rule)
 
       assert_redirected_to settings_shelves_path
-      assert_match(/stl removed/i, flash[:notice])
+      assert_match(%r{\ARemoved \.stl from the \w+/ shelf\.\z}, flash[:notice])
       assert_nil Maker::FilingRule.find_by(id: rule.id)
     end
 
@@ -331,10 +371,53 @@ module Web
 
     # ============================================================ Shell chrome
 
-    test "the page links back to Settings" do
+    # A breadcrumb in the top bar, not a "Settings" ghost button in the page head (UX audit F8,
+    # design-system.md rule 9).
+    test "the page's breadcrumb leads back to Settings" do
       get settings_shelves_path
 
-      assert_select ".page-head a[href=?]", settings_path, text: "Settings"
+      assert_select ".topbar nav.breadcrumb a[href=?]", settings_path, text: "Settings"
+      assert_select ".topbar nav.breadcrumb [aria-current=page]", "Shelves"
+      assert_select ".page-head a[href=?]", settings_path, 0
+    end
+
+    # ============================================================ the chips (UX audit F7)
+
+    # MUTATION-CHECKED, the accessible name: dropping the remove button's aria-label reddens this.
+    test "chips are plain until Edit extensions, and each remove names its extension" do
+      get settings_shelves_path
+
+      cards = css_select(".filing-card")
+      assert_equal cards.size, css_select(".filing-card > details.shelf-exts-edit > summary").size,
+                   "one Edit extensions per card"
+      assert_select "details.shelf-exts-edit[open]", 0, "every editor starts closed"
+      assert_select "details.shelf-exts-edit > summary", text: "Edit extensions"
+      assert_select "details.shelf-exts-edit form.filing-add", cards.size
+      assert_select ".filing-chip", text: /Remove/, count: 0
+      rule = @user.maker_filing_rules.find_by!(ext: "stl")
+      assert_select ".filing-chip form[action=?] button[aria-label=?]", settings_filing_rule_path(rule), "Remove .stl"
+      assert_select ".filing-chip form[action=?][data-turbo-confirm*=?]", settings_filing_rule_path(rule), "Remove .stl from the models/ shelf?"
+    end
+
+    test "a shelf in no group is an h2, a grouped shelf an h3 under its group's h2" do
+      Maker::Shelves.ensure!(@user)
+      group = @user.maker_shelf_groups.create!(name: "Fabrication")
+      @user.maker_shelves.find_by!(name: "laser").update!(shelf_group: group)
+
+      get settings_shelves_path
+
+      assert_select "section.shelf-group h2.group-head", "Fabrication"
+      assert_select "section.shelf-group h3.filing-folder", "laser/"
+      assert_select "section.shelf-group h2.filing-folder", 0
+      assert_select ".filing-cards h2.filing-folder", text: "models/"
+    end
+
+    test "a group's remove says Remove group and names it" do
+      group = @user.maker_shelf_groups.create!(name: "Fabrication")
+      get settings_shelves_path
+      assert_select "form[action=?][data-turbo-confirm=?] button", settings_shelf_group_path(group),
+                    "Remove the group Fabrication? Its shelves stay, ungrouped.", text: "Remove group"
+      assert_select "button", text: "Delete group", count: 0
     end
   end
 end

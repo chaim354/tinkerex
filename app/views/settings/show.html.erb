@@ -29,7 +29,7 @@
   <% if current_user.can_manage_accounts? %>
     <li>
       <%= link_to "Users", settings_users_path, class: "settings-name" %>
-      <span class="settings-fact"><%= pluralize(@user_count, "account") %></span>
+      <span class="settings-fact"><%= pluralize(@user_count, "user") %></span>
     </li>
   <% end %>
   <li>

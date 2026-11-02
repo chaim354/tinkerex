@@ -43,7 +43,15 @@ module Web
       assert_response :success
       assert_select "main .uploader", count: 0
       assert_select "header.topbar .topbar-upload .uploader", count: 1
-      assert_select ".page-head .page-actions a.btn[href=?]", new_files_text_file_path, text: "New text file"
+    end
+
+    # NEW TEXT FILE IS ONE CONTROL, IN THE TOP BAR'S New ▾ (UX audit D5, 2026-11-02). It was also a
+    # page-head button here, the same door twice; the menu's entry creates in this same folder.
+    test "New text file is the top bar's New menu entry, not a second page-head button" do
+      get files_path(folder: "dir-cad")
+      assert_response :success
+      assert_select "main a[href^=?]", new_files_text_file_path, count: 0
+      assert_select "header.topbar a.menu-item[href=?]", new_files_text_file_path(parent_node_id: "dir-cad")
     end
 
     test "rescan lives in the overflow menu on a scannable backend" do

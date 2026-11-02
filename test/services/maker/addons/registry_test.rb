@@ -495,7 +495,8 @@ module Maker
           MANIFEST.merge("services" => [ "boxes" ], "min_host" => Maker::Addons::Host::LEVEL + 1)
         ])
         with_env("BOXES_SIDECAR_URL" => nil) do
-          assert_match(/newer version of this host/, Registry.find("generators").unavailable_reason)
+          assert_match(/\ANeeds a newer Tinkerex than this server runs \(level #{Maker::Addons::Host::LEVEL + 1}; /,
+                       Registry.find("generators").unavailable_reason)
         end
       end
 

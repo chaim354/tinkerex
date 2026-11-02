@@ -154,9 +154,15 @@ class FilesController < ApplicationController
   # nothing caught it before this task, so an unmounted library 500'd -- the fix waited for here
   # deliberately, because a lone rescue in one action would have been a second copy of a mapping
   # that belongs at the controller.
+  #
+  # UNREACHABLE IS THE ONE SENTENCE FOR IT, here and on the JSON doors that hand it to the editor and
+  # the history panel to print (UX audit D10, 2026-11-02) — the port's own FetchError text
+  # ("…ENOENT and the library root looks unmounted") is written for an operator.
+  UNREACHABLE = "Couldn't reach your library. Try again.".freeze
+
   rescue_from FileLayer::FetchError do
     respond_to do |format|
-      format.html { redirect_to files_path, alert: "Couldn't reach your library. Try again." }
+      format.html { redirect_to files_path, alert: UNREACHABLE }
       format.any  { render json: { error: "fetch_error" }, status: :service_unavailable }
     end
   end
@@ -164,9 +170,17 @@ class FilesController < ApplicationController
   # UnsupportedOperation = the REQUEST is wrong for THIS node (share-mode delete on a directory).
   # A client condition, knowable only per-node at runtime, so Capabilities -- which is
   # per-deployment -- cannot gate it and 501 would be the wrong answer twice over.
+  #
+  # THE HTML ANSWER IS A SENTENCE FOR A MAKER, CHOSEN BY THE DOOR, NEVER THE PORT'S MESSAGE (UX audit
+  # D10, 2026-11-02). That message is written for a log: chunk_remote's carries the sync server's
+  # wire code ("<path>: parent_deleted"), s3's names a raw node id and its copy cap. Matching on its
+  # wording would couple a flash to text another repository can reword (TrashController's rule, one
+  # door over), so the ACTION the maker took picks the sentence — #unsupported_sentence. The JSON
+  # answer keeps the message: its callers (lib/chunk_upload.js, the editor) read `error` and the
+  # clobber wording there is pinned ("already exists", UploadBatch's own comment).
   rescue_from FileLayer::UnsupportedOperation do |e|
     respond_to do |format|
-      format.html { redirect_to files_path, alert: e.message }
+      format.html { redirect_to files_path, alert: unsupported_sentence }
       format.any  { render json: { error: e.message }, status: :unprocessable_entity }
     end
   end
@@ -686,8 +700,8 @@ class FilesController < ApplicationController
     return render_save_error(result.status, result.error) unless result.ok
 
     render json: { ok: true, content_token: result.content_token }
-  rescue FileLayer::FetchError => e
-    render_save_error(:service_unavailable, e.message)
+  rescue FileLayer::FetchError
+    render_save_error(:service_unavailable, UNREACHABLE)
   end
 
   # GET /files/:id/history — JSON, fetched by history_controller.js AFTER the page renders. The
@@ -716,9 +730,12 @@ class FilesController < ApplicationController
       # capability anyway rather than written as a literal, so it cannot become a lie if that gate
       # is ever loosened. The panel reads this one key in every response shape.
       restorable: FileLayer.current.capabilities.local_worktree?,
+      # `time` is the instant, for the row's <time datetime>; `at_label` is how every other timestamp
+      # in the app reads (ApplicationHelper#time_label, in the app's zone), which the panel prints
+      # rather than the browser's own toLocaleString() -- that was a fourth clock (UX audit D1).
       entries: result.entries.map { |e|
         { oid: e.oid, short_oid: e.short_oid, subject: e.subject,
-          author: e.author_name, time: e.time.iso8601 }
+          author: e.author_name, time: e.time.in_time_zone.iso8601, at_label: helpers.time_label(e.time) }
       }
     }
   end
@@ -786,9 +803,9 @@ class FilesController < ApplicationController
     Maker::Addons::LibraryOutput.write_bytes!(current_user, parent_node_id: node.parent_node_id,
                                               name: node.name, bytes: content, replace: true)
     Maker::RepoEdit.record!(user: current_user, repo_root_node_id: root.node_id, node_id: node.node_id)
-    redirect_to file_path(node.node_id), notice: "Restored. Review it in the commit box."
-  rescue FileLayer::FetchError => e
-    render_save_error(:service_unavailable, e.message)
+    redirect_to file_path(node.node_id), notice: "Restored #{node.name}. Review it in the commit box."
+  rescue FileLayer::FetchError
+    render_save_error(:service_unavailable, UNREACHABLE)
   end
 
   # POST /files — the share/s3 upload: bytes up in one multipart POST, straight to the port.
@@ -998,10 +1015,25 @@ class FilesController < ApplicationController
   # WHAT MUST NEVER HAPPEN IS A PER-NODE TOMBSTONE STANDING IN FOR A CASCADE. It orphans every
   # descendant: their bytes have moved somewhere the scan refuses to look, so nothing can pair them,
   # and the mass-deletion guard then refuses that scan and every scan after it.
+  #
+  # IT LANDS WHERE THE MAKER DELETED FROM (UX audit B6, 2026-11-02), never at the library root — see
+  # #delete_landing — and the notice says where the file went, because Trash is where it comes back
+  # from.
   def destroy
     node = current_user.nodes.find_by!(node_id: params[:id])
     FileLayer.current.delete(current_user, node_id: node.node_id)
-    redirect_to files_path, notice: "Deleted #{node.name}."
+    # The notice carries the one click that reaches the file again (UX audit B6): Trash is where
+    # a delete can be undone, so the toast says so and links it (layouts/_flash renders the link).
+    flash[:notice_link] = { "label" => "Open Trash", "href" => trash_index_path }
+    redirect_to delete_landing(node), notice: "Deleted #{node.name}. It is in Trash."
+  rescue FileLayer::UnsupportedOperation
+    # THE PORT REFUSED BEFORE IT ACTED — every adapter's delete refusal is raised ahead of the first
+    # move (s3's object cap and copy cap, the sync server's 409) — so the node is still where it was
+    # and the maker goes back to the page they pressed Delete on. The sentence says the one thing
+    # that is true of every refusal: nothing was deleted (UX audit D10).
+    hint = node.dir? ? " A folder holding a great many files may need some of them deleted first." : ""
+    redirect_to helpers.back_target_path(default: files_path(folder: node.parent_node_id)),
+                alert: "#{node.name} couldn't be moved to Trash, and nothing was deleted.#{hint}"
   end
 
   # FOLDERS ARE REFUSED BY #rename AND #move UNTIL Share#move REWRITES THE SUBTREE'S PATHS IN THE
@@ -1019,9 +1051,10 @@ class FilesController < ApplicationController
   # Maker::MoveNode, the one door that keeps the node_id (so every attachment, BOM link and tag
   # survives) and that checks the source, the parent and the leaf's SHAPE. It raises Collision for
   # a taken name before the port is asked — the one refusal a maker hits routinely, so it is
-  # answered as a sentence on the page they came from. FetchError and UnsupportedOperation keep this
-  # controller's mappings above (an unmounted share; a file on disk the catalog had not yet seen),
-  # the way every other port door here answers them.
+  # answered as a sentence on the page they came from. UnsupportedOperation (a file on disk the
+  # catalog had not yet seen, the sync server's 409) is answered the same way since the UX audit's
+  # D10 (2026-11-02), in the door's words rather than the port's message; FetchError keeps this
+  # controller's mapping above (an unmounted share), the way every other port door here answers it.
   #
   # FILES ONLY, AND THAT REFUSAL COMES FIRST — FOLDERS_NOT_YET above says why.
   #
@@ -1058,6 +1091,13 @@ class FilesController < ApplicationController
     redirect_to rename_move_landing(node), notice: "Renamed to #{node.name}."
   rescue Maker::MoveNode::Collision
     redirect_to rename_move_landing(node), alert: "Something named #{name} is already in this folder."
+  rescue FileLayer::UnsupportedOperation
+    # THE PORT'S REFUSAL, ON THE PAGE THE RENAME CAME FROM (UX audit D10), in words rather than its
+    # message -- and NEUTRAL words: usually the name is taken (a file on disk the scan has not seen
+    # yet, or the sync server's 409), but s3 also refuses to rename an object over its copy cap, and
+    # "the name is taken" would send the maker through every name they can think of.
+    redirect_to rename_move_landing(node),
+                alert: "#{node.name} couldn't be renamed to #{name}; it is unchanged. If something in this folder already has that name, choose another."
   rescue Maker::MoveNode::InvalidName => e
     redirect_to rename_move_landing(node), alert: "That name isn't allowed: #{e.message}."
   end
@@ -1093,10 +1133,19 @@ class FilesController < ApplicationController
   rescue Maker::MoveNode::Collision
     redirect_to rename_move_landing(node),
                 alert: "Something named #{node.name} is already in #{dest&.name || 'the library root'}."
-  rescue Maker::MoveNode::InvalidName => e
-    # The name is the node's OWN, so there is nothing to correct here; it is reachable on
-    # chunk_remote, where a device can sync a name (a backslash) no web door would mint.
-    redirect_to rename_move_landing(node), alert: "#{node.name} can't be moved here: #{e.message}."
+  rescue FileLayer::UnsupportedOperation
+    # #rename's arm, for a move (UX audit D10): a name on disk the catalog had not seen, s3's copy
+    # cap, the sync server's 409. The file stays where it was, and the sentence says so.
+    redirect_to rename_move_landing(node),
+                alert: "#{node.name} can't be moved to #{dest&.name || 'the library root'}; it is still where it was."
+  rescue Maker::MoveNode::InvalidName
+    # The name is the node's OWN, so there is nothing to correct in the form; it is reachable on
+    # chunk_remote, where a device can sync a name (a backslash) no web door would mint. The way out
+    # is the rename beside this control, which does take a new name — so the sentence says that, and
+    # not MoveNode's own message (`"a\\b" is not a valid file name`, the inspect of a String).
+    redirect_to rename_move_landing(node),
+                alert: "#{node.name} can't be moved here: its name holds a character the library " \
+                       "can't use. Rename it first."
   end
 
   # POST /files/rescan — trigger an immediate reconcile of a share/s3 library instead of waiting
@@ -1208,6 +1257,19 @@ class FilesController < ApplicationController
       partners[l.public_send(theirs)] && [ l, partners[l.public_send(theirs)] ] if
         l.kind == kind && l.public_send(mine) == @node.node_id
     }
+  end
+
+  # THE rescue_from's SENTENCE FOR A REFUSED REQUEST (UX audit D10), picked by the door, never read
+  # off the port's message. #destroy, #rename and #move answer their own refusals where they happen,
+  # on the page they came from; what reaches here on the HTML door is the single-file UPLOAD, whose
+  # only refusal on both writable adapters is the clobber — "already exists" is the wording
+  # share_delivery_test and s3_write_test pin, and UploadBatch's per-file sentence says it too.
+  def unsupported_sentence
+    if action_name == "create"
+      "A file with that name already exists in this folder. Rename one of them, then upload again."
+    else
+      "That can't be done to this file here."
+    end
   end
 
   # Chunk mode's catalog is the sync engine's changelog; a manual scan is meaningless there. Reads
@@ -1475,6 +1537,15 @@ class FilesController < ApplicationController
     { folder: @folder&.node_id, ext: @exts.presence&.join(","), q: @q, selected: @selected }.compact
   end
 
+  # A ROW'S OR CARD'S "Details" (UX audit D2, 2026-11-02): THIS listing with that file selected, so
+  # #index renders the panel open whether or not JavaScript runs. `page` rides along on a paged
+  # folder, because @selected is honoured only for a file in the rows this request renders — the
+  # pager links carry it explicitly for the same reason, and files_query_base deliberately does not.
+  helper_method :details_path_for
+  def details_path_for(node_id)
+    files_path(files_query_base.merge(selected: node_id, page: (@page if @paged && @page > 1)).compact)
+  end
+
   # A file extension is 1-8 lowercase alphanumerics. ANYTHING ELSE IS DROPPED, not escaped and not
   # rejected with an error: this arrives in a URL a user can hand-edit or a crawler can mangle, and
   # falling back to the ordinary folder view is the honest answer to "that isn't an extension".
@@ -1652,7 +1723,7 @@ class FilesController < ApplicationController
   # carries a `visited` Set for the same reason, but a marker is a GUARD, not an ANSWER: it
   # terminated the recursion and then rendered a literal ellipsis into the middle of the path as
   # where the user's file lives. `path_for` answers nil for any unresolvable chain (cycle,
-  # tombstoned or missing ancestor), and _list.html.erb already renders nil as "Files" while the
+  # tombstoned or missing ancestor), and _list.html.erb already renders nil as "Library" while the
   # folder link goes to node.parent_node_id either way, so navigation is untouched and the label
   # stops claiming a folder that is not there. Same one query; only the flat view calls this.
   def folder_paths_for(nodes)
@@ -1844,5 +1915,35 @@ class FilesController < ApplicationController
     return files_path(folder: node.parent_node_id, selected: node.node_id) if params[:return_to] == "library"
 
     file_path(node.node_id)
+  end
+
+  # WHERE A DELETE LANDS (UX audit B6, 2026-11-02): THE PAGE IT WAS PRESSED ON, read off the referer
+  # the way the file page's Back reads it — ApplicationHelper#back_target_path compares the
+  # referer's origin with this request's and DISCARDS it, so only a root-relative path on this
+  # origin ever reaches the redirect (CLAUDE.md §14d; never a URL param, which is seven call sites
+  # that must agree). The list row, the grid card, the inspector, the right-click menu and a project
+  # page's tile all delete from a page that is still there afterwards, so the folder, the type
+  # filter and the search the maker was in come back with them.
+  #
+  # THREE REFERERS NAME THE THING JUST DELETED, and each lands on the folder it was in instead: the
+  # file's own page (or anything under it — a history panel's URL), a listing OF the deleted folder,
+  # and a listing that has it SELECTED, which loses only `selected` (the rest of the query is the
+  # maker's). `scanning` goes too: it is a one-shot marker for the page a rescan lands on, and
+  # carrying it would start the poll again. With no usable referer (a direct request, a stripped
+  # header) it is the deleted node's own folder, which is what "where it was" means.
+  def delete_landing(node)
+    folder = files_path(folder: node.parent_node_id)
+    back = helpers.back_target_path(default: folder)
+    path, query = back.split("?", 2)
+    own = file_path(node.node_id)
+    return folder if path == own || path.start_with?("#{own}/")
+    return back unless path == files_path
+
+    kept = Rack::Utils.parse_nested_query(query.to_s)
+    return folder if kept["folder"] == node.node_id
+
+    kept.delete("selected") if kept["selected"] == node.node_id
+    kept.delete("scanning")
+    kept.empty? ? files_path : "#{files_path}?#{kept.to_query}"
   end
 end

@@ -16,7 +16,7 @@
         <%= image_tag blob_file_path(@cover_node.node_id), class: "project-hero-img", alt: @cover_node.name %>
       <% end %>
     <% else %>
-      <%= link_to file_path(@cover_node.node_id), class: "file-cell project-hero-thumb",
+      <%= link_to file_path(@cover_node.node_id), class: "file-cell project-hero-thumb", "aria-label": @cover_node.name,
                   data: file_open_data(thumb_cell_data(@cover_node.node_id, ext)) do %>
         <%= render "files/thumb", thumb: @page_thumbs.thumb(@cover_node.node_id), ext_label: ext,
                    url: preview_src(@page_thumbs.thumb(@cover_node.node_id)) %>

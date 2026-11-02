@@ -1,15 +1,26 @@
-<% content_for :title, "Suppliers - Tinkerex" %>
+<% content_for :title, "Suppliers — Tinkerex" %>
+
+<%# BREADCRUMBS, NOT A GHOST BUTTON NAMED FOR THE PARENT (UX audit 2026-11-01, A4/F8; design-system
+    rule 9): the head carried an "Inventory" button. Suppliers belong to Inventory, and the crumb says so. %>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Inventory path">
+    <%= link_to "Inventory", inventory_items_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">Suppliers</span>
+  </nav>
+<% end %>
 
 <div class="page-head">
   <h1>Suppliers</h1>
-  <%= link_to "Inventory", inventory_items_path, class: "btn ghost small" %>
 </div>
 
 <p class="muted">
-  Where you buy inventory from. Removing a supplier never deletes the items it supplied -- they
+  Where you buy inventory from. Removing a supplier never deletes the items it supplied — they
   just lose the reference.
 </p>
 
+<%# EACH ROW IS EDITABLE AND ITS COUNT IS A WAY IN (E5): Edit renames it and keeps its notes, and the
+    count opens Inventory narrowed to what this supplier supplies. %>
 <ul class="settings-list">
   <% @suppliers.each do |supplier| %>
     <li>
@@ -17,10 +28,16 @@
       <% if supplier.url.present? %>
         <%= link_to supplier.url, supplier.url, class: "settings-fact", target: "_blank", rel: "noopener" %>
       <% end %>
-      <span class="settings-fact"><%= pluralize(@item_counts[supplier.id] || 0, "item") %></span>
+      <%= link_to pluralize(@item_counts[supplier.id] || 0, "item"), inventory_items_path(supplier: supplier.id),
+                  class: "settings-fact" %>
+      <%= link_to "Edit", edit_supplier_path(supplier), class: "linkbtn small settings-remove",
+                  aria: { label: "Edit #{supplier.name}" } %>
       <%= button_to "Remove", supplier_path(supplier), method: :delete,
-                    class: "linkbtn danger small settings-remove",
+                    class: "linkbtn danger small",
                     form: { data: { turbo_confirm: "Remove #{supplier.name}? Its items keep their own facts." } } %>
+      <% if supplier.notes.present? %>
+        <span class="settings-note muted"><%= supplier.notes %></span>
+      <% end %>
     </li>
   <% end %>
   <% if @suppliers.empty? %>
@@ -31,15 +48,23 @@
 <%# scope: :supplier -- this form has no model object, so scope: is what names the params at all;
     a bare `url:` form_with + fields_for would otherwise need the scope spelled out for the same
     reason CLAUDE.md §14d's form bullet gives for a namespaced model. SuppliersController#create
-    requires :supplier, which is what scope: here produces. %>
+    requires :supplier, which is what scope: here produces. A REFUSED ADD RE-RENDERS THIS PAGE
+    (422) with the errors and the typed values, each set explicitly from @supplier. %>
 <%= form_with url: suppliers_path, scope: :supplier, class: "settings-add" do |f| %>
+  <% if @supplier.errors.any? %>
+    <div class="form-errors flash-alert"><%= @supplier.errors.full_messages.to_sentence %></div>
+  <% end %>
   <label>
     <span>Name</span>
-    <%= f.text_field :name, required: true %>
+    <%= f.text_field :name, required: true, value: @supplier.name %>
   </label>
   <label>
     <span>URL</span>
-    <%= f.url_field :url %>
+    <%= f.url_field :url, value: @supplier.url %>
+  </label>
+  <label>
+    <span>Notes</span>
+    <%= f.text_field :notes, value: @supplier.notes %>
   </label>
   <%= f.submit "Add supplier", class: "btn primary" %>
 <% end %>

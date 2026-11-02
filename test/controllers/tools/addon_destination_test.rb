@@ -290,7 +290,7 @@ module Tools
         else
           assert_select "header.topbar .topbar-upload section.uploader[data-uploader-parent-node-id-value=?]", node_id
         end
-        assert_select "header.topbar .topbar-upload label.upload-btn:not(.primary)"
+        assert_select "header.topbar .topbar-upload button.upload-btn:not(.primary)"
         assert_select "header.topbar .topbar-upload-caption", text: "Saves to #{caption}"
         assert_select "header.topbar .topbar-upload[data-controller]", 0
       end

@@ -1,4 +1,6 @@
-<% content_for :title, "Publishing #{@project.name} — Tinkerex" %>
+<%# `name_in_database`, as the head does: a refused save re-renders this tab
+    (ProjectsController#update), and a typed name in the title would read as the project's. %>
+<% content_for :title, "Publishing #{@project.name_in_database} — Tinkerex" %>
 <%= render "projects/edit_crumbs", project: @project %>
 <%= render "projects/edit_head", project: @project, current: :publishing %>
 <%= render "projects/publish", project: @project, folder_path: @folder_path %>

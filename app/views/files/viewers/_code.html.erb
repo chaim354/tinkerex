@@ -1,4 +1,4 @@
-<%# locals: (blob_url:, ext:, editable:, save_url:, base_token:) %>
+<%# locals: (blob_url:, ext:, editable:, save_url:, base_token:, in_repo: false) %>
 <%# Source viewer — CodeMirror 6, loaded dynamically so the bundle ships only on a page that
     actually has a text file on it. The inner preformatted block is the FALLBACK and the
     resting state at once: the controller fetches the bytes into it first and removes it only
@@ -35,7 +35,7 @@
 
       INSIDE THIS BRANCH ONLY. The `codeview` branch below is read-only and the public file page
       passes `editable: false`, and there is nothing to warn about where there is nothing to save. %>
-  <%= render "shared/no_history_note" %>
+  <%= render "shared/no_history_note", in_repo: in_repo %>
   <div class="preview-code"
        data-controller="editor"
        data-editor-url-value="<%= blob_url %>"

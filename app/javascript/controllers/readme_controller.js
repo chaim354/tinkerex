@@ -2,8 +2,11 @@ import { Controller } from "@hotwired/stimulus"
 
 // The README editor on the project page (stage 4, S4-4; story 5.3). Upgrades a plain <textarea> to
 // CodeMirror and copies the buffer back into it on submit — the form is an ordinary PATCH that
-// redirects, so there is no JSON, no error surface and no token roll-forward here. That is the
-// difference from editor_controller.js, which must stay on the file page and therefore fetches.
+// redirects, so there is no JSON and no token roll-forward here. That is the difference from
+// editor_controller.js, which must stay on the file page and therefore fetches. A REFUSED save
+// comes back as this editor again (Projects::ReadmesController, 2026-11-02), open, with the error
+// rendered in it and the DRAFT in the textarea: `draft` is true then, and the README is not
+// fetched, because the bytes it would fetch are the ones the draft was refused against.
 //
 // LAZY, ON THE <details> TOGGLE. The bytes are fetched the first time the editor is opened and
 // never on a page nobody edits, which is what keeps the project page's port reads (and its query
@@ -17,7 +20,7 @@ const MAX_BYTES = 200_000
 
 export default class extends Controller {
   static targets = ["input", "mount", "status", "submit"]
-  static values = { url: String }
+  static values = { url: String, draft: Boolean }
 
   connect() {
     this.loaded = false
@@ -34,7 +37,7 @@ export default class extends Controller {
     // A DECLARED-BUT-EMPTY VALUE IS THE "no README yet" CASE, and `hasUrlValue` is true for it —
     // Stimulus reports a declared String value as present however empty. The template is already
     // in the textarea then, so there is nothing to fetch.
-    if (this.urlValue) {
+    if (this.urlValue && !this.draftValue) {
       try {
         const res = await fetch(this.urlValue, { credentials: "same-origin", signal: this.abort.signal })
         if (!res.ok) throw new Error(`fetch failed (${res.status})`)

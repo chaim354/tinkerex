@@ -1,6 +1,6 @@
 atom_feed(root_url: @page_url,
           url: public_feed_url(@pub.handle, @pub.project.slug, **@pub.link_params),
-          id: "tag:tinkerex,#{@pub.project.created_at.to_date}:project/#{@pub.project.id}") do |feed|
+          id: "tag:tinkerex,#{@pub.project.created_at.utc.to_date}:project/#{@pub.project.id}") do |feed|
   feed.title "#{@pub.project.name} — @#{@pub.handle}"
   # THE NEWEST ITEM'S TIME, falling back to the project's own — a feed with no entries and no
   # releases still has to carry an `updated`, and "now" would make every poll look like a change.
@@ -17,8 +17,11 @@ atom_feed(root_url: @page_url,
     #
     # THE TAG URI IS OURS AND DOES NOT NAME THE HOST. A feed reader keys on the id, so deriving it
     # from `request.host` (the helper's default) would make every item in a reader's history a NEW
-    # item the day this app is reached through another hostname.
-    feed.entry(item, id: "tag:tinkerex,#{item.time.to_date}:#{item.kind}/#{item.id}",
+    # item the day this app is reached through another hostname. ITS DATE IS THE UTC DAY, for the
+    # same reason, and the feed's own id above is too: every id was minted while config.time_zone
+    # was UTC, and a date taken in the app's zone (TIME_ZONE, UX audit D1) would move any item made
+    # within that zone's offset of midnight UTC to a neighbouring day -- a new item, to a reader.
+    feed.entry(item, id: "tag:tinkerex,#{item.time.utc.to_date}:#{item.kind}/#{item.id}",
                url: item.url, updated: item.time, published: item.time) do |e|
       e.title item.title
       # `type: "html"` and NOT "xhtml": the string is Action Text's already-rendered, already

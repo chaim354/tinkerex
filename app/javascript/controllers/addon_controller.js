@@ -6,7 +6,9 @@ import { initHost, teardownHost } from "@maker/addon-sdk"
 // names an addon, and the bundle's only contract is a default export with mount(element, context).
 // The bundle is NOT a Stimulus controller — an addon must not have to know the host's JS framework.
 export default class extends Controller {
-  static targets = [ "mount" ]
+  // `loading`, `failure` and `detail` are the host's own markup around the mount
+  // (tools/addons/show.html.erb), never the bundle's: a bundle is handed `mount` and nothing else.
+  static targets = [ "mount", "loading", "failure", "detail" ]
   static values = {
     entry: String, saveUrl: String, serviceUrl: String, statesUrl: String,
     folders: Array, defaultFolder: String, defaultFolderLabel: String,
@@ -42,12 +44,13 @@ export default class extends Controller {
       // CAUGHT ON ITS OWN, SEPARATE FROM THE IMPORT/MOUNT BELOW: this.ctxValue re-parses the
       // data-addon-ctx-value JSON attribute on every read, and everything initHost can throw is
       // about the HOST's own wiring, not the bundle. Falling through to the outer catch would
-      // blame a malformed ctx blob on the addon — "This tool failed to load" — when the bundle
-      // never got a chance to be the problem.
+      // report a malformed ctx blob as the addon's own error when the bundle never got a chance to
+      // be the problem. The page's sentence is the same either way ("Could not load NAME"), since
+      // the maker can do nothing different about the two; the folded-away detail says which half.
       try {
         initHost({ ...this.ctxValue, chooseFolder: chooser, chooseFile: filePicker, csrfToken })
       } catch (e) {
-        this.mountTarget.textContent = `The host failed to initialize: ${e.message}`
+        this.fail(`The host failed to initialize: ${e.message}`)
         return
       }
 
@@ -97,8 +100,25 @@ export default class extends Controller {
         chooseFile: filePicker,
         csrfToken,
       })
+      // Every shipped bundle replaced the loading line as its first act; one that appends instead
+      // would leave it standing over a working tool. A target that has left the DOM is not found.
+      if (this.hasLoadingTarget) this.loadingTarget.remove()
     } catch (e) {
-      this.mountTarget.textContent = `This tool failed to load: ${e.message}`
+      this.fail(e?.message || String(e))
+    }
+  }
+
+  // "Could not load NAME", with the raw message folded into a <details> for whoever reports it —
+  // never the page's own sentence, which is the maker's (UX audit G3). Not after disconnect():
+  // a torn-down page has nothing to say.
+  fail(detail) {
+    if (this.disposed) return
+    this.mountTarget.replaceChildren()
+    if (this.hasFailureTarget) {
+      if (this.hasDetailTarget) this.detailTarget.textContent = detail
+      this.failureTarget.hidden = false
+    } else {
+      this.mountTarget.textContent = detail
     }
   }
 

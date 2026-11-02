@@ -74,6 +74,14 @@ module Web
                    confirmed_at: Time.current)
     end
 
+    # A REFUSED RELEASE COMES BACK AS THE OPEN COMPOSER (2026-11-02, the UX audit's B3), 422, the
+    # error inside it — never a redirect and an alert over an empty form. Answers the sentence.
+    def refusal
+      assert_response :unprocessable_entity
+      assert_nil flash[:alert], "a refusal must not ride a redirect's flash"
+      css_select("details.composer.release-add#release-composer[open] .form-errors[role=alert]").text
+    end
+
     # --- 1. the panel and the composer -----------------------------------------------------------
 
     test "the empty state, and the composer's rendered field names" do
@@ -83,7 +91,7 @@ module Web
       get project_path(@project, add: "releases")
       assert_response :success
       assert_select "section.panel.releases-panel h2", text: "Releases"
-      # QUIET AT ZERO (stage 4, S4-1): no releases is the heading and Create release, so the
+      # QUIET AT ZERO (stage 4, S4-1): no releases is the heading and its composer, so the
       # "0 releases" count and the "No releases yet." sentence are both gone and their absence is
       # the assertion. The composer's own field checks below are untouched by that.
       assert_select "section.releases-panel.panel--quiet"
@@ -93,14 +101,18 @@ module Web
       # THE RENDERED FIELD NAMES, not a Ruby hash posted past the form (§14d): a `form_with` missing
       # `scope:` emits `[version]`-shaped params the controller's `require` rejects, and every test
       # below would stay green because they post `params: { release: {...} }` directly.
-      assert_select "details.composer.release-add summary", text: "Create release"
+      # ONE COMPOSER PATTERN (the UX audit's C4): "Add…" in the head, a submit naming the thing.
+      assert_select ".releases-panel .panel-head > details.composer.release-add summary", text: "Add…"
+      assert_select "details.composer.release-add input[type=submit][value=?]", "Add release"
+      # The notes editor has a visible label, not only a placeholder (§I).
+      assert_select "details.composer.release-add label.composer-label[for=?]", "release-notes", text: "What changed"
       assert_select "form[action=?]", project_releases_path(@project)
       assert_select "input[name=?]", "release[version]"
       assert_select "lexxy-editor[name=?]", "release[notes]"
       # No repository in the folder, so the tag is free text and the page says why.
       assert_select "input[name=?]", "release[git_tag]"
       assert_select "select[name=?]", "release[git_tag]", count: 0
-      assert_select ".release-add p.muted", text: /local folder/
+      assert_select ".release-add p.muted", text: /folder on this server/
     end
 
     # THE PICKER IS ONE SELECT CARRYING TWO FACTS -- "<repo node_id>:<tag>" -- because a <select>
@@ -121,7 +133,7 @@ module Web
         end
       end
       assert_select "input[name=?]", "release[git_tag]", count: 0
-      assert_select ".release-add p.muted", text: /local folder/, count: 0
+      assert_select ".release-add p.muted", text: /folder on this server/, count: 0
     end
 
     # --- 2. create ------------------------------------------------------------------------------
@@ -139,7 +151,7 @@ module Web
       assert_equal 2, release.files.count
       assert_equal 2, release.bom_revision
       assert_redirected_to project_path(@project)
-      assert_equal "Released v1.0.0 with 2 files.", flash[:notice]
+      assert_equal "Added release v1.0.0 with 2 files.", flash[:notice]
 
       follow_redirect!
       assert_select ".releases-panel .mono.muted", text: "1 release"
@@ -184,7 +196,7 @@ module Web
       assert_equal "v0.1.0", release.git_tag
       assert_equal firmware.node_id, release.repo_node_id
       assert_equal @commit_oid.to_s, release.git_oid
-      assert_equal "Released v1.0.0 with 2 files.", flash[:notice],
+      assert_equal "Added release v1.0.0 with 2 files.", flash[:notice],
                    "a verified tag says nothing extra — the oid on the page is what shows it resolved"
 
       follow_redirect!
@@ -215,9 +227,20 @@ module Web
       assert_no_difference "Maker::Release.count" do
         create_release!(git_tag: "#{firmware.node_id}:v9.9.9")
       end
-      assert_redirected_to project_path(@project, add: "releases", anchor: "project-releases")
-      assert_match(/Release not created/, flash[:alert])
-      assert_match(/v9\.9\.9/, flash[:alert])
+      error = refusal
+      assert_match(/Release not added/, error)
+      assert_match(/v9\.9\.9/, error)
+      # THE PICKER COMES BACK (Maker::ReleaseTags, the page's own options), not a free-text field,
+      # and the version as typed.
+      assert_select "#release-composer select[name=?] option[value=?]", "release[git_tag]", "#{firmware.node_id}:v0.1.0"
+      assert_select "#release-composer input[name=?][value=?]", "release[version]", "v1.0.0"
+
+      # A REAL TAG ON A REFUSED VERSION COMES BACK SELECTED.
+      create_release!(git_tag: "#{firmware.node_id}:v0.1.0")
+      create_release!(git_tag: "#{firmware.node_id}:v0.1.0")
+      assert_match(/already a release/, refusal)
+      assert_select "#release-composer select[name=?] option[selected][value=?]", "release[git_tag]",
+                    "#{firmware.node_id}:v0.1.0", 1
     end
 
     # A LIBRARY THAT IS NOT A LOCAL FOLDER HAS NO REPOSITORY THIS PROCESS CAN READ, so the tag is
@@ -232,7 +255,7 @@ module Web
       assert_equal "v1.0.0-rc1", release.git_tag
       assert_nil release.git_oid
       assert_nil release.repo_node_id
-      assert_equal "Released v1.0.0 with 1 file (tag recorded, not verified).", flash[:notice]
+      assert_equal "Added release v1.0.0 with 1 file (tag recorded, not verified).", flash[:notice]
 
       follow_redirect!
       assert_select "summary .badge[title=?]", "recorded, not verified", text: "v1.0.0-rc1"
@@ -247,9 +270,26 @@ module Web
       assert_no_difference "Maker::Release.count" do
         create_release!
       end
-      assert_redirected_to project_path(@project, add: "releases", anchor: "project-releases")
-      assert_match(/Release not created/, flash[:alert])
-      assert_match(/already a release of this project/, flash[:alert])
+      error = refusal
+      assert_match(/Release not added/, error)
+      assert_match(/already a release of this project/, error)
+    end
+
+    # WHAT WAS TYPED SURVIVES THE REFUSAL (B3): the version, a typed tag and the notes, in their
+    # fields, on the composer that opened again — under Turbo the composer alone is replaced.
+    test "a refused release keeps the version, the tag and the notes" do
+      seed!({ "README.md" => "# Desk Lamp\n" })
+      create_release!
+
+      create_release!(git_tag: "v1.0.0-rc1", notes: "<p>Moved the switch.</p>")
+      assert_match(/already a release/, refusal)
+      assert_select "#release-composer input[name=?][value=?]", "release[version]", "v1.0.0"
+      assert_select "#release-composer input[name=?][value=?]", "release[git_tag]", "v1.0.0-rc1"
+      assert_includes css_select("#release-composer").to_s, "Moved the switch."
+
+      post project_releases_path(@project), as: :turbo_stream, params: { release: { version: "v1.0.0" } }
+      assert_response :unprocessable_entity
+      assert_select "turbo-stream[action=replace][target=release-composer]", 1
     end
 
     test "a blank version is refused" do
@@ -258,7 +298,7 @@ module Web
       assert_no_difference "Maker::Release.count" do
         create_release!(version: "")
       end
-      assert_match(/Release not created/, flash[:alert])
+      assert_match(/Release not added/, refusal)
     end
 
     # --- 5. changed since -----------------------------------------------------------------------
@@ -318,7 +358,7 @@ module Web
 
       with_snapshot_cap(1) { create_release! }
 
-      assert_equal "Released v1.0.0 with 1 file (first 1 of a larger folder).", flash[:notice]
+      assert_equal "Added release v1.0.0 with 1 file (first 1 of a larger folder).", flash[:notice]
       release = Maker::Release.order(:id).last
       assert_equal true, release.files_truncated
 

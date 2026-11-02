@@ -8,11 +8,10 @@
   </nav>
 <% end %>
 
-<% low = @item.quantity_cached <= @item.min_quantity %>
 <div class="page-head">
   <div class="page-title">
     <h1><%= @item.name %></h1>
-    <% if low %><span class="badge low-stock">Low stock</span><% end %>
+    <% if @item.low_stock? %><span class="badge low-stock">Low stock</span><% end %>
   </div>
   <div class="page-actions">
     <%= link_to "Edit", edit_inventory_item_path(@item), class: "btn small" %>
@@ -24,10 +23,10 @@
 <dl class="meta">
   <dt>Part #</dt><dd><%= @item.part_number.presence || "—" %></dd>
   <dt>Category</dt><dd><%= @item.category.presence || "—" %></dd>
-  <dt>On hand</dt><dd><%= number_with_precision(@item.quantity_cached, precision: 3, strip_insignificant_zeros: true) %> <%= @item.unit %> · min <%= number_with_precision(@item.min_quantity, precision: 3, strip_insignificant_zeros: true) %></dd>
+  <dt>On hand</dt><dd><%= inventory_quantity(@item.quantity_cached) %> <%= @item.unit %><% if @item.min_quantity.positive? %> · minimum <%= inventory_quantity(@item.min_quantity) %><% end %></dd>
   <dt>Unit cost</dt><dd><%= @item.unit_cost ? number_to_currency(@item.unit_cost) : "—" %></dd>
-  <dt>Location</dt><dd><%= @item.location&.name || "—" %></dd>
-  <dt>Supplier</dt><dd><%= @item.supplier&.name || "—" %></dd>
+  <dt>Location</dt><dd><%= @item.location ? link_to(@item.location.name, inventory_items_path(location: @item.location.id)) : "—" %></dd>
+  <dt>Supplier</dt><dd><%= @item.supplier ? link_to(@item.supplier.name, inventory_items_path(supplier: @item.supplier.id)) : "—" %></dd>
   <% if @item.tags.any? %>
     <dt>Tags</dt><dd><%= tag_chips(@item) %></dd>
   <% end %>
@@ -41,37 +40,51 @@
     append-only and posted through InventoryTransaction.apply!, never built-and-saved here), so
     form_with needs an explicit scope to name its fields transaction[...] at all; without one a
     model-less form_with(url:) has a blank object_name and fields_for-style bracketing breaks
-    (CLAUDE.md §14d). %>
+    (CLAUDE.md §14d). EVERY VALUE IS SET FROM @adjust, explicitly: a scoped form_with fills a field
+    from an ivar named for its scope when one exists, so a refused post (422, the controller's
+    refuse_adjust) shows what was typed only because each field says so.
+
+    THE REASON GIVES THE DIRECTION (UX audit 2026-11-01, E4). Consumed takes the amount away and
+    Restocked adds it; Adjusted takes a signed correction. Initial is not offered: an item's first
+    stock is its creation's (the new-item form). Maker::InventoryTransaction.delta_for signs it. %>
 <details class="composer adjust" open>
   <summary class="btn small">Adjust stock</summary>
   <%= form_with url: adjust_inventory_item_path(@item), scope: :transaction, method: :post, class: "adjust-form" do |f| %>
+    <% if @adjust_errors.present? %>
+      <div class="form-errors flash-alert"><%= @adjust_errors.to_sentence %></div>
+    <% end %>
     <div class="adjust-fields">
       <label>
         <span>Amount</span>
-        <%= f.number_field :delta, step: "any", required: true %>
+        <%= f.number_field :amount, step: "any", required: true, value: @adjust[:amount],
+                           aria: { describedby: "adjust-hint" } %>
       </label>
       <label>
         <span>Reason</span>
-        <%= f.select :reason, Maker::InventoryTransaction::REASONS.map { |r| [ r.capitalize, r ] }, selected: "adjusted" %>
+        <%= f.select :reason, Maker::InventoryTransaction::ADJUST_REASONS.map { |r| [ Maker::InventoryTransaction.reason_label(r), r ] },
+                     selected: @adjust[:reason] %>
       </label>
       <label>
         <span>Project</span>
-        <%= f.select :project_id, @projects, include_blank: true %>
+        <%= f.select :project_id, @projects, include_blank: true, selected: @adjust[:project_id] %>
       </label>
       <label>
         <span>Note</span>
-        <%= f.text_field :note %>
+        <%= f.text_field :note, value: @adjust[:note] %>
       </label>
-      <%= f.submit "Post", class: "btn primary adjust-submit" %>
+      <%= f.submit "Apply", class: "btn primary adjust-submit" %>
     </div>
+    <p class="field-hint muted" id="adjust-hint">Consumed takes the amount away and Restocked adds it.
+      For Adjusted, type the correction with its sign: −2 takes two away, 2 adds two.</p>
   <% end %>
 </details>
 
+<p class="muted ledger-note">Stock changes are recorded here; the balance is the sum.</p>
 <table class="table ledger">
   <thead>
     <tr>
       <th class="col-when">When</th>
-      <th class="num col-delta">Delta</th>
+      <th class="num col-delta">Change</th>
       <th class="num col-balance">Balance</th>
       <th>Reason</th>
       <th class="col-project">Project</th>
@@ -81,10 +94,10 @@
   <tbody>
     <% @ledger.each do |t| %>
       <tr>
-        <td class="col-when"><%= t.created_at.strftime("%Y-%m-%d %H:%M") %></td>
+        <td class="col-when"><%= time_at(t.created_at) %></td>
         <td class="num col-delta"><span class="<%= t.delta.negative? ? "delta-out" : "delta-in" %>"><%= signed(t.delta) %></span></td>
-        <td class="num col-balance"><%= number_with_precision(@balances[t.id], precision: 3, strip_insignificant_zeros: true) %></td>
-        <td><%= t.reason %></td>
+        <td class="num col-balance"><%= inventory_quantity(@balances[t.id]) %></td>
+        <td class="col-reason"><%= t.reason_label %></td>
         <%# Only a project the item's owner owns is named. A row posted before apply! dropped foreign projects can still hold another tenant's id. %>
         <td class="col-project"><%= t.project&.user_id == @item.user_id ? link_to(t.project.name, project_path(t.project)) : "—" %></td>
         <td class="col-note muted"><%= t.note %></td>

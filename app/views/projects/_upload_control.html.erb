@@ -10,11 +10,20 @@
   exists for. The Files page's current-project uploader and Home's hero went first, and the project
   page's Files panel — the one caller that passed true — went when Upload moved into the top bar
   (redesign slice 4; layouts/_topbar_upload.html.erb), which is now the hub's primary.
+
+  THE CONTROL IS A <button> BESIDE ITS HIDDEN FILE INPUT, the top bar's shape (UX audit I): it was a
+  <label> wrapping the input, which a keyboard cannot reach. upload_forward_controller.js#choose
+  opens the input in the same `.uploader`, so the input keeps its own change handling unchanged.
 %>
 <% upload_btn_class = local_assigns[:primary] ? "upload-btn primary" : "upload-btn" %>
+<% upload_btn_data = { controller: "upload-forward", action: "upload-forward#choose" } %>
 <% if capabilities.port_writable? %>
+  <%# THE SHARE/S3 FORM IS SUBMITTED BY zip_upload_controller.js, mounted with NO unpack door, so it
+      only submits: the server attaches what it receives and must get a zip as it is. The controller
+      writes "Uploading NAME…" into the status line beside the button while the browser POSTs, which
+      the inline `onchange="this.form.requestSubmit()"` it replaced never said (UX audit B8). %>
   <%= form_with url: upload_url, method: :post, class: "uploader",
-                data: { turbo: false }, html: { multipart: true } do |f| %>
+                data: { turbo: false, controller: "zip-upload" }, html: { multipart: true } do |f| %>
     <%# Where to send the browser after the upload+attach. OPTIONAL: omitted, the controller
         defaults to the project page, which is also what the one caller — a build-log entry —
         passes. This mirrors the chunk branch's
@@ -24,19 +33,20 @@
     <% if local_assigns[:redirect_url].present? %>
       <%= hidden_field_tag :redirect_url, redirect_url %>
     <% end %>
-    <label class="<%= upload_btn_class %>">
-      <%# `include_hidden: false` IS LOAD-BEARING. `f.file_field` with `multiple: true` renders a
-          companion `<input name="file[]" type="hidden" value="">` so an empty selection still
-          submits the key — which put a bare "" at the head of `params[:file]`, and the server
-          called `original_filename` on a String and 500'd. Nothing needs that marker here: the
-          field's own `onchange` is the only thing that submits this form, so it never fires with
-          an empty selection. Found by uploading four real files through the real form; the
-          Rack::Test suites POSTed a Ruby array and never sent the marker at all, which is §14d's
-          "assert the rendered field name" with a different attribute. %>
-          <%= f.file_field :file, multiple: true, include_hidden: false,
-                       onchange: "this.form.requestSubmit()", hidden: true %>
+    <%# `include_hidden: false` IS LOAD-BEARING. `f.file_field` with `multiple: true` renders a
+        companion `<input name="file[]" type="hidden" value="">` so an empty selection still
+        submits the key — which put a bare "" at the head of `params[:file]`, and the server
+        called `original_filename` on a String and 500'd. Nothing needs that marker here: the
+        field's own change action is the only thing that submits this form, and it returns on an
+        empty selection. Found by uploading four real files through the real form; the
+        Rack::Test suites POSTed a Ruby array and never sent the marker at all, which is §14d's
+        "assert the rendered field name" with a different attribute. %>
+    <%= f.file_field :file, multiple: true, include_hidden: false, hidden: true,
+                     data: { zip_upload_target: "input", action: "change->zip-upload#change" } %>
+    <%= tag.button type: "button", class: upload_btn_class, data: upload_btn_data do %>
       <span>Upload &amp; attach</span>
-    </label>
+    <% end %>
+    <span class="upload-status" data-zip-upload-target="status"></span>
   <% end %>
 <% else %>
   <span class="uploader" data-controller="uploader"
@@ -45,10 +55,10 @@
         data-uploader-attach-url-value="<%= attach_url %>"
         data-uploader-redirect-url-value="<%= redirect_url %>"
         data-uploader-parent-node-id-value="<%= local_assigns[:parent_node_id] %>">
-    <label class="<%= upload_btn_class %>">
-      <input type="file" multiple data-uploader-target="input" data-action="uploader#upload" hidden>
+    <input type="file" multiple data-uploader-target="input" data-action="uploader#upload" hidden>
+    <%= tag.button type: "button", class: upload_btn_class, data: upload_btn_data do %>
       <span>Upload &amp; attach</span>
-    </label>
+    <% end %>
     <span class="upload-status" data-uploader-target="status"></span>
   </span>
 <% end %>

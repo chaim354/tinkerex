@@ -1,0 +1,42 @@
+<% content_for :title, "Edit #{@location.name_in_database} — Tinkerex" %>
+
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Inventory path">
+    <%= link_to "Inventory", inventory_items_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to "Locations", locations_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= @location.name_in_database %></span>
+  </nav>
+<% end %>
+
+<div class="page-head">
+  <h1>Edit <%= @location.name_in_database %></h1>
+</div>
+
+<%# Rename, re-place and annotate a location (UX audit 2026-11-01, E5). The column is `description`;
+    the form calls it Notes, as Suppliers' does. `scope: :location` for the namespaced model's reason
+    (CLAUDE.md §14d). The parent choices leave out this location and everything inside it
+    (LocationsController#load_parents). A refusal re-renders here (422). %>
+<%= form_with model: @location, scope: :location, url: location_path(@location), method: :patch,
+              class: "inventory-form" do |f| %>
+  <% if @location.errors.any? %>
+    <div class="form-errors flash-alert"><%= @location.errors.full_messages.to_sentence %></div>
+  <% end %>
+  <label class="field">
+    <span>Name</span>
+    <%= f.text_field :name, required: true, autofocus: true %>
+  </label>
+  <label class="field">
+    <span>Parent</span>
+    <%= f.select :parent_id, @parent_choices, { include_blank: "— none —" } %>
+  </label>
+  <label class="field">
+    <span>Notes</span>
+    <%= f.text_area :description, rows: 4 %>
+  </label>
+  <div class="form-actions">
+    <%= f.submit "Save changes", class: "btn primary" %>
+    <%= link_to "Cancel", locations_path, class: "linkbtn" %>
+  </div>
+<% end %>

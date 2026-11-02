@@ -1,0 +1,59 @@
+<%#
+  THE RELEASES PANEL'S COMPOSER, on its own (2026-11-02, the UX audit's B3/C4) so a refused release
+  — a version already taken, a tag that is not there — comes back through Projects::ComposerRefusal
+  as this partial again: open, the error inside it, the version, the tag and the notes as typed.
+
+  Locals: project, repos ([[dir name, dir node_id, [tag names]]], Maker::ReleaseTags' shape — [] for
+  the free-text field). Optional (a refusal): draft (the refused Maker::Release, or one built from the
+  posted values), tag (the tag field's posted value, the picker's "<repo node_id>:<tag>" encoding
+  included), error, open.
+
+  THE COMPOSER'S TAG PICKER IS ONE SELECT CARRYING TWO FACTS. A folder may hold several
+  repositories, so a tag needs the one it came from -- and a select cannot fill a second field
+  without JS -- so each option's VALUE is "<repo node_id>:<tag>" and Projects::ReleasesController
+  splits it on the first colon. Its own comment argues why that is unambiguous.
+
+  `form_with model:` WITH `scope: :release`: the draft is the form's object, so the rich-text notes
+  re-render from it (Action Text reads the field's value off the object), and scope: is what names
+  the params — Projects::ReleasesController requires :release (CLAUDE.md §14d's form-scope rule).
+  A fresh composer's object is a new, empty Release, never an ivar the builder could fall back to.
+%>
+<% draft = local_assigns[:draft] || Maker::Release.new %>
+<% tag = local_assigns[:tag] %>
+<% error = local_assigns[:error] %>
+<details class="composer release-add" id="release-composer" <%= "open" if local_assigns[:open] %>>
+  <summary class="btn small" aria-label="Add a release">Add…</summary>
+  <%= form_with model: draft, scope: :release, url: project_releases_path(project), method: :post,
+                class: "release-add-form" do |f| %>
+    <% if error.present? %><div class="form-errors flash-alert composer-error" role="alert"><%= error %></div><% end %>
+    <div class="composer-fields">
+      <label class="field">
+        <span>Version</span>
+        <%= f.text_field :version, value: draft.version, placeholder: "v0.1.0", required: true %>
+      </label>
+      <% if repos.any? %>
+        <label class="field">
+          <span>Tag</span>
+          <%= f.select :git_tag,
+                       repos.map { |name, node_id, tags| [ name, tags.map { |t| [ t, "#{node_id}:#{t}" ] } ] },
+                       { include_blank: "No tag", selected: tag } %>
+        </label>
+      <% else %>
+        <label class="field">
+          <span>Tag</span>
+          <%= f.text_field :git_tag, value: tag, placeholder: "v0.1.0" %>
+        </label>
+      <% end %>
+    </div>
+    <% if repos.empty? %>
+      <%# Plain words for a maker (the UX audit's §H): what a tag is checked against, not where. %>
+      <p class="muted">The tag is recorded as typed; it is checked against the repository only when the library is a folder on this server.</p>
+    <% end %>
+    <%# A VISIBLE LABEL, NOT A PLACEHOLDER (the UX audit's §I): "What changed?" was the field's only
+        name and vanished at the first keystroke. The editor is a form-associated element, so a
+        `<label for>` names it. %>
+    <label class="composer-label" for="release-notes">What changed</label>
+    <%= f.rich_text_area :notes, id: "release-notes", attachments: "false" %>
+    <%= f.submit "Add release", class: "btn small" %>
+  <% end %>
+</details>

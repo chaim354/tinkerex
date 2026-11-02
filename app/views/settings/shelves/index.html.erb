@@ -1,45 +1,68 @@
 <% content_for :title, "Shelves — Tinkerex" %>
+<%= render "settings/crumbs", current: "Shelves" %>
 
+<%# THE SHELVES PAGE (Settings::ShelvesController, and the two controllers beside it that post from
+    here; Settings::ShelvesPage loads it for all three). A refusal from any of them re-renders this page
+    with 422 (UX audit B3): the error sits in the form it came from and that form keeps what was typed.
+    The refused record arrives in @new_shelf, @failed_shelf, @new_group, @failed_group, @new_rule or
+    @failed_rule; each form states its own value rather than reading an ivar its scope names.
+
+    HEADINGS NEST (UX audit I): h1 Shelves; a group is an h2 and its shelves h3; a shelf in no group
+    is an h2 of its own, since no group heading stands over it. %>
 <div class="page-head">
   <h1>Shelves</h1>
-  <%= link_to "Settings", settings_path, class: "btn ghost small" %>
 </div>
 
 <p class="muted">
   A shelf is a folder inside each project, <code>Projects/&lt;your project&gt;/&lt;shelf&gt;/</code>.
   A file left loose in a project folder is filed onto the shelf its extension names here, and an
   extension with no shelf goes to <code>other</code>. A file already in <code>other</code> moves out
-  on the next sweep once its extension gets a shelf. A shelf's view is how its panel opens on a
+  on the next scan once its extension gets a shelf. A shelf's view is how its panel opens on a
   project page, and a group puts its shelves' panels together under one heading.
 </p>
 
+<%# #update's refusal has no control on this page to sit beside (Settings::FilingRulesController), and
+    an added extension aimed at a folder with no card has no card; both say so here, by extension. %>
+<% stray = @failed_rule || (@new_rule if @new_rule && !@shelf_names.include?(@new_rule.folder)) %>
+<% if stray %>
+  <div class="form-errors" role="alert">Could not save the rule for .<%= stray.ext %>:
+    <%= stray.errors.full_messages.to_sentence.chomp(".") %>.</div>
+<% end %>
+
+<% card_locals = { by_folder: @by_folder, groups: @groups, failed_shelf: @failed_shelf, new_rule: @new_rule } %>
+
 <% if @ungrouped.any? %>
   <div class="filing-cards">
-    <%= render partial: "shelf_card", collection: @ungrouped, as: :shelf,
-               locals: { by_folder: @by_folder, groups: @groups } %>
+    <%= render partial: "settings/shelves/shelf_card", collection: @ungrouped, as: :shelf,
+               locals: card_locals.merge(level: 2) %>
   </div>
 <% end %>
 
 <% @groups.each do |group| %>
+  <% typed = @failed_group if @failed_group&.id == group.id %>
   <section class="shelf-group" aria-labelledby="shelf-group-<%= group.id %>">
     <div class="shelf-group-bar">
       <h2 class="group-head" id="shelf-group-<%= group.id %>"><%= group.name %></h2>
-      <%= form_with model: group, url: settings_shelf_group_path(group), scope: :shelf_group,
+      <%= form_with model: typed || group, url: settings_shelf_group_path(group), scope: :shelf_group,
                     method: :patch, class: "shelf-group-rename" do |f| %>
         <%= f.text_field :name, id: nil, required: true, maxlength: Maker::ShelfGroup::NAME_MAX,
                          "aria-label": "Rename #{group.name}" %>
         <%= f.submit "Rename", class: "btn ghost small" %>
       <% end %>
-      <%= button_to "Delete group", settings_shelf_group_path(group), method: :delete,
+      <%= button_to "Remove group", settings_shelf_group_path(group), method: :delete,
                     class: "linkbtn danger small",
-                    form: { data: { turbo_confirm: "Delete the #{group.name} group? " \
+                    form: { data: { turbo_confirm: "Remove the group #{group.name}? " \
                                                     "Its shelves stay, ungrouped." } } %>
     </div>
+    <% if typed %>
+      <div class="form-errors" role="alert">Could not rename <%= group.name %>:
+        <%= typed.errors.full_messages.to_sentence.chomp(".") %>.</div>
+    <% end %>
     <% members = @by_group[group.id] || [] %>
     <% if members.any? %>
       <div class="filing-cards">
-        <%= render partial: "shelf_card", collection: members, as: :shelf,
-                   locals: { by_folder: @by_folder, groups: @groups } %>
+        <%= render partial: "settings/shelves/shelf_card", collection: members, as: :shelf,
+                   locals: card_locals.merge(level: 3) %>
       </div>
     <% else %>
       <p class="empty">No shelves in this group yet. Choose it in a shelf's Group menu.</p>
@@ -48,18 +71,25 @@
 <% end %>
 
 <div class="shelf-forms">
+  <%# value: is stated on both fields: with no model, a scoped field reads the ivar its scope names. %>
   <%= form_with url: settings_shelves_path, scope: :shelf, class: "settings-add shelf-new" do |f| %>
-    <label>
+    <% if @new_shelf %>
+      <div class="form-errors" role="alert"><%= @new_shelf.errors.full_messages.to_sentence.chomp(".") %>.</div>
+    <% end %>
+    <label class="field">
       <span>New shelf</span>
-      <%= f.text_field :name, required: true, placeholder: "renders", id: nil %>
+      <%= f.text_field :name, value: @new_shelf&.name, required: true, placeholder: "renders", id: nil %>
     </label>
     <%= f.submit "Add shelf", class: "btn primary" %>
   <% end %>
   <%= form_with url: settings_shelf_groups_path, scope: :shelf_group,
                 class: "settings-add shelf-group-new" do |f| %>
-    <label>
+    <% if @new_group %>
+      <div class="form-errors" role="alert"><%= @new_group.errors.full_messages.to_sentence.chomp(".") %>.</div>
+    <% end %>
+    <label class="field">
       <span>New group</span>
-      <%= f.text_field :name, required: true, placeholder: "Fabrication",
+      <%= f.text_field :name, value: @new_group&.name, required: true, placeholder: "Fabrication",
                        maxlength: Maker::ShelfGroup::NAME_MAX, id: nil %>
     </label>
     <%= f.submit "Add group", class: "btn ghost" %>

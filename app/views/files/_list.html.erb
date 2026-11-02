@@ -75,10 +75,10 @@
         <td class="muted col-type"><%= file_type_label(node) %></td>
         <%# Where this file actually lives — a flat list without it is unnavigable. The link goes
             to that folder, so the flat view doubles as a way to FIND things. A file at the
-            library root has no path, so it names the root the breadcrumb already calls "Files". %>
+            library root has no path, so it names the root the breadcrumb already calls "Library". %>
         <% if @flat %>
           <td class="muted col-folder">
-            <%= link_to(@folder_paths[node.node_id].presence || "Files",
+            <%= link_to(@folder_paths[node.node_id].presence || "Library",
                         files_path(folder: node.parent_node_id)) %>
           </td>
         <% end %>
@@ -86,13 +86,26 @@
         <% if capabilities.versioned? %>
           <td class="muted mono col-version"><%= info.content_token&.first(8) || "—" %></td>
         <% end %>
-        <td class="muted col-modified"><%= info.mtime ? Time.at(info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %></td>
+        <td class="muted col-modified"><%= info.mtime ? time_at(time_from_nanos(info.mtime)) : "—" %></td>
+        <%# THE ROW'S ACTIONS, IN THE OPEN (UX audit D2, 2026-11-02). Details was reachable only by
+            right-click, which a phone does not have; it is a link to this listing with the file
+            selected, so it works with no JavaScript, and `selection#details` opens the panel in
+            place when there is some (it reads the file off `data-selection-id`, never off the href).
+            Destructive last, as the menu and the inspector put it. Each control's accessible name
+            says which file it acts on; below 480px the words give way to icons (components.css) so
+            the three fit one line. A folder row carries Delete alone, asking the folder's own
+            question (FilesHelper#delete_confirm). %>
         <td class="row-actions col-actions">
           <% if node.file? %>
-            <%= link_to "Download", blob_file_path(node.node_id, download: 1) %>
+            <%= link_to details_path_for(node.node_id), class: "row-action", title: "Details",
+                        aria: { label: "Details for #{node.name}" },
+                        data: { action: "selection#details", selection_id: node.node_id } do %><%= row_action_content(:details, "Details") %><% end %>
+            <%= link_to blob_file_path(node.node_id, download: 1), class: "row-action", title: "Download",
+                        aria: { label: "Download #{node.name}" } do %><%= row_action_content(:download, "Download") %><% end %>
           <% end %>
-          <%= button_to "Delete", file_path(node.node_id), method: :delete,
-                form: { data: { turbo_confirm: "Delete #{node.name}?" } }, class: "linkbtn danger" %>
+          <%= button_to file_path(node.node_id), method: :delete, class: "linkbtn danger row-action",
+                title: "Delete", aria: { label: "Delete #{node.name}" },
+                form: { data: { turbo_confirm: delete_confirm(node.name, kind: node.kind) } } do %><%= row_action_content(:delete, "Delete") %><% end %>
         </td>
       </tr>
     <% end %>

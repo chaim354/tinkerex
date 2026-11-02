@@ -92,7 +92,7 @@ class UploaderTest < ApplicationSystemTestCase
     attach_path = File.join(@attach_dir, file.basename.to_s)
     FileUtils.cp(file, attach_path)
 
-    # make_visible: the real input is `hidden` behind a styled label, so Capybara cannot attach to
+    # make_visible: the real input is `hidden` beside the styled Upload button, so Capybara cannot attach to
     # it as-is. This unhides it for the duration of the attach only, which is the narrowest change
     # that lets a real file selection happen.
     #

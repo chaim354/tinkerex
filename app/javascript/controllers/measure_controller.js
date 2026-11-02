@@ -1,7 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
 import { PAPERS, printSheets, sheetDocuments } from "lib/print_sheet"
 import { exportSvg } from "lib/export_svg"
-import { postJSON, uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
+import { postJSON, uploadChunkFile, uploadFailureSentence, uploadPortFile } from "lib/chunk_upload"
 import { SVG_NS, shapeElement, unionBox } from "lib/shape_svg"
 import { installPanZoom } from "lib/svg_pan_zoom"
 
@@ -179,8 +179,8 @@ export default class extends Controller {
       this.draw(payload)
     } catch (e) {
       if (gen !== this.generation) return
-      console.warn("[measure] keeping the thumbnail:", e)
-      this.setStatus(e.message || "Could not load geometry.")
+      this.setStatus(this.failureText(e, "The measurement could not be computed for this file.",
+                                      "keeping the thumbnail"))
     }
   }
 
@@ -231,20 +231,25 @@ export default class extends Controller {
   async fetchPayload() {
     for (let attempt = 0; attempt <= POLL_DELAYS_MS.length; attempt++) {
       const res = await fetch(this.urlValue, { headers: { Accept: "application/json" } })
-      if (!res.ok) throw new Error(`Geometry request failed (${res.status}).`)
+      if (!res.ok) throw new Error("The measurement could not be loaded. Reload the page to try again.", { cause: `geometry answered ${res.status}` })
       const body = await res.json()
 
       if (body.status === "ready" && body.url) {
         const blob = await fetch(body.url)
-        if (!blob.ok) throw new Error("Could not read the geometry payload.")
+        if (!blob.ok) throw new Error("The measurement could not be loaded. Reload the page to try again.", { cause: `payload answered ${blob.status}` })
         const payload = await blob.json()
         if (payload.v !== SCHEMA_VERSION) {
           throw new Error("This preview needs a newer version of the page — reload.")
         }
         return payload
       }
+      // THE ROW'S `error` IS THE RENDERER'S, NOT A MAKER'S ("ClassName: message", from
+      // GeneratePreviewJob), so it rides along as the cause for the console and never reaches the
+      // readout (UX audit H, 2026-11-02).
       if (body.status === "failed" || body.status === "unsupported") {
-        throw new Error(body.error || "No geometry available for this file.")
+        throw new Error(body.status === "unsupported" ? "There is nothing Measure can draw in this file."
+                                                      : "The measurement could not be computed for this file.",
+                        { cause: body.error })
       }
       if (attempt === POLL_DELAYS_MS.length) break
       this.setStatus("Generating geometry…")
@@ -526,12 +531,11 @@ export default class extends Controller {
       // button that does nothing whatsoever. The message names the size that caused it, which is
       // the only part of it that tells the user what to do differently.
       //
-      // AND IT LOGS, because the catch is unconditional and cannot tell a refusal from a bug. Probed:
-      // make `furniture()` throw a TypeError and "prints without logging a console error" stays
-      // GREEN while the user reads a developer string as the reason their print refused. `load()`
-      // twenty lines up warns for exactly this reason before setting its own status.
-      console.warn("[measure] print refused:", e)
-      this.setStatus(e.message)
+      // AND IT LOGS, because the catch is unconditional. `failureText` is what tells a refusal from a
+      // bug: a TypeError out of `furniture()` reads "Nothing could be printed — try again." and goes
+      // to console.error, so "prints without logging a console error" goes RED over it instead of
+      // staying green while the user reads a developer string as the reason their print refused.
+      this.setStatus(this.failureText(e, "Nothing could be printed — try again.", "print refused"))
     }
   }
 
@@ -560,11 +564,9 @@ export default class extends Controller {
       a.click()
     } catch (e) {
       // REACHES THE READOUT, not just the console — exportSvg throws before any file exists, so a
-      // swallowed message is a button that does nothing whatsoever. AND IT LOGS, because this
-      // catch cannot tell a refusal from a bug: print()'s own catch carries the same pair for the
-      // same reason.
-      console.warn("[measure] export refused:", e)
-      this.setStatus(e.message)
+      // swallowed message is a button that does nothing whatsoever. AND IT LOGS: `failureText`
+      // tells exportSvg's own refusal from a bug, as print()'s catch does.
+      this.setStatus(this.failureText(e, "Nothing could be exported — try again.", "export refused"))
     } finally {
       // RELEASED EVEN WHEN THE CLICK THREW. An object URL pins its Blob for the lifetime of the
       // document, and this view is reachable repeatedly through the ✕ Image -> Measure round trip.
@@ -609,9 +611,8 @@ export default class extends Controller {
     } catch (e) {
       // buildSheets' refusals (nothing selected, MAX_SHEETS) reach the readout, the way print()'s
       // do — they throw before any file exists, so a swallowed message is a button that does
-      // nothing whatsoever. AND IT LOGS, because this catch cannot tell a refusal from a bug.
-      console.warn("[measure] sheet save refused:", e)
-      return this.setStatus(e.message)
+      // nothing whatsoever. AND IT LOGS, through `failureText`, which tells a refusal from a bug.
+      return this.setStatus(this.failureText(e, "Nothing could be saved — try again.", "sheet save refused"))
     }
     const files = bodies.map((body, i) => ({
       name: bodies.length === 1 ? `${base}-print.svg`
@@ -630,13 +631,16 @@ export default class extends Controller {
     const previous = button.textContent
     button.disabled = true
     button.textContent = "Saving…"
+    let current = null
     try {
       let last = null
       const saved = []
       for (const file of files) {
+        current = file.name
         last = await this.uploadOne(new File([ file.body ], file.name, { type: "image/svg+xml" }))
         saved.push(last.nodeId)
       }
+      current = null
       await this.recordSources(saved)
       // THE SERVER'S OWN SENTENCE WHEN IT HAS ONE. Both doors answer with `notice`, built by
       // ProjectFolderIntake — so when the project-folder sweep could not file the save into its
@@ -644,8 +648,16 @@ export default class extends Controller {
       // wording every other upload door uses. Otherwise: what was written, and how many.
       this.setStatus(last?.notice || `Saved ${files.length === 1 ? files[0].name : `${files.length} sheets`}.`)
     } catch (e) {
-      console.warn("[measure] save refused:", e)
-      this.setStatus(e.message)
+      // AN UPLOAD THAT DID NOT LAND SAYS SO IN THE ONE WORDING EVERY UPLOAD DOOR USES
+      // (lib/chunk_upload#uploadFailureSentence: "Upload failed: NAME was refused — the folder
+      // already has a file with that name."), never the request's own message. A throw after the
+      // last upload is not an upload's, so it takes `failureText`'s answer.
+      if (current) {
+        console.warn("[measure] save refused:", e)
+        this.setStatus(uploadFailureSentence([ { name: current, error: e } ]))
+      } else {
+        this.setStatus(this.failureText(e, "Nothing could be saved — try again.", "save refused"))
+      }
     } finally {
       button.disabled = false
       button.textContent = previous
@@ -1110,6 +1122,23 @@ export default class extends Controller {
   // measure_print_test.rb's Reset case reads the element's viewBox back through it. The handle is
   // `this.panZoom` — `reset`, `didPan`, `panning`, and `set`/`view` for a caller that ever needs
   // the numbers.
+
+  // WHAT A FAILURE SAYS IN THE READOUT (UX audit H, 2026-11-02: the raw `e.message` reached it at
+  // five places). A REFUSAL THIS PAGE WROTE is a plain `Error` whose message is already a maker's
+  // sentence — buildSheets' "Nothing to print." and its sheet-count refusal, which names the size
+  // that caused it (the only part that says what to do differently, pinned whole by
+  // measure_print_test), exportSvg's "Nothing selected to export.", fetchPayload's own — so it reads
+  // as written and logs a warning with any `cause`. ANYTHING ELSE (a TypeError out of a bug, a
+  // RangeError, a DOMException) is not written for a maker: the readout says `fallback` and the raw
+  // error goes to console.error, where the system tests' console guard can see it.
+  failureText(e, fallback, label) {
+    if (e?.constructor === Error && e.message) {
+      console.warn(`[measure] ${label}:`, e, e.cause ?? "")
+      return e.message
+    }
+    console.error(`[measure] ${label}:`, e)
+    return fallback
+  }
 
   // EVERY plain status drops the kept readout, so the unit toggle can only ever rewrite the line
   // that is actually on screen — never resurrect a measurement over "Saved sample-parts.svg." or

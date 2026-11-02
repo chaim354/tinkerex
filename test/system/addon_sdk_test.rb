@@ -23,6 +23,11 @@ class AddonSdkTest < ApplicationSystemTestCase
   setup do
     @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
     ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
+    # THE DEPLOYMENT MUST LOOK CONFIGURED FOR `fixture-svc`, OR THE PAGE DOES NOT MOUNT AT ALL: since
+    # 2026-11-02 an unavailable addon's page draws its reason instead of the bundle (UX audit G3),
+    # where `visit` used to mount it regardless. No proxy here — `install_sidecar` adds one for the
+    # tests that actually call the service; teardown deletes the URL.
+    ENV["FIXTURE_SVC_SIDECAR_URL"] = SIDECAR_URL
     sign_in_as "sdk@example.com"
   end
 
@@ -548,24 +553,22 @@ class AddonSdkTest < ApplicationSystemTestCase
   # regression in that handoff. Neither hop below opts out of Turbo (grep app/views/layouts and this
   # controller's own view: no `data: { turbo: false }` on either link), so both are soft navigations.
   test "a Turbo soft navigation away and back re-mounts the bundle cleanly" do
-    # THE ONLY TEST HERE THAT REACHES THE ADDON THROUGH THE GALLERY, so it is the only one that
-    # needs the addon to be AVAILABLE. `sdk-fixture`'s manifest declares `services: ["fixture-svc"]`,
-    # and an addon whose declared service has no configured URL now greys out with a reason naming
-    # it (Maker::Addons::Registry#unavailable_reason) — the check that used to live in the /tools
-    # view as `OpenscadClient.configured?` and was lost with that hardcoded card. A greyed card
-    # renders as a <div>, not an <a>, so `click_link "SDK Fixture"` finds nothing. Every other test
-    # in this file reaches the addon by `visit`, which does not consult `available?` at all.
+    # THIS TEST REACHES THE ADDON THROUGH THE GALLERY, so the addon must be AVAILABLE there:
+    # `sdk-fixture`'s manifest declares `services: ["fixture-svc"]`, and an addon whose declared
+    # service has no configured URL greys out with a reason naming it
+    # (Maker::Addons::Registry#unavailable_reason). A greyed card has no link, so
+    # `click_link "SDK Fixture"` would find nothing. Setup configures the URL for every test now,
+    # because the addon's own page asks the same question (2026-11-02).
     #
     # No FakeServiceProxy here on purpose: this test never calls the sidecar, it only needs the
     # deployment to LOOK configured. `install_sidecar` is for the tests that actually call one.
-    ENV["FIXTURE_SVC_SIDECAR_URL"] = SIDECAR_URL
-
     visit "/tools/sdk-fixture"
     assert_selector "[data-role=sdk-level]", text: "level #{Maker::Addons::Host::LEVEL}"
 
-    # AWAY: the top-nav "Tools" link (app/views/layouts/application.html.erb) is a plain link_to —
-    # Turbo Drive intercepts it, so this is a pushState visit, not a fresh page load.
-    click_link "Tools"
+    # AWAY: the rail's "Tools" link is a plain link_to — Turbo Drive intercepts it, so this is a
+    # pushState visit, not a fresh page load. Scoped to the rail: the page's breadcrumb names
+    # Tools too since 2026-11-02, and either would do, but an ambiguous match does neither.
+    within("aside.rail") { click_link "Tools" }
     assert_selector ".tools-grid"
     assert_selector "h1", text: "Tools"
 

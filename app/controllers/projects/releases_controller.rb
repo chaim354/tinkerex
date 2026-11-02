@@ -7,8 +7,14 @@ module Projects
   # THERE IS NO `update`. A release is a record of a moment (spec §2.3), so it is removed and remade
   # rather than edited -- an editable version or changelog would describe a snapshot that was never
   # taken. `Maker::ReleaseSnapshot` is the ONE door that writes one, here and everywhere.
+  #
+  # A REFUSAL KEEPS WHAT WAS TYPED (2026-11-02, the UX audit's B3): a version already taken or a tag
+  # that is not there comes back as the open composer, its error inside it and the version, the tag
+  # and the notes as posted (Projects::ComposerRefusal), 422 — where a redirect with an alert used
+  # to hand back an empty form under a toast. The picker is rebuilt by Maker::ReleaseTags, the same
+  # options the page offered, so the chosen tag is still chosen.
   class ReleasesController < ApplicationController
-    include Projects::PanelReturn
+    include Projects::ComposerRefusal
 
     # THE PICKER SENDS ONE FIELD FOR TWO FACTS, AND THIS IS WHERE THEY COME APART. A project folder
     # may hold several repositories, so a tag is meaningless without the one it came from -- but a
@@ -31,11 +37,11 @@ module Projects
     rescue ActiveRecord::RecordInvalid => e
       # The version's uniqueness and format live on Maker::Release, so this is where the maker is
       # told "v1.0.0 is already a release of this project" rather than at a 500.
-      redirect_to project_panel_path(project, "releases"), alert: "Release not created: #{e.record.errors.full_messages.to_sentence}."
+      refuse(project, attrs, "Release not added: #{e.record.errors.full_messages.to_sentence}.")
     rescue Maker::ReleaseSnapshot::TagNotFound => e
       # A REFUSED TAG LEAVES NOTHING BEHIND: the snapshot resolves the tag before it opens its
       # transaction, so there is no half-written release to clean up here.
-      redirect_to project_panel_path(project, "releases"), alert: "Release not created: #{e.message}."
+      refuse(project, attrs, "Release not added: #{e.message}.")
     end
 
     # SCOPED TO THIS USER'S OWN RELEASES, not a bare Maker::Release.find -- a foreign id 404s rather
@@ -52,6 +58,19 @@ module Projects
     end
 
     private
+
+    # The composer again, open, holding what was posted. The tag goes back as POSTED — the picker's
+    # "<repo node_id>:<tag>" value or the free-text field's string — so the same option is selected
+    # or the same text is in the field. A fresh, unsaved Release carries the version and the notes,
+    # which is what lets the rich-text field re-render from the form's object.
+    def refuse(project, attrs, error)
+      repos = Maker::ReleaseTags.for(user: current_user, capabilities:,
+                                     listing: Maker::ProjectFolderListing.new(current_user, project))
+      draft = Maker::Release.new(version: attrs[:version], notes: attrs[:notes])
+      refuse_in_composer(project, id: "release-composer", partial: "projects/release_composer",
+                         locals: { project:, repos:, draft:, tag: attrs[:git_tag], error: },
+                         title: "Add a release")
+    end
 
     def split_tag(git_tag, repo_node_id)
       return [ git_tag.presence, repo_node_id.presence ] if repo_node_id.present?
@@ -76,7 +95,7 @@ module Projects
       notes << "tag recorded, not verified" if unverified
       notes << "first #{result.file_count} of a larger folder" if result.truncated
       notes << "#{result.skipped} #{'file'.pluralize(result.skipped)} the library could not read, left out" if result.skipped.positive?
-      "Released #{result.release.version} with #{result.file_count} #{'file'.pluralize(result.file_count)}" \
+      "Added release #{result.release.version} with #{result.file_count} #{'file'.pluralize(result.file_count)}" \
         "#{" (#{notes.join('; ')})" if notes.any?}."
     end
   end

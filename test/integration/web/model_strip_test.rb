@@ -25,7 +25,9 @@ module Web
       assert_select ".model-strip h2", text: "Wall Bracket"
       # THE TITLE OPENS THE MODEL'S OWN PAGE (2026-10-21), which every model renders now.
       assert_select ".model-strip h2 a[href=?]", model_path(@model)
-      assert_select ".model-strip .badge.mstatus-want_to_print", text: "Wanted"
+      # THE DEFAULT STATUS WEARS NO BADGE (UX audit E2, 2026-11-02): every auto-found model is
+      # `want_to_print`, so badging it said nothing; only a non-default status is drawn.
+      assert_select ".model-strip .badge[class*=mstatus-]", count: 0
       assert_select ".model-strip", text: /Ada/
       assert_select ".model-strip a[href=?]", "https://example.com/b"
       assert_select ".model-strip dl", text: /Layer height\s*0\.2mm/

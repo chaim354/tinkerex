@@ -3,6 +3,13 @@
   renderable files show their preview (with the same poll-until-ready cell the list uses), and
   everything else shows a format badge. The `thumbs` controller lives on the grid container and
   drives every `.file-cell` inside it, exactly as it does for the table.
+
+  EACH CARD CARRIES THE ROW'S ACTIONS (UX audit D2, 2026-11-02): Details, Download and Delete for a
+  file, Delete for a folder, under the card rather than inside it — the card is a link, and a link
+  cannot hold another link or a form. `.grid-item` is the cell of the grid; `a.grid-card` inside it
+  is unchanged (the selection item, the menu cell and the poll cell), so everything that reads the
+  card reads what it always did. The actions draw as icons with a title, since a 160px card has no
+  room for three words; each one's accessible name says which file it acts on.
 %>
 <div class="files-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
   <% @nodes.each do |node| %>
@@ -10,6 +17,7 @@
     <%# ext_label is the thumbnail badge and is capped at four characters so it fits the box; the
         tile's sub-line below uses the full extension, so "LBRN2" does not read as "LBRN". %>
     <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
+    <div class="grid-item">
     <% if !node.file? %>
       <%# #folder_menu_data, NOT #file_menu_data - Delete is a folder's whole menu, and it takes no
           thumb cell. The fuller note is in _list.html.erb; the argument is in files_helper.rb. %>
@@ -20,11 +28,10 @@
       <% end %>
     <% elsif Maker::Previews::Registry.for_filename(node.name).present? %>
       <% thumb = @thumb_by_node.thumb(node.node_id) %>
-      <%# FilesHelper#file_menu_data carries data-download-url, which is the grid's ONLY route to
-          the bytes without opening the file first — a card has no row-actions cell. The folder
-          branch above calls #folder_menu_data instead, whose one url is the delete one, so none of
-          this reaches a directory. See the fuller note in _list.html.erb and the argument in
-          files_helper.rb.
+      <%# FilesHelper#file_menu_data carries data-download-url, the right-click menu's route to the
+          bytes. The folder branch above calls #folder_menu_data instead, whose one url is the delete
+          one, so none of this reaches a directory. See the fuller note in _list.html.erb and the
+          argument in files_helper.rb.
 
           A FILE CARD STAYS A LINK TO ITS PAGE: a click opens the file and a double-click opens it in
           a new tab (FilesHelper#file_open_data), and right-click › Details opens the side panel,
@@ -49,5 +56,18 @@
         <%= render "note_badge", count: @note_counts[node.node_id] %>
       <% end %>
     <% end %>
+      <div class="grid-actions">
+        <% if node.file? %>
+          <%= link_to details_path_for(node.node_id), class: "row-action", title: "Details",
+                      aria: { label: "Details for #{node.name}" },
+                      data: { action: "selection#details", selection_id: node.node_id } do %><%= row_action_content(:details, "Details") %><% end %>
+          <%= link_to blob_file_path(node.node_id, download: 1), class: "row-action", title: "Download",
+                      aria: { label: "Download #{node.name}" } do %><%= row_action_content(:download, "Download") %><% end %>
+        <% end %>
+        <%= button_to file_path(node.node_id), method: :delete, class: "linkbtn danger row-action",
+              title: "Delete", aria: { label: "Delete #{node.name}" },
+              form: { data: { turbo_confirm: delete_confirm(node.name, kind: node.kind) } } do %><%= row_action_content(:delete, "Delete") %><% end %>
+      </div>
+    </div>
   <% end %>
 </div>

@@ -44,6 +44,13 @@
   .linkbtn.danger { color: var(--danger); text-decoration-color: currentColor; }
   .linkbtn.small { font-size: 12px; }
   .upload-btn { display: inline-flex; cursor: pointer; }
+  /* UPLOAD IS A <button> (UX audit I), in the top bar and in projects/_upload_control, so a keyboard
+     reaches it; its face is still the `.upload-btn span` above, so the button itself is only a
+     frame: no padding, border or fill of its own, and its corners match the span's so the focus
+     ring (base layer's `:focus-visible`) sits on the face. HERE, beside `.upload-btn`, and not in
+     shell.css where it landed first: a component's selector lives in this file alone
+     (design-system.md rule 3), and both callers are the component, not the shell. */
+  button.upload-btn { padding: 0; border: 0; border-radius: var(--radius-control); background: none; color: inherit; font: inherit; }
   .upload-status { font-size: 12px; color: var(--fg-muted); }
   .uploader { display: inline-flex; align-items: center; gap: var(--space-3); }
 
@@ -70,6 +77,11 @@
   .field > span, .field > label { display: block; margin-bottom: var(--space-1); font-size: 13px; font-weight: 500; color: var(--fg); }
   .field input, .field textarea, .field select { width: 100%; max-width: 480px; }
   .field > .folder-field { display: inline-flex; }
+  /* A HINT UNDER A FIELD (UX audit H, 2026-11-02): one quiet sentence, styled here once. It was three
+     page copies (the Account page's, the adjust-stock composer's and the item form's) at three
+     spacings. Inside a `.field` the label rule above, `.field > span` (0,1,1), would make the hint a
+     second, bold label; `.field > .field-hint` (0,2,0) is what outranks it within this layer. */
+  .field-hint, .field > .field-hint { display: block; margin: var(--space-1) 0 0; font-size: 12px; font-weight: 400; color: var(--fg-muted); }
   .field-inline { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); font-size: 13px; }
   .field-inline input { width: auto; }
   .form-actions { display: flex; gap: 12px; align-items: center; }
@@ -291,9 +303,29 @@
   table.files th a:hover { text-decoration: underline; }
   table.files th.sorted a { color: var(--fg); }
   table.files .num, .table .num { text-align: right; font: 400 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--fg-muted); }
-  table.files .row-actions { justify-content: flex-end; opacity: 0; transition: opacity .12s; }
-  table.files tr:hover .row-actions, table.files tr:focus-within .row-actions { opacity: 1; }
-  @media (hover: none) { table.files .row-actions { opacity: 1; } }
+  /* HOVER-REVEAL ONLY WHERE THERE IS A HOVER (UX audit D2, 2026-11-02). The actions are VISIBLE by
+     default and fade only for a fine pointer that can hover, where a hovered or focused row brings
+     them back; a touch screen, a stylus and a hybrid whose primary pointer is coarse never meet a
+     control it would have to hover to find. The old rule faded first and un-faded under
+     `hover: none`, which missed `pointer: coarse` devices that report a hover. `--shown` opts a
+     table out entirely: Trash's Restore is that page's only action. */
+  table.files .row-actions { justify-content: flex-end; transition: opacity .12s; }
+  @media (hover: hover) and (pointer: fine) {
+    table.files .row-actions:not(.row-actions--shown) { opacity: 0; }
+    table.files tr:hover .row-actions, table.files tr:focus-within .row-actions { opacity: 1; }
+  }
+  /* ONE ROW ACTION — a word, or below 480px its icon (FilesHelper#row_action_content). The icon is
+     the same control at phone width, not a second one: three words stacked in a cell put one row's
+     Delete on the next row's Download (the audit's 375px finding), three 26px icons sit on one line.
+     The accessible name is the control's aria-label either way. */
+  .row-action { display: inline-flex; align-items: center; justify-content: center; gap: var(--space-1); }
+  .row-action .action-icon { display: none; width: 16px; height: 16px; flex: 0 0 auto; }
+  @media (max-width: 479px) {
+    table.files .row-actions { flex-wrap: nowrap; gap: var(--space-1); }
+    table.files .row-action { min-width: var(--control-height-small); min-height: var(--control-height-small); text-decoration: none; }
+    table.files .row-action .action-icon { display: block; }
+    table.files .row-action .row-action-label { display: none; }
+  }
   .dir { font-weight: 600; }
   .file-cell { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
   .file-name { overflow-wrap: anywhere; }
@@ -468,6 +500,8 @@
   .flash-text { flex: 1; }
   .flash-close { background: none; border: 0; padding: 0 2px; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; opacity: .7; }
   .flash-close:hover { opacity: 1; }
+  /* The optional next step a notice carries (layouts/_flash, UX audit B6): inherits the toast's ink. */
+  .flash-link { margin-left: var(--space-2); color: inherit; font-weight: 600; text-decoration: underline; }
 
   /* --- Floating things: menu, popover, dialog, composer --- */
   .file-menu {
@@ -529,8 +563,8 @@
   .menu-form-row input[type="text"] { flex: 1; min-width: 0; }
   .menu-item:hover { background: var(--raised); text-decoration: none; }
   .menu-item.danger { color: var(--danger); }
-  /* A menu row that HOSTS a control rather than being one — the build-log uploader is a label
-     wrapping a hidden file input, so it cannot be a .menu-item anchor without losing the input. */
+  /* A menu row that HOSTS a control rather than being one — the build-log uploader is a button
+     beside a hidden file input, so it cannot be a .menu-item anchor without losing the input. */
   .menu-item--host { padding: 4px 6px; }
   .menu-item--host .upload-btn span { width: 100%; justify-content: flex-start; border: 0; background: none; }
 

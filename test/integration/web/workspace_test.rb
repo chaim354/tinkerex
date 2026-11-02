@@ -53,7 +53,7 @@ module Web
     test "the breadcrumb walks to the file's folder and that link reselects the file" do
       get file_path(@file.node_id)
       assert_select "header.topbar nav.breadcrumb" do
-        assert_select "a[href=?]", files_path, text: "Files"
+        assert_select "a[href=?]", files_path, text: "Library"
         assert_select "a[href=?]", files_path(folder: @dir.node_id, selected: @file.node_id), text: "legs"
         assert_select "[aria-current='page']", text: "leg.lbrn2"
       end
@@ -72,14 +72,14 @@ module Web
       end
     end
 
-    # A file at the library root has no folder crumb, so "Files" IS its folder and carries the
+    # A file at the library root has no folder crumb, so "Library" IS its folder and carries the
     # selection itself.
-    test "a file at the library root reselects itself from the Files crumb" do
+    test "a file at the library root reselects itself from the Library crumb" do
       loose = @user.nodes.create!(node_id: "n-loose", name: "loose.stl", kind: "file", mtime: 1, size: 3)
 
       get file_path(loose.node_id)
       assert_select "header.topbar nav.breadcrumb" do
-        assert_select "a[href=?]", files_path(selected: loose.node_id), text: "Files"
+        assert_select "a[href=?]", files_path(selected: loose.node_id), text: "Library"
         assert_select "a", count: 1
       end
     end

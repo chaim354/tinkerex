@@ -905,7 +905,10 @@ selected file: a Turbo Frame body rendered **without the layout**, built from `f
   own frame with a 503. No adapter's `stat` raises it today (it is a database read of the node).
 - **The tiles stay links.** A click opens the file and a double-click opens it in a new tab
   (`fileopen_controller.js`, 2026-10-21); the panel opens from the file menu's Details
-  (`filemenu:details` → `selection_controller.js#details`) or a `?selected=` page. Every tile keeps
+  (`filemenu:details` → `selection_controller.js#details`), from a `?selected=` page, or — since the
+  UX audit (D2, 2026-11-02) — from the VISIBLE Details action every list row and grid card carries
+  (`FilesHelper#details_path_for`: a plain link to this listing with `selected=` and the page, so it
+  works without JavaScript; with it, `data-action="selection#details"` opens the panel in place). Every tile keeps
   `href=file_path`, which a single click, the file menu's Open, a modifier click, Enter and
   no-JavaScript all rely on. **The model strip above a model folder's files (`files/_model_strip`,
   slice 5) is not a selection item**: nothing in it goes through `with_selection`, because a model is

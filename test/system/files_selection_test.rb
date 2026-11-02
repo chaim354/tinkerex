@@ -177,6 +177,33 @@ class FilesSelectionTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # A ROW'S OWN DETAILS CONTROL OPENS THE PANEL IN PLACE AND RINGS ITS TILE (UX audit D2: files/_list
+  # and files/_grid draw it as `a.row-action` carrying `data-selection-id`). The control is not the
+  # tile, so selection#details finds the tile by that id; and its href names ITS OWN file, so
+  # #syncPageLinks must leave every other row's Details alone when the selection moves — rewriting
+  # them pointed each one at the selected file. The row is hovered first because a fine, hovering
+  # pointer only reveals row actions on hover (files_row_actions_test.rb).
+  #
+  # MUTATION-CHECKED (2026-11-02): with #details back to `this.select(event.currentTarget)`, the
+  # ring assertion goes RED (the panel opens, no tile is `.is-selected`); with `:not(.row-action)`
+  # dropped from #syncPageLinks, the href assertion goes RED. Each restored, green.
+  test "a row's Details control opens the panel, rings its tile, and leaves the other rows' Details alone" do
+    visit files_path(folder: legs.node_id, view: "list")
+    page.execute_script("window.__visits = 0; addEventListener('turbo:before-visit', () => window.__visits++)")
+    bracket_details = "a.row-action[data-selection-id='#{bracket.node_id}']"
+    bracket_href = find(bracket_details, visible: :all)[:href]
+    assert_includes bracket_href, "selected=#{bracket.node_id}"
+
+    find("table.files tr", text: "plate.stl").hover
+    find("a.row-action[data-selection-id='#{plate.node_id}']").click
+
+    assert_selector ".library.has-inspector .inspector .inspector-name", text: "plate.stl"
+    assert_equal 0, page.evaluate_script("window.__visits"), "Details navigated instead of opening the panel"
+    assert_selector "table.files a.is-selected", count: 1, text: "plate.stl"
+    assert_equal bracket_href, find(bracket_details, visible: :all)[:href], "another row's Details now names the selected file"
+    assert_no_console_errors
+  end
+
   # THE INSPECTOR SITS INSIDE THE CONTROLLER'S ELEMENT, so its keydown listener hears the panel's own
   # controls; an arrow in the project picker must choose a project, not move the selection.
   test "arrow keys inside the inspector stay with the control" do

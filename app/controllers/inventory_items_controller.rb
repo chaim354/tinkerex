@@ -14,7 +14,7 @@ class InventoryItemsController < ApplicationController
 
   before_action :find_item, only: %i[show edit update destroy adjust]
 
-  # The "−8" / "+50" sign used both in the flash and in the ledger's Delta column — a real minus
+  # The "−8" / "+50" sign used both in the flash and in the ledger's Change column — a real minus
   # sign (U+2212), matching the ledger, not a hyphen. helper_method so the view can call it too:
   # ONE place decides the glyph, not one in the controller's flash string and a second in the view.
   helper_method :signed
@@ -33,6 +33,23 @@ class InventoryItemsController < ApplicationController
     items = items.where(category: @category) if @category
     @low = params[:low] == "1"
     items = items.low_stock if @low
+    # `?supplier=` / `?location=` (UX audit 2026-11-01, E5): the Suppliers and Locations pages' item
+    # counts link here. Composable facets, carried by every chip and sort header like `tag`, and
+    # resolved THROUGH current_user, so a foreign or unknown id names nothing and narrows to nothing.
+    # A non-String (a crafted `?supplier[a]=b`) is simply absent, as Files::ModelsController's are;
+    # an id that resolves to nothing of this user's narrows to NOTHING, never to every item.
+    supplier_id = params[:supplier].presence if params[:supplier].is_a?(String)
+    location_id = params[:location].presence if params[:location].is_a?(String)
+    if supplier_id
+      @supplier = current_user.maker_suppliers.find_by(id: supplier_id)
+      items = @supplier ? items.where(supplier_id: @supplier.id) : items.none
+    end
+    if location_id
+      @location = current_user.maker_locations.find_by(id: location_id)
+      items = @location ? items.where(location_id: @location.id) : items.none
+    end
+    # ANY FACET SET is what tells "nothing matches" from "nothing yet" in the empty state.
+    @filtered = [ @q, @tag, @category, supplier_id, location_id ].any?(&:present?) || @low
     @sort = SORTS.key?(params[:sort]) ? params[:sort] : "name"
     @dir = params[:dir] == "desc" ? "desc" : "asc"
     @items = items.order(Arel.sql("#{SORTS[@sort]} #{@dir}"), :id).to_a
@@ -46,15 +63,11 @@ class InventoryItemsController < ApplicationController
   end
 
   def show
-    ledger_scope = @item.transactions.reorder(created_at: :desc, id: :desc)
-    @ledger_total = ledger_scope.count
-    @ledger = ledger_scope.includes(:project).limit(LEDGER_CAP).to_a
-    # THE BALANCE AFTER EACH ROW, walking back from the cached balance: the newest row's balance is
-    # the balance now; each older row's is the next-newer's minus that newer delta. In Ruby, no
-    # per-row query — @ledger is already loaded above.
-    running = @item.quantity_cached
-    @balances = @ledger.each_with_object({}) { |t, h| h[t.id] = running; running -= t.delta }
-    @projects = current_user.maker_projects.where.not(status: "archived").order(:name).pluck(:name, :id)
+    # A door may preselect the reason (Recent\x27s "Restock" lands on a composer set to Restocked);
+    # anything outside ADJUST_REASONS falls back to Consumed rather than echoing the param.
+    reason = params[:reason].to_s
+    @adjust = { reason: Maker::InventoryTransaction::ADJUST_REASONS.include?(reason) ? reason : "consumed" }
+    load_ledger
   end
 
   def new
@@ -98,18 +111,64 @@ class InventoryItemsController < ApplicationController
   # POST /inventory/:id/adjust — the ledger's one door from the web. WHAT A POSTABLE ROW IS (a
   # finite, non-zero amount that fits the column, a known reason, a project of the item owner's own
   # or none) is Maker::InventoryTransaction's to decide, for this door, the initial quantity below,
-  # v1's adjust and BOM consume alike. This action only turns its refusal into the page's alert.
+  # v1's adjust and BOM consume alike.
+  #
+  # THE REASON GIVES THE DIRECTION (UX audit 2026-11-01, E4): the composer sends how many and why,
+  # and Maker::InventoryTransaction.delta_for signs it, so "Consumed 3" takes three away where it
+  # used to add them. Only ADJUST_REASONS come through here; "initial" belongs to creation.
+  #
+  # A REFUSAL RE-RENDERS THE PAGE (422) WITH THE COMPOSER'S ERRORS AND WHAT WAS TYPED, never a
+  # redirect with an alert that drops it (B3). @adjust carries the typed values to the view, which
+  # sets each one explicitly: a scoped form_with would otherwise read them from an ivar of its own name.
   def adjust
     form = params.require(:transaction)
-    txn = Maker::InventoryTransaction.apply!(item: @item, user: current_user, delta: form[:delta],
-                                             reason: form[:reason].presence || "adjusted",
-                                             project_id: form[:project_id], note: form[:note])
-    redirect_to inventory_item_path(@item), notice: "Posted #{signed(txn.delta)} #{@item.unit} (#{txn.reason})."
+    @adjust = { amount: form[:amount].to_s, reason: form[:reason].to_s.presence || "adjusted",
+                project_id: form[:project_id].to_s, note: form[:note].to_s }
+    unless Maker::InventoryTransaction::ADJUST_REASONS.include?(@adjust[:reason])
+      @adjust_errors = [ "Choose a reason: Consumed, Restocked or Adjusted." ]
+      return refuse_adjust
+    end
+
+    delta = Maker::InventoryTransaction.delta_for(reason: @adjust[:reason], amount: @adjust[:amount])
+    txn = Maker::InventoryTransaction.apply!(item: @item, user: current_user, delta:, reason: @adjust[:reason],
+                                             project_id: @adjust[:project_id], note: @adjust[:note])
+    redirect_to inventory_item_path(@item), notice: adjust_notice(txn)
   rescue ActiveRecord::RecordInvalid => e
-    redirect_to inventory_item_path(@item), alert: e.record.errors.full_messages.to_sentence
+    # The model names its column; the composer names its field. Same message, the word the maker
+    # typed into ("Amount must be a non-zero number…"), never "Delta".
+    @adjust_errors = e.record.errors.map { |err| err.attribute == :delta ? "Amount #{err.message}" : err.full_message }
+    refuse_adjust
   end
 
   private
+
+  def refuse_adjust
+    load_ledger
+    render :show, status: :unprocessable_entity
+  end
+
+  # Verb first, the reason's own word, and the balance it left: "Consumed 3 each. 7 each on hand."
+  def adjust_notice(txn)
+    what = if txn.reason == "adjusted"
+      "Adjusted by #{signed(txn.delta)} #{@item.unit}."
+    else
+      "#{txn.reason_label} #{quantity(txn.delta.abs)} #{@item.unit}."
+    end
+    "#{what} #{quantity(@item.quantity_cached)} #{@item.unit} on hand."
+  end
+
+  # The item page's ledger: newest first, capped, with the balance after each row.
+  def load_ledger
+    ledger_scope = @item.transactions.reorder(created_at: :desc, id: :desc)
+    @ledger_total = ledger_scope.count
+    @ledger = ledger_scope.includes(:project).limit(LEDGER_CAP).to_a
+    # THE BALANCE AFTER EACH ROW, walking back from the cached balance: the newest row's balance is
+    # the balance now; each older row's is the next-newer's minus that newer delta. In Ruby, no
+    # per-row query — @ledger is already loaded above.
+    running = @item.quantity_cached
+    @balances = @ledger.each_with_object({}) { |t, h| h[t.id] = running; running -= t.delta }
+    @projects = current_user.maker_projects.where.not(status: "archived").order(:name).pluck(:name, :id)
+  end
 
   # An amount the ledger refuses (zero, not a number, non-finite, out of range) posts nothing and the
   # item stands, exactly as a blank one does: the field is optional, and the create already succeeded.
@@ -140,7 +199,8 @@ class InventoryItemsController < ApplicationController
   end
 
   def signed(delta)
-    n = ActiveSupport::NumberHelper.number_to_rounded(delta.abs, precision: 3, strip_insignificant_zeros: true)
-    (delta.negative? ? "−" : "+") + n
+    (delta.negative? ? "−" : "+") + quantity(delta.abs)
   end
+
+  def quantity(value) = helpers.inventory_quantity(value)
 end

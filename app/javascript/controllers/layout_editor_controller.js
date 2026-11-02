@@ -40,9 +40,38 @@ import Sortable from "sortablejs"
 // `data-name` are its whole draft and it drags by the same handle. "Add tab" clones
 // projects/_block_templates' tab template and lands it at the BOTTOM — a new separator at the top
 // would put every panel into one tab. Delete removes the
-// separator alone. The count hint under each tab is recomputed on every change.
+// separator alone. The count hint under each tab is recomputed on every change. A separator moves
+// by its own Up/Down too (projects/_tab_slot), so a tab is never drag-only.
+//
+// THE DRAFT IS NOT DROPPED WITHOUT A QUESTION (2026-11-02, the UX audit's B1). Four ways used to
+// drop it silently, and each has its own answer here:
+//   * LEAVING BY A LINK. `isDirty()` compares the draft with the one the page loaded with, so a drag
+//     that lands where it started, or a Hide undone by Show, is not a change. While it differs,
+//     `turbo:before-visit` asks LEAVE_QUESTION — which covers Done, Cancel, the edit area's other
+//     two tabs, the rail and every other Turbo link with one listener rather than a confirm per
+//     control. Reset is the one exit that already asks its own question, so its form marks the
+//     draft discarded once that question is answered (`discard`).
+//   * LEAVING THE DOCUMENT — a reload, a closed tab, a typed address, AND BROWSER BACK. The guard
+//     cancels `beforeunload`, and the browser draws its own "Leave site?" (browsers draw it only
+//     once the page has been interacted with, which a dirty draft implies). Back reaches this only
+//     because the editor is always a whole document (projects/_layout_bar's
+//     `turbo-visit-control: reload`): rendered into the page a Turbo link came from, Back was a
+//     Turbo restoration visit, which fires neither event. Measured, not assumed: the test Chrome
+//     draws no beforeunload dialog at all, so page_editor_test.rb asserts the cancelled event.
+//   * A REFUSED SAVE. Save posts the draft itself and reads a JSON answer (`submit`): a refusal
+//     becomes an alert on THIS page with the draft still in it. The form's own submit — a redirect
+//     that reloaded the saved layout over every unsaved change — is what Projects::PanelsController
+//     still answers for a request that is not ours (no Accept: application/json).
+//   * A TURBO CACHE RESTORE. The page is exempt from Turbo's snapshot cache, so Back after leaving
+//     with a draft shows the saved layout, not the abandoned draft looking as if it had been saved.
+//
+// EVERY MESSAGE THIS EDITOR RAISES IS AN ALERT (B2): `toast()` takes a kind, and a refusal, a cap,
+// a preview that did not load or a body over its limit is `flash-alert`, which components.css
+// labels "Problem" and which stays until dismissed. A `flash-notice` reads "Done" — the wrong word
+// in front of "Not saved".
 const YAML_DEBOUNCE_MS = 200
-const TOAST_MS = 6000
+const LEAVE_QUESTION = "Leave the page layout without saving?"
+const AUTOMATIC_COVER = "Chosen automatically: after Save, the page picks a cover from the project's files."
 // BOTH PREFIXES, ONE COUNTER. Maker::LayoutDocument mints `block:new-N` and `tab:new-N` from ONE
 // shared index (its own `next_new_index` reads both), so a browser regex that saw only blocks would
 // hand an Add-tab the number an Apply had just given a block — two slots with one key, which Save
@@ -69,11 +98,47 @@ export default class extends Controller {
       onEnd: () => this.changed()
     })
     this.countTabs()
+
+    // THE BASELINE IS READ ONCE, HERE, off the slots the server rendered — the same `draft()` Save
+    // posts, so "dirty" means exactly "Save would write something different".
+    this.leaving = false
+    this.saving = false
+    this.clean = JSON.stringify(this.draft())
+    this.onBeforeUnload = (event) => {
+      if (!this.isDirty()) return
+      event.preventDefault()
+      event.returnValue = ""
+    }
+    this.onBeforeVisit = (event) => {
+      if (this.isDirty() && !window.confirm(LEAVE_QUESTION)) event.preventDefault()
+    }
+    window.addEventListener("beforeunload", this.onBeforeUnload)
+    document.addEventListener("turbo:before-visit", this.onBeforeVisit)
+    window.Turbo?.cache?.exemptPageFromCache?.()
   }
 
   disconnect() {
     this.sortable?.destroy()
     clearTimeout(this.yamlTimer)
+    window.removeEventListener("beforeunload", this.onBeforeUnload)
+    document.removeEventListener("turbo:before-visit", this.onBeforeVisit)
+  }
+
+  // --- leaving -------------------------------------------------------------------------------------
+
+  isDirty() {
+    return !this.leaving && JSON.stringify(this.draft()) !== this.clean
+  }
+
+  // Reset's form, once its own confirm is answered (`turbo:submit-start` fires after it): the draft
+  // is being thrown away on purpose, so the visit Reset's redirect proposes must not ask again.
+  discard() {
+    this.leaving = true
+  }
+
+  // …and if that request failed, the draft is still here and still worth asking about.
+  resumeGuard(event) {
+    if (!event.detail?.success) this.leaving = false
   }
 
   // --- the draft, read off the slots ---------------------------------------------------------
@@ -186,7 +251,7 @@ export default class extends Controller {
       this.applyTitle(slot, slot.dataset.title || "")
       this.applyIntro(slot, slot.dataset.intro || "")
     } catch (_e) {
-      this.toast("The preview for that view did not load. The view is kept and applies on Save.")
+      this.toast("The preview for that view did not load. The view is kept and applies on Save.", "alert")
     }
   }
 
@@ -248,7 +313,7 @@ export default class extends Controller {
       // SAID, NOT SWALLOWED (found in review): the bar's `disabled` reflects the SAVED count, so
       // blocks added within a session reach this lock with the buttons still live.
       this.addMenuTarget.removeAttribute("open")
-      this.toast(`This page has ${this.blockCapValue} blocks, the most it can hold.`)
+      this.toast(`This page has ${this.blockCapValue} blocks, the most it can hold.`, "alert")
       return
     }
 
@@ -285,9 +350,33 @@ export default class extends Controller {
   }
 
   // A DRAFT EDIT, NOT A WRITE: Cancel (a reload) brings the block back and only Save makes it final.
+  // ASKED FIRST WHEN THERE IS SOMETHING TO LOSE (the UX audit's C10): a block can hold 20 KB of
+  // writing, and one stray click used to take it with no question. An empty block — one just added
+  // and never typed into — goes at once, because asking about nothing is only friction.
   deleteBlock(event) {
-    this.slotOf(event).remove()
+    const slot = this.slotOf(event)
+    if (this.blockHasContent(slot) && !window.confirm(this.blockDeleteQuestion(slot))) return
+    slot.remove()
     this.changed()
+  }
+
+  blockHasContent(slot) {
+    const d = slot.dataset
+    return [d.heading, d.body, d.url, d.linkTitle, d.line, d.file, d.caption].some((v) => (v || "").trim() !== "")
+  }
+
+  // "Verb named-object?" (the audit's shared rule for confirms), named from the DRAFT rather than
+  // from the strip's server-rendered label, which still says what the block said before this
+  // session. An image block's question says the picture survives: "delete the image" reads as
+  // deleting the file, and the file is not what goes.
+  blockDeleteQuestion(slot) {
+    const d = slot.dataset
+    const quoted = (v) => ((v || "").trim() ? ` “${v.trim()}”` : "")
+    switch (d.kind) {
+      case "link": return d.linkTitle?.trim() ? `Delete the link${quoted(d.linkTitle)}?` : "Delete this link?"
+      case "image": return "Delete this image block? The picture stays in the project folder."
+      default: return d.heading?.trim() ? `Delete the text block${quoted(d.heading)}?` : "Delete this text block?"
+    }
   }
 
   // Every input in a block's editor names its field; the slot's data attribute IS the draft.
@@ -340,7 +429,7 @@ export default class extends Controller {
       // applies (found in review).
       this.toast(/422/.test(String(e?.message))
         ? "The text is over the 20 KB limit; Save will refuse it too."
-        : "The preview did not render; the text is kept and applies on Save.")
+        : "The preview did not render; the text is kept and applies on Save.", "alert")
     }
   }
 
@@ -354,7 +443,7 @@ export default class extends Controller {
     if (this.slotTargets.filter((s) => s.dataset.kind === "tab").length >= this.tabCapValue) {
       // SAID, NOT SWALLOWED, the same rule Add block follows: the bar's `disabled` reflects the
       // SAVED count, so a tab added within this session reaches this lock with the button still live.
-      this.toast(`This page has ${this.tabCapValue} tabs, the most it can hold.`)
+      this.toast(`This page has ${this.tabCapValue} tabs, the most it can hold.`, "alert")
       return
     }
 
@@ -374,24 +463,37 @@ export default class extends Controller {
 
   // A DRAFT EDIT, NOT A WRITE, exactly as deleteBlock is: the separator goes and its panels join the
   // group above; Cancel (a reload) brings the tab back and only Save makes the removal final.
+  // ASKED FIRST, like a block, unless the tab is a nameless empty separator, and the question says
+  // what happens to the panels — they are not deleted, which "delete the tab" alone leaves open.
   deleteTab(event) {
-    this.slotOf(event).remove()
+    const slot = this.slotOf(event)
+    const name = (slot.dataset.name || "").trim()
+    const n = this.panelsUnder(slot)
+    if (name || n) {
+      const what = name ? `the tab “${name}”` : "this tab"
+      const rest = n ? ` Its ${n} panel${n === 1 ? "" : "s"} stay on the page and join the panels above it.` : ""
+      if (!window.confirm(`Delete ${what}?${rest}`)) return
+    }
+    slot.remove()
     this.changed()
   }
 
-  // "3 panels" / "1 panel" / "empty": the slots between this separator and the next, or the end,
-  // hidden ones included — a hidden panel is still in the tab.
-  countTabs() {
+  // The slots between this separator and the next, or the end, hidden ones included — a hidden
+  // panel is still in the tab.
+  panelsUnder(tab) {
     const slots = this.slotTargets
-    slots.forEach((slot, i) => {
+    let n = 0
+    for (let j = slots.indexOf(tab) + 1; j < slots.length && slots[j].dataset.kind !== "tab"; j++) n++
+    return n
+  }
+
+  // "3 panels" / "1 panel" / "empty" under each separator.
+  countTabs() {
+    this.slotTargets.forEach((slot) => {
       if (slot.dataset.kind !== "tab") return
-      let n = 0
-      for (let j = i + 1; j < slots.length; j++) {
-        if (slots[j].dataset.kind === "tab") break
-        n++
-      }
+      const n = this.panelsUnder(slot)
       const hint = slot.querySelector("[data-layout-editor-target=tabCount]")
-      if (hint) hint.textContent = n ? `${n} panel${n === 1 ? "" : "s"}` : "empty: drag panels under it"
+      if (hint) hint.textContent = n ? `${n} panel${n === 1 ? "" : "s"}` : "empty: move panels under it"
     })
   }
 
@@ -410,8 +512,12 @@ export default class extends Controller {
     this.changed()
   }
 
+  // REMOVE COVER CLEARS THE CHOICE, NOT THE PICTURE (the UX audit's C6): with no cover chosen the
+  // page picks one from the project's files (Maker::Project#cover_node_id), so after Save the hero
+  // is the automatic pick, not empty. The card says that rather than "No cover", which was false
+  // the moment the maker saved.
   removeCover() {
-    this.setCover("", "No cover")
+    this.setCover("", AUTOMATIC_COVER)
     this.changed()
   }
 
@@ -451,7 +557,7 @@ export default class extends Controller {
       this.yamlTarget.value = text
       this.copyTarget.dataset.copyTextValue = text
     } catch (_e) {
-      this.note(["The YAML view could not be refreshed."], [])
+      this.note(["The text view could not be refreshed."], [])
     }
   }
 
@@ -541,7 +647,7 @@ export default class extends Controller {
     // A COVER FROM OUTSIDE THE FOLDER HAS NO BUTTON HERE AND NO NAME TO READ (spec §3): it keeps
     // working and the card keeps saying what it already said, rather than inventing a name.
     const current = this.hasCoverNameTarget ? this.coverNameTarget.textContent : ""
-    this.setCover(cover, cover ? (picked ? picked.title : current) : "No cover")
+    this.setCover(cover, cover ? (picked ? picked.title : current) : AUTOMATIC_COVER)
   }
 
   note(errors, notes) {
@@ -560,10 +666,10 @@ export default class extends Controller {
   // --- Save ----------------------------------------------------------------------------------------
 
   // WHAT SAVE REFUSES TO POST (found in review): an empty block makes the server refuse the whole
-  // draft and reload the editor from the row, which throws away every OTHER unsaved change in the
-  // session. The server's own rules, asked here first; the toast names the block, the slot is
-  // scrolled into view, and nothing is lost. The body is byte-counted like the server, not in the
-  // UTF-16 units `maxlength` counts.
+  // draft. That refusal no longer costs the session anything (`submit` keeps the draft on a
+  // refusal), but asking here first still does what the server cannot: the toast names the block,
+  // the slot is scrolled into view and focused, and no round trip is spent. The body is
+  // byte-counted like the server, not in the UTF-16 units `maxlength` counts.
   //
   // A TAB IS THE FOURTH KIND THIS GATE ANSWERS FOR (2026-09-09, tabs; spec §7) — hence `slotProblem`
   // rather than `blockProblem`: a blank or duplicate tab name is refused by Maker::LayoutDocument on
@@ -594,17 +700,56 @@ export default class extends Controller {
     }
   }
 
+  // THE FORM NEVER SUBMITS ITSELF: the browser's own submit would follow Projects::PanelsController's
+  // redirect, which on a refusal reloads the SAVED layout over the draft (the UX audit's B1). Save
+  // posts the same form as data instead (`submit`) and stays on this page unless the server agrees.
   save(event) {
+    event.preventDefault()
     const problems = this.slotTargets.filter((s) => s.dataset.kind).map((s) => [s, this.slotProblem(s)]).filter(([, p]) => p)
     if (problems.length) {
-      event.preventDefault()
       const [slot, problem] = problems[0]
       slot.scrollIntoView({ block: "center" })
       slot.querySelector("input, textarea")?.focus()
-      this.toast(`Not saved: ${problem}. Fill it in or delete it; nothing else was lost.`)
+      this.toast(`Not saved: ${problem}. Fill it in or delete it; nothing else was lost.`, "alert")
       return
     }
     this.draftTarget.value = JSON.stringify(this.draft())
+    this.submit(event.submitter)
+  }
+
+  // THE FORM'S OWN FIELDS, POSTED AS THEY ARE — the authenticity token, `_method=patch` and the
+  // `layout` field just filled — with Accept: application/json, which is the one thing that tells
+  // the panels door this is the editor asking. Agreed: the server has set the flash, and the visit
+  // goes where it says with the guard stood down. Refused, or no answer: an alert, the Save button
+  // back, and every slot exactly as the maker left it.
+  async submit(button) {
+    if (this.saving) return
+    this.saving = true
+    if (button) button.disabled = true
+    let res = null
+    let data = null
+    try {
+      res = await fetch(this.formTarget.action, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { Accept: "application/json", "X-CSRF-Token": document.querySelector("meta[name=csrf-token]")?.content ?? "" },
+        body: new FormData(this.formTarget)
+      })
+      data = await res.json()
+    } catch (_e) {
+      data = null
+    }
+    if (res?.ok && data?.location) {
+      this.leaving = true
+      if (window.Turbo) window.Turbo.visit(data.location)
+      else window.location.assign(data.location)
+      return
+    }
+    this.saving = false
+    if (button) button.disabled = false
+    this.toast(data?.error
+      ? `${data.error} Your changes are still on this page.`
+      : "Not saved: the server did not answer. Your changes are still on this page; try Save again.", "alert")
   }
 
   // --- helpers -------------------------------------------------------------------------------------
@@ -627,22 +772,44 @@ export default class extends Controller {
     })
   }
 
+  // The look (`active`) and what a screen reader hears (`aria-pressed`) move together, here only.
   activate(slot, selector, chosen) {
-    slot.querySelectorAll(`.panel-strip button${selector}`).forEach((b) => b.classList.toggle("active", chosen(b)))
+    slot.querySelectorAll(`.panel-strip button${selector}`).forEach((b) => {
+      b.classList.toggle("active", chosen(b))
+      b.setAttribute("aria-pressed", String(chosen(b)))
+    })
   }
 
-  // The flash stack is always in the layout (layouts/_flash.html.erb); a notice removes itself.
-  toast(text) {
+  // THE SHELL'S OWN TOAST, BUILT THE WAY layouts/_flash.html.erb BUILDS ONE: the same classes, role,
+  // `toast` target and close button, so the stack's controller (toast_controller.js) times, pauses
+  // and dismisses it like any other — this controller keeps no timer of its own. `kind` is "alert"
+  // or "notice" and has no default, so a new message has to say which it is — and one that says
+  // nothing FAILS SAFE TO AN ALERT, because a problem drawn as a notice reads "Done". An alert stays
+  // until dismissed, as the shell's does, and a notice removes itself. The same text twice is one toast,
+  // moved to the end — three refused Saves are one problem, not three.
+  toast(text, kind) {
     const stack = document.querySelector(".flash-stack")
     if (!stack) return
+    stack.querySelectorAll(".flash[data-layout-editor-toast]").forEach((old) => {
+      if (old.querySelector(".flash-text")?.textContent === text) old.remove()
+    })
+    const alert = kind !== "notice"
     const item = document.createElement("div")
-    item.className = "flash flash-notice"
-    item.setAttribute("role", "status")
+    item.className = `flash ${alert ? "flash-alert" : "flash-notice"}`
+    item.setAttribute("role", alert ? "alert" : "status")
+    item.dataset.toastTarget = "item"
+    item.dataset.layoutEditorToast = ""
     const span = document.createElement("span")
     span.className = "flash-text"
     span.textContent = text
-    item.appendChild(span)
+    const close = document.createElement("button")
+    close.type = "button"
+    close.className = "flash-close"
+    close.setAttribute("aria-label", "Dismiss")
+    close.title = "Dismiss"
+    close.dataset.action = "toast#dismiss"
+    close.textContent = "×"
+    item.append(span, close)
     stack.appendChild(item)
-    setTimeout(() => item.remove(), TOAST_MS)
   }
 }

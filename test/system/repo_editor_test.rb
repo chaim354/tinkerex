@@ -27,6 +27,12 @@ class RepoEditorTest < ApplicationSystemTestCase
 
   BODY = "line one\nline two\n".freeze
 
+  # True when the editor's leave-guard would make the browser ask. WebDriver accepts every
+  # beforeunload prompt on its own, so the prompt cannot be waited for; the guard's answer to a
+  # cancelable `beforeunload` dispatched in the page — preventing it — is what the browser acts on.
+  GUARD_HOLDS = '(() => { const e = new Event("beforeunload", { cancelable: true }); ' \
+                "window.dispatchEvent(e); return e.defaultPrevented })()".freeze
+
   setup do
     @user = sign_in_as("repo-editor@example.com")
     @node = seed_repo_file!("notes.md", BODY)
@@ -99,6 +105,142 @@ class RepoEditorTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # Makes the editor's next PATCH answer however `respond` (a JS expression) says, and leaves every
+  # other request alone — the page's own GETs must still reach the server. The states below are ones
+  # this server cannot be made to produce on demand (a dropped connection, a proxy's HTML 500), and
+  # what is being pinned is what the EDITOR does with them, so the fetch is replaced in the page
+  # rather than the server broken (repo_history_test.rb#render_history's reasoning).
+  def answer_saves_with(respond)
+    page.execute_script(<<~JS)
+      const real = window.fetch
+      window.fetch = (url, opts = {}) => opts.method === "PATCH" ? (#{respond}) : real(url, opts)
+    JS
+  end
+
+  # The unsaved edit these cases leave behind would hold the next navigation at the browser's
+  # "Leave site?" prompt; this is the editor's own stand-down, the one history's Restore sends.
+  def discard_unsaved_edit
+    page.execute_script("document.dispatchEvent(new CustomEvent('editor:discard'))")
+  end
+
+  # A SAVE THAT FAILS SAYS SO, AND THE EDIT STAYS (UX audit B4). The save was a try/finally with no
+  # catch, so a dropped connection threw past the status line and left "Saving…" on screen for good
+  # over an edit that never reached the disk. The two answers below are the two ways that happened:
+  # no answer at all, and an answer `res.json()` cannot read.
+  #
+  # MUTATION-CHECKED (2026-11-02): with the fetch's own `catch` removed from editor_controller.js#save
+  # the first case goes RED ("Saving…" stays, no `.flash-alert`); with `.catch(() => null)` removed
+  # from the `res.json()` the second goes RED the same way. Each restored, both green.
+  test "a save the server never answers says Not saved and keeps the edit" do
+    open_editor
+    answer_saves_with('Promise.reject(new TypeError("Failed to fetch"))')
+    type_and_save("LOST")
+
+    assert_selector ".editor-status.flash.flash-alert", text: "Not saved. The server could not be reached"
+    assert_no_selector ".editor-status", text: "Saving"
+    assert_selector ".cm-content", text: "LOST" # the edit is still in the buffer
+    assert_selector ".editor-bar button:not([disabled])", text: "Save"
+    refute_includes File.read(@path), "LOST"
+    discard_unsaved_edit
+    assert_no_console_errors
+  end
+
+  test "an HTML error page in answer to a save says Not saved, never Saving forever" do
+    open_editor
+    answer_saves_with('Promise.resolve(new Response("<html><body>Internal Server Error</body></html>", ' \
+                      '{ status: 500, headers: { "Content-Type": "text/html" } }))')
+    type_and_save("LOST")
+
+    assert_selector ".editor-status.flash.flash-alert", text: "Not saved. The server had a problem"
+    assert_no_selector ".editor-status", text: "500" # a status code is a wire code, not a sentence
+    assert_selector ".editor-bar button:not([disabled])", text: "Save"
+    discard_unsaved_edit
+    assert_no_console_errors
+  end
+
+  # A RAILS EXCEPTION PAGE ANSWERED AS JSON IS NOT THE SERVER'S SENTENCE. With `Accept:
+  # application/json`, an unhandled exception comes back from Rails' own exception app as
+  # `{"status":500,"error":"Internal Server Error"}` — an `error` key, but not one written for a
+  # maker. Only FilesController#render_save_error's `{ ok: false, error }` is printed; this one gets
+  # the editor's own 500 sentence.
+  #
+  # MUTATION-CHECKED (2026-11-02): with editor_controller.js#refusal trusting any `body.error` again
+  # (`const said = body?.error`), the status reads "Not saved. Internal Server Error" — RED;
+  # restored, green.
+  test "a JSON exception answer reads as the editor's own 500 sentence, not Rails' error string" do
+    open_editor
+    answer_saves_with('Promise.resolve(new Response(JSON.stringify({ status: 500, error: "Internal Server Error" }), ' \
+                      '{ status: 500, headers: { "Content-Type": "application/json" } }))')
+    type_and_save("LOST")
+
+    assert_selector ".editor-status.flash.flash-alert", text: "Not saved. The server had a problem"
+    assert_no_selector ".editor-status", text: "Internal Server Error"
+    discard_unsaved_edit
+    assert_no_console_errors
+  end
+
+  # THE STALE ANSWER IS THE SERVER'S SENTENCE, A RELOAD BUTTON, AND WHAT RELOADING COSTS. The file
+  # moved on under the editor — on share `stat` answers from the catalog row, so a scan that saw a
+  # desktop edit is a new `content_hash` there — and FilesController#update refuses the save (409)
+  # rather than overwrite the newer bytes. The maker is told the reload discards their edit, and the
+  # Reload button does not then ask again in the browser's words: pressing it IS that choice. The
+  # guard's answer is read from a document click listener, which runs after the button's own, and
+  # kept in sessionStorage across the reload that follows.
+  #
+  # MUTATION-CHECKED (2026-11-02): with `this.discarded = true` removed from the Reload button's
+  # handler (editor_controller.js#report), the recorded answer is "true" — RED; restored, green.
+  test "a save against a file that changed says so and offers Reload" do
+    open_editor
+    File.write(@path, "edited elsewhere\n")
+    @node.update_columns(content_hash: Digest::SHA256.hexdigest("edited elsewhere\n"))
+    type_and_save("MINE")
+
+    assert_selector ".editor-status.flash-alert", text: "This file changed since you opened it."
+    assert_selector ".editor-status", text: "Reloading discards the edit you made here."
+    assert_equal "edited elsewhere\n", File.read(@path), "the stale save wrote anyway"
+    assert page.evaluate_script(GUARD_HOLDS), "the refused edit is not guarded, so this case proves nothing"
+
+    page.execute_script(<<~JS)
+      sessionStorage.removeItem("guard-after-reload-click")
+      document.addEventListener("click", () =>
+        sessionStorage.setItem("guard-after-reload-click", String(#{GUARD_HOLDS})))
+    JS
+    within(".editor-status") { click_on "Reload" }
+    assert_selector ".cm-content", text: "edited elsewhere", wait: 10
+    assert_equal "false", page.evaluate_script("sessionStorage.getItem('guard-after-reload-click')")
+    assert_no_selector ".cm-content", text: "MINE"
+    assert_no_console_errors(ignoring: [ /status of 409/ ])
+  end
+
+  # AN UNSAVED EDIT IS ASKED ABOUT BEFORE A VISIT LEAVES IT, AND A SAVED ONE IS NOT. Both halves of
+  # the guard: a Turbo visit (the crumb is an ordinary Turbo link on every file page) gets one
+  # confirm, and a full navigation gets the browser's beforeunload prompt, read here as the guard's
+  # answer to a dispatched `beforeunload` because WebDriver accepts the real prompt on its own.
+  #
+  # MUTATION-CHECKED (2026-11-02): with the `turbo:before-visit` listener removed from
+  # editor_controller.js#guard, `dismiss_confirm` finds no dialog (Capybara::ModalNotFound) — RED;
+  # with the `beforeunload` listener removed, the GUARD_HOLDS assertion — RED. Each restored, green.
+  test "an unsaved edit is asked about before a visit leaves it" do
+    open_editor
+    refute page.evaluate_script(GUARD_HOLDS), "a page with nothing typed asks before leaving"
+    content = find(".cm-content")
+    content.click
+    content.send_keys(:end, "UNSAVED")
+    assert page.evaluate_script(GUARD_HOLDS), "a full navigation would leave the unsaved edit unasked"
+
+    question = dismiss_confirm { find("nav.breadcrumb a", match: :first).click }
+    assert_equal "Leave this file without saving your changes?", question
+    assert_current_path file_path(@node.node_id)
+    assert_selector ".cm-content", text: "UNSAVED"
+
+    click_on "Save"
+    assert_selector ".editor-status", text: "Saved"
+    refute page.evaluate_script(GUARD_HOLDS), "a saved edit still asks before leaving"
+    find("nav.breadcrumb a", match: :first).click # saved: nothing to ask about
+    assert_no_current_path file_path(@node.node_id)
+    assert_no_console_errors
+  end
+
   # THE COMMIT BOX'S DIFF, AND NO REQUEST TEST CAN SEE IT. @codemirror/merge renders through
   # extensions, and CM6's answer to a DUPLICATE @codemirror/state is to IGNORE an extension
   # SILENTLY — no error, no console warning, the editor mounts and the feature is simply absent
@@ -162,7 +304,10 @@ class RepoEditorTest < ApplicationSystemTestCase
 
     assert_equal({ "readOnly" => true, "editable" => false }, editability_facts)
     assert_no_selector ".editor-bar"
-    assert_no_button "Save"
+    # EXACT, because the top bar's Upload is a <button> whose title reads "Saves to <folder>", and a
+    # button locator matches a title by substring: without it this matched Upload and went red on a
+    # page with no Save at all.
+    assert_no_button "Save", exact: true
 
     assert_no_console_errors
   end

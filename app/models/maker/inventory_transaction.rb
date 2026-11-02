@@ -5,6 +5,43 @@ module Maker
     # Immutable append-only ledger: no updated_at. Rails sets created_at on create.
     REASONS = %w[consumed restocked adjusted initial].freeze
 
+    # THE ADJUST COMPOSER'S REASONS, AND WHICH WAY EACH ONE MOVES THE BALANCE (UX audit 2026-11-01,
+    # E4). The reason was a label and nothing more, so "Consumed" with 3 typed ADDED three. Now
+    # Consumed and Restocked carry the direction and the maker types how many; Adjusted takes a
+    # signed correction exactly as typed. "initial" is not offered there: it belongs to an item's
+    # creation (InventoryItemsController#create's initial quantity).
+    #
+    # THIS IS THE WEB COMPOSER'S VOCABULARY, NOT A RULE ABOUT ROWS. v1's adjust and the BOM's Consume
+    # post a signed delta and name a reason, as they always have, and nothing here refuses a
+    # "consumed" row whose delta is positive: that refusal would change the wire under the desktop
+    # client, which sends both fields on its own terms.
+    ADJUST_REASONS = %w[consumed restocked adjusted].freeze
+    DIRECTIONS = { "consumed" => -1, "restocked" => 1 }.freeze
+    REASON_LABELS = {
+      "consumed" => "Consumed", "restocked" => "Restocked", "adjusted" => "Adjusted", "initial" => "Initial stock"
+    }.freeze
+
+    # A readable word rather than a raise for a reason with no label, the same fallback
+    # Maker::Model.print_status_label makes; REASONS and REASON_LABELS name the same four.
+    def self.reason_label(reason) = REASON_LABELS.fetch(reason.to_s) { reason.to_s.tr("_", " ").upcase_first }
+    def reason_label = self.class.reason_label(reason)
+
+    # The signed delta a composer post means. For a directed reason it is the SIZE of what was typed,
+    # signed by the reason: "-3" under Consumed is still three out, because the sign a maker types
+    # there says what the reason already says, never something to resolve against it. For Adjusted
+    # (or any reason without a direction) it is the typed value as it stands. Anything that is not a
+    # finite number passes through untouched, so the delta validation below refuses it with its own
+    # message rather than this method guessing what it meant.
+    def self.delta_for(reason:, amount:)
+      sign = DIRECTIONS[reason.to_s]
+      return amount unless sign
+
+      value = BigDecimal(amount.to_s.strip, exception: false)
+      return amount unless value&.finite?
+
+      value.abs * sign
+    end
+
     belongs_to :user
     belongs_to :inventory_item, class_name: "Maker::InventoryItem"
     # SOFT REFERENCE, NOT A VALIDATED ONE — deliberately no `belongs_to ... optional: false` and no

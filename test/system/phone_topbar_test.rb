@@ -1,20 +1,21 @@
 require "application_system_test_case"
 
 # ONE "+" ON A PHONE (structural redesign spec §4.3, slice 7). At 719px and below the New summary reads
-# "+", the top bar's upload LABEL hides, and the New menu's first item is "Upload…", which forwards a
-# click to that label (upload_forward_controller.js). A request test sees the button and its action;
+# "+", the top bar's Upload BUTTON hides, and the New menu's first item is "Upload…", which forwards a
+# click to that button (upload_forward_controller.js; it was a <label> until UX audit I). A request
+# test sees the button and its action;
 # only a browser sees which of the two is shown at which width, and that the forwarded click takes the
-# same road a tap on the label does — the chooser on a page with no folder, the file picker on a folder.
+# same road a tap on the button does — the chooser on a page with no folder, the file picker on a folder.
 #
 # The viewport is set through CDP for the reason shell_test.rb records (headless Chrome will not make a
 # WebDriver window narrower than 500px). The picks counter is topbar_upload_test.rb's: headless Chrome
 # shows no file picker, so it counts the click the input receives — it proves the call, not the dialog.
 #
 # MUTATION-CHECKED (slice 7, Task 2):
-#   1. upload_forward_controller.js clicking `#topbar_upload_file` instead of the label — the Recent test
-#      goes red at the chooser: the input-targeted click is the one upload_pick_controller.js lets
-#      through, so no chooser opens and the picker would open on the library root unasked.
-#   2. shell.css hiding all of `.topbar-upload` instead of its label — the chunk-flow test goes red: the
+#   1. upload_forward_controller.js clicking `#topbar_upload_file` instead of the button — the Recent test
+#      goes red at the chooser: an input-targeted click never reaches upload_pick_controller.js, so
+#      no chooser opens and the picker would open on the library root unasked.
+#   2. shell.css hiding all of `.topbar-upload` instead of its button — the chunk-flow test goes red: the
 #      progress text an upload started from the menu writes has nowhere to show.
 #   3. Dropping `.topbar-new-upload` from the desktop-hide rule — the desktop test goes red: "Upload…"
 #      shows, because nothing else outranks `.menu-item`'s own `display: flex`.
@@ -49,9 +50,9 @@ class PhoneTopbarSystemTest < ApplicationSystemTestCase
     assert plus_middle.between?(crumbs[0], crumbs[1]) || (crumbs[0] + crumbs[1]) / 2 <= plus[1] && (crumbs[0] + crumbs[1]) / 2 >= plus[0],
            "the + is not on the breadcrumb's row (crumbs #{crumbs.inspect}, + #{plus.inspect})"
     assert_operator search[0], :>=, [ crumbs[1], plus[1] ].max - 1, "the search box is not on its own row below them"
-    # PRESENT AND HIDDEN, not merely absent: absence would mean the partial stopped rendering the label
+    # PRESENT AND HIDDEN, not merely absent: absence would mean the partial stopped rendering the button
     # the "+" forwards to, which is a broken Upload rather than a phone layout.
-    assert_selector "header.topbar .topbar-upload label.upload-btn", visible: :hidden
+    assert_selector "header.topbar .topbar-upload button.upload-btn", visible: :hidden
 
     summary.click
     assert_selector "header.topbar .topbar-new .menu-list > button.menu-item.topbar-new-upload:first-child", text: "Upload…"
@@ -98,7 +99,7 @@ class PhoneTopbarSystemTest < ApplicationSystemTestCase
     visit files_path(folder: @cad.node_id)
     count_picks!
     open_plus.click
-    # THE FORWARDED LABEL CLICK CLOSES THE MENU (menu_controller.js sees it land outside), and it does
+    # THE FORWARDED BUTTON CLICK CLOSES THE MENU (menu_controller.js sees it land outside), and it does
     # so inside the same synchronous `click()` that then clicks the input. Waiting for the menu to
     # close is therefore waiting for the input's click too.
     assert_no_selector "header.topbar .topbar-new[open]"
@@ -111,7 +112,7 @@ class PhoneTopbarSystemTest < ApplicationSystemTestCase
     visit root_path
     summary = find("header.topbar .topbar-new > summary")
     assert_equal "New ▾", summary.text
-    assert_selector "header.topbar .topbar-upload label.upload-btn", text: "Upload"
+    assert_selector "header.topbar .topbar-upload button.upload-btn", text: "Upload"
 
     summary.click
     assert_selector "header.topbar .topbar-new a.menu-item", text: "Text file"
@@ -119,8 +120,8 @@ class PhoneTopbarSystemTest < ApplicationSystemTestCase
     assert_selector "header.topbar .topbar-new-upload", visible: :hidden, count: 2
   end
 
-  # ONLY THE LABEL HIDES, NEVER `.topbar-upload`. On the chunk flow the uploader's `.upload-status` sits
-  # beside the label inside it, and an upload started from the menu writes its progress there. The flow
+  # ONLY THE BUTTON HIDES, NEVER `.topbar-upload`. On the chunk flow the uploader's `.upload-status` sits
+  # beside the button inside it, and an upload started from the menu writes its progress there. The flow
   # is forced by answering `port_writable?` false (the page's other questions go to the real port), and
   # the status is filled the way uploader_controller.js#setStatus fills it.
   test "on a phone the chunk flow's upload progress still shows" do
@@ -131,7 +132,7 @@ class PhoneTopbarSystemTest < ApplicationSystemTestCase
     visit root_path
     # Which flow rendered, asked of the markup (`visible: :all`); what shows is the last assertion's.
     assert_selector "header.topbar .topbar-upload section.uploader[data-controller='uploader']", visible: :all
-    assert_selector "header.topbar .topbar-upload label.upload-btn", visible: :hidden
+    assert_selector "header.topbar .topbar-upload button.upload-btn", visible: :hidden
     page.execute_script("document.querySelector('header.topbar .upload-status').textContent = 'Uploading plate.dxf…'")
     assert_selector "header.topbar .topbar-upload .upload-status", text: "Uploading plate.dxf…"
   end

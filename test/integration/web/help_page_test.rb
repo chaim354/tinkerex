@@ -75,6 +75,29 @@ module Web
       end
     end
 
+    # HELP SPEAKS THE APP'S OWN WORDS AND COVERS WHAT IT HAD LEFT OUT (UX audit 2026-11-01, §H): the
+    # place is the Library, never "the Files page"; the pass that files loose files is "the next
+    # scan", never a "sweep"; publishing is the Publishing tab, not the Publish panel that moved; and
+    # Inventory (with Suppliers and Locations), adding a 3D model and the search shortcut each get
+    # their paragraph. "Shelf" is explained where it first appears.
+    test "help says Library, scan and Publishing tab, and covers inventory, adding a model and search" do
+      sign_in_as(make_owner!(handle: "ada"))
+      get help_path
+      text = maker_text.squish
+      assert_no_match(/Files page|sweep|Publish panel/i, text)
+      assert_match(/under ⋯ in the Library/, text)
+      assert_match(/filed onto their shelf on the next scan/, text)
+      assert_match(/shelves: type folders such as models\//, text)
+      assert_match(/Publishing tab/, text)
+      assert_match(/Ctrl\+K \(⌘K on a Mac\)/, text)
+      assert_select "main section[aria-labelledby='inventory']" do
+        assert_select "h2#inventory", text: "Inventory"
+        [ inventory_items_path, suppliers_path, locations_path ].each { |path| assert_select "a[href=?]", path }
+      end
+      assert_match(/Consumed takes the amount away/, text)
+      assert_select "main a[href=?]", new_model_path, text: "Import a Printables zip"
+    end
+
     # THE THREE WAYS A LIBRARY CAN BE BACKED, ASKED OF THE CAPABILITIES THE PAGE READS — never a
     # backend name, so the sentences stay right on every leg. `use_fresh_share_library!` pins share
     # on all three legs, so without swapping the capabilities the bucket and sync-server arms would

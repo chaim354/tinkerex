@@ -40,10 +40,11 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # COLLAPSED, A LIT PIN OR PROJECT HIDES WITH ITS GROUP, so its family link must wear the lit mark
-  # or the rail shows nothing lit at all — which the first cut of the places sidebar did, seen in a
-  # screenshot and by no test. Measured as "which VISIBLE links draw the edge marker", the
-  # `::before` every lit rail link carries, because only a browser resolves the cascade.
+  # COLLAPSED, A LIT PIN OR PROJECT STAYS VISIBLE AS ITS MONOGRAM AND CARRIES THE MARK ITSELF (UX audit
+  # A2). It used to hide with its group, and its family link wore the mark instead — before that, the
+  # first cut of the places sidebar showed nothing lit at all, seen in a screenshot and by no test.
+  # Measured as "which VISIBLE links draw the edge marker", the `::before` every lit rail link
+  # carries, because only a browser resolves the cascade. shell_rail_test.rb draws the monograms.
   test "the collapsed rail still marks where you are inside a pinned folder or a project" do
     @root.join("laser").mkpath
     Library::ScanJob.perform_now(user_id: @user.id)
@@ -62,11 +63,11 @@ class ShellTest < ApplicationSystemTestCase
     assert_equal [ "laser" ], marked.call
     find("aside.rail [data-action='rail#toggle']").click
     assert_selector "body.rail--collapsed"
-    assert_equal [ "Library" ], marked.call
+    assert_equal [ "laser" ], marked.call
 
     visit project_path(project)
     assert_selector "body.rail--collapsed"
-    assert_equal [ "All projects" ], marked.call
+    assert_equal [ "Desk Lamp" ], marked.call
 
     find("aside.rail [data-action='rail#toggle']").click
     assert_no_selector "body.rail--collapsed"
@@ -74,11 +75,12 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # BELOW 1100px THE RAIL IS ICONS WHATEVER THE COOKIE SAYS: the viewport narrows the rail's track, and
-  # the one icon-rail block (a container query on `.rail`, shell.css) follows the width — the other
-  # trigger to the collapsed-cookie test above, which is what this one reaches. Expanded cookie, 900px
-  # viewport (CDP, for the reason the 375px sweep below records).
-  test "below 1100px the icon rail marks a lit pin's family link without the collapse cookie" do
+  # BELOW 1100px, WITH NO COOKIE, THE RAIL IS ICONS: the viewport narrows the rail's track, and the
+  # one icon-rail block (a container query on `.rail`, shell.css) follows the width — the other
+  # trigger to the collapsed-cookie test above, which is what this one reaches. The lit pin is its
+  # own monogram there. No cookie, 900px viewport (CDP, for the reason the 375px sweep below records);
+  # the `expanded` cookie's exemption is shell_rail_test.rb's.
+  test "below 1100px with no rail cookie the icon rail marks the lit pin's monogram" do
     @root.join("laser").mkpath
     Library::ScanJob.perform_now(user_id: @user.id)
     laser = @user.nodes.present.find_by!(name: "laser", kind: "dir")
@@ -87,12 +89,13 @@ class ShellTest < ApplicationSystemTestCase
                                     width: 900, height: 900, deviceScaleFactor: 1, mobile: false)
     visit files_path(folder: laser.node_id)
     assert_no_selector "body.rail--collapsed"
+    assert_no_selector "body.rail--expanded"
     marked = page.evaluate_script(<<~JS)
       Array.from(document.querySelectorAll("aside.rail a.rail-link"))
         .filter((a) => a.offsetParent !== null && getComputedStyle(a, "::before").content !== "none")
-        .map((a) => a.title)
+        .map((a) => [a.title, getComputedStyle(a.querySelector(".rail-label")).display])
     JS
-    assert_equal [ "Library" ], marked
+    assert_equal [ [ "laser", "none" ] ], marked
   ensure
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
   end
@@ -142,12 +145,15 @@ class ShellTest < ApplicationSystemTestCase
   # Mutation-checked: dropping `.rail-label` from the `@container` block reddens both arms; deleting
   # `body.app-shell.rail--collapsed`'s track rule reddens the cookie arm alone; deleting `container`
   # from `.rail` reddens both.
+  #
+  # THE NARROW ARM DELETES THE COOKIE FIRST (UX audit A2): the second click writes `expanded`, an
+  # explicit choice that now keeps the FULL rail below 1100px, so the width trigger is "no cookie".
   test "the collapse cookie and a narrow viewport draw the same icon rail" do
     @root.join("laser").mkpath
     Library::ScanJob.perform_now(user_id: @user.id)
     laser = @user.nodes.present.find_by!(name: "laser", kind: "dir")
     @user.maker_pins.create!(node_id: laser.node_id)
-    parts = [ ".brand-name", ".rail-label", ".rail-user", ".rail-btn span", ".rail-group-head", ".rail-pin" ]
+    parts = [ ".brand-name", ".rail-label", ".rail-user", ".rail-btn span", ".rail-group-head", ".rail-pin .folder-glyph" ]
     fingerprint = lambda do
       page.evaluate_script(<<~JS)
         (() => {
@@ -167,7 +173,7 @@ class ShellTest < ApplicationSystemTestCase
       JS
     end
     icon_rail = { "container" => "inline-size rail", "width" => 56, "hidden" => parts,
-                  "brand" => "center", "link" => "center 0px", "lit" => [ "Library" ] }
+                  "brand" => "center", "link" => "center 0px", "lit" => [ "laser" ] }
 
     visit files_path(folder: laser.node_id)
     expanded = fingerprint.call
@@ -179,10 +185,12 @@ class ShellTest < ApplicationSystemTestCase
 
     find("aside.rail [data-action='rail#toggle']").click
     assert_no_selector "body.rail--collapsed"
+    page.driver.browser.manage.delete_cookie("rail")
     page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
                                     width: 900, height: 900, deviceScaleFactor: 1, mobile: false)
     visit files_path(folder: laser.node_id)
     assert_no_selector "body.rail--collapsed"
+    assert_no_selector "body.rail--expanded"
     # BOTH ARMS IN ONE ASSERTION, so a failure shows which trigger drew a different rail.
     assert_equal({ "collapse cookie at 1400px" => icon_rail, "expanded cookie at 900px" => icon_rail },
                  { "collapse cookie at 1400px" => cookie, "expanded cookie at 900px" => fingerprint.call },
@@ -241,21 +249,30 @@ class ShellTest < ApplicationSystemTestCase
     prior_demo.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior_demo
   end
 
-  test "the theme button cycles light, dark, system and persists" do
+  # THE BUTTON NAMES ITS NEXT STEP, NOT THE STATE (UX audit A6): "Switch to dark" while light is on,
+  # "Use system theme" while dark is, "Switch to light" while system is — in the label, the
+  # aria-label and the title alike, both as the server renders it and as the controller re-renders it.
+  test "the theme button cycles light, dark, system, persists, and names what it will do" do
     visit files_path
     theme = -> { page.evaluate_script("document.documentElement.dataset.theme") }
+    button = -> { find("aside.rail [data-action='theme#cycle']") }
+    names = -> { [ button.call.text, button.call["aria-label"], button.call["title"] ] }
     assert_equal "light", theme.call
+    assert_equal [ "Switch to dark" ] * 3, names.call
 
-    find("aside.rail [data-action='theme#cycle']").click
+    button.call.click
     assert_equal "dark", theme.call
+    assert_equal [ "Use system theme" ] * 3, names.call
     visit files_path
     assert_equal "dark", theme.call
-    assert_selector "aside.rail [data-action='theme#cycle']", text: "Theme: dark"
+    assert_equal [ "Use system theme" ] * 3, names.call
 
-    find("aside.rail [data-action='theme#cycle']").click
+    button.call.click
     assert_equal "system", theme.call
-    find("aside.rail [data-action='theme#cycle']").click
+    assert_equal [ "Switch to light" ] * 3, names.call
+    button.call.click
     assert_equal "light", theme.call
+    assert_equal [ "Switch to dark" ] * 3, names.call
     visit files_path
     assert_equal "light", theme.call
     assert_no_console_errors
@@ -299,8 +316,10 @@ class ShellTest < ApplicationSystemTestCase
   end
 
   test "a notice toast leaves on its own and an alert waits to be dismissed" do
-    # sign_in_as landed on /files carrying Devise's "Signed in successfully." notice.
-    assert_selector ".flash-stack .flash-notice", text: "Signed in successfully."
+    # sign_in_as landed on / carrying Devise's sign-in notice ("Signed in.", config/locales). A pattern,
+    # because the words are the locale's to choose and the toast's behaviour is what is under test.
+    # The pause on hover and focus, and Escape, are shell_toast_test.rb's.
+    assert_selector ".flash-stack .flash-notice", text: /\ASigned in/
     assert_no_selector ".flash-stack .flash-notice", wait: 9
 
     # THE `assert_current_path` IS NOT DECORATION, for the reason `sign_in_as` gives about the
@@ -740,7 +759,8 @@ class ShellTest < ApplicationSystemTestCase
           folder_rows = @user.nodes.where(parent_node_id: folder.node_id, kind: "dir").count
           assert_operator folder_rows, :>=, 2, "the strips need folder panels to list"
           assert_selector "div.panel-slot .panel-strip", count: Maker::Project::PANELS.size + folder_rows
-          assert_selector ".layout-bar input[type=submit][value='Save']"
+          # "Save layout" since the three edit tabs name their submits (UX audit C6).
+          assert_selector ".layout-bar input[type=submit][value='Save layout']"
           opened_panels = true
           # THE EDIT PAGE'S OWN OVERFLOW IS MEASURED HERE, on this page, before the sweep returns:
           # the strips are the layout most likely to overflow at 375px, and a `visit path` first

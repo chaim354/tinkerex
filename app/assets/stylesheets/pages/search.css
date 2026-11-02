@@ -19,6 +19,13 @@
      §2.8 named directly — and a quantity or an extension for others. Prose decides it. */
   .result-sub { font: 11px/1.4 var(--font-ui); color: var(--fg-muted); }
   .result-more { font-size: 12px; margin-top: 6px; }
+  /* A ROW'S NAME AND, UNDER IT, WHERE IT SITS (UX audit D11, 2026-11-02; shared/_result_folder). A
+     path is DATA, so mono (decision 4); muted so the name stays what the eye lands on. `min-width: 0`
+     lets the column shrink inside the flex row, and the row's own `overflow-wrap: anywhere` breaks a
+     long path rather than pushing the page past 375px (rule 11). */
+  .result-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  .result-path { font: 400 12px/16px var(--font-mono); color: var(--fg-muted); text-decoration: none; }
+  .result-path:hover { color: var(--fg); text-decoration: underline; }
 
   /* THE FILES TOOLBAR'S OWN SEARCH BOX (search_test.rb's sibling, files_search_test.rb) lives
      here rather than in pages/files.css: this feature (stage 2, S2-5) is the only thing that adds

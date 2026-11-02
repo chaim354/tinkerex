@@ -36,7 +36,7 @@ module Web
       get files_path(folder: "d-jigs")
       assert_response :success
       assert_destination "d-jigs"
-      assert_select "header.topbar .topbar-upload label.upload-btn.primary span", text: "Upload"
+      assert_select "header.topbar .topbar-upload button.upload-btn.primary span", text: "Upload"
       assert_caption "cad/jigs"
       # The page head's own uploader moved here; one Upload, not two.
       assert_select "main .uploader", count: 0
@@ -59,7 +59,7 @@ module Web
     test "the workspace saves beside its file, quietly" do
       get file_path("n-plate")
       assert_destination "d-jigs"
-      assert_select "header.topbar .topbar-upload label.upload-btn:not(.primary)"
+      assert_select "header.topbar .topbar-upload button.upload-btn:not(.primary)"
       assert_caption "cad/jigs"
     end
 
@@ -68,7 +68,7 @@ module Web
       folder = project_folder_rows!(@user, project)
       get project_path(project)
       assert_destination folder.node_id
-      assert_select "header.topbar .topbar-upload label.upload-btn.primary"
+      assert_select "header.topbar .topbar-upload button.upload-btn.primary"
       assert_caption "Projects/desk-lamp"
       assert_select ".attachments-panel .uploader", count: 0
     end
@@ -81,7 +81,7 @@ module Web
       assert_select "header.topbar .topbar-upload[data-controller='upload-pick'][data-upload-pick-children-url-value=?][data-upload-pick-create-url-value=?]",
                     library_children_path, library_folders_path
       assert_destination ""
-      assert_select "header.topbar .topbar-upload label.upload-btn:not(.primary)[data-action=?]", "click->upload-pick#pick"
+      assert_select "header.topbar .topbar-upload button.upload-btn:not(.primary)[data-action=?]", "click->upload-pick#pick"
       assert_select "header.topbar .topbar-upload input[type=file][data-upload-pick-target='input']", 1
       if FileLayer.current.capabilities.port_writable?
         assert_select "header.topbar .topbar-upload form.uploader input[type=hidden][name='parent_node_id'][data-upload-pick-target='parent']", 1
@@ -97,7 +97,7 @@ module Web
     # above is the other half: the flag must not leak to every page without a folder.
     test "Recent's Upload is its primary, and still asks with the chooser" do
       get root_path
-      assert_select "header.topbar .topbar-upload[data-controller='upload-pick'] label.upload-btn.primary[data-action=?]",
+      assert_select "header.topbar .topbar-upload[data-controller='upload-pick'] button.upload-btn.primary[data-action=?]",
                     "click->upload-pick#pick"
       assert_destination ""
       assert_select "header.topbar .topbar-upload-caption[hidden][data-upload-pick-target='caption']"

@@ -47,6 +47,15 @@ module Web
                         position: (bom.lines.maximum(:position) || -1) + 1, **attrs)
     end
 
+    # A REFUSED LINE COMES BACK AS THE OPEN COMPOSER (2026-11-02, the UX audit's B3), 422, with its
+    # sentence inside it — never a redirect and an alert. Answers that sentence, so each refusal
+    # test below reads it the way it read flash[:alert] before.
+    def refusal
+      assert_response :unprocessable_entity
+      assert_nil flash[:alert], "a refusal must not ride a redirect's flash"
+      css_select("details.composer.bom-add#bom-composer[open] .form-errors[role=alert]").text
+    end
+
     # --- the panel ---------------------------------------------------------------------------
 
     test "the panel lists lines of all three kinds" do
@@ -112,18 +121,22 @@ module Web
       assert_match(/1 short/, css_select(".bom-rollup").text)
     end
 
-    # ONE LINE, SO THE PANEL IS NOT QUIET. Since stage 4, S4-1 the project page's BOM panel renders
-    # projects/_bom_lines — the table, the rollup AND this composer — only when it has lines; an
-    # empty panel is its heading and Open, and adding the first line happens on the BOM page. That
-    # surface's own composer is asserted by "the page with no BOM renders the empty state and the
-    # composer" below, so the no-BOM-at-all case is still covered; what this test is about is the
-    # rendered field names, which is a §14d rule about the form and not about which page it sits on.
+    # ONE LINE, SO THE PANEL IS NOT QUIET; the empty panel's composer is "+ Add panel opens the BOM
+    # with its composer" below. What this test is about is the rendered field names, which is a
+    # §14d rule about the form and not about which page it sits on.
     test "the composer's field names" do
       item = item!(name: "NEMA17")
       line!(bom!, inventory_item: item, quantity: 1, unit: "each")
       get project_path(@project)
 
-      assert_select "details.composer.bom-add summary", text: "Add line"
+      # ONE COMPOSER PATTERN (the UX audit's C4): "Add…" in the head, a submit naming the thing, and
+      # no second accent on the hub — the top bar's Upload is its one.
+      assert_select ".bom-panel .panel-head > details.composer.bom-add summary", text: "Add…"
+      assert_select "details.composer.bom-add input[type=submit][value=?]", "Add line"
+      assert_select "details.composer.bom-add input[type=submit].primary", 0
+      # Each target control names itself (§I: a label names only its first control, the radio).
+      assert_select "select[name=?][aria-label=?]", "bom_line[inventory_item_id]", "Stock item"
+      assert_select "input[name=?][aria-label=?]", "bom_line[part_name]", "Part name"
       assert_select "form[action=?]", project_bom_lines_path(@project)
       assert_select "input[name=?]", "bom_line[reference]"
       assert_select "input[name=?]", "bom_line[quantity]"
@@ -184,8 +197,7 @@ module Web
         post project_bom_lines_path(@project),
              params: { bom_line: { target_kind: "stock", inventory_item_id: "", quantity: "1", unit: "each" } }
       end
-      assert_redirected_to project_path(@project)
-      assert_match(/pick a stock item/i, flash[:alert])
+      assert_match(/pick a stock item/i, refusal)
     end
 
     test "target_kind file with a node the user does not own is refused" do
@@ -194,13 +206,13 @@ module Web
         post project_bom_lines_path(@project),
              params: { bom_line: { target_kind: "file", node_id: foreign.node_id, quantity: "1", unit: "each" } }
       end
-      assert_match(/isn't in your library/, flash[:alert])
+      assert_match(/isn't in your library/, refusal)
 
       assert_no_difference "Maker::BomLine.count" do
         post project_bom_lines_path(@project),
              params: { bom_line: { target_kind: "file", node_id: "unknown-node", quantity: "1", unit: "each" } }
       end
-      assert_match(/isn't in your library/, flash[:alert])
+      assert_match(/isn't in your library/, refusal)
 
       # A DIRECTORY IS NOT A FILE: the lookup carries kind: "file", so a folder the user does own is
       # refused the same way — without it a line could point at a folder and link file_path to it.
@@ -209,7 +221,7 @@ module Web
         post project_bom_lines_path(@project),
              params: { bom_line: { target_kind: "file", node_id: folder.node_id, quantity: "1", unit: "each" } }
       end
-      assert_match(/isn't in your library/, flash[:alert])
+      assert_match(/isn't in your library/, refusal)
     end
 
     # THE RETURN PATH FOLLOWS THE REFERER: the same three doors serve the panel and the full page,
@@ -250,7 +262,7 @@ module Web
         post project_bom_lines_path(@project),
              params: { bom_line: { target_kind: "text", part_name: "", quantity: "1", unit: "each" } }
       end
-      assert_match(/enter a part name/i, flash[:alert])
+      assert_match(/enter a part name/i, refusal)
     end
 
     test "a foreign inventory_item_id surfaces the model's error" do
@@ -260,7 +272,7 @@ module Web
              params: { bom_line: { target_kind: "stock", inventory_item_id: foreign_item.id,
                                    quantity: "1", unit: "each" } }
       end
-      assert_match(/inventory item/i, flash[:alert])
+      assert_match(/inventory item/i, refusal)
       # AND NO EMPTY BOM IS LEFT BEHIND: the bom is minted by the first line, inside the same
       # transaction, so a line the model refuses rolls the bom back with it (review, 2026-09-04).
       assert_equal 0, @project.reload.boms.count, "a rejected first line minted an empty bom"
@@ -274,7 +286,7 @@ module Web
              params: { bom_line: { target_kind: "stock", inventory_item_id: item.id,
                                    supplier_id: foreign_supplier.id, quantity: "1", unit: "each" } }
       end
-      assert_match(/supplier/i, flash[:alert])
+      assert_match(/supplier/i, refusal)
     end
 
     # --- quantity and unit validation ------------------------------------------------------------
@@ -288,13 +300,13 @@ module Web
         post project_bom_lines_path(@project),
              params: { bom_line: { target_kind: "stock", inventory_item_id: item.id, quantity: "0", unit: "each" } }
       end
-      assert flash[:alert].present?
+      assert refusal.present?
 
       assert_no_difference "Maker::BomLine.count" do
         post project_bom_lines_path(@project),
              params: { bom_line: { target_kind: "text", part_name: "wire", quantity: "1", unit: "furlong" } }
       end
-      assert flash[:alert].present?
+      assert refusal.present?
     end
 
     # --- Consume -------------------------------------------------------------------------------
@@ -430,6 +442,53 @@ module Web
       get project_path(@project)
       assert_select ".badge.bom-text", text: "text"
       assert_select ".col-target", text: /NEMA17/
+    end
+
+    # --- a line the door refuses keeps what was typed (2026-11-02, the UX audit's B3) ----------
+
+    test "a refused line comes back with every typed value and the chosen target" do
+      supplier = @user.maker_suppliers.create!(name: "McMaster")
+      post project_bom_lines_path(@project),
+           params: { bom_line: { target_kind: "text", part_name: "", reference: "R7", quantity: "2.5",
+                                 unit: "m", supplier_id: supplier.id, notes: "the long one" } }
+      assert_match(/enter a part name/i, refusal)
+      assert_select "#bom-composer[open]" do
+        assert_select "input[name=?][value=?]", "bom_line[reference]", "R7"
+        assert_select "input[name=?][value=?]", "bom_line[quantity]", "2.5"
+        assert_select "select[name=?] option[selected][value=?]", "bom_line[unit]", "m"
+        assert_select "input[type=radio][name=?][value=?][checked]", "bom_line[target_kind]", "text"
+        assert_select "select[name=?] option[selected][value=?]", "bom_line[supplier_id]", supplier.id.to_s
+        assert_select "input[name=?][value=?]", "bom_line[notes]", "the long one"
+      end
+      # On a page of its own under the project's crumbs, since there is no hub to patch without JS.
+      assert_select ".breadcrumb a[href=?]", project_path(@project)
+    end
+
+    test "a refused line under Turbo replaces only the composer" do
+      post project_bom_lines_path(@project), as: :turbo_stream,
+           params: { bom_line: { target_kind: "text", part_name: "", reference: "R7", quantity: "1", unit: "each" } }
+      assert_response :unprocessable_entity
+      assert_select "turbo-stream[action=replace][target=bom-composer]", 1
+      assert_select "turbo-stream", 1
+      assert_includes response.body, %(value="R7")
+    end
+
+    # "+ ADD PANEL → BILL OF MATERIALS" OPENS A PANEL YOU CAN ADD TO (C5): the composer lived inside
+    # projects/_bom_lines, which an empty panel never rendered.
+    test "+ Add panel opens the BOM with its composer, quiet" do
+      get project_path(@project, add: "bom")
+      assert_select "section.bom-panel.panel--quiet .panel-head > details.composer.bom-add form[action=?]",
+                    project_bom_lines_path(@project)
+    end
+
+    # REMOVE CONFIRMS, NAMING THE PART (B5), beside a Consume that always did.
+    test "Remove confirms with the part's name" do
+      bom = bom!
+      line!(bom, part_name: "22 AWG wire")
+      line!(bom, part_name: "Spacer", reference: "S1")
+      get project_path(@project)
+      assert_select "form[data-turbo-confirm=?] button.bom-remove", "Remove 22 AWG wire from the bill of materials?"
+      assert_select "form[data-turbo-confirm=?] button.bom-remove", "Remove S1 from the bill of materials?"
     end
   end
 end

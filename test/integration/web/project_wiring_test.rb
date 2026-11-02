@@ -67,13 +67,18 @@ module Web
       assert_select "section.panel.wiring-panel.panel--quiet"
       assert_select "section.wiring-panel table.wiring", count: 0
       assert_select ".wiring-panel .panel-head .mono.muted", count: 0
-      # The composer still renders with nothing to edit yet.
-      assert_select "details.composer.wiring-add summary", text: "Add connection"
+      # The composer still renders with nothing to edit yet, in the panel's head (C4).
+      assert_select ".wiring-panel .panel-head > details.composer.wiring-add summary", text: "Add…"
     end
 
+    # ONE COMPOSER PATTERN (2026-11-02, the UX audit's C4): "Add…" opens it and the submit names the
+    # thing, so the two never carry one label; the submit is a quiet `.btn` (the hub's accent is
+    # the top bar's Upload).
     test "the composer's field names" do
       get project_path(@project, add: "wiring")
-      assert_select "details.composer.wiring-add summary", text: "Add connection"
+      assert_select "details.composer.wiring-add summary", text: "Add…"
+      assert_select "details.composer.wiring-add input[type=submit][value=?]", "Add connection"
+      assert_select "details.composer.wiring-add input[type=submit].primary", 0
       assert_select "form[action=?]", project_connections_path(@project)
       assert_select "input[name=?]", "connection[from_label]"
       assert_select "input[name=?]", "connection[to_label]"
@@ -100,12 +105,37 @@ module Web
       assert_match(/Motor/, flash[:notice])
     end
 
-    test "a blank to_label is refused with the message" do
+    # A REFUSAL KEEPS WHAT WAS TYPED (2026-11-02, the UX audit's B3): 422 and the composer again,
+    # open, its error inside it and every field still holding the posted value — never a redirect
+    # with an alert over an empty form. Without Turbo that is a page of its own.
+    test "a blank to_label is refused with the message, and the composer keeps what was typed" do
       assert_no_difference "Maker::Connection.count" do
-        post project_connections_path(@project), params: { connection: { from_label: "Driver", to_label: "" } }
+        post project_connections_path(@project),
+             params: { connection: { from_label: "Driver", to_label: "", wire: "22 AWG", note: "twisted" } }
       end
-      assert_redirected_to project_path(@project)
-      assert_match(/to label/i, flash[:alert])
+      assert_response :unprocessable_entity
+      assert_nil flash[:alert]
+      assert_select "details.composer.wiring-add#wiring-composer[open]" do
+        assert_select ".form-errors[role=alert]", text: /to label/i
+        assert_select "input[name=?][value=?]", "connection[from_label]", "Driver"
+        assert_select "input[name=?][value=?]", "connection[wire]", "22 AWG"
+        assert_select "input[name=?][value=?]", "connection[note]", "twisted"
+        assert_select "input[name=?]", "connection[to_label]"
+      end
+      assert_select ".breadcrumb a[href=?]", project_path(@project)
+    end
+
+    # UNDER TURBO THE COMPOSER ALONE IS REPLACED, so nothing else on the page — another panel's
+    # draft included — is re-rendered by the refusal.
+    test "a refused connection under Turbo replaces only the composer, open and holding the input" do
+      post project_connections_path(@project), as: :turbo_stream,
+           params: { connection: { from_label: "Driver", to_label: "" } }
+      assert_response :unprocessable_entity
+      assert_equal "text/vnd.turbo-stream.html", response.media_type
+      assert_select "turbo-stream[action=replace][target=wiring-composer]", 1
+      assert_select "turbo-stream", 1
+      assert_includes response.body, %(value="Driver")
+      assert_includes response.body, "open"
     end
 
     test "a connection posted against another user's project slug 404s" do
@@ -134,8 +164,46 @@ module Web
 
       patch connection_path(connection), params: { connection: { from_label: "Driver v2" } }
       assert_redirected_to project_path(@project)
-      assert_equal "Saved.", flash[:notice]
+      # Names what was saved, verb first (the UX audit's B7: "Saved." was one of two bare notices).
+      assert_equal "Saved Driver v2 → Motor.", flash[:notice]
       assert_equal "Driver v2", connection.reload.from_label
+    end
+
+    # A REFUSED ROW KEEPS ITS EDIT (B3): the table comes back with that row still holding what was
+    # typed and its sentence beside its Save, 422; the other rows show what is saved.
+    test "a refused row edit comes back as typed, with its error, under Turbo and without" do
+      connection = connection!(from_label: "Driver", to_label: "Motor")
+      other = connection!(from_label: "PSU", to_label: "Driver")
+
+      patch connection_path(connection), params: { connection: { from_label: "Driver v2", to_label: "" } }
+      assert_response :unprocessable_entity
+      assert_equal "Motor", connection.reload.to_label
+      assert_select "tr.wiring-row--refused input[name=?][value=?]", "connection[from_label]", "Driver v2"
+      assert_select "tr.wiring-row--refused .wiring-row-error[role=alert]", text: /to label/i
+      assert_select "input#connection-#{other.id}-from_label[value=?]", "PSU"
+      # THE REFUSED ROW IS STILL UNSAVED, AND SAYS SO: marked dirty for wiring_controller.js, so
+      # leaving the page asks about it, with its "Unsaved" shown; the other row is not.
+      assert_select "tr.wiring-row--refused[data-wiring-target=row][data-dirty=true] .wiring-unsaved:not([hidden])",
+                    text: "Unsaved"
+      assert_select "tr.wiring-row[data-dirty]", 1
+
+      patch connection_path(connection), as: :turbo_stream, params: { connection: { to_label: "" } }
+      assert_response :unprocessable_entity
+      assert_select "turbo-stream[action=replace][target=project-wiring]", 1
+    end
+
+    # EVERY CELL'S FIELD HAS A NAME (the UX audit's §I: four unnamed inputs per row), and the table
+    # mounts the unsaved-row warning (C10) — wiring_controller.js, which stimulus_hygiene_test.rb
+    # holds to an existing file.
+    test "each row's four fields carry a label, and the table mounts the unsaved warning" do
+      connection = connection!(from_label: "Driver", to_label: "Motor")
+      get project_path(@project)
+      %w[from_label to_label wire note].each do |field|
+        assert_select "label.label-hidden[for=?]", "connection-#{connection.id}-#{field}", 1
+      end
+      assert_select "section.wiring-panel[data-controller=wiring]"
+      assert_select "tr.wiring-row[data-wiring-target=row] .wiring-unsaved[hidden]", text: "Unsaved"
+      assert_select "form#connection-#{connection.id}[data-action=?]", "submit->wiring#save"
     end
 
     test "update on a foreign connection 404s" do

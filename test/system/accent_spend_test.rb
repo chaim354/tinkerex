@@ -93,9 +93,10 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/files" => [ "Upload" ],
       # The model strip above the files adds nothing (slice 5).
       "/files (a model folder)" => [ "Upload" ],
-      # The Library's 3D models view (slice 5): its one action is Import model. No folder is on screen,
-      # so the top bar's Upload stays quiet (FolderDestination is never set here).
-      "/files/models" => [ "Import model" ],
+      # The Library's 3D models view (slice 5): its one action is the Add model menu (UX audit E3:
+      # a model comes from a file already in the library or from a Printables zip, so the primary
+      # opens a menu). No folder is on screen, so the top bar's Upload stays quiet.
+      "/files/models" => [ "Add model ▾" ],
       "/projects" => [ "New project" ],
       "/inventory" => [ "New item" ],
       # THE PROJECT PAGE SPENDS IT ONCE NOW (2026-10-26, the edit area): the top bar's Upload, into
@@ -108,7 +109,7 @@ class AccentSpendTest < ApplicationSystemTestCase
       # be told (ProjectsController#show's `primary:`).
       "/projects/desk-lamp/edit" => [ "Save changes" ],
       "/projects/desk-lamp/publishing" => [ "Save publishing" ],
-      "/projects/desk-lamp/layout" => [ "Save" ],
+      "/projects/desk-lamp/layout" => [ "Save layout" ],
       # Pages with no action of their own spend none, and pinning [] is what keeps it that way —
       # /tools in particular is about to grow a first-run state (slice 3).
       "/settings" => [],
@@ -128,9 +129,9 @@ class AccentSpendTest < ApplicationSystemTestCase
       # K (2026-10-20): the library folder page, with a catalog to keep (the model folder above), spends
       # it on Switch; Start over is quiet behind its confirmation. Off share there is nothing to choose.
       "/settings/library" => FileLayer.current.is_a?(FileLayer::Share) ? [ "Switch to this folder" ] : [],
-      # Users (2026-10-21): the list spends it on Add account; one account's page on Set password, with
+      # Users (2026-10-21): the list spends it on Add user; one user's page on Set password, with
       # Make admin quiet and Delete the danger button behind a typed address.
-      "/settings/users" => [ "Add account" ],
+      "/settings/users" => [ "Add user" ],
       "/settings/users/:id/edit" => [ "Set password" ],
       # Devices (pentest H1b, 2026-10-22): no one action; each row's Sign out is a danger link.
       "/settings/devices" => []
@@ -194,7 +195,7 @@ class AccentSpendTest < ApplicationSystemTestCase
           probe.remove()
 
           var sel = ['a', 'button', 'input[type=submit]', 'input[type=button]', 'summary',
-                     'label.upload-btn > span']
+                     '.upload-btn > span']
                       .reduce(function (all, s) { return all.concat(['header.topbar ' + s, 'main ' + s]) }, [])
                       .join(', ')
 

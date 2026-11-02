@@ -69,7 +69,7 @@ export default class extends Controller {
       if (this.disconnected) return
       // SAYS SO, rather than leaving the panel empty. See the header: an empty panel reads as
       // "this file has no history", which is the one thing this code exists not to claim.
-      this.rowsTarget.replaceChildren(this.note(`History could not be loaded (${e.message}).`))
+      this.rowsTarget.replaceChildren(this.note("History could not be loaded. Reload the page to try again."))
       return
     }
     if (this.disconnected) return
@@ -148,7 +148,7 @@ export default class extends Controller {
     head.append(
       this.span("history-oid mono", entry.short_oid),
       this.span("history-subject", entry.subject || "(no message)"),
-      this.span("history-meta muted", [entry.author, this.when(entry.time)].filter(Boolean).join(" · "))
+      this.meta(entry)
     )
 
     const detail = document.createElement("div")
@@ -197,7 +197,7 @@ export default class extends Controller {
       })
       if (!res.ok) throw new Error(`fetch failed (${res.status})`)
     } catch (e) {
-      return this.note(`That version could not be loaded (${e.message}).`)
+      return this.note("That version could not be loaded. Try again in a moment.")
     }
 
     const tooBig = this.oversize(res)
@@ -242,7 +242,16 @@ export default class extends Controller {
     return mount
   }
 
+  // ASKED BEFORE THE POST, AND THE QUESTION NAMES WHAT IS LOST. FilesController#restore writes the
+  // old bytes over the working copy with `replace: true`, and the page then reloads, so whatever the
+  // editor above holds unsaved goes with it. The restore itself is a pending edit and one click from
+  // undone (git-editing.md, "Restore writes a pending edit"); the unsaved text in the editor is not,
+  // which is why this asks and Trash's restore, which loses nothing, should not. `window.confirm`
+  // rather than a custom dialog, so the system tests answer it with accept_confirm/dismiss_confirm.
   async restore(entry, button, detail) {
+    const when = entry.at_label || `commit ${entry.short_oid}`
+    if (!window.confirm(`Restore the version from ${when}? This replaces the current file and any unsaved edit.`)) return
+
     button.disabled = true
     try {
       const res = await fetch(this.oidUrl(this.restoreUrlValue, entry.oid), {
@@ -259,18 +268,28 @@ export default class extends Controller {
         },
         signal: this.abort.signal
       })
-      if (res.type === "opaqueredirect" || res.ok) return window.location.reload()
+      if (res.type === "opaqueredirect" || res.ok) {
+        // THE MAKER ALREADY SAID YES TO LOSING THE UNSAVED EDIT, in the confirm above, so the
+        // editor's own leave-guard (editor_controller.js) is told to stand down rather than ask a
+        // second time in the browser's "Leave site?" words.
+        document.dispatchEvent(new CustomEvent("editor:discard"))
+        return window.location.reload()
+      }
 
       // A REFUSAL IS A SENTENCE THE SERVER WROTE, and both of its cases are ordinary clicks rather
       // than mistakes: the panel lists HEAD's commit, whose bytes are usually exactly what is on
-      // disk, and an old version can be over the editor's size ceiling.
+      // disk, and an old version can be over the editor's size ceiling. ONLY IN THE APP'S OWN SHAPE,
+      // `{ ok: false, error }` (FilesController#render_save_error): Rails' exception pages answer JSON
+      // with an `error` key too ("Internal Server Error", "Unprocessable Content"), and those are not
+      // sentences for a maker (editor_controller.js#refusal, the same rule).
       const body = await res.json().catch(() => ({}))
+      const said = body?.ok === false && body.error ? body.error : null
       detail.dataset.open = "error"
-      detail.replaceChildren(this.note(body.error ?? `Restore failed (${res.status}).`))
+      detail.replaceChildren(this.note(said ?? "That version was not restored. Try again in a moment."))
     } catch (e) {
       if (this.disconnected) return
       detail.dataset.open = "error"
-      detail.replaceChildren(this.note(`Restore failed (${e.message}).`))
+      detail.replaceChildren(this.note("That version was not restored: the server could not be reached. Try again in a moment."))
     } finally {
       button.disabled = false
     }
@@ -319,10 +338,19 @@ export default class extends Controller {
     return p
   }
 
-  // The server sends ISO-8601; the browser knows the reader's locale and this panel does not care
-  // about the format. An unparseable value renders as nothing rather than as "Invalid Date".
-  when(iso) {
-    const at = new Date(iso)
-    return Number.isNaN(at.getTime()) ? "" : at.toLocaleString()
+  // WHO AND WHEN, AND THE WHEN IS THE SERVER'S WORDS. `at_label` is ApplicationHelper#time_label's
+  // absolute form in the app's one zone (FilesController#history), so this row reads like every
+  // other timestamp in the app; it used to be the browser's toLocaleString(), a fourth clock in a
+  // fourth format (UX audit D1). The ISO instant rides in `datetime`, as time_at's does. No label,
+  // no <time>: an entry without one shows its author alone rather than a guess.
+  meta(entry) {
+    const meta = this.span("history-meta muted", entry.author)
+    if (entry.at_label) {
+      const at = document.createElement("time")
+      at.dateTime = entry.time ?? ""
+      at.textContent = entry.at_label
+      meta.append(entry.author ? " · " : "", at)
+    }
+    return meta
   }
 }

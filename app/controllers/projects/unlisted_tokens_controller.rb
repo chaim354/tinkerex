@@ -18,8 +18,9 @@ module Projects
       # it cannot interfere; what `update!` buys is the validations — a row that has drifted into an
       # unpublishable state must not be quietly written past on its way to a new credential.
       project.update!(unlisted_token: SecureRandom.hex(16))
+      # Verb first, and it is the LINK that stops working, not "anyone holding" it (2026-11-02).
       redirect_to publishing_project_path(project),
-                  notice: "New unlisted link. Anyone holding the old one will no longer work."
+                  notice: "Made a new unlisted link. The old one no longer works."
     end
   end
 end

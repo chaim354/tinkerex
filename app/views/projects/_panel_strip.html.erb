@@ -7,6 +7,10 @@
   Publishing tab on 2026-10-26.) The view switch renders only the views
   THIS panel offers, from the same list the door validates against.
 
+  THE PRESSED TOGGLE SAYS SO TO A SCREEN READER, NOT ONLY BY ITS LOOK (2026-11-02, the UX audit's
+  C10): each Full/Half and view button carries `aria-pressed`, and layout_editor_controller.js's
+  `activate` flips it with the `active` class, so the two can never disagree.
+
   A BLOCK'S STRIP IS THE SAME STRIP MINUS TWO CONTROLS (2026-09-09, content blocks; spec §2): no
   pencil, because a block's title and intro ARE its content and its own editor holds them, and no
   view switch, because a block has no views to offer. It gains Delete, the one control a panel has
@@ -36,7 +40,7 @@
     <% end %>
     <span class="view-toggle" role="group" aria-label="Width of <%= label %>">
       <% Maker::ProjectKind::WIDTHS.each do |w| %>
-        <button type="button" class="toggle<%= " active" if width == w %>" data-action="layout-editor#width" data-width="<%= w %>"><%= w.capitalize %></button>
+        <button type="button" class="toggle<%= " active" if width == w %>" aria-pressed="<%= width == w %>" data-action="layout-editor#width" data-width="<%= w %>"><%= w.capitalize %></button>
       <% end %>
     </span>
     <%# Below the two-column breakpoint every panel stacks, so the switch still WORKS but shows
@@ -46,14 +50,15 @@
     <% if offered.any? %>
       <span class="view-toggle" role="group" aria-label="View of <%= label %>">
         <% offered.each do |v| %>
-          <button type="button" class="toggle<%= " active" if @panel_layout.view_for(key) == v %>" data-action="layout-editor#view" data-view="<%= v %>"><%= v.capitalize %></button>
+          <button type="button" class="toggle<%= " active" if @panel_layout.view_for(key) == v %>" aria-pressed="<%= @panel_layout.view_for(key) == v %>" data-action="layout-editor#view" data-view="<%= v %>"><%= v.capitalize %></button>
         <% end %>
       </span>
     <% end %>
     <% if blockish %>
-      <%# DELETE IS A DRAFT EDIT, NOT A WRITE: the slot leaves the page at once, Cancel (a reload)
-          brings it back, and only Save makes it final — the same rule every other control on this
-          strip follows, which is why it is a plain button and not a button_to. %>
+      <%# DELETE IS A DRAFT EDIT, NOT A WRITE: the slot leaves the page (after a question, when the
+          block holds anything — layout_editor_controller.js#deleteBlock), Cancel brings it back,
+          and only Save makes it final — the same rule every other control on this strip follows,
+          which is why it is a plain button and not a button_to. %>
       <button type="button" class="linkbtn small danger" data-action="layout-editor#deleteBlock"
               aria-label="Delete <%= label %>">Delete</button>
     <% end %>

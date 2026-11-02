@@ -83,8 +83,10 @@ deployment, 0 of 9 real projects have one the page shows (spec §2 D3; §1 holds
 findings 1 and 4, why it is zero). A rule that protects a file nobody ever writes has protected
 nothing — and that is as true of a `.gcode` the maker keeps on a NAS as of a README. So the trade is
 **named on the editor** — "This library keeps no history for this file; saving replaces it." on
-share and s3, nothing on chunk_remote, decided by `capabilities.versioned?` — and the maker chooses
-with the cost in front of them.
+share and s3, nothing on chunk_remote, decided by `capabilities.versioned?`, **and nothing inside a
+working tree either** (UX audit D6, 2026-11-02: there git IS the history, and the note sat above a
+History panel listing a commit — the partial takes `in_repo` and renders nothing when it is true) —
+and the maker chooses with the cost in front of them.
 
 **ONE PARTIAL, `shared/_no_history_note`, AND IT IS NOW RENDERED TWICE:** the README editor
 (`projects/_readme_editor`) and the file page's editable source view

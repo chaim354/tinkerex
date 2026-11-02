@@ -17,7 +17,7 @@ module Projects
         position: next_pos,
         data: Maker::Sheet.blank_data
       )
-      redirect_to sheet_path(sheet)
+      redirect_to sheet_path(sheet), notice: "Added the sheet “#{sheet.name}”."
     end
 
     def show
@@ -32,7 +32,9 @@ module Projects
     end
 
     # Two callers, one action: the grid's debounced JSON autosave (sends `data`) and the rename
-    # form (sends `name`). Answering by format keeps them from needing separate routes.
+    # form (sends `name`). Answering by format keeps them from needing separate routes. THE RENAME
+    # SAYS SO (2026-11-02, the UX audit's B7): it redirected with no notice, so the only sign a
+    # Rename had worked was the heading changing.
     #
     # THE RESCUE IS NOT DECORATION. `update!` on an over-limit blob raises RecordInvalid, which for
     # the autosave means a 500 the debounced fetch shows as NOTHING — trading unbounded growth for a
@@ -42,7 +44,7 @@ module Projects
       @sheet.update!(sheet_params)
       respond_to do |format|
         format.json { render json: { status: "ok", updated_at: @sheet.updated_at } }
-        format.html { redirect_to sheet_path(@sheet) }
+        format.html { redirect_to sheet_path(@sheet), notice: "Renamed the sheet to “#{@sheet.name}”." }
       end
     rescue ActiveRecord::RecordInvalid => e
       respond_to do |format|
@@ -54,8 +56,9 @@ module Projects
 
     def destroy
       project = @sheet.project
+      name = @sheet.name
       @sheet.destroy!
-      redirect_to project_path(project), notice: "Sheet deleted."
+      redirect_to project_path(project), notice: "Deleted the sheet “#{name}”."
     end
 
     private

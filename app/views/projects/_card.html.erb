@@ -17,35 +17,38 @@
     <span class="project-name"><%= project.name %></span>
   <% end %>
   <%#
-    NEW (stage 4, S4-6; story 1.1). An auto-created project the owner has not opened yet — the only
-    feedback discovery has ever had, and the one that works on every backend and for the unattended
-    15-minute sweep, which is how discovery actually runs. Both columns come off the row this card
-    already holds, so the badge costs no query on the index or on Recent.
+    ONE STATUS BADGE PER CARD, ALWAYS (2026-11-02, the UX audit's C7). Every card on the seeded
+    audit read "New" beside its status, and a planning project read nothing at all — two words for
+    one state on some cards and none on others. Now every card carries exactly one, in the words
+    and component classes the project page's own head uses, OUTSIDE the link (`.project-card
+    .badge` stays empty, projects_flow_test.rb).
 
-    `discovered_at.present?` IS the definition of auto-created: Maker::ProjectDiscovery is the only
-    writer, and Projects::AdoptionsController leaves it nil on purpose (a project you made is never
-    new to you). It clears itself on the first open — ProjectsController#show stamps `opened_at` —
-    so nothing has to be dismissed and no state accumulates.
+    "NEW" IS THE STATUS WORD OF A PROJECT THAT IS STILL NEW (stage 4, S4-6; story 1.1): an
+    auto-created project the owner has not opened yet, still at the column's first status. That is
+    the only feedback discovery has ever had, and the one that works on every backend and for the
+    unattended 15-minute pass, which is how discovery actually runs. It takes the place of
+    "Planning" rather than sitting beside it, and never beside a later status: a discovered project
+    set to Done from its edit page is Done, not new. `discovered_at.present?` IS the definition of
+    auto-created — Maker::ProjectDiscovery is the only writer, and Projects::AdoptionsController
+    leaves it nil on purpose (a project you made is never new to you). It clears itself on the
+    first open — ProjectsController#show stamps `opened_at` — so nothing has to be dismissed. All
+    three columns come off the row this card already holds, so the badge costs no query on the
+    index or on Recent.
   %>
-  <% if project.discovered_at.present? && project.opened_at.nil? %>
-    <span class="badge project-new">New</span>
+  <% if project.status == "planning" && project.discovered_at.present? && project.opened_at.nil? %>
+    <span class="badge project-new status-planning">New</span>
+  <% else %>
+    <span class="badge status-<%= project.status %>"><%= project.status.humanize %></span>
   <% end %>
   <%# THE KIND, WHERE THE PROJECT IS LISTED (stage 4, S4-7). A NON-DEFAULT kind only: `other` is
-      the column default, and badging a default is noise -- the same rule the New badge above and
-      S4-6's public status badge follow. Beside the New badge rather than inside the link_to, so
-      the tile's badges are one group and none of them is part of the card's own click target.
+      the column default, and badging a default kind is noise (a status is different: it is always
+      one of five things worth saying). Beside the status rather than inside the link_to, so the
+      tile's badges are one group and none of them is part of the card's own click target.
       `.badge` is a component (design-system rule 3); `project-kind` is a qualifier, and
       components.css is not touched. The label comes from Maker::ProjectKind, never `kind.humanize`
       -- "Cnc" is not a word. %>
   <% unless project.kind == Maker::ProjectKind::DEFAULT %>
     <span class="badge project-kind"><%= Maker::ProjectKind.label(project.kind) %></span>
-  <% end %>
-  <%# THE STATUS, WHERE THE PROJECT IS LISTED (structural redesign §6, slice 6): active, paused and
-      done, in the words and component classes the project page's own head uses. `planning` is the
-      column default and is never badged, and `archived` is a different list, not a badge. With the
-      other badges, OUTSIDE the link — `.project-card .badge` stays empty (projects_flow_test.rb). %>
-  <% if project.status.in?(%w[active paused done]) %>
-    <span class="badge status-<%= project.status %>"><%= project.status.humanize %></span>
   <% end %>
   <% if project.status == "archived" %>
     <%= button_to "Unarchive", unarchive_project_path(project), method: :patch, class: "linkbtn" %>

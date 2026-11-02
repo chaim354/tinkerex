@@ -77,14 +77,14 @@ module Maker
     # vocabulary, and layout_for drops any value outside it.
     VIEWS = %w[tiles list browser].freeze
 
-    # What the chooser calls each one. Its own map rather than `key.humanize`, because three of the
+    # What the chooser calls each one. Its own map rather than `key.humanize`, because four of the
     # twelve disagree with what humanize would say: `attachments` is "Files" (the panel has been
     # headed Files since S2-2 — the key is the partial's name, and renaming the partial would touch
-    # eight call sites), `bom` is "Bill of materials", and `build_log` is "Build log", not
-    # "Build Log". A chooser whose labels differ from the headings above them is a chooser nobody
+    # eight call sites), `models` is "3D models" (the rail's word for that catalog, UX audit H),
+    # `bom` is "Bill of materials", and `build_log` is "Build log", not "Build Log". A chooser whose labels differ from the headings above them is a chooser nobody
     # trusts. Totality pinned in project_kind_test.rb.
     PANEL_LABELS = {
-      "attachments" => "Files", "photos" => "Photos", "models" => "Models", "schematics" => "Schematics",
+      "attachments" => "Files", "photos" => "Photos", "models" => "3D models", "schematics" => "Schematics",
       "build_log" => "Build log", "tasks" => "Tasks", "bom" => "Bill of materials",
       "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "calculations" => "Calculations"
     }.freeze

@@ -30,9 +30,17 @@ export default class extends Controller {
   // RIGHT-CLICK › DETAILS (filemenu_controller.js) asks the tile through a cancelable
   // `filemenu:details` event. On the Library the answer is this panel, opened in place, and the cancel
   // is what tells the menu not to navigate to its details url.
+  //
+  // A ROW'S OR CARD'S OWN DETAILS CONTROL ANSWERS HERE TOO (UX audit D2, 2026-11-02: files/_list and
+  // files/_grid draw it as `a.row-action` with `data-selection-id`). That control is not the tile, so
+  // the tile it names is looked up by id: selecting the control itself would open the panel with no
+  // tile ringed, and leave the arrows nothing to move from.
   details(event) {
     event.preventDefault()
-    this.select(event.currentTarget)
+    const trigger = event.currentTarget
+    const item = this.itemTargets.includes(trigger) ? trigger
+      : this.itemTargets.find((el) => el.dataset.selectionId === trigger.dataset.selectionId)
+    this.select(item || trigger)
   }
 
   select(item) {
@@ -82,8 +90,11 @@ export default class extends Controller {
   // clicked, switches view straight back to A. Only links to THIS page that already carry the
   // param are rewritten: a page rendered with no selection has none to keep in step, and a re-sort
   // from it arrives with no selection, which is never the WRONG file.
+  //
+  // A ROW'S DETAILS CONTROL (`a.row-action`) IS SKIPPED: its `selected=` names ITS OWN file, not the
+  // page's selection, so rewriting it pointed every row's Details at whichever file was selected.
   syncPageLinks(id) {
-    document.querySelectorAll("a[href*='selected=']").forEach((link) => {
+    document.querySelectorAll("a[href*='selected=']:not(.row-action)").forEach((link) => {
       const url = new URL(link.href)
       if (url.origin !== window.location.origin || url.pathname !== window.location.pathname) return
       if (id) url.searchParams.set("selected", id)

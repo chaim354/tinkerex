@@ -21,19 +21,29 @@ class SettingsThemeTest < ApplicationSystemTestCase
     assert_equal "light", theme.call
     assert_selector ".theme-choice button[data-theme-theme-param='light'][aria-pressed='true']"
 
+    # ONE CONTROL ON THE ROW (UX audit A6): the lowercase "Theme: light" readout that sat beside the
+    # three buttons is gone; the pressed button is the state.
+    assert_no_selector ".theme-choice", text: /Theme:/i
+    rail = "aside.rail [data-action='theme#cycle']"
+    assert_selector rail, text: "Switch to dark"
+
     find(".theme-choice button[data-theme-theme-param='dark']").click
     assert_equal "dark", theme.call
     assert_equal "dark", page.driver.browser.manage.cookie_named("theme")[:value]
     assert_selector ".theme-choice button[data-theme-theme-param='dark'][aria-pressed='true']"
+    # THE RAIL'S BUTTON FOLLOWS AT ONCE, with no reload (UX audit A6). It is a SEPARATE `theme`
+    # controller instance from this row's, and it used to keep naming the old state until the next
+    # page; theme_controller.js#apply now broadcasts every change and each instance re-renders.
+    # Mutation-checked (2026-11-02): #apply rendering only its own instance (`this.render(next)` for
+    # the `document.dispatchEvent(...)` broadcast, the old behaviour) leaves the rail reading "Switch
+    # to dark" here, and this assertion red — as it does shell_more_sheet_test.rb's theme test.
+    assert_selector rail, text: "Use system theme"
+    assert_equal "Use system theme", find(rail)["aria-label"]
 
-    # RELOAD, NOT JUST THE IMMEDIATE DOM CHANGE. The rail's theme button is a SEPARATE Stimulus
-    # `theme` controller instance from the settings row's (theme_controller.js's own comment: two
-    # instances, two independent renders), so the rail's label only ever picks up a click made on
-    # the settings row on the NEXT server render -- which reads the cookie the click wrote, not the
-    # in-page DOM tweak. That is the property actually worth pinning here: not "the button looks
-    # pressed", but "a page rendered afterwards agrees".
+    # AND A PAGE RENDERED AFTERWARDS AGREES: the server reads the cookie the click wrote, not the
+    # in-page DOM tweak, and renders both controls already in that state.
     visit settings_path
-    assert_selector "aside.rail [data-action='theme#cycle']", text: "Theme: dark"
+    assert_selector rail, text: "Use system theme"
     assert_selector ".theme-choice button[data-theme-theme-param='dark'][aria-pressed='true']"
 
     # MUTATION-CHECKED (test/system/README.md): inside theme_controller.js#choose, replacing
@@ -51,6 +61,7 @@ class SettingsThemeTest < ApplicationSystemTestCase
     find(".theme-choice button[data-theme-theme-param='system']").click
     assert_equal "system", theme.call
     assert_selector ".theme-choice button[data-theme-theme-param='system'][aria-pressed='true']"
+    assert_selector rail, text: "Switch to light"
     assert_no_console_errors
   end
 end

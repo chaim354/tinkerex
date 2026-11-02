@@ -8,7 +8,13 @@
   ONE PARTIAL SO THE SENTENCE HAS ONE DEFINITION. Asked of `capabilities.versioned?`, never of an
   adapter class (§14a / git-editing.md): chunk_remote keeps every version regardless, so it says
   nothing at all rather than a hedge.
+
+  AND NOT INSIDE A GIT WORKING TREE (UX audit D6, 2026-11-02): there git IS the history — the file
+  page lists it in its History panel and a save becomes a pending edit for the commit box — so the
+  sentence contradicted the panel two inches below it. `in_repo` is the caller's answer (the file
+  page's @repo_root); it defaults to false, so the project README editor, which writes a project
+  folder's README whatever it sits in, still says it.
 %>
-<% unless capabilities.versioned? %>
+<% unless capabilities.versioned? || local_assigns.fetch(:in_repo, false) %>
   <p class="muted no-history-note">This library keeps no history for this file; saving replaces it.</p>
 <% end %>

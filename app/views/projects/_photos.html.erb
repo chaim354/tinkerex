@@ -19,7 +19,9 @@
     <%= panel_intro(@panel_layout, "photos") %>
     <div class="project-photos" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% @photo_rows.each do |row| %>
-        <%= link_to file_path(row.node_id), class: "photo-cell file-cell", title: row.node.name,
+        <%# NAMED BY THE FILE (the UX audit's §I): the picture inside carries an empty alt, so a
+            `title` alone left a link a screen reader announced as nothing. %>
+        <%= link_to file_path(row.node_id), class: "photo-cell file-cell", title: row.node.name, "aria-label": row.node.name,
                     data: file_open_data(thumb_cell_data(row.node_id, "IMG")) do %>
           <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: "IMG",
                      url: preview_src(@page_thumbs.thumb(row.node_id)) %>

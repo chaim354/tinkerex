@@ -43,7 +43,7 @@ module Models
     def destroy
       att = @model.file_attachments.find(params[:id])
       att.destroy!
-      redirect_back_or_to model_path(@model), notice: "Removed from model."
+      redirect_back_or_to model_path(@model), notice: "Removed the file from #{@model.title}."
     end
 
     private

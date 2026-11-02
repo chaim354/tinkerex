@@ -170,8 +170,9 @@ module Web
 
       %w[unlisted public].each do |visibility|
         patch project_path(project), params: { project: { visibility: }, return_to: "publishing" }
-        assert_redirected_to publishing_project_path(project)
-        assert_match(/shared demo can't publish/, flash[:alert].to_s, visibility)
+        # The Publishing tab re-renders its refusal (UX audit B3) rather than redirecting with a toast.
+        assert_response :unprocessable_entity
+        assert_select ".publish-panel .form-errors", text: /shared demo can't publish/, count: 1
         assert_equal "private", project.reload.visibility
       end
 

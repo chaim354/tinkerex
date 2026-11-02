@@ -1,11 +1,24 @@
 /* The Projects hub: index tiles, the project page's panels, tasks, the build-log timeline,
    sheets. Panels, buttons, badges and fields are components. */
 @layer pages {
-  /* THE BUILD-LOG COMPOSER SITS IN THE PANEL HEAD, and open it takes the whole row. Without this it
-     is a flex item beside the title and the editor renders about 70px wide — measured, in a
-     screenshot, after the reasoning that predicted a graceful wrap turned out to be wrong.
-     Qualified inside  because only this head holds a disclosure. */
-  .build-log-panel .panel-head > details.composer[open] { flex-basis: 100%; }
+  /* EVERY PANEL'S COMPOSER SITS IN ITS HEAD, and open it takes the whole row. Without this it is a
+     flex item beside the title and the editor renders about 70px wide — measured, in a screenshot,
+     after the reasoning that predicted a graceful wrap turned out to be wrong. It was the build
+     log's alone until 2026-11-02, when BOM, Wiring, Releases, Tasks and Sheets moved theirs into
+     the head too (the UX audit's C4: one composer pattern). Qualified by `.panel-head`, never the
+     bare component (design-system rule 3). */
+  .panel-head > details.composer[open] { flex-basis: 100%; order: 1; }
+  /* A field's name for a screen reader where the eye already has one (a column heading, a panel
+     heading): taken out of the layout, never out of the accessibility tree. Page-scoped on purpose;
+     if a second page wants it, it belongs in components.css. */
+  .label-hidden { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+                  clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; border: 0; }
+  /* The label above a composer's rich-text editor, which no `.field` wraps (the editor is its own
+     block). The error a refused composer comes back with sits first inside it. */
+  .composer-label { display: block; margin: 0 0 4px; font-size: 11px; color: var(--fg-muted); }
+  .composer-error { margin-bottom: 10px; }
+  /* A refused composer on its own page (projects/composer_page, the no-JavaScript answer). */
+  .composer-page { max-width: 720px; }
   /* --- Index --- */
   .projects-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 16px; }
   /* THE MODELS PANEL (2026-10-21): a model card with its Detach under it, centred. */
@@ -52,6 +65,10 @@
   .project-description { white-space: pre-wrap; margin: 0 0 12px; max-width: 72ch; font-size: 14px; line-height: 1.55; }
   .project-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 20px; font: 12px/1.5 var(--font-mono); color: var(--fg-muted); }
   .project-stats b { color: var(--fg); font-weight: 500; }
+  /* "Also in this project" (2026-11-02, the UX audit's C1): the hidden panels that hold rows, one
+     line under the stats, which then gives up its bottom margin to it. */
+  .project-stats:has(+ .project-also) { margin-bottom: 4px; }
+  .project-also { margin: 0 0 20px; font-size: 12px; }
   /* --- The hero (stage 4, S4-1): the cover on the project's own page. An image cover is the
      picture, capped like the model page's; any other cover is its thumbnail in a poll cell. --- */
   .project-hero { display: flex; flex-direction: column; gap: 6px; margin: 0 0 20px; }
@@ -175,6 +192,12 @@
   .attachment-group-head .badge { margin: 0 2px 0 8px; }
   .attachment-group-head .linkbtn.small { margin-left: 8px; font-size: 11px; }
   .loose-note { font-size: 12px; margin: -8px 0 16px; }
+  /* A row's one-line fact about itself (projects/_attachment_group's `notes`: "design/x.svg already
+     exists — rename one to file it"), under the tile's name or the list row's. */
+  .tile-note { margin: 0; font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+  .project-files .row-note { display: block; font-size: 11px; overflow-wrap: anywhere; }
+  .project-files .col-actions { text-align: right; }
+  .project-files .col-actions form { display: inline; margin: 0 0 0 6px; }
   /* The repository browser's host (projects/_repo_browser, filebrowser_controller.js). The panel
      itself is `.filechooser--inline` from components.css — this only spaces it under the card. */
   .repo-browser { margin-top: 8px; }
@@ -236,10 +259,12 @@
   .task-actions form { margin: 0; }
   .task-move { min-height: 22px; padding: 0 7px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--fg-muted); font: 500 11px/1 var(--font-ui); cursor: pointer; }
   .task-move:hover { color: var(--fg); border-color: var(--line-strong); }
-  .task-delete { min-height: 22px; padding: 0 6px; border: 0; background: none; color: var(--fg-muted); font: 12px/1 var(--font-ui); cursor: pointer; }
-  .task-delete:hover { color: var(--danger); }
-  .task-form { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
-  .task-form input[type="text"] { flex: 1; max-width: none; margin: 0; }
+  /* Delete is `linkbtn danger small` like every destructive control on the hub (2026-11-02); this
+     only sizes it to the row's other buttons. */
+  .task-delete { min-height: 22px; padding: 0 6px; }
+  .task-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .task-form .field { flex: 1; min-width: 12em; margin: 0; }
+  .task-form .task-error { flex-basis: 100%; }
   .task-error { margin: 8px 0 0; }
 
   /* --- Build log: composer, then the timeline with its dates in a column --- */
@@ -286,6 +311,11 @@
   .wiring input[type="text"] { width: 100%; margin: 0; }
   @media (max-width: 719px) { .wiring .col-note { display: none; } }
   @media (max-width: 479px) { .wiring .col-wire { display: none; } }
+  /* A row being edited says so with its word (status carries its word, rule 13), and a refused
+     row's sentence sits beside its Save. */
+  .wiring .col-actions form { display: inline; }
+  .wiring-unsaved { font-size: 11px; margin-left: 6px; }
+  .wiring-row-error { display: block; white-space: normal; font-size: 12px; color: var(--danger); margin-top: 4px; }
 
   /* --- Releases (stage 3, S3-5): a <details> per release whose summary is a wrapping row of
      facts -- version, date, tag, BOM revision, file count, "N changed since". `list-style: none`
@@ -335,11 +365,22 @@
   .calculations-panel .calculation-rename-form { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
   .calculations-panel .calculation-rename-form input[type="text"] { flex: 1; min-width: 0; }
   .calculations-panel .calculations-empty { margin: 0; font-size: 13px; }
-  .sheet-new-form { display: flex; gap: 6px; align-items: center; }
-  .picker-search { display: flex; gap: 8px; margin-bottom: 16px; }
+  .sheet-new-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .sheet-new-form .field { flex: 1; min-width: 12em; margin: 0; }
+  /* The two pickers (attach a file, add a model; 2026-11-02, the UX audit's C9): a visible label,
+     and rows that carry a thumbnail and their folder so same-named files can be told apart. */
+  .picker-search { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; }
+  .picker-label { flex-basis: 100%; font-size: 12px; color: var(--fg-muted); }
   .picker-search input { flex: 1; max-width: 480px; }
   .picker-results { display: flex; flex-direction: column; gap: 6px; }
-  .picker-result { display: flex; justify-content: space-between; align-items: center; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+  .picker-result { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+  .picker-result .picker-thumb { flex: 0 0 auto; display: block; width: 48px; height: 48px; }
+  .picker-result .picker-thumb .thumb, .picker-result .picker-thumb.thumb { width: 48px; height: 48px; }
+  .picker-result .picker-thumb .rail-icon { width: 20px; height: 20px; color: var(--fg-muted); }
+  .picker-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+  .picker-name { overflow-wrap: anywhere; }
+  .picker-folder { font-size: 11px; overflow-wrap: anywhere; }
+  .picker-result form { flex: 0 0 auto; margin: 0; }
   .sheet-head { align-items: flex-start; }
   .sheet-head h1 { margin: 0 0 4px; }
   .sheet-rename { display: inline-flex; gap: 6px; }

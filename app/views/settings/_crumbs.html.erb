@@ -1,0 +1,18 @@
+<%# THE SETTINGS PAGES' BREADCRUMB (UX audit A4/F8; design-system.md rule 9): Settings, any pages
+    between, then this page's own name, plain and last. It replaced the "Settings" and "Users" ghost
+    buttons each page head carried. The Account page (users/registrations/edit) renders it too, being
+    a Settings page.
+
+    Locals: current (this page's name), trail (optional: [label, path] pairs between Settings and
+    this page, e.g. [["Users", settings_users_path]] on one account's page). %>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Settings path">
+    <%= link_to "Settings", settings_path %>
+    <% local_assigns.fetch(:trail, []).each do |label, path| %>
+      <span class="sep" aria-hidden="true">/</span>
+      <%= link_to label, path %>
+    <% end %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= current %></span>
+  </nav>
+<% end %>

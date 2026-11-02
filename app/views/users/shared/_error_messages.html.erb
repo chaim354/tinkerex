@@ -1,15 +1,6 @@
+<%# ONE ERROR STYLE FOR EVERY FORM (UX audit F3): the `.form-errors` box the Settings pages use, with
+    the errors as one sentence, not Devise's "N errors prohibited this user from being saved" list.
+    data-turbo-cache="false" keeps a refusal out of Turbo's snapshot, so Back never shows it again. %>
 <% if resource.errors.any? %>
-  <div id="error_explanation" data-turbo-cache="false">
-    <h2>
-      <%= I18n.t("errors.messages.not_saved",
-                 count: resource.errors.count,
-                 resource: resource.class.model_name.human.downcase)
-       %>
-    </h2>
-    <ul>
-      <% resource.errors.full_messages.each do |message| %>
-        <li><%= message %></li>
-      <% end %>
-    </ul>
-  </div>
+  <div class="form-errors" role="alert" data-turbo-cache="false"><%= resource.errors.full_messages.to_sentence.chomp(".") %>.</div>
 <% end %>

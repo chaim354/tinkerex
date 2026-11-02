@@ -61,8 +61,8 @@ class PageBlocksTest < ApplicationSystemTestCase
     end
     assert_equal "block:new-1", all("div.panel-slot").first["data-key"], "Add lands the block first"
 
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Page layout saved."
+    click_on "Save layout"
+    assert_selector ".flash-notice", text: "Saved the page layout."
     block = @project.blocks.sole
     assert_equal [ "text", "Why a printed shade", "A **paper** shade yellows." ], [ block.kind, block.heading, block.body ]
     assert_equal block.layout_key, @project.reload.panels["order"].first, "and Save rewrote the placeholder key into the order"
@@ -91,8 +91,8 @@ class PageBlocksTest < ApplicationSystemTestCase
       fill_in "Caption", with: "Side on."
     end
 
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Page layout saved."
+    click_on "Save layout"
+    assert_selector ".flash-notice", text: "Saved the page layout."
     link = @project.blocks.find_by(kind: "link")
     image = @project.blocks.find_by(kind: "image")
     assert_equal [ "Printables", "https://www.printables.com/model/1", "Sliced files." ], [ link.heading, link.url, link.line ]
@@ -110,7 +110,9 @@ class PageBlocksTest < ApplicationSystemTestCase
     # type put Photos' top at y≈1290 in the suite's 1257px viewport. Restored in `ensure`.
     page.current_window.resize_to(1400, 2200)
     open_editor
-    within(slot(gone.layout_key)) { click_on "Delete" }
+    # A BLOCK WITH WRITING IN IT ASKS FIRST (the UX audit's C10). Mutation-checked: dropping the
+    # confirm from deleteBlock turns this `accept_confirm` red (Capybara::ModalNotFound).
+    accept_confirm("Delete this text block?") { within(slot(gone.layout_key)) { click_on "Delete" } }
     assert_no_selector slot(gone.layout_key)
 
     # THE DROP TARGET MUST BE IN THE VIEWPORT, and Photos is the panel that is on this page. A
@@ -122,8 +124,8 @@ class PageBlocksTest < ApplicationSystemTestCase
     assert_operator order.index(kept.layout_key), :>, order.index("attachments"),
                     "the block dropped below Files: #{order.inspect}"
 
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Page layout saved."
+    click_on "Save layout"
+    assert_selector ".flash-notice", text: "Saved the page layout."
     # A BLOCK ABSENT FROM THE POSTED DRAFT IS DESTROYED (spec decision 3): the draft is the whole
     # truth of blocks, so removing the slot IS the delete, and nothing else had to ask for it.
     assert_nil Maker::ProjectBlock.find_by(id: gone.id)
@@ -181,15 +183,51 @@ class PageBlocksTest < ApplicationSystemTestCase
     open_editor
     within("div.panel-slot[data-key='tasks']") { click_on "Hide" }
     add("text")
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Not saved: a text block needs a heading or a body"
+    click_on "Save layout"
+    # AN ALERT (the UX audit's B2): `.flash-notice` is drawn under the word "Done". Mutation-checked:
+    # `flash-notice` back in toast() turns this red.
+    assert_selector ".flash-alert", text: "Not saved: a text block needs a heading or a body"
+    assert_no_selector ".flash-notice"
     assert_current_path edit_layout_project_path(@project)
-    assert_no_selector ".flash-alert"
     assert_selector "div.panel-slot[data-key='tasks'].panel-slot--hidden"
+    # AN EMPTY BLOCK GOES WITHOUT A QUESTION: there is nothing in it to lose. An unexpected confirm
+    # here would fail the next command with UnexpectedAlertOpenError.
     within(new_slot("text")) { click_on "Delete" }
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Page layout saved."
+    assert_no_selector new_slot("text")
+    click_on "Save layout"
+    assert_selector ".flash-notice", text: "Saved the page layout."
     assert_includes @project.reload.panels["hidden"], "tasks"
+  end
+
+  # DISMISSED, NOTHING CHANGES; THE QUESTION NAMES THE BLOCK AS IT NOW READS. The heading is typed in
+  # this session, so a question built from the strip's server-rendered label would name the block
+  # as it was. An image block's question says the picture survives, because "delete the image"
+  # reads as deleting the file.
+  test "deleting a block that holds something asks, by the name it has now" do
+    open_editor
+    add("text")
+    within(new_slot("text")) { fill_in "Heading", with: "Why a printed shade" }
+    dismiss_confirm("Delete the text block “Why a printed shade”?") { within(new_slot("text")) { click_on "Delete" } }
+    assert_selector new_slot("text")
+
+    add("image")
+    within(new_slot("image")) { find("button.image-pick[data-node-id='#{@side.node_id}']").click }
+    accept_confirm("Delete this image block? The picture stays in the project folder.") do
+      within(new_slot("image")) { click_on "Delete" }
+    end
+    assert_no_selector new_slot("image")
+    assert_selector new_slot("text")
+  end
+
+  # "USE AUTOMATIC COVER" CLEARS THE CHOICE, AND THE CARD SAYS WHAT HAPPENS NEXT (C6): the page picks
+  # one from the project's files on Save, so "No cover" was untrue the moment the maker saved.
+  test "Use automatic cover says the cover will be chosen automatically" do
+    @project.update!(cover_node_id: @front.node_id)
+    open_editor
+    within(".page-intro") do
+      click_on "Use automatic cover"
+      assert_selector ".cover-current", text: "Chosen automatically: after Save, the page picks a cover from the project's files."
+    end
   end
 
   test "the page intro changes the description and the cover" do
@@ -205,8 +243,8 @@ class PageBlocksTest < ApplicationSystemTestCase
     # SEVERE. The claim worth making is about the editor, and this is where the editor is.
     assert_no_console_errors
 
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Page layout saved."
+    click_on "Save layout"
+    assert_selector ".flash-notice", text: "Saved the page layout."
     assert_equal [ "A lamp, rewritten.", @front.node_id ], [ @project.reload.description, @project.cover_node_id ]
     assert_selector "p.project-description", text: "A lamp, rewritten."
   end
@@ -218,7 +256,7 @@ class PageBlocksTest < ApplicationSystemTestCase
   # and Save would write it from a page that never displayed it.
   test "Apply mints a slot for a block the pasted text creates, and Save writes it" do
     open_editor
-    click_on "Edit as YAML"
+    click_on "Edit as text"
     # A textarea's VALUE is not its text node, so no Capybara matcher can wait on the server's
     # answer arriving; poll it (slice 1's suite records the same).
     wait_until(message: "the drawer never filled with the server's YAML") do
@@ -234,8 +272,8 @@ class PageBlocksTest < ApplicationSystemTestCase
       assert_field "Text (Markdown)", with: "From another project."
     end
 
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Page layout saved."
+    click_on "Save layout"
+    assert_selector ".flash-notice", text: "Saved the page layout."
     block = @project.blocks.sole
     assert_equal [ "Pasted", "From another project." ], [ block.heading, block.body ]
     assert_equal block.layout_key, @project.reload.panels["order"].first

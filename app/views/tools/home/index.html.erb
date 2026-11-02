@@ -1,14 +1,16 @@
 <% content_for :title, "Tools — Tinkerex" %>
 
 <div class="page-head"><h1>Tools</h1></div>
-<%# THE ONE PLACE THE PIN IS NAMED, because a right click is invisible until someone tries it.
-    pages/tools.css hides it at phone width, where there is no sidebar to pin to. %>
-<p class="muted tools-pin-hint">Right-click a tool to pin it to the sidebar.</p>
 
-<%# `toolmenu` (toolmenu_controller.js): every tool here pins or unpins itself from a right click on
-    its card (ShellHelper#tool_menu_data) — the calculator and each addon a manifest made alike. A
-    greyed-out card has no menu: it cannot run here, so a pinned link to it could open nothing. %>
-<div data-controller="toolmenu">
+<%# PINNING, TWO WAYS TO ONE DOOR (Tools::PinsController). Every runnable card carries a visible
+    Pin to sidebar toggle (tools/home/_pin_toggle), which a keyboard, a touch screen and a first-time
+    visitor can all find; a right click on the card does the same through `toolmenu`
+    (toolmenu_controller.js, ShellHelper#tool_menu_data), the calculator and each addon a manifest
+    made alike. The sentence that used to explain the right click is gone with the need for it
+    (UX audit G2). A greyed-out card has neither: it cannot run here, so a pinned link to it could
+    open nothing. `tools-home` scopes this page's card rules away from the bundles, which reuse
+    `.tools-grid` and `.addon-card` for their own galleries (pages/tools.css). %>
+<div class="tools-home" data-controller="toolmenu">
 
 <%#
   BUILT IN, ABOVE THE ADD-ONS (2026-10-21; plan 2026-10-21-calculator-modal.md). The calculator is a
@@ -18,7 +20,7 @@
   test/controllers/tools/home_controller_test.rb counts. Its own grid and heading keep the two
   kinds apart; the inner head/icon/title/description classes are shared for their look.
 
-  The card OPENS the modal (`data-calculator-open`); a right click on it pins it. At phone width,
+  The card OPENS the modal (`data-calculator-open`); its Pin toggle, or a right click, pins it. At phone width,
   where the tab bar keeps its four destinations and there is no rail, this card IS the way to the
   calculator (the Tools tab). `id="calculator"` is where the pinned rail link's href lands when its
   click is not the controller's to handle (a modified click).
@@ -29,17 +31,22 @@
     <%= tag.div class: "tool-card calculator-card", id: "calculator",
                 data: tool_menu_data(Maker::ToolPins::CALCULATOR, "Calculator") do %>
       <span class="addon-card-head">
-        <span class="addon-icon"><%= rail_icon(:calculator) %></span>
-        <span class="addon-title">Calculator</span>
+        <span class="addon-icon" aria-hidden="true"><%= rail_icon(:calculator) %></span>
+        <span class="addon-title" id="tool-title-calculator">Calculator</span>
       </span>
       <span class="addon-desc muted">Lengths in mm, cm, m, inches and feet, inch fractions, and
         conversions. Save a result to a project. <span class="calculator-card-keys">Opens over any page
         with <kbd><%= calculator_shortcut %></kbd>.</span></span>
-      <span class="calculator-card-actions">
+      <%# A <div>, not a <span>: the pin toggle is a <form>, which phrasing content cannot hold. %>
+      <div class="calculator-card-actions">
         <%# Plain `.btn`: the accent is not spent on this page (design-system.md rule 13). %>
         <button type="button" class="btn small calculator-card-open" data-calculator-open aria-haspopup="dialog"
                 aria-keyshortcuts="<%= CalculationsHelper::CALCULATOR_KEYS %>">Open calculator</button>
-      </span>
+        <%# After Open, so Esc from the right-click menu still hands focus back to Open
+            (toolmenu_controller.js takes the first control in a card that is not a link). %>
+        <%= render "tools/home/pin_toggle", key: Maker::ToolPins::CALCULATOR, name: "Calculator",
+                                            label_id: "tool-title-calculator" %>
+      </div>
     <% end %>
   </div>
 </section>
@@ -97,12 +104,21 @@
 <% end %>
 
 <div class="tools-grid">
-  <% @addons.each do |addon| %>
+  <% @addons.each_with_index do |addon, index| %>
     <% if addon.available? %>
-      <%= link_to tools_addon_path(addon.key), class: "addon-card", data: tool_menu_data(addon.key, addon.title) do %>
+      <%#
+        A CARD THAT HOLDS A BUTTON IS NOT A LINK (2026-11-02). A <form> cannot sit inside an <a>, so
+        the card is a <div> and its TITLE is the link, stretched over the whole card by
+        `.addon-card-link::after` (pages/tools.css): the card still opens the tool from anywhere on
+        it, and the link's name is the tool's name instead of every word on the card. The pin form
+        sits above the stretch. The right-click data stays on the card, so a right click anywhere
+        on it still opens the menu, and the menu hands focus back to the title link.
+      %>
+      <% title_id = "tool-title-#{index}" %>
+      <%= tag.div class: "addon-card", data: tool_menu_data(addon.key, addon.title) do %>
         <span class="addon-card-head">
-          <span class="addon-icon"><%= addon.icon %></span>
-          <span class="addon-title"><%= addon.title %></span>
+          <%= render "tools/home/addon_mark", addon: %>
+          <%= link_to addon.title, tools_addon_path(addon.key), class: "addon-title addon-card-link", id: title_id %>
         </span>
         <span class="addon-desc muted"><%= addon.description %></span>
         <% if addon.permissions.any? %>
@@ -111,11 +127,16 @@
             <%= addon.permissions.map { |p| Maker::Addons::Permissions.label_for(p["name"]) }.to_sentence %>
           </span>
         <% end %>
+        <div class="tool-card-actions">
+          <%= render "tools/home/pin_toggle", key: addon.key, name: addon.title, label_id: title_id %>
+        </div>
       <% end %>
     <% else %>
+      <%# NOT A LINK (UX audit G3): it cannot run here, and its page says the same sentence
+          (tools/addons/show) rather than mounting a bundle that would fail. %>
       <div class="addon-card disabled" title="<%= addon.unavailable_reason %>">
         <span class="addon-card-head">
-          <span class="addon-icon"><%= addon.icon %></span>
+          <%= render "tools/home/addon_mark", addon: %>
           <span class="addon-title"><%= addon.title %></span>
         </span>
         <span class="addon-desc muted"><%= addon.unavailable_reason %></span>

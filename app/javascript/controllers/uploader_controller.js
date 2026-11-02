@@ -1,5 +1,5 @@
 import { Controller } from "@hotwired/stimulus"
-import { uploadChunkFile } from "lib/chunk_upload"
+import { RequestError, alertToast, uploadChunkFile, uploadFailureSentence } from "lib/chunk_upload"
 import { isZip, reportAndLand, splitSelection, uploadSplit } from "lib/zip_unpack"
 
 // Browser-side upload (chunk two-phase). Thin wrapper over lib/chunk_upload so the importer and
@@ -14,10 +14,22 @@ import { isZip, reportAndLand, splitSelection, uploadSplit } from "lib/zip_unpac
 // head-then-put CHECK and not a lock (CLAUDE.md §14a), so two same-named files in one selection
 // could silently overwrite instead of the second losing with a message. The page reloads ONCE at
 // the end rather than per file, so a batch is one navigation.
+//
+// A FAILURE IS SAID, AND A RUN WITH ONE STAYS ON SCREEN (2026-11-02, the UX audit's B8). The status
+// line is a live region, so "Uploading x… (2 of 5)" is announced as well as drawn — set from
+// connect() because the two views that mount this (layouts/_topbar_upload, projects/_upload_control)
+// render the span bare. What went wrong is an alert in the flash stack, worded by
+// lib/chunk_upload.js#uploadFailureSentence, never `e.message`. A run where something failed does not
+// navigate, lib/zip_unpack.js#reportAndLand's rule: a reload would wipe the one line that says what
+// did not land, so the line says "Reload to see them" instead.
 export default class extends Controller {
   static targets = ["input", "status"]
   static values  = { beginUrl: String, finalizeUrl: String, attachUrl: String, redirectUrl: String, parentNodeId: String,
                      unpackUrl: String, unpackedUrl: String, modelExts: Array }
+
+  connect() {
+    if (this.hasStatusTarget) this.statusTarget.setAttribute("aria-live", "polite")
+  }
 
   async upload() {
     // ONE ZIP RUN AT A TIME: a selection made while one is being read or unpacked is ignored, not
@@ -87,15 +99,17 @@ export default class extends Controller {
       } catch (e) {
         // Recorded and carried past, not rethrown: losing files 4 and 5 because file 3 hit a
         // name that was already taken is the failure this loop exists to avoid.
-        failed.push(`${file.name} (${e.message})`); console.error(e)
+        failed.push({ name: file.name, error: e }); console.error(e)
       }
     }
 
-    if (done === 0) {
-      this.setStatus(`Upload failed: ${failed.join(", ")}`)
-      return
+    if (failed.length > 0) {
+      const sentence = uploadFailureSentence(failed, { landed: done })
+      const shown = alertToast(sentence)
+      if (done === 0) return this.setStatus(shown ? "" : sentence)
+      return this.setStatus(`Uploaded ${done} of ${files.length}. Reload to see ${done === 1 ? "it" : "them"}.${shown ? "" : ` ${sentence}`}`)
     }
-    this.setStatus(failed.length ? `Uploaded ${done}; failed: ${failed.join(", ")}` : "Done.")
+    this.setStatus("Done.")
     if (this.hasRedirectUrlValue && this.redirectUrlValue) window.location.href = this.redirectUrlValue
     else window.location.reload()
   }
@@ -118,7 +132,7 @@ export default class extends Controller {
       },
       body: JSON.stringify({ node_id: nodeId })
     })
-    if (!res.ok) throw new Error(`attach failed (${res.status})`)
+    if (!res.ok) throw new RequestError(`attach failed (${res.status})`, { status: res.status })
   }
 
   setStatus(text) { if (this.hasStatusTarget) this.statusTarget.textContent = text }

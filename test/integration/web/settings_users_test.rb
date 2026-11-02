@@ -55,7 +55,7 @@ module Web
           request.call
         end
         assert_redirected_to settings_path
-        assert_equal "Only an admin can manage accounts.", flash[:alert]
+        assert_equal "Only an admin can manage users.", flash[:alert]
       end
       assert @admin.reload.valid_password?(PASSWORD)
       assert_not @member.reload.admin?
@@ -82,7 +82,8 @@ module Web
       sign_in_as(@admin)
       get settings_path
       assert_select "ul.settings-hub a.settings-name[href=?]", settings_users_path, text: "Users"
-      assert_select ".settings-fact", text: "2 accounts"
+      # The row is "Users", so its fact counts users (UX audit F8).
+      assert_select ".settings-fact", text: "2 users"
 
       delete destroy_user_session_path
       sign_in_as(@member)
@@ -106,12 +107,14 @@ module Web
       assert_select ".settings-fact", text: "never signed in", count: 1
     end
 
-    test "the page says what a new account will see" do
+    test "the page says what a new user will see" do
       sign_in_as(@admin)
       get settings_users_path
 
       if caps.syncable?
-        assert_match(/a library of its own/, response.body)
+        # "Each user has a library of their own on the sync server" (the account → user rewording of
+        # the UX audit's §H; the share/s3 arm below is the other sentence).
+        assert_match(/a library of their own/, response.body)
       else
         assert_match(/sees the same library folder/, response.body)
       end
@@ -251,21 +254,43 @@ module Web
       assert sso.reload.encrypted_password.blank?
     end
 
-    # Found in review: the unlock was assigned before the password was refused, so the re-rendered
-    # page said nothing of a lock the database still held, and the field read the account's @user
-    # and refilled the rejected password.
-    test "a refused reset still shows the lock, keeps it, and does not refill the password" do
+    # Found in review: the unlock was assigned before the password was refused, and the field read the
+    # account's @user and refilled the rejected password. The page no longer reports a lock at all
+    # (UX audit F8: lock_strategy is :none, so nothing sets one now), but a lock left from before
+    # 2026-10-22 must still survive a refused reset.
+    test "a refused reset keeps an old lock and does not refill the password" do
       @member.update_columns(locked_at: Time.current, failed_attempts: 10)
       sign_in_as(@admin)
 
       patch reset_password_settings_user_path(@member), params: { user: { password: "short" } }
 
       assert_response :unprocessable_entity
-      assert_match(/Locked after too many wrong passwords/, response.body)
+      assert_no_match(/Locked after too many wrong passwords/, response.body)
       assert @member.reload.access_locked?
       assert_select "form[action=?] input[name=?]", reset_password_settings_user_path(@member), "user[password]" do |fields|
         assert_nil fields.first["value"], "the rejected password must not come back in the field"
       end
+    end
+
+    # B5: taking admin away is confirmed and names the account; MUTATION-CHECKED by dropping the
+    # button's form data (the run's output is in the UX-audit T6 report).
+    test "Remove admin asks first, naming the account" do
+      @member.update!(admin: true)
+      sign_in_as(@admin)
+      get edit_settings_user_path(@member)
+      assert_select "form[action=?][data-turbo-confirm^=?] button", set_admin_settings_user_path(@member),
+                    "Remove admin from #{@member.email}?", text: "Remove admin"
+    end
+
+    test "one account's page is crumbed Settings, Users, then the account" do
+      sign_in_as(@admin)
+      get edit_settings_user_path(@member)
+      assert_select ".topbar nav.breadcrumb" do
+        assert_select "a[href=?]", settings_path, text: "Settings"
+        assert_select "a[href=?]", settings_users_path, text: "Users"
+        assert_select "[aria-current=page]", @member.email
+      end
+      assert_select ".page-head a.btn.ghost", 0
     end
 
     test "make and remove admin; the demo account cannot be made one" do

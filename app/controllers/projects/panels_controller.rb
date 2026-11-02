@@ -36,7 +36,7 @@ module Projects
     # intros go with it, by the same argument: they are the arrangement, not a separate setting.
     def destroy
       @project.update!(panels: nil)
-      redirect_to project_path(@project), notice: "Page layout reset to the #{kind_label} defaults."
+      redirect_to project_path(@project), notice: "Reset the page layout to the #{kind_label} defaults."
     end
 
     private
@@ -45,7 +45,7 @@ module Projects
     # the layout AS IT IS NOW, so a folder renamed on disk mid-edit (share/s3 mint a new dir id)
     # drops out with a note rather than refusing the whole save, and anything a browser of ours
     # would never send — an unknown fixed key, a view Files does not offer — refuses the write and
-    # returns to the editor with the reasons. Nothing is written on a refusal.
+    # answers with the reasons (#refuse). Nothing is written on a refusal.
     def replace
       doc = document
       posted = parsed_layout
@@ -66,11 +66,36 @@ module Projects
       rescue ActiveRecord::RecordInvalid => e
         return refuse([ e.record.errors.full_messages.join(", ") ])
       end
-      redirect_to project_path(@project), notice: [ "Page layout saved.", *result.notes ].join(" ")
+      saved([ "Saved the page layout.", *result.notes ].join(" "))
     end
 
+    # TWO ANSWERS, AND THE EDITOR TAKES THE JSON ONE (2026-11-02, the UX audit's B1). The editor posts
+    # its form with Accept: application/json (layout_editor_controller.js#submit) and reads the
+    # answer IN PLACE: a refusal is an alert on the page that still holds the draft, never a redirect
+    # that reloads the saved layout over every unsaved change. Success sets the flash for the page
+    # the editor then visits, so the notice reads exactly as the redirect's did. The HTML answer —
+    # the redirect either way — is for any other caller (a form post with no script, the request
+    # tests); HTML is listed FIRST so an ambiguous Accept gets it.
+    def saved(notice)
+      respond_to do |format|
+        format.html { redirect_to project_path(@project), notice: }
+        format.json do
+          flash[:notice] = notice
+          render json: { location: project_path(@project) }
+        end
+      end
+    end
+
+    # THE MESSAGE ENDS WITH A FULL STOP WHATEVER ITS SOURCE: a RecordInvalid's `full_messages` carry
+    # none, and the editor appends a sentence after it ("… Your changes are still on this page."),
+    # which would otherwise run on from the reason.
     def refuse(errors)
-      redirect_to edit_layout_project_path(@project), alert: "The layout was not saved: #{errors.join(' ')}"
+      message = "The layout was not saved: #{errors.join(' ')}"
+      message = "#{message}." unless message.end_with?(".")
+      respond_to do |format|
+        format.html { redirect_to edit_layout_project_path(@project), alert: message }
+        format.json { render json: { error: message, errors: }, status: :unprocessable_entity }
+      end
     end
 
     # THE BROWSER'S DRAFT IS THE WHOLE TRUTH OF BLOCKS; A PASTED LAYOUT IS NOT (spec §5), AND THE

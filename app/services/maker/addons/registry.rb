@@ -47,11 +47,15 @@ module Maker
       #
       # STILL ONLY COSMETIC, exactly as the min_host arm is. `Tools::AddonsController` does not gate
       # on `available?` (see states_key_permitted?'s note below) — a greyed addon stays reachable by
-      # URL. This makes the gallery honest; it is not an access control, and reading it as one is
-      # how a real gate ends up not being written.
+      # URL, where its page shows this reason in place of the bundle. This makes the gallery and the
+      # page honest; it is not an access control, and reading it as one is how a real gate ends up
+      # not being written.
       def unavailable_reason
+        # IN THE MAKER'S WORDS, NUMBERS AFTER (UX audit H, 2026-11-02): "host" and "level" are this
+        # API's vocabulary, not the reader's, so the sentence names the product and the levels follow
+        # in parentheses for whoever reports it.
         if min_host > Maker::Addons::Host::LEVEL
-          return "Needs a newer version of this host (asks for level #{min_host}, this host is " \
+          return "Needs a newer Tinkerex than this server runs (level #{min_host}; this server is " \
                  "level #{Maker::Addons::Host::LEVEL})"
         end
 
@@ -283,14 +287,14 @@ module Maker
       # SKIP, NOT GREY OUT — DELIBERATELY THE OPPOSITE OF `min_host`'S CHOICE ABOVE, and the two do
       # not generalise to each other. `min_host` leaves a too-new addon LISTED with an
       # `unavailable_reason`, on the grounds that an addon which silently never appears reads as a
-      # broken deploy. That argument does not reach here, because `Tools::AddonsController` never
-      # gates on `available?` at all — its ONE consumer is the `if addon.available?` in
-      # `app/views/tools/home/index.html.erb` that decides how a gallery card renders (two further
-      # lines there render `unavailable_reason`), and nothing else in the app asks. A
-      # listed-but-unavailable addon is still `Registry.find`-able, `load_addon` still succeeds, and
-      # `#states`/`#create` still serve `@addon.states_key` exactly as if nothing were wrong. Greying
-      # this out would leave the hole wide open while LOOKING closed. A future editor harmonising the
-      # two decisions is the mistake to watch for — don't.
+      # broken deploy. That argument does not reach here, because no action in
+      # `Tools::AddonsController` gates on `available?` at all. Every reader of it is cosmetic: the
+      # gallery card (`app/views/tools/home/index.html.erb`), the addon page, which draws the reason
+      # instead of mounting the bundle (`app/views/tools/addons/show.html.erb`), the New menu's list
+      # and the pin door's refusal. A listed-but-unavailable addon is still `Registry.find`-able,
+      # `load_addon` still succeeds, and `#states`/`#create` still serve `@addon.states_key` exactly
+      # as if nothing were wrong. Greying this out would leave the hole wide open while LOOKING
+      # closed. A future editor harmonising the two decisions is the mistake to watch for — don't.
       #
       # A refusal SKIPS the addon, exactly as an unsupported api_version does, rather than raising:
       # one bad manifest must never take /tools down. THE SKIP IS NO LONGER SILENT, AND THIS METHOD

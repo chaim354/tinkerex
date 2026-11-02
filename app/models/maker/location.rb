@@ -15,8 +15,23 @@ module Maker
 
     validates :name, presence: true
     validate :parent_belongs_to_user, if: -> { parent_id.present? }
+    # A LOCATION CANNOT SIT INSIDE ITSELF. Reachable since a location can be re-placed on its edit
+    # page (UX audit 2026-11-01, E5): choosing a drawer as its own cabinet's parent would make a ring
+    # every "in X" walk loops on. The page offers no such choice; this is the door's answer to a
+    # crafted one.
+    validate :parent_is_not_inside_this, if: -> { parent_id.present? && persisted? }
 
     private
+
+    def parent_is_not_inside_this
+      seen = Set.new
+      current = parent_id
+      while current && seen.add?(current)
+        return errors.add(:parent_id, "cannot be this location or one inside it") if current == id
+
+        current = Maker::Location.where(id: current, user_id: user_id).pick(:parent_id)
+      end
+    end
 
     def parent_belongs_to_user
       unless Maker::Location.exists?(id: parent_id, user_id: user_id)

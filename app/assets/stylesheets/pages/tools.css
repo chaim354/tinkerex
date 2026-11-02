@@ -18,11 +18,17 @@
      Add-ons a manifest makes. The heading is the page's section heading, quieter than the h1. */
   .tools-section { margin-bottom: var(--space-5); }
   .tools-section-head { margin: 0 0 var(--space-3); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
-  .calculator-card .addon-icon .rail-icon { width: 22px; height: 22px; }
-  /* How to pin (toolmenu_controller.js). A phone has no sidebar, and no right click. */
-  .tools-pin-hint { margin: calc(-1 * var(--space-2)) 0 var(--space-4); font-size: 13px; }
-  @media (max-width: 719px) { .tools-pin-hint { display: none; } }
-  .calculator-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
+  .calculator-card .addon-icon .rail-icon { width: 18px; height: 18px; }
+  .calculator-card-actions, .tools-home .tool-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
+  /* A card's permission line already draws the rule above it, so the actions under it do not. */
+  .tools-home .addon-card-foot + .tool-card-actions { margin-top: 0; padding-top: 0; border-top: 0; }
+  /* THE PIN TOGGLE (tools/home/_pin_toggle). Pressed is drawn in ink, the way every toggle and
+     selected chip is (selection is ink, design-system.md rule 13), and its word changes with it.
+     A phone has no sidebar to pin to, so the control goes with the rail. */
+  .tools-home .tool-pin-form { position: relative; z-index: 1; margin: 0; }
+  .tools-home .tool-pin[aria-pressed="true"] { border-color: var(--fg); background: var(--fg); color: var(--surface); }
+  /* An addon card's action row holds only the toggle, so it goes too; the calculator's keeps Open. */
+  @media (max-width: 719px) { .tools-home .tool-pin-form, .tools-home .tool-card-actions { display: none; } }
   /* The shortcut, drawn the way the top bar draws its ⌘K (shell.css .topbar-kbd). */
   .calculator-card-keys { white-space: nowrap; }
   .calculator-card-keys kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
@@ -32,7 +38,18 @@
   .addon-card:hover { text-decoration: none; border-color: var(--fg); }
   .addon-card.disabled { opacity: .6; }
   .addon-card-head { display: flex; align-items: center; gap: 10px; }
-  .addon-icon { font-size: 22px; line-height: 1; }
+  /* THE TOOL'S MARK: a tile holding a monogram (tools/home/_addon_mark) or, for a built-in tool, its
+     rail glyph. Never the manifest's emoji `icon` (UX audit G1). */
+  .addon-icon { display: inline-grid; place-items: center; flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--raised); color: var(--fg); font: 600 15px/1 var(--font-ui); }
+  /* A RUNNABLE CARD IS A <div> WHOSE TITLE IS THE LINK (tools/home/index), stretched over the card
+     so the whole card still opens the tool. Scoped to `.tools-home`: the bundles build their own
+     `.addon-card`s, as links or buttons, inside `.tools-grid` on their own pages. */
+  .tools-home .addon-card:not(.disabled) { position: relative; }
+  .tools-home .addon-card-link { color: inherit; }
+  .tools-home .addon-card-link::after { content: ""; position: absolute; inset: 0; border-radius: inherit; }
+  .tools-home .addon-card-link:hover { text-decoration: none; }
+  .tools-home .addon-card-link:focus-visible { outline: none; }
+  .tools-home .addon-card:has(.addon-card-link:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
   .addon-title { font-weight: 600; font-size: 14px; }
   .addon-desc { font-size: 13px; line-height: 1.45; }
   /* ONE CLASS, TWO ELEMENTS: a <span> on the gallery card, a <ul> on the addon page. Without the
@@ -45,6 +62,11 @@
      a row keeps its border-top at the same height. */
   .addon-card-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); font: 11px/1.5 var(--font-mono); }
   ul.addon-permissions { list-style: none; margin: 0 0 18px; padding: 0; }
+  /* The addon page's own states around the mount (tools/addons/show): loading, a bundle that would
+     not load, and an addon this server cannot run. The raw error stays folded, left-aligned, and
+     wraps rather than pushing the page sideways at 375px (design-system.md rule 11). */
+  .addon-load-failed details { margin-top: var(--space-3); text-align: left; }
+  .addon-load-detail { margin: var(--space-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); }
   ul.addon-permissions li { margin-top: 4px; }
   .addon-thumb { width: 100%; height: 120px; object-fit: contain; background: var(--raised); border-radius: 6px; }
   .addon-thumb.is-missing { display: none; }

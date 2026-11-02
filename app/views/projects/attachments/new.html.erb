@@ -1,33 +1,62 @@
-<% content_for :title, "Attach a file — Tinkerex" %>
+<% content_for :title, "Attach a file — #{@project.name} — Tinkerex" %>
 
-<div class="page-head"><h1>Attach a file to <%= @project.name %></h1></div>
+<%#
+  THE ATTACH PICKER (2026-11-02, the UX audit's C9). Breadcrumbs in the top bar, not a foot
+  "← Back to project" (design-system.md rule 9); one visible label on the search box, not a
+  placeholder; and each row shows its thumbnail and its folder, so three files of one name can be
+  told apart, and an Attach button that says when attaching also moves the file into the project's
+  folder ("Attach and move into Desk Lamp") — Maker::AttachPicker's prediction of
+  Maker::AttachToProject's rules. A build-log entry's photo (?entry_id=) attaches to the entry and
+  never moves, so its button is plain Attach.
+%>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Project path">
+    <%= link_to "Projects", projects_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to @project.name, project_path(@project) %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= params[:entry_id].present? ? "Add a photo" : "Attach a file" %></span>
+  </nav>
+<% end %>
+
+<div class="page-head"><h1><%= params[:entry_id].present? ? "Add a photo to a build log entry" : "Attach a file to #{@project.name}" %></h1></div>
 
 <%# entry_id must survive a search, or the Attach buttons below fall back to attaching to the
     PROJECT instead of the build-log entry the picker was opened for. It rides along as a hidden
     field in this GET form so it lands back in params on the results page. %>
 <%= form_with url: new_project_attachment_path(@project), method: :get, class: "picker-search" do |f| %>
   <% if params[:entry_id].present? %><%= hidden_field_tag :entry_id, params[:entry_id] %><% end %>
-  <%= f.search_field :q, value: params[:q], placeholder: "Search your library by name…", autofocus: true %>
+  <label class="picker-label" for="picker-q">Search your library by name</label>
+  <%= f.search_field :q, value: params[:q], id: "picker-q", autofocus: true %>
   <%= f.submit "Search", class: "btn" %>
 <% end %>
 
-<% if @results.empty? %>
+<% if @rows.empty? %>
   <p class="muted">No files found<%= " for “#{params[:q]}”" if params[:q].present? %>.</p>
 <% else %>
-  <div class="picker-results">
-    <% @results.each do |node| %>
+  <div class="picker-results" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+    <% @rows.each do |row| %>
+      <% node = row.node %>
+      <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
       <div class="picker-result">
-        <span class="picker-name"><%= node.name %></span>
+        <span class="picker-thumb file-cell" <%= tag.attributes(data: thumb_cell_data(node.node_id, ext)) %>>
+          <%= render "files/thumb", thumb: @thumbs.thumb(node.node_id), ext_label: ext, url: preview_src(@thumbs.thumb(node.node_id)) %>
+        </span>
+        <span class="picker-text">
+          <span class="picker-name"><%= node.name %></span>
+          <span class="picker-folder mono muted"><%= row.folder.presence || "Library" %></span>
+        </span>
         <% if params[:entry_id].present? %>
           <%= button_to "Attach", entry_photos_path(params[:entry_id]),
-                        params: { node_id: node.node_id }, class: "btn small" %>
+                        params: { node_id: node.node_id }, class: "btn small",
+                        "aria-label": "Attach #{node.name}" %>
         <% else %>
-          <%= button_to "Attach", project_attachments_path(@project),
-                        params: { node_id: node.node_id }, class: "btn small" %>
+          <% label = row.moves ? "Attach and move into #{@project.name}" : "Attach" %>
+          <%= button_to label, project_attachments_path(@project),
+                        params: { node_id: node.node_id }, class: "btn small",
+                        "aria-label": "#{label.sub('Attach', "Attach #{node.name}")}" %>
         <% end %>
       </div>
     <% end %>
   </div>
 <% end %>
-
-<p><%= link_to "← Back to project", project_path(@project), class: "linkbtn" %></p>

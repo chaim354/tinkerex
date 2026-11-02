@@ -310,7 +310,10 @@ class MeasureExportTest < ApplicationSystemTestCase
 
     find("[data-measure-target='saveSvgButton']").click
 
-    assert_text(/already exists/i, wait: 15)
+    # IN THE ONE WORDING EVERY UPLOAD DOOR USES (lib/chunk_upload#uploadFailureSentence), never the
+    # adapter's own "already exists" sentence or a status code (UX audit H, 2026-11-02).
+    assert_selector ".measure-dims", exact_text: "Upload failed: sample-parts.svg was refused — the folder " \
+                                                 "already has a file with that name.", wait: 15
     assert_equal "<svg/>", File.read(@root.join("sample-parts.svg")), "nothing was overwritten"
   end
 

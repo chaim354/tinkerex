@@ -58,8 +58,12 @@ module Files
       # is not reachable here (the button posts, so there is no meaningful referer chain for it);
       # the subject travels as a param the view already knows.
       node_id = current_user.nodes.present.exists?(node_id: params[:from]) ? params[:from] : link.from_node_id
+      # THE NOTICE NAMES THE OTHER END, in the button's verb (UX audit B7): the page's own file is
+      # the one the maker is looking at, so "Unlinked bracket.stl." says what left the list.
+      other_id = node_id == link.from_node_id ? link.to_node_id : link.from_node_id
+      other = current_user.nodes.find_by(node_id: other_id)&.name || "the file"
       link.destroy!
-      redirect_to file_path(node_id), notice: "Link removed."
+      redirect_to file_path(node_id), notice: "Unlinked #{other}."
     end
 
     private

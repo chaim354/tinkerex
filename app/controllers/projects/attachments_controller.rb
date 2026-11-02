@@ -28,10 +28,18 @@ module Projects
     # GET /projects/:project_id/attachments/new?q= — the picker: search by name + recent files.
     # `ESCAPE '\'` is SearchController's idiom: SQLite has no default LIKE escape character, so
     # without it sanitize_sql_like's backslash is matched literally and "100%" finds nothing.
+    #
+    # EACH ROW SAYS WHERE THE FILE IS AND WHAT ATTACH WILL DO (2026-11-02, the UX audit's C9):
+    # Maker::AttachPicker gives the folder and whether the attach moves the file into this project's
+    # folder, and ThumbnailMap the picture — three "tetra" rows or forty bare names could not be
+    # told apart. A build-log entry's photo is attached to the ENTRY and never moves, so that arm
+    # asks no prediction.
     def new
       scope = current_user.nodes.present.where(kind: "file")
       scope = scope.where("name LIKE ? ESCAPE '\\'", "%#{ActiveRecord::Base.sanitize_sql_like(params[:q])}%") if params[:q].present?
       @results = scope.order(updated_at: :desc).limit(RECENT_LIMIT).to_a
+      @rows = Maker::AttachPicker.rows(user: current_user, project: @project, nodes: @results)
+      @thumbs = Maker::Previews::ThumbnailMap.for(current_user, @results.map(&:node_id))
     end
 
     # POST /projects/:project_id/attachments  { node_id }
@@ -135,8 +143,12 @@ module Projects
     def destroy
       att = current_user.maker_file_attachments.find(params[:id])
       project = att.attachable
+      # THE NOTICE NAMES WHAT LEFT (2026-11-02, the UX audit's B7: "Detached." was one of the two
+      # bare notices). The file itself is untouched, so its name is still there to read.
+      name = current_user.nodes.where(node_id: att.node_id).pick(:name) || "the file"
+      owner = project.try(:name) || project.try(:title)
       att.destroy!
-      redirect_back_or_to project_path(project), notice: "Detached."
+      redirect_back_or_to project_path(project), notice: owner ? "Detached #{name} from #{owner}." : "Detached #{name}."
     end
 
     private

@@ -40,7 +40,7 @@ class SheetGridTest < ApplicationSystemTestCase
     visit new_user_session_path
     fill_in "user[email]", with: @user.email
     fill_in "user[password]", with: PASSWORD
-    click_on "Log in"
+    click_on "Sign in"
     # Wait for Turbo to actually FOLLOW the login redirect before navigating (see
     # tray_layout_test.rb — without this the next visit races the redirect and 401s into the login
     # page, which reads exactly like the page failing to render).

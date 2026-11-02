@@ -1,3 +1,10 @@
+<%# One model on a grid. `facts` is Maker::Model.card_facts' entry for it, or absent (a project's
+    Models panel renders this card without one). THE FACTS LINE TELLS CARDS APART (UX audit
+    2026-11-01, E1): the sweep makes one model per file on a shelf, so tetra.stl and tetra.obj in one
+    folder are two "tetra" cards, and only the formats and the folder say which is which. No status
+    badge (2026-10-20, the owner's call: it covered the picture); the chips above the grid filter by
+    status and the model's page shows it. %>
+<% facts = local_assigns[:facts] %>
 <%= link_to model_path(model), class: "project-card model-card" do %>
   <% if model.cover_node_id %>
     <span class="thumb file-cell" data-thumbs-target="cell"
@@ -8,4 +15,10 @@
     <span class="thumb project-thumb-empty" aria-hidden="true"><%= rail_icon(:models) %></span>
   <% end %>
   <span class="project-name model-name"><%= model.title %></span>
+  <% if facts && (facts.extensions.any? || facts.folder) %>
+    <span class="model-facts">
+      <% if facts.extensions.any? %><span class="model-facts-ext"><%= facts.extensions.first(3).join(", ") %><%= "…" if facts.extensions.size > 3 %></span><% end %>
+      <% if facts.folder %><span class="model-facts-folder"><%= facts.folder.presence || "Library" %></span><% end %>
+    </span>
+  <% end %>
 <% end %>

@@ -1,4 +1,4 @@
-import { postJSON } from "lib/chunk_upload"
+import { alertToast, postJSON, uploadFailureSentence } from "lib/chunk_upload"
 import { extOf, isZip, listZipBundle } from "lib/zip_bundle"
 
 // THE TOP BAR'S UPLOAD WHEN THE SELECTION HOLDS A MODEL ZIP (2026-10-21; spec
@@ -44,8 +44,9 @@ export async function splitSelection(files, modelExts) {
 // Unpack ONE model zip: the folder map from the server, every entry inflated (`load()`) and sent
 // through `upload` one at a time, then the catalog nudge. The inflate is INSIDE the per-entry try:
 // a failed entry — an unreadable member as much as a refused name — is recorded as `dir/name` (two
-// `readme.txt` in different folders must stay two lines) and passed over, the importer's rule: one
-// bad entry must not lose the other seventeen. THROWS only when the folder itself could not be made.
+// `readme.txt` in different folders must stay two lines) with the error that stopped it, and passed
+// over, the importer's rule: one bad entry must not lose the other seventeen. THROWS only when the
+// folder itself could not be made.
 async function unpackZip({ file, entries }, { parentNodeId, unpackUrl, unpackedUrl, upload, setStatus }) {
   const made = await postJSON(unpackUrl, {
     parent_node_id: parentNodeId || null,
@@ -62,7 +63,7 @@ async function unpackZip({ file, entries }, { parentNodeId, unpackUrl, unpackedU
       await upload(blob, made.folder_map[entry.dir] ?? made.folder_map[""])
     } catch (e) {
       console.warn(`skipped ${path}:`, e)
-      failed.push(path)
+      failed.push({ name: path, error: e })
     }
   }
   const landed = entries.length - failed.length
@@ -90,13 +91,13 @@ export async function uploadSplit(split, { parentNodeId, unpackUrl, unpackedUrl,
       const r = await unpackZip(zip, { parentNodeId, unpackUrl, unpackedUrl, upload, setStatus })
       if (r.landed > 0) {
         unpacked.push({ name: zip.file.name, folderUrl: r.folderUrl })
-        failed.push(...r.failed.map((name) => `${name} (in ${zip.file.name})`))
+        failed.push(...r.failed.map((f) => ({ ...f, name: `${f.name} in ${zip.file.name}` })))
       } else {
-        failed.push(`${zip.file.name} (nothing could be unpacked)`)
+        failed.push({ name: zip.file.name, why: "nothing in it could be unpacked" })
       }
     } catch (e) {
       console.error(e)
-      failed.push(`${zip.file.name} (${e.message})`)
+      failed.push({ name: zip.file.name, error: e })
     }
   }
 
@@ -111,7 +112,7 @@ export async function uploadSplit(split, { parentNodeId, unpackUrl, unpackedUrl,
     } catch (e) {
       console.error(e)
       restFailed.add(file.name)
-      failed.push(`${file.name} (${e.message})`)
+      failed.push({ name: file.name, error: e })
     }
   }
 
@@ -126,9 +127,17 @@ export async function uploadSplit(split, { parentNodeId, unpackUrl, unpackedUrl,
 // The end of a run, the same for both flows. ANYTHING THAT WENT WRONG STAYS ON SCREEN — a reload
 // would wipe the one line that says what failed. A clean run navigates: to the unpacked folder, or
 // a reload of this page so the new files show.
+//
+// WHAT FAILED IS AN ALERT, NOT THE STATUS LINE (2026-11-02, the UX audit's B8): the line is 12px
+// muted progress text, and it used to carry the raw `e.message` of every failure. The alert is worded
+// by lib/chunk_upload.js#uploadFailureSentence; the status keeps what did land. Where a page has no
+// flash stack the sentence falls back to the status line.
 export function reportAndLand(out, setStatus) {
-  if (out.unpacked.length === 0 && out.uploaded === 0) {
-    setStatus(out.failed.length > 0 ? `Upload failed: ${out.failed.join(", ")}` : "Nothing was uploaded.")
+  const landed = out.unpacked.length + out.uploaded
+  const failure = uploadFailureSentence(out.failed, { landed })
+  const shown = failure ? alertToast(failure) : false
+  if (landed === 0) {
+    setStatus(failure ? (shown ? "" : failure) : "Nothing was uploaded.")
     return
   }
   if (out.failed.length > 0 || out.unreadable.length > 0) {
@@ -139,9 +148,9 @@ export function reportAndLand(out, setStatus) {
       const asIs = out.unreadable.length === 1 ? "it as it is" : "them as they are"
       parts.push(`couldn't open ${out.unreadable.join(", ")}, so uploaded ${asIs}`)
     }
-    if (out.failed.length > 0) parts.push(`failed: ${out.failed.join(", ")}`)
     const line = parts.join("; ")
-    setStatus(`${line.charAt(0).toUpperCase()}${line.slice(1)}. Reload to see them.`)
+    const tail = failure && !shown ? ` ${failure}` : ""
+    setStatus(`${line.charAt(0).toUpperCase()}${line.slice(1)}. Reload to see them.${tail}`)
     return
   }
   setStatus("Done.")

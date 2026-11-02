@@ -21,12 +21,14 @@ module Web
       get tag_path("laser")
       assert_response :success
       assert_select ".page-head h1 .tag-chip", text: "laser"
-      assert_select ".page-subtitle", text: "3 things"
+      # BY KIND (UX audit D11, 2026-11-02): it read "3 things", which said nothing about what to look
+      # for below.
+      assert_select ".page-subtitle", text: "1 project · 1 3D model · 1 inventory item"
 
       assert_select ".result-group--project h2", text: "Projects 1"
       assert_select ".result-group--project .result-row a[href=?]", project_path(project), text: "Desk Lamp"
 
-      assert_select ".result-group--model h2", text: "Models 1"
+      assert_select ".result-group--model h2", text: "3D models 1"
       assert_select ".result-group--model .result-row a[href=?]", model_path(model), text: "Bracket"
 
       assert_select ".result-group--inventory_item h2", text: "Inventory 1"
@@ -93,6 +95,16 @@ module Web
       get tag_path("laser")
       assert_response :success
       assert_select ".empty", text: /Nothing wears this tag/
+      # THE NEXT STEP (UX audit D11): where a tag is added, and a way into the Library.
+      assert_select ".empty a[href=?]", files_path, text: "browse the Library"
+      assert_select ".page-subtitle", text: "Nothing yet"
+    end
+
+    # THE CRUMB GOES SOMEWHERE (UX audit D11): the tag list is Settings › Tags.
+    test "the Tags crumb links the tag list" do
+      @user.maker_projects.create!(name: "Desk Lamp", tag_list: "laser")
+      get tag_path("laser")
+      assert_select "nav.breadcrumb a[href=?]", settings_tags_path, text: "Tags"
     end
   end
 end

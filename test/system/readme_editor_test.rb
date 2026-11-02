@@ -10,7 +10,7 @@ require "support/git_repo_fixture"
 # Save ever posts what the maker TYPED. readme_controller.js#sync is the one line that carries
 # it: the form's real field is a textarea CodeMirror hides, and without the copy-back the form
 # submits whatever that textarea held when the editor mounted — the ORIGINAL bytes — with
-# "README saved." and a redirect to prove it worked. That is this repo's dominant failure shape
+# "Saved the README." and a redirect to prove it worked. That is this repo's dominant failure shape
 # (CLAUDE.md §15), and this file is the one place it goes red: empty `sync()`'s body and the
 # marker assertions below fail while every request test stays green.
 #
@@ -54,7 +54,7 @@ class ReadmeEditorTest < ApplicationSystemTestCase
     click_on "Save README"
 
     # THE REDIRECTED PAGE, NOT THE BUFFER: the card is rebuilt from the bytes the port reads back.
-    assert_selector ".flash-notice", text: "README saved."
+    assert_selector ".flash-notice", text: "Saved the README."
     assert_selector ".readme-card .markdown", text: MARKER
     # THE BYTES ON DISK, not the page's own idea of them.
     assert_includes File.read(@path), MARKER

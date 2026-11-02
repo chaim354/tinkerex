@@ -25,14 +25,19 @@
   without JS -- so each option's VALUE is "<repo node_id>:<tag>" and Projects::ReleasesController
   splits it on the first colon. Its own comment argues why that is unambiguous.
 %>
-<%# QUIET AT ZERO (stage 4, S4-1): no releases is the heading and Create release. The count span
-    goes with the list it counts and the empty sentence with it, for the same reason
-    projects/_wiring drops both -- the composer below, which is what an empty panel is for, stays. %>
+<%# QUIET AT ZERO (stage 4, S4-1): no releases is the heading and its composer. The count span goes
+    with the list it counts and the empty sentence with it, for the same reason projects/_wiring
+    drops both -- the composer, which is what an empty panel is for, stays. It sits in the head, a
+    direct child of `.panel-head` like every panel's composer (2026-11-02, the UX audit's C4), and
+    it is projects/_release_composer so a refusal re-renders it alone (B3). %>
 <section class="panel releases-panel<%= " panel--quiet" if releases.empty? %>" id="project-releases">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "releases") %></h2>
     <% if releases.any? %>
       <span class="mono muted"><%= pluralize(releases.size, "release") %></span>
+    <% end %>
+    <% if editable %>
+      <%= render "projects/release_composer", project: project, repos: repos %>
     <% end %>
   </div>
   <%= panel_intro(@panel_layout, "releases") %>
@@ -44,7 +49,7 @@
       <details class="release" <%= "open" if index.zero? %>>
         <summary>
           <span class="release-version mono"><%= release.version %></span>
-          <time datetime="<%= release.published_at.iso8601 %>"><%= release.published_at.strftime("%Y-%m-%d") %></time>
+          <%= time_at(release.published_at, style: :date) %>
           <% if release.git_tag.present? %>
             <%# A RECORDED TAG AND A VERIFIED ONE LOOK THE SAME EXCEPT FOR THE COMMIT. Where the
                 library is not a local folder there is no repository this process can read, so the
@@ -123,40 +128,5 @@
         <% end %>
       </details>
     <% end %>
-  <% end %>
-
-  <% if editable %>
-    <%# scope: :release -- this form has no model object, so scope: is what names the params at
-        all; Projects::ReleasesController requires :release, which scope: here produces (CLAUDE.md
-        §14d's form-scope rule). %>
-    <details class="composer release-add">
-      <summary class="btn small">Create release</summary>
-      <%= form_with url: project_releases_path(project), scope: :release, class: "release-add-form" do |f| %>
-        <div class="composer-fields">
-          <label class="field">
-            <span>Version</span>
-            <%= f.text_field :version, placeholder: "v0.1.0", required: true %>
-          </label>
-          <% if repos.any? %>
-            <label class="field">
-              <span>Tag</span>
-              <%= f.select :git_tag,
-                           repos.map { |name, node_id, tags| [ name, tags.map { |t| [ t, "#{node_id}:#{t}" ] } ] },
-                           { include_blank: "No tag" } %>
-            </label>
-          <% else %>
-            <label class="field">
-              <span>Tag</span>
-              <%= f.text_field :git_tag, placeholder: "v0.1.0" %>
-            </label>
-          <% end %>
-        </div>
-        <% if repos.empty? %>
-          <p class="muted">Tags can be verified where the library is a local folder.</p>
-        <% end %>
-        <%= f.rich_text_area :notes, placeholder: "What changed?", attachments: "false" %>
-        <%= f.submit "Create release", class: "btn small" %>
-      <% end %>
-    </details>
   <% end %>
 </section>

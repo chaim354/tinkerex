@@ -26,11 +26,18 @@
   .model-hero { margin-bottom: 14px; }
   .model-hero-img { display: block; width: 100%; max-height: 60vh; object-fit: contain;
                     background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-panel); }
-  .model-hero-thumb { display: flex; align-items: center; justify-content: center; width: 100%;
-                      aspect-ratio: 4/3; background: var(--raised); border: 1px solid var(--line); border-radius: var(--radius-panel); }
-  .model-hero-thumb img { max-width: 100%; max-height: 100%; }
+  /* THE HERO'S RENDER IS THE `.thumb` CARD AT HERO SIZE (UX audit 2026-11-01, E7): the cell only
+     sizes it, and the card keeps the component's `--thumb-stage` ground, isolation and multiply, so a
+     render reads ink on paper in both themes (design-system rule 5). The cell painted `--raised`
+     over that ground until then. */
+  /* Capped and centred, so a render still on its way is a modest card with a spinner rather than a
+     box the pane's whole width wide and three quarters of that tall (E3). */
+  .model-hero-thumb { display: block; width: 100%; max-width: 640px; margin-inline: auto; }
+  .model-hero-thumb .thumb { width: 100%; aspect-ratio: 4 / 3; border-radius: var(--radius-panel); }
+  /* No cover at all: the 3D models icon on a short box, not a 4:3 one the pane's width tall (E3). */
   .model-hero-empty { display: flex; align-items: center; justify-content: center; width: 100%;
-                      aspect-ratio: 4/3; font-size: 48px; background: var(--raised); border-radius: var(--radius-panel); }
+                      height: 160px; font-size: 48px; background: var(--raised); border-radius: var(--radius-panel); }
+  .model-hero-note { margin: 0; }
 
   .image-gallery { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 18px; }
   /* A thumbnail cell (a .heic, tinkerex#285) sits beside the inline pictures at their size. */
@@ -69,6 +76,16 @@
      only: project and explore cards keep their banner shape. The status badge that sat over the
      cover's corner is gone; the chips above the grid and the model page carry the status. */
   .model-card .thumb { height: auto; aspect-ratio: 1 / 1; }
+  /* The card's facts line (UX audit 2026-11-01, E1): the formats and the folder, which are what tell
+     two "tetra" cards apart. Data, so mono (cohesion decision 5); a long path wraps, never widens. */
+  .model-facts { display: flex; flex-direction: column; align-items: center; gap: 2px; margin-top: -4px;
+                 font: 11px/1.35 var(--font-mono); color: var(--fg-muted); text-align: center; overflow-wrap: anywhere; }
+
+  /* The model page's foot: its destroy link and what it does (E3), out of the head. */
+  .model-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3);
+                margin-top: var(--space-7); padding-top: var(--space-4); border-top: 1px solid var(--line); }
+  .model-foot form { margin: 0; }
+  .model-foot p { margin: 0; font-size: 12px; }
 
   /* An empty hero is the 3D models icon (slice 5; no emoji in the interface), at the size the
      glyph it replaced was set. The model CARD's empty cover is sized by pages/projects.css's

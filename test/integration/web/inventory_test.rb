@@ -143,24 +143,33 @@ module Web
         assert_select "dt", text: "Location"
         assert_select "dt", text: "Supplier"
       end
-      assert_select "dl.meta dd", text: "12 each · min 50"
+      assert_select "dl.meta dd", text: "12 each · minimum 50"
 
+      # THE COMPOSER OFFERS THE THREE REASONS THAT MOVE STOCK, IN WORDS, AND NOT "INITIAL" (UX audit
+      # 2026-11-01, E4): an item's first stock is its creation's. The field is the amount, not a delta.
       assert_select "details.composer.adjust[open]" do
-        assert_select "select[name='transaction[reason]']" do
-          Maker::InventoryTransaction::REASONS.each { |r| assert_select "option[value=?]", r }
+        assert_select "select[name='transaction[reason]'] option", 3
+        { "consumed" => "Consumed", "restocked" => "Restocked", "adjusted" => "Adjusted" }.each do |value, word|
+          assert_select "select[name='transaction[reason]'] option[value=?]", value, text: word
         end
+        assert_select "select[name='transaction[reason]'] option[value='initial']", 0
         assert_select "select[name='transaction[project_id]']" do
           assert_select "option", text: "Desk Lamp"
         end
-        assert_select "input[name='transaction[delta]']"
+        assert_select "input[name='transaction[amount]']"
+        assert_select "input[name='transaction[delta]']", 0
         assert_select "input[name='transaction[note]']"
+        assert_select "input[type=submit][value='Apply']"
       end
+      assert_select "table.table.ledger th", text: "Change"
+      assert_select "table.table.ledger th", text: "Delta", count: 0
 
       rows = css_select("table.table.ledger tbody tr")
       assert_equal 3, rows.size
 
       assert_select rows[0], "td.col-delta .delta-out", text: "−8"
       assert_select rows[0], "td.col-balance", text: "12"
+      assert_select rows[0], "td.col-reason", text: "Consumed"
 
       assert_select rows[1], "td.col-delta .delta-out", text: "−30"
       assert_select rows[1], "td.col-balance", text: "20"
@@ -168,7 +177,7 @@ module Web
 
       assert_select rows[2], "td.col-delta .delta-in", text: "+50"
       assert_select rows[2], "td.col-balance", text: "50"
-      assert_select rows[2], "td", text: "initial"
+      assert_select rows[2], "td.col-reason", text: "Initial stock"
     end
 
     test "the ledger is capped" do
@@ -193,16 +202,16 @@ module Web
 
     # --- adjust ------------------------------------------------------------------------------
 
-    test "adjust posts through apply! and redirects with a signed flash" do
+    test "adjust posts through apply! and redirects with the reason's own word and the balance" do
       project = @user.maker_projects.create!(name: "Desk Lamp")
       item = item!("Screws", min_quantity: 1)
       post!(item, 12, reason: "initial")
 
       post adjust_inventory_item_path(item),
-           params: { transaction: { delta: "-8", reason: "consumed", project_id: project.id, note: "base" } }
+           params: { transaction: { amount: "8", reason: "consumed", project_id: project.id, note: "base" } }
 
       assert_redirected_to inventory_item_path(item)
-      assert_match(/Posted −8 each \(consumed\)/, flash[:notice])
+      assert_equal "Consumed 8 each. 4 each on hand.", flash[:notice]
       assert_equal 4, item.reload.quantity_cached.to_i
       last = item.transactions.reorder(created_at: :desc, id: :desc).first
       assert_equal project.id, last.project_id
@@ -210,26 +219,30 @@ module Web
       assert_equal "consumed", last.reason
     end
 
-    test "adjust refuses a zero delta" do
+    # A REFUSAL RE-RENDERS THE PAGE (422) WITH THE ERROR IN THE COMPOSER AND WHAT WAS TYPED KEPT (UX
+    # audit 2026-11-01, B3); it redirected with an alert and the fields came back empty.
+    test "adjust refuses a zero amount" do
       item = item!("Screws")
       post!(item, 12, reason: "initial")
 
       assert_no_difference -> { item.transactions.count } do
-        post adjust_inventory_item_path(item), params: { transaction: { delta: "0", reason: "consumed" } }
+        post adjust_inventory_item_path(item), params: { transaction: { amount: "0", reason: "consumed", note: "kept" } }
       end
-      assert_redirected_to inventory_item_path(item)
-      assert_match(/Delta must be a non-zero number/, flash[:alert])
+      assert_response :unprocessable_entity
+      assert_select "details.composer.adjust[open] .form-errors", text: /Amount must be a non-zero number/
+      assert_select "input[name='transaction[amount]'][value='0']"
+      assert_select "input[name='transaction[note]'][value='kept']"
     end
 
-    test "adjust refuses a non-numeric delta" do
+    test "adjust refuses a non-numeric amount" do
       item = item!("Screws")
       post!(item, 12, reason: "initial")
 
       assert_no_difference -> { item.transactions.count } do
-        post adjust_inventory_item_path(item), params: { transaction: { delta: "not-a-number", reason: "consumed" } }
+        post adjust_inventory_item_path(item), params: { transaction: { amount: "not-a-number", reason: "consumed" } }
       end
-      assert_redirected_to inventory_item_path(item)
-      assert_match(/Delta must be a non-zero number/, flash[:alert])
+      assert_response :unprocessable_entity
+      assert_select ".adjust .form-errors", text: /Amount must be a non-zero number/
     end
 
     # A NON-FINITE OR OUT-OF-COLUMN AMOUNT NEVER REACHES THE LEDGER. BigDecimal("Infinity") parses
@@ -241,12 +254,12 @@ module Web
       item = item!("Screws")
       post!(item, 12, reason: "initial")
 
-      %w[Infinity -Infinity NaN 1e400].each do |bad|
-        assert_no_difference -> { item.transactions.count }, "#{bad} reached the ledger" do
-          post adjust_inventory_item_path(item), params: { transaction: { delta: bad, reason: "consumed" } }
+      %w[consumed restocked adjusted].product(%w[Infinity -Infinity NaN 1e400]).each do |reason, bad|
+        assert_no_difference -> { item.transactions.count }, "#{bad} (#{reason}) reached the ledger" do
+          post adjust_inventory_item_path(item), params: { transaction: { amount: bad, reason: } }
         end
-        assert_redirected_to inventory_item_path(item)
-        assert_match(/Delta must be a non-zero number/, flash[:alert])
+        assert_response :unprocessable_entity
+        assert_select ".adjust .form-errors", text: /Amount must be a non-zero number/
       end
       assert_equal 12, item.reload.quantity_cached
 
@@ -265,10 +278,10 @@ module Web
       post!(item, 12, reason: "initial")
 
       post adjust_inventory_item_path(item),
-           params: { transaction: { delta: "5", reason: "restocked", project_id: foreign_project.id } }
+           params: { transaction: { amount: "5", reason: "restocked", project_id: foreign_project.id } }
 
       assert_redirected_to inventory_item_path(item)
-      assert_match(/Posted \+5 each \(restocked\)/, flash[:notice])
+      assert_equal "Restocked 5 each. 17 each on hand.", flash[:notice]
       last = item.transactions.reorder(created_at: :desc, id: :desc).first
       assert_nil last.project_id
     end
@@ -290,15 +303,19 @@ module Web
       assert_not_includes response.body, project_path(foreign)
     end
 
-    test "adjust refuses a reason outside REASONS" do
+    # "initial" IS A REASON THE LEDGER KNOWS AND THIS DOOR DOES NOT OFFER: it belongs to creation, so a
+    # crafted post naming it is refused like any reason outside the composer's three.
+    test "adjust refuses a reason outside the composer's three, initial included" do
       item = item!("Screws")
       post!(item, 12, reason: "initial")
 
-      assert_no_difference -> { item.transactions.count } do
-        post adjust_inventory_item_path(item), params: { transaction: { delta: "5", reason: "bogus" } }
+      %w[bogus initial].each do |reason|
+        assert_no_difference -> { item.transactions.count }, reason do
+          post adjust_inventory_item_path(item), params: { transaction: { amount: "5", reason: } }
+        end
+        assert_response :unprocessable_entity
+        assert_select ".adjust .form-errors", text: /Choose a reason: Consumed, Restocked or Adjusted/
       end
-      assert_response(:redirect) # alert-flash shape, not a 422 — either is allowed by the plan
-      assert_match(/reason/i, flash[:alert])
     end
 
     test "the ledger has no edit or delete door" do

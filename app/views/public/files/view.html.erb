@@ -15,7 +15,7 @@
   the visitor has already fetched, so withholding them would cost a visitor the one thing story 5.5
   asks for and save nothing. There has never been a note control in that bar to drop.
 %>
-<% content_for :title, "#{@node.name} — #{@pub.project.name} — @#{@pub.handle}" %>
+<% content_for :title, "#{@node.name} — #{@pub.project.name} — @#{@pub.handle} — Tinkerex" %>
 <% content_for :container_class, "public-main" %>
 
 <%# A REAL BREADCRUMB IN THE PAGE, NOT `content_for :crumbs` — the layout renders layouts/topbar
@@ -47,7 +47,7 @@
       has shipped twice. No "Current version" row: `capabilities.versioned?` is a deployment fact a
       visitor has no use for, and this page carries no owner-facing metadata at all. %>
   <dt>Modified</dt>
-  <dd><%= @info&.mtime ? Time.at(@info.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %></dd>
+  <dd><%= @info&.mtime ? time_at(time_from_nanos(@info.mtime)) : "—" %></dd>
 </dl>
 
 <div class="preview-row">

@@ -1,16 +1,26 @@
-<% content_for :title, "Locations - Tinkerex" %>
+<% content_for :title, "Locations — Tinkerex" %>
+
+<%# BREADCRUMBS, NOT A GHOST BUTTON NAMED FOR THE PARENT (UX audit 2026-11-01, A4/F8; design-system
+    rule 9), as on Suppliers. %>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Inventory path">
+    <%= link_to "Inventory", inventory_items_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">Locations</span>
+  </nav>
+<% end %>
 
 <div class="page-head">
   <h1>Locations</h1>
-  <%= link_to "Inventory", inventory_items_path, class: "btn ghost small" %>
 </div>
 
 <p class="muted">
   Where inventory lives on your shelves. Nest a location under another to place it, like a drawer
-  inside a cabinet. Removing a location never deletes what it held -- child locations and items
+  inside a cabinet. Removing a location never deletes what it held — child locations and items
   just lose the reference.
 </p>
 
+<%# EACH ROW IS EDITABLE AND ITS COUNT IS A WAY IN (E5), as on Suppliers. %>
 <ul class="settings-list">
   <% @locations.each do |location| %>
     <li>
@@ -18,10 +28,16 @@
       <% if location.parent %>
         <span class="settings-fact">in <%= location.parent.name %></span>
       <% end %>
-      <span class="settings-fact"><%= pluralize(@item_counts[location.id] || 0, "item") %></span>
+      <%= link_to pluralize(@item_counts[location.id] || 0, "item"), inventory_items_path(location: location.id),
+                  class: "settings-fact" %>
+      <%= link_to "Edit", edit_location_path(location), class: "linkbtn small settings-remove",
+                  aria: { label: "Edit #{location.name}" } %>
       <%= button_to "Remove", location_path(location), method: :delete,
-                    class: "linkbtn danger small settings-remove",
+                    class: "linkbtn danger small",
                     form: { data: { turbo_confirm: "Remove #{location.name}? Its children and items keep their own facts." } } %>
+      <% if location.description.present? %>
+        <span class="settings-note muted"><%= location.description %></span>
+      <% end %>
     </li>
   <% end %>
   <% if @locations.empty? %>
@@ -30,16 +46,24 @@
 </ul>
 
 <%# scope: :location -- same reason as suppliers/index: this form has no model object, so scope:
-    is what makes fields serialize as location[...], which LocationsController#create requires. %>
+    is what makes fields serialize as location[...], which LocationsController#create requires. A
+    REFUSED ADD RE-RENDERS THIS PAGE (422) with the errors and the typed values from @location. %>
 <%= form_with url: locations_path, scope: :location, class: "settings-add" do |f| %>
+  <% if @location.errors.any? %>
+    <div class="form-errors flash-alert"><%= @location.errors.full_messages.to_sentence %></div>
+  <% end %>
   <label>
     <span>Name</span>
-    <%= f.text_field :name, required: true %>
+    <%= f.text_field :name, required: true, value: @location.name %>
   </label>
   <label>
     <span>Parent</span>
-    <%= f.select :parent_id, options_from_collection_for_select(@locations, :id, :name),
+    <%= f.select :parent_id, options_from_collection_for_select(@locations, :id, :name, @location.parent_id),
                  { include_blank: "— none —" } %>
+  </label>
+  <label>
+    <span>Notes</span>
+    <%= f.text_field :description, value: @location.description %>
   </label>
   <%= f.submit "Add location", class: "btn primary" %>
 <% end %>

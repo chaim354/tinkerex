@@ -1,14 +1,20 @@
-<%# The same three states the rail's button cycles through, laid out as a choice. This is a
-    SEPARATE theme controller instance from the rail's own -- choose shares cycle's write path
-    (html[data-theme], the cookie, the two metas: design-system.md rule 7), so the two controls
-    can never disagree about what a theme change means, but each instance renders its own
-    label/option targets on its own schedule. aria-pressed is rendered by the server from the
-    cookie on first paint and moved by the controller after a click. %>
+<%# The same three states the rail's button cycles through, laid out as a choice: on the Settings page
+    and in the phone's More sheet (layouts/_tabbar). Each is a SEPARATE theme controller instance
+    from the rail's own; choose shares cycle's write path (html[data-theme], the cookie, the two
+    metas: design-system.md rule 7) and every instance re-renders on any change (theme_controller.js
+    broadcasts it), so the rail's "Switch to …" label follows a choice made here at once.
+    aria-pressed is rendered by the server from the cookie on first paint and moved by the
+    controller after a click.
+
+    ONE CONTROL, NO READOUT BESIDE IT (UX audit A6): the row used to repeat a lowercase "Theme: light"
+    after its own buttons, which the pressed button already says. System is the one word that needs
+    explaining, and its title does it. %>
 <div class="theme-choice" data-controller="theme" role="group" aria-label="Theme">
+  <% hints = { "light" => "Always light", "dark" => "Always dark",
+               "system" => "Follow this device's light or dark setting" } %>
   <% ShellHelper::THEMES.each do |t| %>
     <button type="button" class="btn small theme-option" data-action="theme#choose"
-            data-theme-theme-param="<%= t %>" data-theme-target="option"
+            data-theme-theme-param="<%= t %>" data-theme-target="option" title="<%= hints.fetch(t) %>"
             aria-pressed="<%= ui_theme == t %>"><%= t.capitalize %></button>
   <% end %>
-  <span class="settings-fact" data-theme-target="label">Theme: <%= ui_theme %></span>
 </div>

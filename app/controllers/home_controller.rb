@@ -12,10 +12,25 @@ class HomeController < ApplicationController
   # Only the failed-prints limit now: Recent has no prints section of its own (slice 6) — a failed
   # print is the one kind that still reaches this page, through "Needs attention".
   ATTENTION_PRINTS = 5
-  ATTENTION_WINDOW = 30.days
+  # A FAILED PRINT LEAVES ON ITS OWN, AND SOONER (UX audit 2026-11-01, E6). It sat here for 30 days
+  # with no way to dismiss it. Now it shows for a week, and only while it is still the model's
+  # answer: logging a later print of that model, or setting the model's status to anything but
+  # Failed, takes it off — both things a maker does when the failure has been dealt with, so the
+  # dismissal is the work itself and there is no flag to store. (A dismiss button would need a
+  # column and a route for what the window and the next print already decide.)
+  ATTENTION_WINDOW = 7.days
   # Stage 2, S2-3: how many low-stock inventory items land in "Needs attention" — the same
   # bounded-list shape as RECENT_PROJECTS/RECENT_FILES/ATTENTION_PRINTS above, not a second pattern.
   ATTENTION_STOCK = 5
+  # "THE MODEL'S LATEST RUN", Maker::PrintRun#sync_model_status's own ordering (printed_on, then id),
+  # as one correlated NOT EXISTS so the list stays a single query: a run with any later run of the
+  # same model is history, not something to attend to.
+  LATEST_RUN = <<~SQL.squish.freeze
+    NOT EXISTS (SELECT 1 FROM maker_print_runs later
+                WHERE later.model_id = maker_print_runs.model_id
+                  AND (later.printed_on > maker_print_runs.printed_on
+                       OR (later.printed_on = maker_print_runs.printed_on AND later.id > maker_print_runs.id)))
+  SQL
 
   def index
     # `.includes(:file_attachments)` is load-bearing, not decoration: `cover_node_id` falls back to
@@ -34,9 +49,11 @@ class HomeController < ApplicationController
     @failed_prints = current_user.maker_print_runs.includes(:model)
                                  .where(outcome: "failed")
                                  .where("printed_on >= ?", ATTENTION_WINDOW.ago.to_date)
+                                 .joins(:model).where(maker_models: { print_status: "failed" })
+                                 .where(LATEST_RUN)
                                  .order(printed_on: :desc, id: :desc).limit(ATTENTION_PRINTS).to_a
-    # A SECOND attention source, alongside failed prints — low stock is the `<=` scope from
-    # Maker::InventoryItem (min_quantity itself counts as low), bounded and ordered by name the
+    # A SECOND attention source, alongside failed prints — low stock is Maker::InventoryItem's scope
+    # (at or below a minimum the maker set; a minimum of 0 is none), bounded and ordered by name the
     # same way every other list on this page is bounded (this class's own header).
     @low_stock = current_user.maker_inventory_items.low_stock.order(:name).limit(ATTENTION_STOCK).to_a
     @covers = Maker::Previews::ThumbnailMap.for(

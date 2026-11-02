@@ -71,8 +71,13 @@ class TrashController < ApplicationController
   # The Size column used to come from current_user.versions, which is EMPTY on share and s3 — the
   # same lie #index and #show told before Task 6, in a third spelling. TrashEntry is
   # backend-neutral by construction, which is the port's whole job.
+  #
+  # WHERE EACH ONE CAME FROM (UX audit D7, 2026-11-02): two deleted README.md files could not be told
+  # apart. `@origins` is node_id => Origin, built in three queries however long the trash is
+  # (#origins_for) — page_query_budget_test.rb's trash case grows the tombstones and asserts that.
   def index
     @entries = FileLayer.current.trashed(current_user)
+    @origins = origins_for(@entries)
   end
 
   # POST /trash/:id/restore — bring it back to the normal listing.
@@ -96,12 +101,48 @@ class TrashController < ApplicationController
   # delete — no longer reaches this line at all: it raises UnsupportedOperation instead, rescued
   # above. That reversal, and why, live in Chunk#undelete's own comment (the sync-engine gem) and
   # CLAUDE.md 14a, not here.
+  #
+  # IT LANDS BACK ON TRASH AND SAYS WHERE THE FILE WENT (UX audit B6, 2026-11-02). It landed on the
+  # library root, which is neither the page the maker was on nor, usually, where the file is; Trash
+  # is where the next restore is, and the notice names the folder so the file can be found there.
   def restore
     info = FileLayer.current.undelete(current_user, node_id: params[:id])
-    redirect_to files_path, notice: "Restored #{info.name}."
+    redirect_to trash_index_path, notice: restored_sentence(info)
   end
 
   private
+
+  # WHERE A TRASHED ROW CAME FROM, AS THE ROW SHOWS IT. `path` is the folder's library path ("" for
+  # the library root) while that folder is live, and `deleted_parent` names the folder when it is in
+  # the trash too — the case whose restore is refused until the folder comes back first, so it is
+  # the one a maker most needs to see.
+  Origin = Data.define(:parent_node_id, :path, :deleted_parent)
+
+  # THREE QUERIES FOR THE WHOLE LIST: the rows' parents, one pluck of the live folders
+  # (Maker::LibraryTree, the same walk the Library's flat view uses), and the names of the parents
+  # that are not live. Never a walk per row. `current_user.nodes` is what every backend's `trashed`
+  # reads from, chunk_remote's mirror included, so the parent ids are there on all three.
+  def origins_for(entries)
+    parents = current_user.nodes.where(node_id: entries.map(&:node_id)).pluck(:node_id, :parent_node_id).to_h
+    tree = Maker::LibraryTree.new(current_user)
+    paths = parents.transform_values { |parent| tree.path_for(parent) }
+    gone = parents.select { |id, parent| parent && paths[id].nil? }.values.uniq
+    names = gone.any? ? current_user.nodes.where(node_id: gone).pluck(:node_id, :name).to_h : {}
+    parents.to_h do |id, parent|
+      [ id, Origin.new(parent_node_id: parent, path: paths[id], deleted_parent: (names[parent] if paths[id].nil?)) ]
+    end
+  end
+
+  # "Restored NAME to FOLDER." — the folder it is in NOW, read from the catalog the undelete just
+  # revived, because that is where the maker will go looking. A broken ancestor chain names nothing
+  # rather than claim the root.
+  def restored_sentence(info)
+    parent = current_user.nodes.where(node_id: info.node_id).pick(:parent_node_id)
+    path = Maker::LibraryTree.new(current_user).path_for(parent)
+    return "Restored #{info.name}." if path.nil?
+
+    "Restored #{info.name} to #{path.presence || "the top of the Library"}."
+  end
 
   # THE ONE THING THAT MAKES restore_refusal_message HONEST RATHER THAN A GUESS: it does not
   # infer the orphan condition from e.message (see the rescue_from comment above for why that

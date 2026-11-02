@@ -20,20 +20,22 @@
         into a box that now means something else (search EVERYTHING). SearchController's OWN page
         already has its own big, sticky search-toolbar input for that job (search/index.html.erb) —
         this is the entry point, not a second display of the last query. rail_controller.js's
-        Ctrl/Cmd-K handler finds this field by `.topbar-search input[type=search]`, unchanged. %>
+        Ctrl/Cmd-K handler finds this field by `.topbar-search input[type=search]`, unchanged.
+        The hint is per platform (ShellHelper#search_shortcut, UX audit A7): it was "⌘K" on every OS. %>
     <input type="search" name="q" placeholder="Search everything" aria-label="Search everything"
-           autocomplete="off">
-    <kbd class="topbar-kbd" aria-hidden="true">⌘K</kbd>
+           aria-keyshortcuts="<%= ShellHelper::SEARCH_KEYS %>" autocomplete="off">
+    <kbd class="topbar-kbd" aria-hidden="true"><%= search_shortcut %></kbd>
   <% end %>
   <%# NEW ▾ (structural redesign spec §4.2): everything here creates where the maker is standing —
       NewMenuHelper#new_menu_folder_node_id. Upload sits beside it (layouts/_topbar_upload.html.erb),
       and both create in FolderDestination's folder. ON A PHONE (spec §4.3, slice 7) the summary reads
-      "+" and Upload moves inside it: shell.css hides the top bar's upload LABEL at 719px and below and
-      shows the Upload item here, which forwards a click to that label (upload_forward_controller.js). %>
+      "+" and Upload moves inside it: shell.css hides the top bar's Upload BUTTON at 719px and below and
+      shows the Upload item here, which forwards a click to that button (upload_forward_controller.js). %>
   <details class="menu topbar-new" data-controller="menu">
     <summary class="btn" aria-label="New"><span class="topbar-new-label">New <span aria-hidden="true">▾</span></span><span class="topbar-new-plus" aria-hidden="true">+</span></summary>
     <div class="menu-list">
-      <%# PHONE ONLY (shell.css hides it above 719px): the top bar's Upload, from inside the one "+". %>
+      <%# PHONE ONLY (shell.css hides it above 719px): the top bar's Upload, from inside the one "+".
+          It clicks the top bar's Upload BUTTON, never the file input (upload_forward_controller.js). %>
       <button type="button" class="menu-item topbar-new-upload" data-controller="upload-forward"
               data-action="upload-forward#open">Upload…</button>
       <div class="menu-sep topbar-new-upload" role="separator"></div>

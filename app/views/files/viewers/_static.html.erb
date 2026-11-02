@@ -24,6 +24,10 @@
 <% else %>
   <div class="preview-fallback muted">
     <p>No inline preview for this file type.</p>
-    <%= link_to "Download #{name}", download_url, class: "btn" %>
+    <%# A nil `download_url` is a page whose head already offers Download (files/_viewer's
+        `poster_download`; UX audit D5), so the fallback does not offer it twice. %>
+    <% if download_url %>
+      <%= link_to "Download #{name}", download_url, class: "btn" %>
+    <% end %>
   </div>
 <% end %>

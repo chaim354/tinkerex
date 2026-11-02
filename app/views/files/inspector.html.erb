@@ -30,7 +30,7 @@
     <%= link_to "Open", file_path(@node.node_id), class: "btn small" %>
     <%= link_to "Download", blob_file_path(@node.node_id, download: 1), class: "btn small", data: { turbo: false } %>
     <%= button_to "Delete", file_path(@node.node_id), method: :delete, class: "btn small danger",
-          form: { data: { turbo_confirm: "Delete #{@node.name}?" } } %>
+          form: { data: { turbo_confirm: delete_confirm(@node.name, kind: @node.kind) } } %>
   </div>
 
   <%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>

@@ -2,9 +2,9 @@ require "test_helper"
 require_relative "../../support/fake_addon_source"
 
 module Web
-  # ANY TOOL PINS TO THE SIDEBAR, BY A RIGHT CLICK (2026-10-22; Maker::ToolPins, Tools::PinsController,
-  # toolmenu_controller.js). The calculator's own pin is calculator_shell_test.rb's; this is the
-  # addons: what the gallery offers, what the door refuses, what the rail draws and lights, and that
+  # ANY TOOL PINS TO THE SIDEBAR, BY ITS CARD'S TOGGLE OR A RIGHT CLICK (2026-10-22, the toggle
+  # 2026-11-02; Maker::ToolPins, Tools::PinsController, toolmenu_controller.js). The calculator's own
+  # pin is calculator_shell_test.rb's; this is the addons: what the gallery offers, what the door refuses, what the rail draws and lights, and that
   # the rail still never reads the addon registry. The menu opening on a right click, which only a
   # browser can see, is test/system/tool_pins_test.rb's.
   class ToolPinsTest < ActionDispatch::IntegrationTest
@@ -54,19 +54,52 @@ module Web
 
     test "every runnable card carries the right-click pin; a greyed one carries none" do
       get tools_path
-      assert_select "a.addon-card[href=?][data-action=?][data-tool-pin-url=?][data-tool-pinned=false][data-tool-name=?]",
-                    tools_addon_path("widgetkit"), "contextmenu->toolmenu#open", tools_pin_path("widgetkit"), "Widget Kit"
+      assert_select "div.addon-card[data-action=?][data-tool-pin-url=?][data-tool-pinned=false][data-tool-name=?]",
+                    "contextmenu->toolmenu#open", tools_pin_path("widgetkit"), "Widget Kit" do
+        assert_select "a.addon-card-link[href=?]", tools_addon_path("widgetkit"), text: "Widget Kit"
+      end
       assert_select ".addon-card.disabled", 1
       assert_select ".addon-card.disabled[data-tool-pin-url]", 0
-      # The gallery and its cards share ONE menu controller, and the hint says how to use it.
-      assert_select "main [data-controller=toolmenu] a.addon-card", 1
-      assert_select "main p.tools-pin-hint", text: "Right-click a tool to pin it to the sidebar."
+      # The gallery and its cards share ONE menu controller.
+      assert_select "main [data-controller=toolmenu] .addon-card:not(.disabled)", 1
+    end
+
+    # PINNING YOU CAN SEE (UX audit G2): the sentence that explained the right click is gone, and
+    # every runnable card, the calculator's included, carries a toggle posting to the same door.
+    # Its state is the WORD and `aria-pressed` together — never the ink fill alone — and the button
+    # is described by the tool's title, since every card's button says the same thing.
+    test "every runnable card carries a visible pin toggle that says whether it is pinned" do
+      get tools_path
+      assert_select "main .tools-pin-hint", 0
+      assert_select "main", text: /Right-click a tool/, count: 0
+
+      card = css_select("div.addon-card:not(.disabled)").first
+      toggle = card.css("form.tool-pin-form[action='#{tools_pin_path("widgetkit")}'] button.tool-pin").first
+      assert toggle, "the runnable card has no pin toggle"
+      assert_equal "false", toggle["aria-pressed"]
+      assert_equal "Pin to sidebar", toggle.text.strip
+      assert_equal card.css("a.addon-card-link").first["id"], toggle["aria-describedby"],
+                   "the toggle is not described by the tool's title"
+      assert_empty card.css("form.tool-pin-form input[name=_method]"), "pinning is a POST"
+      assert_select ".addon-card.disabled .tool-pin", 0
+      assert_select "#calculator .calculator-card-actions form.tool-pin-form[action=?] button.tool-pin[aria-pressed=false][aria-describedby=tool-title-calculator]",
+                    tools_pin_path("calculator"), text: "Pin to sidebar"
+
+      post tools_pin_path("widgetkit"), headers: { "Referer" => tools_url }
+      follow_redirect!
+      card = css_select("div.addon-card:not(.disabled)").first
+      toggle = card.css("button.tool-pin").first
+      assert_equal "true", toggle["aria-pressed"]
+      assert_equal "Pinned to sidebar", toggle.text.strip
+      assert_equal "delete", card.css("form.tool-pin-form input[name=_method]").first&.[]("value"),
+                   "a pinned card's toggle unpins"
+      assert_match(/Unpin Widget Kit/, toggle["title"])
     end
 
     test "pinning an addon puts a link to it under Tools on every page, by the title it had" do
       post tools_pin_path("widgetkit"), headers: { "Referer" => tools_url }
       assert_redirected_to tools_url
-      assert_equal "Widget Kit pinned to the sidebar.", flash[:notice]
+      assert_equal "Pinned Widget Kit to the sidebar.", flash[:notice]
       assert_equal [ { "key" => "widgetkit", "title" => "Widget Kit" } ], @user.reload.pinned_tools
 
       [ root_path, files_path, tools_path ].each do |path|
@@ -82,7 +115,7 @@ module Web
       assert_equal foot.index("Tools") + 1, foot.index("Widget Kit"), "pinned tools sit under Tools"
 
       get tools_path
-      assert_select "a.addon-card[data-tool-pin-url=?][data-tool-pinned=true]", tools_pin_path("widgetkit")
+      assert_select "div.addon-card[data-tool-pin-url=?][data-tool-pinned=true]", tools_pin_path("widgetkit")
     end
 
     test "pinning twice keeps one pin; tools stay in the order they were pinned" do
@@ -159,7 +192,7 @@ module Web
         assert_equal 0, calls.call, "unpinning read the registry"
       end
       assert_redirected_to root_url
-      assert_equal "Widget Kit unpinned from the sidebar.", flash[:notice]
+      assert_equal "Unpinned Widget Kit from the sidebar.", flash[:notice]
       assert_equal [], @user.reload.pinned_tools
       get root_path
       assert_select "aside.rail a.rail-tool-pin", 0

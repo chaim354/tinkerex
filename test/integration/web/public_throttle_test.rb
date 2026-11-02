@@ -19,6 +19,12 @@ module Web
       end
       get public_explore_path
       assert_response :too_many_requests
+      # A SENTENCE, NOT A BLANK PAGE (UX audit G4): the refusal was `head`, which a browser draws
+      # as nothing at all. No layout, so a refused request buys no shell render.
+      assert_equal "text/html", response.media_type
+      assert_select "body p", text: "Too many requests — try again in a minute."
+      assert_select "head title", text: "Too many requests — Tinkerex"
+      assert_select "aside.rail, header, nav", 0
     end
   end
 end

@@ -2,7 +2,7 @@
 
 <% content_for :crumbs do %>
   <nav class="breadcrumb" aria-label="Model path">
-    <%= link_to "Files", files_path %>
+    <%= link_to "Library", files_path %>
     <span class="sep" aria-hidden="true">/</span>
     <%= link_to "3D models", files_models_path %>
     <span class="sep" aria-hidden="true">/</span>
@@ -33,7 +33,9 @@
   </label>
 
   <div class="form-actions">
-    <button class="btn primary" data-importer-target="submit" data-action="importer#submit" disabled>Create model</button>
+    <%# "Import", agreeing with the page's title and the 3D models view's "Import a Printables zip"
+        (UX audit 2026-11-01, E3); it read "Create model" under an "Import model" heading. %>
+    <button class="btn primary" data-importer-target="submit" data-action="importer#submit" disabled>Import</button>
     <%= link_to "Cancel", files_models_path, class: "linkbtn" %>
     <span class="muted" data-importer-target="status"></span>
   </div>

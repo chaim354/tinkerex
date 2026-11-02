@@ -9,9 +9,32 @@
     for this, since the host — not the addon bundle — owns the page chrome. %>
 <% content_for :container_class, "container-wide" if @addon.layout == "wide" %>
 
-<div class="page-head"><h1><%= @addon.icon %> <%= @addon.title %></h1>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Tool path">
+    <%= link_to "Tools", tools_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= @addon.title %></span>
+  </nav>
+<% end %>
+
+<%# The title alone: the manifest's `icon` is an emoji by convention and is not drawn anywhere
+    (tools/home/_addon_mark, UX audit G1). %>
+<div class="page-head"><h1><%= @addon.title %></h1>
   <p class="page-subtitle muted"><%= @addon.description %></p>
 </div>
+
+<%#
+  AN ADDON THAT CANNOT RUN HERE SAYS SO INSTEAD OF MOUNTING (2026-11-02, UX audit G3). A greyed
+  card is not a link, but a pinned rail link, a bookmark or a typed URL still reaches this page, and
+  mounting the bundle there produced whatever its first failing call said — "Service request failed
+  (404)" for a missing sidecar. The sentence is the gallery card's, `Addon#unavailable_reason`.
+
+  STILL COSMETIC, NOT A GATE (docs/invariants/addons.md): views ask `available?`, and no action in
+  Tools::AddonsController does. The asset, service, states and save doors answer for this addon
+  exactly as before, so nothing here may be read as an access control. The unavailable branch is at
+  the foot of this file.
+%>
+<% if @addon.available? %>
 
 <% if @addon.permissions.any? %>
   <ul class="addon-permissions muted">
@@ -49,5 +72,29 @@
      data-addon-default-folder-label-value="<%= @default_folder_label %>"
      data-addon-children-url-value="<%= library_children_path %>"
      data-addon-create-url-value="<%= library_folders_path %>">
-  <div data-addon-target="mount"></div>
+  <%# LOADING, THEN THE TOOL OR A SENTENCE (UX audit G3). The loading line is rendered here so it
+      shows before any script runs; every shipped bundle replaces the mount's contents as its
+      first act, and addon_controller.js removes the line once mount() resolves in case one
+      appends instead. A failure empties the mount and shows the block under it, the raw error kept
+      in a collapsed <details> for whoever reports it, never as the page's sentence. %>
+  <div data-addon-target="mount">
+    <p class="addon-loading muted" data-addon-target="loading" role="status">Loading <%= @addon.title %>…</p>
+  </div>
+  <div class="empty addon-load-failed" data-addon-target="failure" role="alert" hidden>
+    <p>Could not load <%= @addon.title %>.</p>
+    <p>Reload the page to try again. If it keeps happening, the person running this server can
+      check the add-on — <%= link_to "Help", help_path(anchor: "tools") %> says how.</p>
+    <details>
+      <summary>Details</summary>
+      <pre class="addon-load-detail" data-addon-target="detail"></pre>
+    </details>
+  </div>
 </div>
+
+<% else %>
+  <div class="empty addon-unavailable">
+    <p><%= @addon.unavailable_reason %>.</p>
+    <p>The person running this server can set it up — <%= link_to "Help", help_path(anchor: "tools") %>
+      says how.</p>
+  </div>
+<% end %>

@@ -1,0 +1,45 @@
+<%#
+  THE WIRING TABLE'S COMPOSER, on its own (2026-11-02, the UX audit's B3/C4) so a refused connection
+  comes back through Projects::ComposerRefusal as this partial again — open, with the error inside it
+  and what was typed in each field. The maker's page draws it in the panel's head; the public page
+  renders projects/_wiring with `editable: false` and never reaches it.
+
+  Locals: project. Optional (a refusal): draft (the refused Maker::Connection), error, open.
+
+  scope: :connection -- this form has no model object, so scope: is what names the params at all;
+  Projects::ConnectionsController#create requires :connection, which scope: here produces (CLAUDE.md
+  §14d's form-scope rule). Every field states its value, so none falls back to an @connection ivar.
+
+  `submit->wiring#save` IS NOT DECORATION: this form sits inside the table's wiring controller, so
+  its submit would otherwise just switch the leave-guard off, and an Add — which reloads the table —
+  would drop every other row's unsaved edit without a word. With the action, wiring_controller.js
+  asks first; the form is in no row, so every edited row counts.
+%>
+<% draft = local_assigns[:draft] %>
+<% error = local_assigns[:error] %>
+<details class="composer wiring-add" id="wiring-composer" <%= "open" if local_assigns[:open] %>>
+  <summary class="btn small" aria-label="Add a connection">Add…</summary>
+  <%= form_with url: project_connections_path(project), scope: :connection, class: "wiring-add-form",
+                data: { action: "submit->wiring#save" } do |f| %>
+    <% if error.present? %><div class="form-errors flash-alert composer-error" role="alert"><%= error %></div><% end %>
+    <div class="composer-fields">
+      <label class="field">
+        <span>From</span>
+        <%= f.text_field :from_label, value: draft&.from_label, placeholder: "e.g. Driver board", required: true %>
+      </label>
+      <label class="field">
+        <span>To</span>
+        <%= f.text_field :to_label, value: draft&.to_label, placeholder: "e.g. Stepper motor", required: true %>
+      </label>
+      <label class="field">
+        <span>Wire</span>
+        <%= f.text_field :wire, value: draft&.wire, placeholder: "e.g. 22 AWG, pin 3" %>
+      </label>
+      <label class="field">
+        <span>Note</span>
+        <%= f.text_field :note, value: draft&.note %>
+      </label>
+    </div>
+    <%= f.submit "Add connection", class: "btn small" %>
+  <% end %>
+</details>

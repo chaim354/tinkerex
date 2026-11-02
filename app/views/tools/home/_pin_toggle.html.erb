@@ -1,0 +1,18 @@
+<%# locals: (key:, name:, label_id:) %>
+<%#
+  PINNING IS A CONTROL YOU CAN SEE (2026-11-02, UX audit G2). A right click is invisible until
+  someone tries it, and iOS has none; this posts to the same door the right-click menu does
+  (Tools::PinsController), and its redirect back is what redraws the rail.
+
+  A TOGGLE, WHOSE TWO NAMES AGREE WITH ITS STATE. `aria-pressed` carries the state to assistive
+  tech and the word carries it on screen ("Pinned to sidebar"; never the ink fill alone,
+  design-system.md rule 13). The words never flip to the opposite action: "Unpin, pressed" reads as
+  either state, which is why the house toggles keep a name that describes the thing pressed. The
+  title says what a press will do. `aria-describedby` names the tool, because every card's button
+  has the same words. Hidden below 720px, where there is no sidebar to pin to (pages/tools.css).
+%>
+<% pinned = current_user.tool_pins.pinned?(key) %>
+<%= button_to (pinned ? "Pinned to sidebar" : "Pin to sidebar"), tools_pin_path(key),
+              method: pinned ? :delete : :post, class: "btn small tool-pin", form_class: "tool-pin-form",
+              aria: { pressed: pinned, describedby: label_id },
+              title: pinned ? "Unpin #{name} from the sidebar" : "Pin #{name} to the sidebar" %>

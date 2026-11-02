@@ -38,7 +38,7 @@ class FilesPagesTest < ApplicationSystemTestCase
     assert_no_selector ".page-actions details.menu[open]"
     find(".page-actions details.menu > summary").click
     assert_selector ".page-actions details.menu[open] .menu-item", text: /rescan/i
-    find("h1", text: "Files").click
+    find("h1", text: "Library").click
     assert_no_selector ".page-actions details.menu[open]"
     find(".page-actions details.menu > summary").click
     assert_selector ".page-actions details.menu[open]"

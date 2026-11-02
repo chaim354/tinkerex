@@ -1,11 +1,11 @@
 <%# THE MODEL PAGE'S DETAILS PANE (2026-10-21): what the page's main and side columns held before the
     model page became files-left, pane-right (models/show), minus two things that moved elsewhere —
     the file tree, which is the page's list now, and the instructions iframes, which are the pane's
-    default (ModelsController#stage_for). So: the cover with View in 3D and its switcher, the gallery,
+    default (Models::Page#stage_for). So: the cover with View in 3D and its switcher, the gallery,
     the notes, designer, licence, source, tags and added date, the print settings and the print log.
     Rendered inside the `model_stage` frame (models/_stage), whose `target="_top"` sends every link
     and form here to the whole page; the gallery's links alone opt back into the frame, so a photo
-    opens in the pane. Reads the ivars ModelsController#load_details sets. %>
+    opens in the pane. Reads the ivars Models::Page#load_details sets. %>
 <div class="model-details">
   <% if @viewable_3d.any? %>
     <%# The hero doubles as the 3D viewer: click "View in 3D" to swap the poster for the live
@@ -58,12 +58,12 @@
         <span class="mv-status muted" data-modelviewer-target="status" role="status"></span>
       </div>
       <div class="model-viewer-fallback" data-modelviewer-target="fallback">
-        <%= render "hero_poster" %>
+        <%= render "models/hero_poster" %>
       </div>
     </div>
   <% else %>
     <div class="model-hero">
-      <%= render "hero_poster" %>
+      <%= render "models/hero_poster" %>
     </div>
   <% end %>
 
@@ -86,7 +86,7 @@
                                          new_tab: file_path(a.node_id)) do %>
           <%# `inline_image?`, NOT the role (tinkerex#285, found in review): a .heic is an image by
               role and a broken picture as raw bytes, so it gets the same thumbnail cell the hero
-              poster falls back to — fed by @covers, which ModelsController#load_details widens to these. %>
+              poster falls back to — fed by @covers, which Models::Page#load_details widens to these. %>
           <% if Maker::FileAttachment.inline_image?(node.name) %>
             <%= image_tag blob_file_path(a.node_id), alt: node.name, loading: "lazy" %>
           <% else %>
@@ -121,7 +121,7 @@
       </dd>
     <% end %>
     <% if @model.tags.any? %><dt>Tags</dt><dd><%= @model.tag_list %></dd><% end %>
-    <dt>Added</dt><dd><%= @model.created_at.strftime("%Y-%m-%d") %></dd>
+    <dt>Added</dt><dd><%= time_at(@model.created_at, style: :date) %></dd>
   </dl>
 
   <%= render "models/projects", model: @model, choices: @project_choices %>
@@ -137,5 +137,6 @@
     </section>
   <% end %>
 
-  <%= render "models/print_log", model: @model, print_runs: @print_runs, printers: @printers, materials: @materials %>
+  <%= render "models/print_log", model: @model, print_runs: @print_runs, printers: @printers, materials: @materials,
+                                 open: @print_log_open, draft: @print_run_draft %>
 </div>

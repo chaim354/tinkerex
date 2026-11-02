@@ -20,7 +20,7 @@
       <% if card.head %>
         <span class="mono"><%= card.head.short_oid %></span>
         <span class="repo-summary"><%= card.head.summary %></span>
-        <span class="muted">— <%= card.head.author %>, <%= time_ago_in_words(card.head.time) %> ago</span>
+        <span class="muted">— <%= card.head.author %>, <%= time_at(card.head.time, style: :relative) %></span>
         <% if card.tags.any? %>
           <% card.tags.each do |tag| %><span class="badge"><%= tag %></span><% end %>
         <% else %>

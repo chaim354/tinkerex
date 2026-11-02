@@ -36,6 +36,11 @@ class AddonBundleTest < ApplicationSystemTestCase
     @root = use_fresh_share_library!
     @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
     ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
+    # THE FIXTURE DECLARES `fixture-svc`, SO IT IS UNAVAILABLE WITHOUT A URL FOR IT — and since
+    # 2026-11-02 an unavailable addon's page draws its reason instead of mounting (UX audit G3).
+    # Nothing here calls the service; the URL only has to be configured.
+    @prior_fixture_svc = ENV["FIXTURE_SVC_SIDECAR_URL"]
+    ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://fixture-svc.invalid"
     sign_in_as "bundle@example.com"
   end
 
@@ -46,11 +51,15 @@ class AddonBundleTest < ApplicationSystemTestCase
 
   teardown do
     ENV["ADDON_SOURCE_PATH"] = @prior_addon_source_path
+    @prior_fixture_svc ? ENV["FIXTURE_SVC_SIDECAR_URL"] = @prior_fixture_svc : ENV.delete("FIXTURE_SVC_SIDECAR_URL")
   end
 
   test "a fixture bundle mounts through the real pipeline, including a pinned bare-specifier import" do
     visit "/tools/fixture"
     assert_selector "[data-role=fixture-output]", text: "pinned-ok"
+    # The host's loading line (tools/addons/show) is gone once the bundle has mounted.
+    assert_no_selector ".addon-loading"
+    assert_no_selector ".addon-load-failed"
     assert_no_console_errors
   end
 

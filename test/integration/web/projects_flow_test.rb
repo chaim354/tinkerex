@@ -54,10 +54,11 @@ module Web
       assert_select ".project-card .project-name", text: "Old Rig", count: 0
     end
 
-    # THE STATUS ON THE CARD (structural redesign §6, slice 6): active, paused and done are badged,
-    # in the words the project page's head uses, beside the other badges and OUTSIDE the link;
-    # `planning` — the column default — never is.
-    test "an index card badges active, paused and done beside its link, and never planning" do
+    # THE STATUS ON THE CARD (structural redesign §6, slice 6; ONE PER CARD since 2026-11-02, the UX
+    # audit's C7): every status is badged, in the words the project page's head uses, beside the
+    # other badges and OUTSIDE the link. A planning card used to wear nothing while a discovered one
+    # wore "New" beside its status — two words for one state on some cards, none on others.
+    test "an index card badges its status beside its link, one badge per card" do
       user = sign_in
       { "Desk Lamp" => "active", "Bench Jig" => "paused", "Old Clock" => "done", "Someday" => "planning" }
         .each { |name, status| user.maker_projects.create!(name:, status:) }
@@ -67,11 +68,28 @@ module Web
       assert_select ".project-tile > .badge.status-active", text: "Active"
       assert_select ".project-tile > .badge.status-paused", text: "Paused"
       assert_select ".project-tile > .badge.status-done", text: "Done"
-      assert_select ".project-tile .badge.status-planning", 0
-      tile = css_select(".project-tile").find { |t| t.at_css(".project-name")&.text == "Someday" }
-      assert tile, "expected a tile for the planning project"
-      assert_empty tile.css(".badge"), "a planning project wears no badge at all"
+      assert_select ".project-tile > .badge.status-planning", text: "Planning"
+      css_select(".project-tile").each do |tile|
+        assert_equal 1, tile.css(".badge[class*=status-]").size, "one status badge per card: #{tile.text.squish}"
+      end
       assert_select ".project-card .badge", 0
+    end
+
+    # "NEW" IS A STATUS WORD, NOT A SECOND BADGE (C7): a discovered, unopened project still at the
+    # first status reads "New" in place of "Planning", and one that has moved on reads its status
+    # alone — the seeded audit showed "New" beside a Done.
+    test "a discovered project reads New only while it is still new" do
+      user = sign_in
+      fresh = user.maker_projects.create!(name: "Fresh", status: "planning")
+      moved = user.maker_projects.create!(name: "Moved On", status: "done")
+      [ fresh, moved ].each { |p| p.update_columns(discovered_at: 1.hour.ago) }
+
+      get projects_path
+
+      tiles = css_select(".project-tile").index_by { |t| t.at_css(".project-name").text }
+      assert_equal [ "New" ], tiles.fetch("Fresh").css(".badge[class*=status-]").map { |b| b.text.strip }
+      assert_equal [ "Done" ], tiles.fetch("Moved On").css(".badge[class*=status-]").map { |b| b.text.strip }
+      assert_empty tiles.fetch("Moved On").css(".badge.project-new"), "New beside a later status"
     end
 
     # NO EMOJI IN THE INTERFACE: a project with no cover shows the rail's projects icon, which is the
@@ -430,13 +448,14 @@ module Web
       assert_match(%r{Its folder is Projects/smart-lamp\.}, flash[:notice].to_s)
     end
 
-    # STORY 1.2: "A failed mkdir still says 'Project created.'" — the one flash a maker cannot act
-    # on, over a project whose folder does not exist. The error CLASS is named because
-    # FileLayer::FetchError (an unmounted NAS) and FileLayer::UnsupportedOperation (a refused name)
-    # are different problems with different answers. The broken-port fixture is the one "project
-    # create still succeeds if the library backend can't make the folder" already uses, above —
-    # a second mechanism (define_method on the model) would prove the same thing twice.
-    test "a project whose folder could not be made says so, and names the error class" do
+    # STORY 1.2: "A failed mkdir still says 'Project created.'" (now "Created NAME.") — over a project whose folder does
+    # not exist. The two failures are still told apart, FileLayer::FetchError (an unmounted NAS) from
+    # FileLayer::UnsupportedOperation (a refused name), but IN WORDS, as a separate alert beside the
+    # notice: the class name reached the flash until the UX audit (D13, 2026-11-02), and a maker
+    # cannot act on "FileLayer::FetchError". The log still records the class. The broken-port fixture
+    # is the one "project create still succeeds if the library backend can't make the folder"
+    # already uses, above.
+    test "a project whose folder could not be made says so, in words and without the error class" do
       sign_in
       broken = Object.new
       def broken.capabilities = Object.new.tap { |c| def c.port_writable? = true }
@@ -446,7 +465,9 @@ module Web
       post projects_path, params: { project: { name: "No Folder" } }
 
       assert_predicate Maker::Project.find_by(slug: "no-folder"), :present?
-      assert_match(/could not be made \(FileLayer::FetchError\)/, flash[:notice].to_s)
+      assert_equal "Created No Folder.", flash[:notice]
+      assert_match(/library could not be reached/i, flash[:alert].to_s)
+      refute_match(/FileLayer|Error/, flash[:alert].to_s + flash[:notice].to_s)
     ensure
       FileLayer.reset!
     end
@@ -509,7 +530,7 @@ module Web
       assert_select "title", text: /\AEdit Desk Lamp/
     end
 
-    # --- the New badge, first open, and "Not a project" (stage 4, S4-6) ----------
+    # --- the New badge, first open, and "Stop treating this folder as a project" (stage 4, S4-6) ---
 
     # STORY 1.1: "no 'new' marker". The badge is the surface on every backend, including for the
     # unattended sweep, which is the only way discovery runs on share/s3.
@@ -554,13 +575,13 @@ module Web
     end
 
     # STORY 1.6: "Archive doubles as the undocumented 'not a project' dismissal."
-    test "a discovered project offers Not a project, and it archives with its own sentence" do
+    test "a discovered project offers Stop treating this folder as a project, and it archives with its own sentence" do
       user = sign_in
       auto = user.maker_projects.create!(name: "Tray")
       auto.update_columns(discovered_at: 1.hour.ago)
 
       get edit_project_path(auto)
-      assert_select ".danger-zone form[action=?] button.btn", project_path(auto, dismiss: 1), text: "Not a project"
+      assert_select ".danger-zone form[action=?] button.btn", project_path(auto, dismiss: 1), text: "Stop treating this folder as a project"
       assert_select ".danger-zone form[data-turbo-confirm*=?]", "won't adopt it as a project again"
 
       delete project_path(auto, dismiss: 1)
@@ -630,7 +651,7 @@ module Web
       # it asks with the folder chooser. The chooser and its caption are the same in both upload flows.
       assert_select ".topbar-upload[data-controller=?]", "upload-pick", 1,
                     "no destination: the top bar must ask, not upload into the root"
-      assert_select ".topbar-upload label[title=?]", "Choose a folder, then files"
+      assert_select ".topbar-upload button.upload-btn[title=?]", "Choose a folder, then files"
     end
 
     test "an attach into that project attaches the row and leaves the bytes where they are" do

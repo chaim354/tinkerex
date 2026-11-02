@@ -102,7 +102,7 @@ module Web
       sign_in_web!(@user, password: PASSWORD)
       get settings_devices_path
       if FileLayer.current.capabilities.syncable?
-        assert_select "p.muted", text: /does not end that key yet, so its files keep syncing/
+        assert_select "p.muted", text: /It can still sync files until it is removed from the sync server too/
       else
         assert_no_match(/sync server/, response.body)
       end
@@ -149,6 +149,43 @@ module Web
       delete revoke_device_settings_user_path(@user, device_id: @theirs.id)
       assert_response :not_found
       assert_equal 200, api_status(@theirs)
+    end
+
+    # ONE ROW, TWO PAGES (UX audit F6): an admin's view of another account's devices shows the same
+    # columns and the same verb as that account's own page, because both render settings/devices/_device.
+    test "an admin's view of an account's devices has the same columns and verbs as the account's own" do
+      @laptop.update_column(:last_seen_at, (Device::IDLE_DAYS_DEFAULT + 1).days.ago)
+      rows_of = lambda do
+        css_select("ul.settings-list li").reject { |li| li["class"].to_s.include?("empty") }.to_h do |li|
+          [ li.at_css(".settings-name").text, li.css(".settings-fact, .badge, button").map { |el| el.text.strip } ]
+        end
+      end
+      sign_in_web!(@user, password: PASSWORD)
+      get settings_devices_path
+      own = rows_of.call
+      delete destroy_user_session_path
+
+      admin = User.create!(email: "admin-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
+                           confirmed_at: Time.current, admin: true)
+      sign_in_web!(admin, password: PASSWORD)
+      get edit_settings_user_path(@user)
+      theirs = rows_of.call
+
+      assert_equal %w[Workshop\ laptop Desk\ PC].sort, theirs.keys.sort
+      assert_equal own, theirs
+      assert_equal "Expired", theirs.fetch("Workshop laptop").first
+      assert_equal "Remove", theirs.fetch("Workshop laptop").last
+      assert_equal "Sign out", theirs.fetch("Desk PC").last
+      assert theirs.fetch("Desk PC").any? { |fact| fact.start_with?("added ") }, "the admin's view shows when it was added"
+    end
+
+    test "the page says what it is for before what signing out does" do
+      sign_in_web!(@user, password: PASSWORD)
+      get settings_devices_path
+      notes = css_select("main p.muted").map { |p| p.text.squish }
+      assert_match(/\AThe desktop apps signed in to your account/, notes.first)
+      assert_match(/\ASigning a device out ends its access to this server/, notes.second)
+      assert_select ".topbar nav.breadcrumb [aria-current=page]", "Devices"
     end
 
     test "the account page with no devices says so" do

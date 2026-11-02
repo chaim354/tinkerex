@@ -107,9 +107,18 @@ module Web
     test "destroy removes the link and returns to the page the button was on" do
       link = @user.maker_file_links.create!(from_node_id: @subject.node_id,
                                             to_node_id: @source.node_id, kind: "derived_from")
+      # THE NAME IS LOOKED UP THROUGH current_user: another user's node with the SAME node_id and a
+      # different name must never be the one the notice prints (an unscoped `Node.find_by` stayed
+      # green here before this decoy existed — T9's review).
+      decoy = User.create!(email: "fl-decoy-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
+                           confirmed_at: Time.current)
+      decoy.nodes.create!(node_id: @subject.node_id, name: "decoy.stl", kind: "file", mtime: 1, size: 1)
       delete file_link_path(link), params: { from: @source.node_id }
       assert_redirected_to file_path(@source.node_id)
       assert_equal 0, @user.maker_file_links.count
+      # The button's verb and the OTHER end's name (UX audit B7): from lid.lbrn2's page, the file that
+      # left its list is lid.stl. Reading the pair the wrong way round would name the page itself.
+      assert_equal "Unlinked lid.stl.", flash[:notice]
     end
 
     # 404 AND THE ROW SURVIVES, which is notes_test.rb's idiom for the same shape. The plan wrote

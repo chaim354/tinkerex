@@ -30,7 +30,7 @@
         <span class="commit-subject"><%= entry.subject %></span>
         <span class="muted commit-meta">
           <%= entry.author_name %> ·
-          <time datetime="<%= entry.time.iso8601 %>"><%= entry.time.strftime("%Y-%m-%d %H:%M") %></time>
+          <%= time_at(entry.time) %>
         </span>
       </li>
     <% end %>

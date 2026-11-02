@@ -72,14 +72,15 @@ module Web
       assert_redirected_to suppliers_path
       supplier = @user.maker_suppliers.find_by!(name: "McMaster")
       assert_equal "https://mcmaster.com", supplier.url
-      assert_match(/mcmaster added/i, flash[:notice])
+      assert_match(/Added mcmaster/i, flash[:notice])
     end
 
     test "a blank supplier name is refused with the model's error, not a 500" do
       post suppliers_path, params: { supplier: { name: "" } }
 
-      assert_redirected_to suppliers_path
-      assert_match(/name can't be blank/i, flash[:alert])
+      # Re-rendered with the error, no longer a redirect with a toast (UX audit B3, SuppliersController).
+      assert_response :unprocessable_entity
+      assert_select ".form-errors", /name can't be blank/i
       assert_empty @user.maker_suppliers
     end
 
@@ -149,7 +150,7 @@ module Web
       assert_redirected_to locations_path
       location = @user.maker_locations.find_by!(name: "Drawer B1")
       assert_equal cabinet.id, location.parent_id
-      assert_match(/drawer b1 added/i, flash[:notice])
+      assert_match(/Added drawer b1/i, flash[:notice])
     end
 
     # A FOREIGN parent_id FAILS Maker::Location#parent_belongs_to_user, AND THE MODEL'S OWN MESSAGE
@@ -160,8 +161,8 @@ module Web
 
       post locations_path, params: { location: { name: "Drawer B1", parent_id: theirs.id } }
 
-      assert_redirected_to locations_path
-      assert_match(/parent must reference your own location/i, flash[:alert])
+      assert_response :unprocessable_entity
+      assert_select ".form-errors", /parent must reference your own location/i
       assert_nil @user.maker_locations.find_by(name: "Drawer B1")
     end
 
@@ -191,12 +192,13 @@ module Web
 
     # ============================================================ Shell chrome
 
+    # Back to Inventory through the breadcrumb, not a ghost button in the head (UX audit A4/F8).
     test "both pages light the rail's Inventory link and link back to Inventory" do
       [ suppliers_path, locations_path ].each do |path|
         get path
 
         assert_select "aside.rail a.rail-link[aria-current='page'][href=?]", inventory_items_path
-        assert_select ".page-head a[href=?]", inventory_items_path, text: "Inventory"
+        assert_select ".topbar nav.breadcrumb a[href=?]", inventory_items_path, text: "Inventory"
       end
     end
 

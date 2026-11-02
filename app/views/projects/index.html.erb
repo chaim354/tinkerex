@@ -40,8 +40,10 @@
       </span>
     <% end %>
     <% if @project_tags.any? %>
+      <%# "All tags", NOT "All" (2026-11-02, the UX audit's C10): it sat in a row below "All types",
+          and a bare "All" there read as clearing both filters, which it does not. %>
       <span class="chips">
-        <%= link_to "All", projects_path(kind: @kind, archived: (@archived_view ? 1 : nil)),
+        <%= link_to "All tags", projects_path(kind: @kind, archived: (@archived_view ? 1 : nil)),
                     class: "filter chip#{' active' if @tag.blank?}" %>
         <% @project_tags.each do |t| %>
           <%= link_to t, projects_path(tag: t, kind: @kind, archived: (@archived_view ? 1 : nil)),
@@ -90,7 +92,7 @@
   <% end %>
 <% else %>
   <div class="projects-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
-    <% @projects.each do |project| %>
+    <% projects_in_order(@projects, @sort).each do |project| %>
       <%= render "card", project:, thumb: @covers.thumb(project.cover_node_id) %>
     <% end %>
   </div>
@@ -99,7 +101,7 @@
 <% if @archived_view || @archived_count.positive? %>
   <p class="archived-note muted">
     <% if @archived_view %>
-      <%= link_to "← Back to projects", projects_path %>
+      <%= link_to "Back to projects", projects_path %>
     <% else %>
       <%= link_to pluralize(@archived_count, "archived project"), projects_path(archived: 1) %>
     <% end %>

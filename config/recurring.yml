@@ -9,6 +9,10 @@
 #     priority: 2
 #     schedule: at 5am every day
 
+# AN UNZONED `schedule:` BELOW IS IN THE APP'S ZONE: config.time_zone, which is TIME_ZONE on a
+# deployment that sets it (lib/tinkerex/time_zone.rb). Fugit asks ActiveSupport's Time.zone when the
+# process has no TZ, and a TZ, when set, wins -- measured 2026-11-02 (`every day at 3am` under
+# TIME_ZONE=Asia/Tokyo is 18:00 UTC). Spell UTC out where something promises a UTC time.
 production:
   clear_solid_queue_finished_jobs:
     command: "SolidQueue::Job.clear_finished_in_batches(sleep_between_batches: 0.3)"
@@ -275,7 +279,7 @@ production:
   #
   # `class:` rather than `command:`: the gate lives in #perform, which reads the one setting, so there
   # is no class-method fan-out to call. UTC SPELLED OUT, because the banner a visitor reads promises
-  # 04:00 UTC and an unzoned schedule follows the server's local zone.
+  # 04:00 UTC and an unzoned schedule follows the app's zone (the note above `production:`).
   demo_reset:
     class: Tinkerex::DemoResetJob
     queue: background

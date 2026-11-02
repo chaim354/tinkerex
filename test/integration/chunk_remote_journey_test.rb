@@ -146,10 +146,10 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
     assert_includes response.body, name
 
     post restore_trash_path(node_id)
-    # TrashController's failure arms redirect to trash_index_path with an alert (:36, :59) while
-    # success goes to files_path with a notice (:99), so the destination alone would discriminate
-    # here -- the alert check is kept anyway so every redirect in this file reads the same way.
-    assert_redirected_to files_path
+    # TrashController's failure arms AND its success land on trash_index_path since the UX audit's
+    # B6 (2026-11-02) -- success with a notice naming where the file went -- so the alert check is
+    # what tells them apart here, as it does for every redirect in this file.
+    assert_redirected_to trash_index_path
     assert_nil flash[:alert], "restore was refused: #{flash[:alert]}"
     assert user.nodes.present.exists?(node_id:), "restore did not revive the mirror row"
   end
@@ -261,8 +261,8 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
 
     # THE CHILD, FIRST -- WHILE THE PARENT FOLDER IS STILL TOMBSTONED. This used to succeed and
     # scatter the child to the root; it is now REFUSED. TrashController's UnsupportedOperation
-    # rescue redirects to trash_index_path (never files_path -- that is success's own redirect)
-    # with an alert that names the action, not just the failure.
+    # rescue redirects to trash_index_path -- where success lands too since the UX audit's B6, so the
+    # ALERT is what says it was refused -- with one that names the action, not just the failure.
     post restore_trash_path(child)
     assert_redirected_to trash_index_path
     assert_match(/folder/i, flash[:alert],
@@ -284,11 +284,11 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
     # first used to be merely the order that happened to preserve structure; the other order is
     # refused outright now, so this is the only path back to a live child.
     post restore_trash_path(folder_node.node_id)
-    assert_redirected_to files_path
+    assert_redirected_to trash_index_path
     assert_nil flash[:alert], "restoring the folder was refused: #{flash[:alert]}"
 
     post restore_trash_path(child)
-    assert_redirected_to files_path
+    assert_redirected_to trash_index_path
     assert_nil flash[:alert],
                "restoring the child was refused even once its folder was back: #{flash[:alert]}"
 

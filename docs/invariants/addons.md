@@ -134,7 +134,8 @@
   only the deployment-wide lookup is shared. A **blank** counts as unconfigured — Kamal's
   `env.clear` blanks rather than removes, which is exactly the shape OVH has. Cosmetic only:
   `Tools::AddonsController` never gates on `available?`, so a greyed addon stays reachable by URL —
-  do not read this as an access control.
+  where its page shows the card's sentence in place of the bundle (2026-11-02), while every door
+  behind it still answers. Do not read this as an access control.
 - **Asset paths are REJECTED, never normalized** (§14a's `key_for` rule) — one guard,
   `Source.validate_asset_path!`, shared by the HTTP and local (`Source::Local`, dev/test)
   backends. The controller-level traversal test passed under mutation until the fake was seeded
@@ -581,12 +582,20 @@
   the reason is the invariant: that target still wrote `shares_states_with` itself, so **consent**,
   not gallery visibility, is the property being enforced.
 - **THAT REFUSAL MUST SKIP, NOT GREY OUT — AND IT IS THE OPPOSITE CHOICE FROM `min_host` ONE METHOD
-  AWAY.** `Tools::AddonsController` never gates on `available?` — its ONE consumer is the gallery's
-  `if addon.available?` in `app/views/tools/home/index.html.erb` (two further lines there render
-  `unavailable_reason`), so a listed-but-unavailable addon is still
+  AWAY.** No action in `Tools::AddonsController` gates on `available?`. Every reader of it is
+  cosmetic: the gallery card (`app/views/tools/home/index.html.erb`), the addon page, which draws
+  `unavailable_reason` instead of mounting the bundle (`app/views/tools/addons/show.html.erb`,
+  2026-11-02), the New menu's list (`Tools::HomeController#new_menu`) and the pin door's refusal
+  (`Tools::PinsController`). So a listed-but-unavailable addon is still
   `Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key`
   from `#states` and `#create`. Greying an unreciprocated claim out would **look closed while
   leaving the hole open**. Do not harmonise the two.
+- **THE MANIFEST'S `icon` IS REQUIRED AND NEVER DRAWN (2026-11-02, UX audit G1).** It is an emoji
+  by convention and the interface draws none (design-system.md rule 13), so the gallery draws a
+  monogram tile from the title (`tools/home/_addon_mark`) and the addon page's h1 is the title alone.
+  It stays in `Registry::REQUIRED`: every published bundle sends it, and dropping a required key is
+  a contract change for a field nothing now reads. `test/no_emoji_test.rb` cannot see manifest
+  data, so `tools_gallery_test.rb` renders the gallery over emoji icons and refuses any in the page.
 - **`Addon#available?` IS NO LONGER HARDCODED TRUE, AND THE GALLERY SHOWS A REASON RATHER THAN A
   FIXED SENTENCE.** It was true for as long as "registered" meant "fetchable"; `min_host` gives it a
   second real answer. A too-new addon is still **BUILT** and still **LISTED** — skipping it is the

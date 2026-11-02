@@ -54,7 +54,7 @@ module Settings
         # THE FIRST SCAN FOLLOWS THE CONFIRMATION, NOT THE SIGN-UP (K §3), through the sign-up
         # form's own door. Nothing can be scanning yet: pending paused every schedule.
         Library::ScanJob.enqueue_first_for(current_user)
-        redirect_to root_path, notice: "Your library is #{display(rel)}. Indexing it now."
+        redirect_to root_path, notice: "Your library is #{display(rel)}. Scanning it now."
       else
         # ONE CHANGE PER USER, EACH BEHIND THAT USER'S RUNNING SCAN (Library::RootChangeJob): on share
         # every account indexes the one library, so every catalog follows the folder.
@@ -83,6 +83,20 @@ module Settings
       # The ADAPTER's root, the one actually in use, rather than a second join of the two halves.
       @root_missing = !@pending && !FileLayer.current.root.directory?
       @refusal = current_user.library_scan_refusal
+      @refusal_counts = refusal_counts(@refusal)
+    end
+
+    # THE NUMBERS IN A MASS-DELETION REFUSAL, so the page can say them in a maker's words (UX audit
+    # F8) without printing the scan's own message, which is written for the failed-jobs row
+    # ("scan would tombstone 9/10 observable files (90.0% > 20%)...", Library::Reconciler
+    # #guard_mass_deletion!). {doomed:, total:, limit:} or nil -- any other refusal (a missing root)
+    # has no numbers and the page says it generically. Read from the message because the column holds
+    # nothing else; settings_library_refusal_test.rb builds its fixture with the Reconciler's own
+    # raise, so a change to that wording reddens it rather than quietly falling to the generic arm.
+    REFUSAL_COUNTS = %r{would tombstone (\d+)/(\d+)\b.*?> (\d+(?:\.\d+)?)%}
+    def refusal_counts(message)
+      m = REFUSAL_COUNTS.match(message.to_s) or return nil
+      { doomed: m[1].to_i, total: m[2].to_i, limit: m[3] }
     end
 
     def display(rel) = rel.empty? ? "the whole mounted folder" : rel

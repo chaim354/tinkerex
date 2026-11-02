@@ -22,9 +22,10 @@ module Projects
       next_pos = (project.tasks.maximum(:position) || -1) + 1
       task = project.tasks.new(task_params.merge(user: current_user, position: next_pos))
       if task.save
-        render_tasks(project, notice: "Task added.")
+        # THE COMPOSER STAYS OPEN after an add, so the next task is typed straight away.
+        render_tasks(project, notice: "Added the task “#{task.title}”.", composer_open: true)
       else
-        render_tasks(project, alert: task.errors.full_messages.to_sentence)
+        render_tasks(project, alert: task.errors.full_messages.to_sentence, draft: task.title)
       end
     end
 
@@ -52,7 +53,14 @@ module Projects
       else               attrs["completed_at"] = nil           # out of done: drop the stale stamp
       end
       if task.update(attrs)
-        render_tasks(task.taskable)
+        # THE NOTICE SAYS WHAT THE BUTTON DID (2026-11-02, the UX audit's B7): an update used to set
+        # none, so a status change was told by the row moving and a rename by nothing at all.
+        notice = if attrs["status"].present?
+          "Moved “#{task.title}” to #{task.status.capitalize}."
+        else
+          "Saved the task “#{task.title}”."
+        end
+        render_tasks(task.taskable, notice:)
       else
         # Same reason `create` passes one: a turbo_stream response replaces the panel and nothing
         # else, so without this the user presses a button, watches the panel redraw unchanged, and
@@ -64,8 +72,9 @@ module Projects
     def destroy
       task = project_task!(params[:id])
       project = task.taskable
+      title = task.title
       task.destroy!
-      render_tasks(project, notice: "Task deleted.")
+      render_tasks(project, notice: "Deleted the task “#{title}”.")
     end
 
     private
@@ -78,15 +87,29 @@ module Projects
     # `@task_error` rather than `flash.now[:alert]`: a turbo_stream response replaces the tasks
     # panel and NOTHING ELSE, so a flash set here would be drawn by no response at all — the user
     # would submit an invalid task, watch the panel redraw unchanged, and be told nothing. The
-    # partial renders it inline. The html branch below still uses a real flash, because there the
+    # partial renders it inline, inside the composer it rendered open, with the refused title still
+    # in its field (`@task_draft`). The html branch below still uses a real flash, because there the
     # layout is re-rendered and there is something to draw it.
-    def render_tasks(project, notice: nil, alert: nil)
+    #
+    # A NOTICE IS DRAWN AS A TOAST (2026-11-02, the UX audit's B7): "Task added." was set and then
+    # thrown away under Turbo, because nothing in the stream drew a flash. The stream now re-renders
+    # the layout's own flash stack (layouts/_flash, the partial every page draws its toasts with) so
+    # the notice appears and dismisses itself exactly as a page's would — `replace_all` by class,
+    # because the stack has no id and is not this controller's markup to give one.
+    def render_tasks(project, notice: nil, alert: nil, draft: nil, composer_open: false)
       respond_to do |format|
         format.turbo_stream do
           @project = project
           @tasks = project.tasks.order(:position, :created_at).to_a
           @task_error = alert
-          render turbo_stream: turbo_stream.replace("project-tasks", partial: "projects/tasks")
+          @task_draft = draft
+          @task_composer_open = composer_open
+          streams = [ turbo_stream.replace("project-tasks", partial: "projects/tasks") ]
+          if notice
+            flash.now[:notice] = notice
+            streams << turbo_stream.replace_all(".flash-stack", partial: "layouts/flash")
+          end
+          render turbo_stream: streams
         end
         # Without JavaScript a refused task returns with its panel opened (Projects::PanelReturn).
         format.html { redirect_to (alert ? project_panel_path(project, "tasks") : project_path(project)), notice:, alert: }

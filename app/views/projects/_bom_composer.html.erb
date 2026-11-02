@@ -1,0 +1,94 @@
+<%#
+  THE BILL OF MATERIALS' COMPOSER, on its own (2026-11-02, the UX audit's B3/C4/C5). It lived inside
+  projects/_bom_lines, which the panel renders only once a line exists, so "+ Add panel → Bill of
+  materials" opened a panel with no way to add the first line (C5). Now the panel draws it in its
+  head whether or not a line exists, the BOM page draws it under its table, and a refused line
+  comes back through Projects::ComposerRefusal as this partial again — open, with the error inside
+  it and the typed values in their fields.
+
+  Locals:
+    project   — the Maker::Project the form posts against
+    items     — [[name, id], …] for the stock select
+    suppliers — [[name, id], …] for the supplier select
+  Optional (a refusal):
+    draft     — the refused Maker::BomLine (unsaved), whose attributes refill the fields
+    kind      — the target radio that was chosen ("stock" | "file" | "text")
+    file_name — the chosen file's name, the chooser's label
+    error     — the sentence the door refused with
+    open      — render it open
+
+  EVERY FIELD STATES ITS VALUE. A scoped `form_with url:` reads `@bom_line` for a field that names
+  none (CLAUDE.md §14d's form-scope lesson, and the fallback it hides), so nothing here is left to
+  the builder's guess.
+
+  scope: :bom_line — WITHOUT it, a model-less form_with(url:) has a blank object_name, and
+  fields_for-style bracketing breaks (CLAUDE.md §14d, the trap projects/_tasks.html.erb's own
+  comment records). Every field below is a plain f.* call for exactly that reason.
+%>
+<% draft = local_assigns[:draft] %>
+<% kind = local_assigns[:kind] %>
+<% error = local_assigns[:error] %>
+<details class="composer bom-add" id="bom-composer" <%= "open" if local_assigns[:open] %>>
+  <summary class="btn small" aria-label="Add a line to the bill of materials">Add…</summary>
+  <%= form_with url: project_bom_lines_path(project), scope: :bom_line, method: :post, class: "bom-add-form" do |f| %>
+    <% if error.present? %><div class="form-errors flash-alert composer-error" role="alert"><%= error %></div><% end %>
+    <div class="composer-fields">
+      <label class="field">
+        <span>Reference</span>
+        <%= f.text_field :reference, value: draft&.reference %>
+      </label>
+      <label class="field">
+        <span>Quantity</span>
+        <%= f.number_field :quantity, step: "any", value: draft ? draft.read_attribute_before_type_cast(:quantity) : 1 %>
+      </label>
+      <label class="field">
+        <span>Unit</span>
+        <%= f.select :unit, Maker::BomLine::UNITS, selected: draft&.read_attribute(:unit) %>
+      </label>
+    </div>
+
+    <%# EXACTLY ONE TARGET, CHOSEN BY THE RADIO: Projects::BomLinesController#create is what
+        actually enforces this (it drops the other two inputs server-side before the line is
+        built), so a client that fills more than one field and picks the "wrong" radio still gets
+        the target it chose, never a validation error about a field it never meant to set. EACH
+        CONTROL CARRIES ITS OWN NAME (the UX audit's §I): a label names only its first control, the
+        radio, so the select, the chooser and the text field say what they are themselves. %>
+    <fieldset class="bom-target">
+      <legend>Target</legend>
+      <label>
+        <%= f.radio_button :target_kind, "stock", checked: kind == "stock" %>
+        <span>Stock</span>
+        <%= f.select :inventory_item_id, items, { include_blank: true, selected: draft&.inventory_item_id },
+                     { "aria-label": "Stock item" } %>
+      </label>
+      <label>
+        <%= f.radio_button :target_kind, "file", checked: kind == "file" %>
+        <span>File</span>
+        <%= render "shared/folder_field", name: "bom_line[node_id]",
+                   children_url: library_children_path, create_url: library_folders_path,
+                   mode: "file", root_label: "Choose a file…", value: draft&.node_id,
+                   label: local_assigns[:file_name].presence || "Choose a file…" %>
+      </label>
+      <label>
+        <%= f.radio_button :target_kind, "text", checked: kind == "text" %>
+        <span>Part name</span>
+        <%= f.text_field :part_name, value: draft&.part_name, placeholder: "e.g. 22 AWG wire", "aria-label": "Part name" %>
+      </label>
+    </fieldset>
+
+    <div class="composer-fields">
+      <label class="field">
+        <span>Supplier</span>
+        <%= f.select :supplier_id, suppliers, include_blank: true, selected: draft&.supplier_id %>
+      </label>
+      <label class="field">
+        <span>Notes</span>
+        <%= f.text_field :notes, value: draft&.notes %>
+      </label>
+    </div>
+
+    <%# A QUIET `.btn`: the hub's one accent is the top bar's Upload (design-system.md rule 13), and
+        this submit was a second one the moment the composer opened (the UX audit's C4). %>
+    <%= f.submit "Add line", class: "btn small" %>
+  <% end %>
+</details>

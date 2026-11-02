@@ -1,13 +1,17 @@
 <%#
-  THE YAML DRAWER (2026-09-09; spec §2, §4). Hidden until "Edit as YAML"; beside the page, never
+  THE YAML DRAWER (2026-09-09; spec §2, §4). Hidden until "Edit as text"; beside the page, never
   over it, so a drag on the left is watched on the right. The text is whatever the server rendered
   for the current draft (Projects::LayoutsController#yaml); Apply posts it back (#parse) and the
   controller adopts the draft that returns. Copy is the shared copy controller with its text
   value kept current by the editor.
+
+  THE MAKER READS "TEXT", NEVER "YAML" (2026-11-02, the UX audit's §H). The format is still YAML and
+  the code still says so; what the drawer tells a maker is what it is for — copy a layout out, paste
+  one in.
 %>
-<aside class="layout-drawer" hidden data-layout-editor-target="drawer" aria-label="Layout as YAML">
+<aside class="layout-drawer" hidden data-layout-editor-target="drawer" aria-label="Layout as text">
   <div class="layout-drawer-head">
-    <b>Layout as YAML</b>
+    <b>Layout as text</b>
     <span>
       <button type="button" class="btn small" data-controller="copy" data-copy-text-value=""
               data-action="copy#copy" data-layout-editor-target="copy">Copy</button>
@@ -19,8 +23,8 @@
   </div>
   <%# `input->yamlTyped` keeps Copy honest against hand-typed text: the copy value would otherwise be
       the server's last render, not what is on screen (found in review). %>
-  <textarea class="layout-yaml" rows="24" spellcheck="false" aria-label="Layout YAML"
+  <textarea class="layout-yaml" rows="24" spellcheck="false" aria-label="Layout as text"
             data-layout-editor-target="yaml" data-action="input->layout-editor#yamlTyped"></textarea>
   <div class="layout-drawer-notes" data-layout-editor-target="notes" aria-live="polite"></div>
-  <p class="muted">Apply updates the page behind this drawer; nothing is saved until Save. A layout naming a folder this project lacks is applied without that entry, and says so here.</p>
+  <p class="muted">Copy this text to reuse the layout in another project, or paste one here. Apply updates the page behind this drawer; nothing is saved until Save layout. A layout naming a folder this project lacks is applied without that entry, and says so here.</p>
 </aside>
