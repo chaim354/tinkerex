@@ -3,12 +3,12 @@
 <%# THE BREADCRUMB IS "BACK TO FOLDER" (structural redesign §5.3, slice 3): the folder chain
     FilesController#show walks with the same folder_crumbs #index uses. The link to THIS FILE'S
     folder carries `selected:` for it, so the Library reopens with the file selected and its
-    inspector open. A file at the library root has no folder crumb, so "Files" is its folder and
+    inspector open. A file at the library root has no folder crumb, so "Library" is its folder and
     carries the selection instead. The page head's Back keeps its referer contract
     (ApplicationHelper#back_target_path) and is not this link. %>
 <% content_for :crumbs do %>
   <nav class="breadcrumb" aria-label="File path">
-    <%= link_to "Files", files_path(selected: (@crumbs.empty? ? @node.node_id : nil)) %>
+    <%= link_to "Library", files_path(selected: (@crumbs.empty? ? @node.node_id : nil)) %>
     <% @crumbs.each_with_index do |crumb, i| %>
       <span class="sep" aria-hidden="true">/</span>
       <%= link_to crumb.name, files_path(folder: crumb.node_id,
@@ -57,13 +57,15 @@
     <% if addon_origin %>
       <%= link_to addon_origin[:label], addon_origin[:url], class: "btn" %>
     <% end %>
+    <%# DOWNLOAD · BACK · DELETE (UX audit D5, 2026-11-02): the destructive control last, as the
+        file menu and the inspector already put it, rather than between two safe ones. %>
     <%= link_to "Download", blob_file_path(@node.node_id, download: 1), class: "btn" %>
-    <%= button_to "Delete", file_path(@node.node_id), method: :delete,
-          form: { data: { turbo_confirm: "Delete #{@node.name}?" } }, class: "btn danger" %>
     <%# Back to WHERE THE USER CAME FROM (the folder, the filter, the project panel), not to the
         library root — see ApplicationHelper#back_target_path. files_path stays as the fallback for
         a direct visit, which is what this link always did. %>
     <%= link_to "Back", back_target_path(default: files_path), class: "btn ghost" %>
+    <%= button_to "Delete", file_path(@node.node_id), method: :delete,
+          form: { data: { turbo_confirm: delete_confirm(@node.name, kind: @node.kind) } }, class: "btn danger" %>
   </div>
 </div>
 
@@ -127,7 +129,13 @@
       <% end %>
     </div>
   <% end %>
-  <%= render "files/viewer", viewer: @viewer, editable: @editable, save: true %>
+  <%# `poster_download: false` because the page head already offers Download, and a poster's second
+      "Download NAME" under the stage was the same control twice (UX audit D5). `in_repo` keeps the
+      editor's "keeps no history" sentence off a file inside a working tree, where git is the
+      history and the History panel below lists it (D6) — the same @repo_root that decides whether a
+      save records a pending git edit. %>
+  <%= render "files/viewer", viewer: @viewer, editable: @editable, save: true,
+             poster_download: false, in_repo: @repo_root.present? %>
   </div>
 </div>
 
@@ -227,7 +235,7 @@
       <article class="note">
         <div class="note-body"><%= note.body %></div>
         <div class="note-meta muted">
-          <time><%= note.created_at.strftime("%Y-%m-%d %H:%M") %></time>
+          <%= time_at(note.created_at) %>
           <%= button_to "Delete", note_path(note), method: :delete, class: "linkbtn danger small",
                         form: { data: { turbo_confirm: "Delete this note?" } } %>
         </div>

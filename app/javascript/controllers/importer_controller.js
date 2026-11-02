@@ -1,5 +1,5 @@
 import { Controller } from "@hotwired/stimulus"
-import { uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
+import { alertToast, failureReason, notDoneSentence, postJSON, uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
 import { isZip, readZipBundle } from "lib/zip_bundle"
 
 // Import a downloaded model bundle from ONE selection. Unzips any .zip in the browser through
@@ -7,6 +7,13 @@ import { isZip, readZipBundle } from "lib/zip_bundle"
 // a zip holds (clutter, a wrapper folder, duplicates) — classifies entries by extension, then
 // creates the Model (+ folder map) and uploads every entry through the existing per-backend flow,
 // attaching each. No zip bytes ever reach Rails; §15/§10 untouched.
+//
+// THE REPORT IS READ BEFORE ANYONE LEAVES (2026-11-02, the UX audit's B7). A run that skipped files
+// used to write "imported N, skipped M" into the status line and navigate to the model on the very
+// next line, so nobody ever saw it. Now a clean run navigates as before; a run that skipped anything
+// STAYS, says what landed in the status line (a live region, set in connect() since the view renders
+// it bare), names what did not in an alert worded by lib/chunk_upload.js#notDoneSentence, and
+// offers the model as a link. A failure is never printed as `e.message`.
 const IMAGE_EXT = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "tif", "tiff"]
 const MODEL_EXT = ["stl", "3mf", "obj", "step", "stp"]
 const roleFor = (name) => {
@@ -28,6 +35,10 @@ export default class extends Controller {
   // The create-model response ({ slug, model_url, attach_url, port_writable, folder_map }), kept
   // on the instance (not a local) so a mid-loop failure can still point at the model it made.
   created = null
+
+  connect() {
+    if (this.hasStatusTarget) this.statusTarget.setAttribute("aria-live", "polite")
+  }
 
   async choose() {
     try {
@@ -61,7 +72,7 @@ export default class extends Controller {
       console.error(e)
       this.files = []
       this.renderSummary()
-      this.setStatus(`Couldn't read that file: ${e.message}`)
+      this.setStatus("That zip could not be opened; it may be damaged. Try downloading it again.")
     }
   }
 
@@ -116,32 +127,59 @@ export default class extends Controller {
           await this.postJSON(this.created.attach_url, { node_id: nodeId, cover: i === cover })
         } catch (e) {
           console.warn(`skipped ${f.name}:`, e)
-          failed.push(f.name)
+          failed.push({ name: f.name, error: e })
         }
       }
-      if (failed.length === this.files.length) {
-        throw new Error(`no files could be added (${failed.length} failed — they may already exist)`)
+      const landed = this.files.length - failed.length
+      if (failed.length === 0) {
+        this.setStatus("Done.")
+        window.location.href = this.created.model_url
+        return
       }
-      this.setStatus(failed.length ? `Done — imported ${this.files.length - failed.length}, skipped ${failed.length} (already present).` : "Done.")
-      window.location.href = this.created.model_url
+      // NOTHING OR PART OF IT: either way the page stays, so the sentence can be read — and the
+      // submit stays DISABLED, because the model exists now and a second press would make another.
+      const lead = landed === 0 ? "None of the files could be added to the model." : `Imported ${landed} of ${this.files.length} files.`
+      const sentence = notDoneSentence(failed, { verb: "added" })
+      const shown = alertToast(sentence)
+      this.report(`${lead}${shown ? "" : ` ${sentence}`}`, this.created.model_url)
     } catch (e) {
-      const partial = this.created?.model_url ? ` — partial import saved at ${this.created.model_url}` : ""
-      this.setStatus(`Import failed: ${e.message}${partial}`)
-      console.error(e); this.submitTarget.disabled = false
+      // THE MODEL ITSELF WAS NOT MADE (the only throw left above is `POST models.json`), so the
+      // submit comes back for another go. Its refusal is a sentence the server wrote for a maker — a
+      // validation message, or "That name was just taken — try again." — and anything without one
+      // is put plainly.
+      console.error(e)
+      const sentence = this.createFailure(e)
+      this.setStatus(alertToast(sentence) ? "" : sentence)
+      this.submitTarget.disabled = false
     }
   }
 
-  async postJSON(url, body) {
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Accept": "application/json",
-                 "X-CSRF-Token": document.querySelector('meta[name="csrf-token"]')?.content || "" },
-      body: JSON.stringify(body)
-    })
-    const data = await res.json().catch(() => ({}))
-    if (!res.ok) throw new Error(data.error || `request failed (${res.status})`)
-    return data
+  // WHY `POST models.json` FAILED, as one sentence. The known conditions first, in the upload doors'
+  // own words (lib/chunk_upload.js#failureReason): a 503 answers `{ error: "fetch_error" }`, a CODE,
+  // which printed as "Import failed: fetch_error". Only then the server's text, and only a 422's that
+  // reads as a sentence — ModelsController's validation messages and its "That name was just
+  // taken — try again." — never a bare snake_case code.
+  createFailure(e) {
+    const known = failureReason(e)
+    if (known) return `Import failed: ${known.reason}.${known.refused ? "" : " Try again in a moment."}`
+    const said = e?.serverError
+    if (e?.status === 422 && said && !/^[a-z0-9_]+$/.test(said)) {
+      const text = `${said.charAt(0).toLowerCase()}${said.slice(1)}`
+      return `Import failed: ${/[.!?]$/.test(text) ? text : `${text}.`}`
+    }
+    return "Import failed: the model could not be created. Try again in a moment."
   }
+
+  // A status line with the model to go to, for a run that made the model and stays on this page.
+  report(text, modelUrl) {
+    if (!this.hasStatusTarget) return
+    const link = document.createElement("a")
+    link.href = modelUrl
+    link.textContent = "Open the model"
+    this.statusTarget.replaceChildren(`${text} `, link)
+  }
+
+  postJSON(url, body) { return postJSON(url, body) }
 
   setStatus(text) { if (this.hasStatusTarget) this.statusTarget.textContent = text }
 }

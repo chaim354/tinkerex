@@ -73,12 +73,18 @@
     display: flex; align-items: center; gap: 10px;
     margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--line);
   }
-  .editor-bar button, .editor-bar input[type=submit] {
+  /* THE QUIET BUTTON'S FACE, AND NEVER OVER `.primary` (UX audit D6, 2026-11-02). This sits in a
+     LATER layer than components.css, so it beat `input[type="submit"].primary` regardless of
+     specificity and the commit page's one action rendered as a plain grey button. The editor's own
+     Save is class-less and keeps this face. */
+  .editor-bar button:not(.primary), .editor-bar input[type=submit]:not(.primary) {
     font: inherit; padding: 5px 12px; border: 1px solid var(--line); border-radius: 6px;
     background: var(--bg); color: inherit; cursor: pointer;
   }
-  .editor-bar button:hover:not(:disabled),
-  .editor-bar input[type=submit]:hover { background: var(--raised); }
+  .editor-bar button:not(.primary):hover:not(:disabled),
+  .editor-bar input[type=submit]:not(.primary):hover { background: var(--raised); }
+  /* The commit message's visible label, above its field: a LABEL, so the UI face (decision 4). */
+  .commit-message-label { display: block; margin: 12px 0 4px; font: 500 13px/18px var(--font-ui); }
   .editor-bar button:disabled { opacity: .55; cursor: default; }
   /* Empty until a save reports back, so it must take no space when it says nothing — otherwise
      the bar jumps a line the first time the editor answers. */

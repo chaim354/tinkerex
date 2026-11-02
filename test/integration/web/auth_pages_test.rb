@@ -123,7 +123,10 @@ module Web
     # --- the auth card (spec §8): a restyled form that renamed a field would look finished and
     # never sign anyone in, so these pin the card's markup AND Devise's field names together. ---
 
+    # AN ACCOUNT EXISTS FIRST: on a server with none, the sign-in page is the first-run card instead
+    # (auth_first_run_test.rb), which has no sign-in form to pin.
     test "sign in renders the card with Devise's fields" do
+      User.create!(email: "someone@example.com", password: PASSWORD, confirmed_at: Time.current)
       get new_user_session_path
       assert_response :success
       # The card carries the brand again (the landing's second pass, 2026-10-16, gave `/` its own page).
@@ -131,12 +134,14 @@ module Web
       assert_select ".auth-card form[action=?] input[name='user[email]'][type='email']", user_session_path
       assert_select ".auth-card form input[name='user[password]'][type='password']"
       assert_select ".auth-card form input[name='user[remember_me]'][type='checkbox']"
-      assert_select ".auth-card form input[type='submit'][value='Log in'].primary"
+      assert_select ".auth-card form input[type='submit'][value='Sign in'].primary"
       assert_select ".auth-card ul.auth-links a[href=?]", new_user_registration_path
       assert_select ".auth-card ul.auth-links a[href=?]", new_user_password_path
     end
 
     test "sign up, reset and resend render the card with their fields" do
+      # The ordinary sign-up card: with no account at all the page is the first-run card.
+      User.create!(email: "someone@example.com", password: PASSWORD, confirmed_at: Time.current)
       get new_user_registration_path
       assert_select ".auth-card form input[name='user[email]']"
       assert_select ".auth-card form input[name='user[password]']"

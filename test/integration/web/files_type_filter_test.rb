@@ -74,7 +74,7 @@ module Web
       assert_equal %w[deep.stl root.stl tiny.stl], listed_names.sort
       # And the page SAYS so rather than merely behaving so: the breadcrumb is back at the root,
       # and the in-page links carry the filter instead of the folder the request threw away.
-      assert_select "nav.breadcrumb a", text: "Files", count: 1
+      assert_select "nav.breadcrumb a", text: "Library", count: 1
       assert_select "nav.breadcrumb a[href=?]", files_path(folder: "dir-sub"), count: 0
       assert_select "th a[href=?]", files_path(ext: "stl", sort: "type", dir: "asc")
     end
@@ -234,7 +234,7 @@ module Web
       assert_select "table.files tbody tr td a[href=?]", files_path(folder: "dir-sub"),
                     text: "cad/sub"
       # A file at the library root has no folder path; it must still say something navigable.
-      assert_select "table.files tbody tr td a", text: "Files"
+      assert_select "table.files tbody tr td a", text: "Library"
     end
 
     # A REACHABLE COMBINATION, not a curiosity: `view` is cookie-persisted, so anyone who has ever
@@ -279,7 +279,7 @@ module Web
       get files_path(ext: "stl")
       assert_response :success
       assert_includes listed_names, "tiny.stl"
-      assert_equal "Files", folder_labels["tiny.stl"],
+      assert_equal "Library", folder_labels["tiny.stl"],
                    "an unresolvable chain must read as the root, not as a path with a hole in it"
     end
 
@@ -290,9 +290,9 @@ module Web
       @user.nodes.find_by!(node_id: "dir-cad").update!(deleted: true)
       get files_path(ext: "stl")
       assert_response :success
-      assert_equal "Files", folder_labels["tiny.stl"]
+      assert_equal "Library", folder_labels["tiny.stl"]
       # and the resolvable rows are untouched
-      assert_equal "Files", folder_labels["root.stl"]
+      assert_equal "Library", folder_labels["root.stl"]
     end
 
     # --- the type dropdown ------------------------------------------------------
@@ -525,8 +525,9 @@ module Web
 
       with_flat_limit(2) do
         get files_path(ext: "stl")
-        # Both rows are named "same.stl", so identity has to be read off the row's own links.
-        ids = css_select("table.files tbody tr td.row-actions a").map { |a| a["href"][%r{files/([^/]+)/blob}, 1] }
+        # Both rows are named "same.stl", so identity has to be read off the row's own links — the
+        # Download one, since the row's Details link (UX audit D2) names the listing, not the bytes.
+        ids = css_select("table.files tbody tr td.row-actions a[href*='/blob']").map { |a| a["href"][%r{files/([^/]+)/blob}, 1] }
         assert_equal %w[dup-a dup-b], ids
       end
     end

@@ -15,9 +15,17 @@
   open (2026-10-20). This tile is NOT a selection item — nothing here goes through with_selection,
   because this page has no selection controller. The file menu's Open follows this href, and its
   Details lands in the Library with the file's side panel open.
+
+  Optional local `notes` ({ node_id => sentence }, projects/_attachment_group): one muted line under
+  the name, OUTSIDE the link, so it reads as a fact about the file rather than part of its name.
+
+  DETACH IS THE PAGE'S ONE DESTRUCTIVE SHAPE (2026-11-02, the UX audit's C4): `linkbtn danger
+  small`, the shape Remove and Delete wear in every panel, with a confirm naming the file and the
+  project. The Linked list row offers the same two controls (projects/_file_rows).
 %>
 <% node = row.node %>
 <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
+<% note = local_assigns.fetch(:notes, {})[row.node_id] %>
 <div class="attachment-tile">
   <%= link_to file_path(row.node_id), class: "grid-card file-cell",
               data: file_open_data(thumb_cell_data(row.node_id, ext)
@@ -26,12 +34,6 @@
                url: preview_src(@page_thumbs.thumb(row.node_id)) %>
     <span class="grid-name"><%= node.name %></span>
   <% end %>
-  <% if row.linked? %>
-    <div class="tile-meta">
-      <%= button_to "Detach", attachment_path(row.attachment), method: :delete, class: "btn small danger tile-detach",
-                    form: { data: { turbo_confirm: "Detach #{node.name}? (the file itself is kept)" } } %>
-      <%= button_to "Move into project", relocate_project_attachments_path(@project),
-                    params: { node_id: row.node_id }, class: "btn small tile-move" %>
-    </div>
-  <% end %>
+  <% if note %><p class="tile-note muted"><%= note %></p><% end %>
+  <%= render "projects/linked_actions", row: row, node: node, tile: true %>
 </div>

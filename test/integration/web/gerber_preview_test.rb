@@ -42,12 +42,15 @@ module Web
       assert_select ".gerber-viewer[data-gerber-single-value=?]", "true"
       assert_select ".gerber-viewer .model-viewer-stage[data-gerber-target=?]", "stage"
       # THE 3D VIEWER'S CHROME: a launch button in the bar, the three actions beside it, and the
-      # poster underneath with the download — nothing is fetched until the button is clicked.
+      # poster underneath — nothing is fetched until the button is clicked. THE POSTER'S OWN Download
+      # went on the maker's page (UX audit D5, 2026-11-02): the page head offers it already, and the
+      # visitor's page, which has no head Download, still passes the poster one.
       assert_select ".gerber-viewer .mv-launch button", text: "View layer"
       assert_select ".gerber-viewer .mv-actions button", text: "Fit"
       assert_select ".gerber-viewer .mv-actions button", text: "Fullscreen"
       assert_select ".gerber-viewer .mv-actions button", text: "✕ Image"
-      assert_select ".gerber-viewer .model-viewer-fallback a[href=?]", blob_file_path(node.node_id, download: 1)
+      assert_select ".gerber-viewer .model-viewer-fallback a[href=?]", blob_file_path(node.node_id, download: 1), 0
+      assert_select ".page-head a[href=?]", blob_file_path(node.node_id, download: 1), text: "Download"
       assert_equal [ { "name" => "board.gtl",
                        "url" => named_blob_file_path(node.node_id, filename: "board.gtl") } ],
                    layers_of(".gerber-viewer")
@@ -94,8 +97,7 @@ module Web
       get file_path(node.node_id)
       assert_response :success
       assert_select ".gerber-viewer .model-viewer-fallback img", 0
-      assert_select ".gerber-viewer .model-viewer-fallback a[href=?]",
-                    blob_file_path(node.node_id, download: 1)
+      assert_select ".gerber-viewer .model-viewer-fallback [data-gerber-target=?]", "status"
     end
 
     # THE FILE PAGE IS ABOUT ITS OWN FILE, even when the whole board sits beside it. A file page that

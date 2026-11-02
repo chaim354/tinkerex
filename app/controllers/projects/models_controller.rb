@@ -33,7 +33,13 @@ module Projects
       filed = current_user.maker_file_attachments.where(attachable_type: "Maker::Model").select(:attachable_id)
       scope = scope.where.not(origin: "auto").or(scope.where(id: filed))
       scope = scope.where("LOWER(title) LIKE ? ESCAPE '\\'", "%#{Maker::Model.sanitize_sql_like(@q.downcase)}%") if @q
-      @results = scope.order(updated_at: :desc, id: :desc).limit(RECENT_LIMIT).to_a
+      # `includes(:file_attachments)`: the cover and the card facts below both read the loaded rows.
+      @results = scope.includes(:file_attachments).order(updated_at: :desc, id: :desc).limit(RECENT_LIMIT).to_a
+      # EACH ROW SAYS WHICH MODEL IT IS (2026-11-02, the UX audit's C9): three "tetra" rows could not
+      # be told apart. The formats and the folder come from Maker::Model.card_facts, the 3D models
+      # view's own answer to the same question, and the picture from the cover — constant queries.
+      @facts = Maker::Model.card_facts(current_user, @results)
+      @thumbs = Maker::Previews::ThumbnailMap.for(current_user, @results.filter_map(&:cover_node_id))
     end
   end
 end

@@ -90,8 +90,10 @@ module Web
 
       get project_path(project)
 
-      assert_select "p.sweep-note", /Sweep filed 3 files/
+      # "Filed", never "sweep" (2026-11-02, the UX audit's C3): the pass is filing to a maker.
+      assert_select "p.sweep-note", /Filed 3 files/
       assert_select "p.sweep-note", /2 hours ago/
+      assert_select "p.sweep-note", text: /sweep/i, count: 0
     end
 
     test "a sweep that moved nothing says nothing" do
@@ -206,7 +208,7 @@ module Web
       # Loose stays in Files, and it names why these files sit apart.
       assert_select ".attachments-panel .attachment-group-head", text: /Loose \(1\)/
       assert_select ".attachments-panel .attachment-group .grid-name", text: "notes.txt"
-      assert_select ".attachments-panel p.loose-note", text: /Loose files are filed on the next sweep/
+      assert_select ".attachments-panel p.loose-note", text: /Loose files are filed into their folders on the next scan/
 
       assert_select "section.folder-panel[id=?] .panel-head", "folder:d-models" do
         assert_select "h2", text: "models"
@@ -630,7 +632,7 @@ module Web
       assert_response :success
       assert_select ".attachment-tile .grid-name", text: "bracket.stl"
       assert_no_match(/bracket\.stl\.ptr/, response.body)
-      assert_select ".loose-note", text: /Loose files are filed on the next sweep/
+      assert_select ".loose-note", text: /Loose files are filed into their folders on the next scan/
       # ONE tile, ONE file counted -- the pointer is not a second, merely-hidden row. In the recent
       # row too (slice 6): the pointer is no more a recent file than a listed one.
       assert_select ".attachment-group .attachment-tile", 1

@@ -63,14 +63,17 @@ module Web
       assert_select ".empty", text: /Trash is empty/
     end
 
+    # IT LANDS BACK ON TRASH AND NAMES WHERE THE FILE WENT (UX audit B6, 2026-11-02), where it
+    # landed on the library root and said nothing about where.
     test "restore returns the file to the normal listing" do
       sign_in
       node_id = upload("restore-me.txt", "alive".b)
       delete file_path(node_id)
 
       post restore_trash_path(node_id)
-      assert_redirected_to files_path
-      follow_redirect!
+      assert_redirected_to trash_index_path
+      assert_equal "Restored restore-me.txt to the top of the Library.", flash[:notice]
+      get files_path
       assert_select "a", text: "restore-me.txt"
 
       user = User.find_by(email: "web-trash@example.com")

@@ -13,18 +13,23 @@
       other panel's action. %>
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "build_log") %></h2>
-    <details class="composer">
-      <summary class="btn small">Add entry</summary>
+    <details class="composer log-add">
+      <%# THE PANELS' ONE COMPOSER PATTERN (2026-11-02, the UX audit's C4): the opener is "Add…" and
+          the submit names the thing — "Add line", "Add connection", "Add release", "Add task", "Add
+          sheet", "Add entry" — so the two never carry one label (the §1A.8 rule this composer
+          first stated, when its opener and its submit both read "Add entry" 150px apart). %>
+      <summary class="btn small" aria-label="Add a build log entry">Add…</summary>
       <%# scope: :build_log_entry — form_with on a NAMESPACED model (Maker::BuildLogEntry) derives
           `maker_build_log_entry[...]`, which the controller's params.require(:build_log_entry)
           rejects. Same trap as projects/_form.html.erb. %>
       <%= form_with model: @new_entry, scope: :build_log_entry,
                     url: project_build_log_entries_path(@project), class: "log-form" do |f| %>
-        <%= f.rich_text_area :body, placeholder: "What did you do?", attachments: "false" %>
-        <%# "Save entry", NOT "Add entry" — the <summary> above already says Add entry, and the two sat
-            150px apart in one panel naming different actions (§1A.8). The opener offers the composer;
-            this commits what is in it. %>
-        <%= f.submit "Save entry", class: "btn small" %>
+        <%# A VISIBLE LABEL, NOT A PLACEHOLDER (the UX audit's §I): "What did you do?" was the field's
+            only name and vanished at the first keystroke. The editor is a form-associated element,
+            so a `<label for>` names it. %>
+        <label class="composer-label" for="build-log-entry-body">What did you do?</label>
+        <%= f.rich_text_area :body, id: "build-log-entry-body", attachments: "false" %>
+        <%= f.submit "Add entry", class: "btn small" %>
       <% end %>
     </details>
   </div>

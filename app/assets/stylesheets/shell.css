@@ -6,7 +6,9 @@
      and a box there would take a grid cell of its own; its only content is a <dialog>, which is
      display:none closed and in the top layer open, so the host draws no box at all. */
   .calculator-host { display: contents; }
-  /* The collapse cookie sets the rail's TRACK and nothing else; the icon rail below follows the width. */
+  /* The collapse cookie sets the rail's TRACK and nothing else; the icon rail below follows the width.
+     Its twin, `rail--expanded`, sets nothing here: it only exempts the body from the ≤1099px track
+     (below), because an explicit choice beats the width default (UX audit A2). */
   body.app-shell.rail--collapsed { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
 
   /* THE RAIL IS A SIZE CONTAINER, `rail`, and the icon-rail block below asks its width. That width
@@ -60,6 +62,16 @@
   .rail-project { min-height: 30px; padding-left: 36px; font-weight: 400; }
   .rail-pin, .rail-tool-pin { font-weight: 400; }
   .rail-nav--foot { margin-top: auto; }
+  /* A PROJECT'S OR A PINNED FOLDER'S MONOGRAM (ShellHelper#rail_monogram): drawn only in the icon rail
+     (the block below shows it), where the name hides. A tile, so a letter is never mistaken for one
+     of the line icons around it; ink-filled when its link is lit, because selection is ink. */
+  .rail-monogram {
+    display: none; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 auto;
+    border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface);
+    color: var(--fg); font: 600 11px/1 var(--font-ui);
+  }
+  .rail-monogram::before { content: attr(data-monogram); }
+  .rail-link[aria-current="page"] .rail-monogram { background: var(--fg); border-color: var(--fg); color: var(--bg); }
 
   .rail-foot { margin-top: 0; display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) 0 0; border-top: 1px solid var(--line); }
   .rail-foot form { margin: 0; }
@@ -78,19 +90,26 @@
   .rail-user { padding: 4px 10px; font: 400 12px/16px var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* THE ICON RAIL, ONCE (F-S20-1): icons only, whichever trigger narrowed the rail, the collapse
-     cookie (`body.app-shell.rail--collapsed`, above) or a viewport below 1100px (the media block
-     below). Both set only the grid track; this asks the rail's own content width (39px narrow, 199px
-     wide, so any threshold between serves), so it matches the rail's descendants and nothing else.
+     cookie (`body.app-shell.rail--collapsed`, above) or a viewport below 1100px without the
+     `expanded` cookie (the media block below). Both set only the grid track; this asks the rail's
+     own content width (39px narrow, 199px wide, so any threshold between serves), so it matches the
+     rail's descendants and nothing else.
      It was two hand-synced copies, a `.rail--collapsed`-prefixed one and an UNSCOPED one in the
      ≤1099px media query, and every rail edit landed twice. css_hygiene_test.rb refuses a second
      copy; shell_test.rb draws both triggers and the sign-in card's wordmark. */
   @container rail (max-width: 120px) {
     .brand { justify-content: center; padding: 4px 0; }
     .brand-name, .rail-label, .rail-user, .rail-btn span,
-    .rail-group-head, .rail-project, .rail-pin, .rail-tool-pin { display: none; }
+    .rail-group-head, .rail-tool-pin, .rail-pin .folder-glyph { display: none; }
     .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
-    /* The lit project, pin or pinned tool just hid, so its family link (ShellHelper#sidebar_family_lit?) wears the
-       lit look instead; otherwise the icon rail shows nothing lit. */
+    /* PROJECTS AND PINNED FOLDERS STAY, AS MONOGRAMS (UX audit A2). They used to hide with their
+       labels, so at 1024px the eight projects and every pin were simply gone. A pin's folder glyph
+       gives way to its letter: every pin wears the same glyph, so the glyph alone named none. */
+    .rail-monogram { display: inline-flex; }
+    /* The Collapse button's arrow points the way the rail will move: left to collapse, right to expand. */
+    .rail-collapse .rail-icon { transform: scaleX(-1); }
+    /* The lit pinned TOOL just hid, so its family link (ShellHelper#sidebar_family_lit?) wears the lit
+       look instead; otherwise the icon rail shows nothing lit. */
     .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
     .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
   }
@@ -131,9 +150,14 @@
   main.container { width: 100%; max-width: var(--container-max); margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-8); }
   main.container.container-wide { max-width: none; }
 
+  /* THE TOASTS SIT AT THE BOTTOM RIGHT (UX audit A5). They were fixed at the top right, over the top
+     bar's New ▾ and Upload, so the notice after a delete covered the two controls a maker reaches
+     for next. Nothing of the shell lives down here: the top bar and every page head's actions are
+     at the top. On a phone the stack spans the screen just above the tab bar (the ≤719px block).
+     shell_toast_test.rb measures that it never meets New, Upload or the tab bar. */
   .flash-stack {
-    position: fixed; top: 12px; right: 12px; z-index: 900; display: flex; flex-direction: column; gap: 8px;
-    width: min(420px, calc(100vw - 24px)); pointer-events: none;
+    position: fixed; bottom: 16px; right: 16px; z-index: 900; display: flex; flex-direction: column; gap: 8px;
+    width: min(420px, calc(100vw - 32px)); pointer-events: none;
   }
   /* A floating toast is OPAQUE: the -soft tint is translucent, so it layers over --surface rather
      than letting the page show through. */
@@ -169,15 +193,21 @@
   .account-delete { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 
   @media (max-width: 1099px) {
-    /* The narrow viewport's half of the icon rail: the TRACK, whatever the cookie says. */
-    body.app-shell { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
+    /* The narrow viewport's half of the icon rail: the TRACK, unless the maker chose the full rail
+       (`rail--expanded`, UX audit A2: an explicit choice beats the width default). `:where()` keeps
+       this at `body.app-shell`'s own specificity, so the ≤719px block's one-column grid, later in the
+       sheet, still wins on a phone. */
+    body.app-shell:where(:not(.rail--expanded)) { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
     .topbar { padding: 0 16px; }
     .topbar-upload-caption { display: none; }
     main.container { padding: 16px 16px 64px; }
   }
 
   @media (max-width: 719px) {
-    body.app-shell { grid-template-columns: minmax(0, 1fr); padding-bottom: var(--tabbar-height); }
+    /* ONE COLUMN, WHATEVER THE COOKIE SAYS: the rail is gone, so no track may be kept for it.
+       `body.app-shell.rail--collapsed` is named because it outranks a bare `body.app-shell`, and with
+       the collapse cookie set a phone laid the whole page out in the rail's 56px track. */
+    body.app-shell, body.app-shell.rail--collapsed { grid-template-columns: minmax(0, 1fr); padding-bottom: var(--tabbar-height); }
     .rail { display: none; }
     .tabbar {
       position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex;
@@ -186,6 +216,24 @@
     .tabbar-link { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--fg-muted); font-size: 11px; }
     .tabbar-link:hover { text-decoration: none; }
     .tabbar-link[aria-current="page"] { color: var(--fg); font-weight: 600; }
+    /* MORE, THE FIFTH TAB (UX audit A1; layouts/_tabbar). A `details.menu` made a tab: static, so its
+       list is positioned by the fixed bar and opens UPWARD as a sheet between the gutters, scrolling
+       if a short phone cannot hold it. The tab lights like a place when one of its links is the page
+       (`:has()` on the link's aria-current, which `sidebar_current` decided) or while it is open. */
+    .tabbar .tabbar-more { position: static; display: block; flex: 1; min-width: 0; }
+    .tabbar-more > summary { height: 100%; cursor: pointer; }
+    .tabbar-more[open] > summary,
+    .tabbar-more:has(.tabbar-sheet [aria-current="page"]) > summary { color: var(--fg); font-weight: 600; }
+    .tabbar-more .tabbar-sheet {
+      top: auto; bottom: calc(100% + 8px); left: 8px; right: 8px; min-width: 0;
+      max-height: calc(100vh - var(--tabbar-height) - 24px); overflow-y: auto;
+    }
+    .tabbar-sheet .menu-item[aria-current="page"] { background: var(--raised); font-weight: 600; }
+    .tabbar-theme { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 6px 10px; }
+    .tabbar-sheet-label { font-size: 14px; color: var(--fg); }
+    .tabbar-sheet-user { margin: 0; padding: 6px 10px 2px; font: 400 12px/16px var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* The toasts span the phone just above the tab bar, never under it or over the top bar. */
+    body.app-shell .flash-stack { left: 12px; right: 12px; bottom: calc(var(--tabbar-height) + 12px); width: auto; }
     .topbar { flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; }
     /* THE PHONE ROW IS THE BREADCRUMB AND THE "+" (spec §4.3), with search on a full-width row below
        (slice 7). `order` moves only the search box; the crumbs, New and Upload keep their DOM order. */
@@ -199,16 +247,16 @@
     .topbar-new { position: static; }
     .topbar-new .menu-list { left: 12px; right: 12px; min-width: 0; }
     /* ONE "+" FOR NEW AND UPLOAD (structural redesign spec §4.3, slice 7). The summary reads "+", and
-       the top bar's Upload moves inside it as the menu's first item, which clicks the hidden LABEL
-       (upload_forward_controller.js) so a page with no folder still asks with the chooser. Only the
-       LABEL hides, never `.topbar-upload`: the chunk flow's `.upload-status` beside it is where an
+       the top bar's Upload moves inside it as the menu's first item, which clicks the hidden Upload
+       BUTTON (upload_forward_controller.js) so a page with no folder still asks with the chooser. Only
+       the BUTTON hides, never `.topbar-upload`: the chunk flow's `.upload-status` beside it is where an
        upload started from the menu reports its progress. `revert-layer` hands the item back the
        display its own component gives it (`.menu-item`'s flex, the separator's block) rather than
        restating either here. */
     .topbar-new-label { display: none; }
     .topbar-new-plus { display: inline; }
     .topbar-new-upload { display: revert-layer; }
-    .topbar-upload label.upload-btn { display: none; }
+    .topbar-upload .upload-btn { display: none; }
     .topbar-kbd { display: none; }
     main.container { padding: 12px 12px 72px; }
     .page-head h1 { font-size: 18px; }

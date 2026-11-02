@@ -64,8 +64,9 @@ module Web
       assert_select ".settings-fact", text: "2 locations"
       assert_select ".settings-fact", text: "4 tags"
       assert_select ".settings-fact", text: @user.email
-      # cookies[:theme] is unset -- ShellHelper#ui_theme's default, "light".
-      assert_select ".settings-fact", text: /light/
+      # cookies[:theme] is unset -- ShellHelper#ui_theme's default, "light". Read off the choice's
+      # pressed button, not a label beside it (the Settings page has one control, UX audit A6).
+      assert_select ".theme-choice button[data-theme-theme-param='light'][aria-pressed='true']"
     end
 
     # Users (2026-10-21) is admins-only, so the eight rows above are a plain account's hub.

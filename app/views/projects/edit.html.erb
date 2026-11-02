@@ -5,7 +5,7 @@
 
 <%#
   THE DANGER ZONE (2026-10-26, the edit area; spec 2026-10-26-project-edit-area §3). Archive,
-  Unarchive and Not a project lived in the project page's ⋯ menu; the owner moved them behind Edit
+  Unarchive and "Not a project" lived in the project page's ⋯ menu; the owner moved them behind Edit
   with the other customisations, so the page is a view. They moved VERBATIM — the same button_to,
   routes and confirms — with `btn` for the menu-item class (Archive keeps `danger`). Below the form
   and outside it: a button_to is a form of its own, and a form inside a form is invalid HTML.
@@ -14,13 +14,16 @@
   adopted, archiving is also what stops it being adopted again. A local rather than a helper — one
   call site, and the sentence belongs at the point of the click.
 
-  NOT A PROJECT (stage 4, S4-6; story 1.6). The app made this row from a folder, so the maker needs a
+  STOP TREATING THIS FOLDER AS A PROJECT (stage 4, S4-6, as "Not a project"; story 1.6; relabelled
+  2026-11-02 for the UX audit's C7, because "Not a project" named a state, not the thing the button
+  does). The app made this row from a folder, so the maker needs a
   way to say it was wrong — and archiving already IS that mechanism, silently: the claim lookup is
   unscoped, so an archived project keeps its folder_node_id and the sweep passes over that folder
   forever. This names the act instead of leaving it to be discovered. ONE WRITE, TWO SENTENCES — see
   ProjectsController#destroy; a second route would be two ways to do one thing. Only for a
-  discovered project: a project you made by hand was never adopted, so there is nothing for "not a
-  project" to mean.
+  discovered project: a project you made by hand was never adopted, so there is nothing for "stop
+  treating this folder as a project" to mean. The route, the `dismiss=1` and the confirm are
+  unchanged.
 %>
 <% name = @project.name_in_database %>
 <% archive_confirm = if @project.discovered_at.present?
@@ -36,7 +39,7 @@
       <p class="muted">Return it to your projects list.</p>
     <% else %>
       <% if @project.discovered_at.present? %>
-        <%= button_to "Not a project", project_path(@project, dismiss: 1), method: :delete,
+        <%= button_to "Stop treating this folder as a project", project_path(@project, dismiss: 1), method: :delete,
                       class: "btn small",
                       form: { data: { turbo_confirm: "“#{name}” is not a project? Its folder stays in your library, and the app won't adopt it again." } } %>
       <% end %>

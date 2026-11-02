@@ -16,7 +16,7 @@ module Projects
           a.role = "image"
         end
         respond_to do |format|
-          format.html { redirect_to project_path(entry.project), notice: "Photo added." }
+          format.html { redirect_to project_path(entry.project), notice: "Added the photo #{node.name}." }
           # 200, not 201, when the photo was already attached — same rule as
           # Projects::AttachmentsController and Models::AttachmentsController.
           format.json { render json: { node_id: att.node_id, role: att.role },
@@ -34,7 +34,7 @@ module Projects
       att = current_user.maker_file_attachments.find(params[:id])
       entry = att.attachable
       att.destroy!
-      redirect_to project_path(entry.project), notice: "Photo removed."
+      redirect_to project_path(entry.project), notice: "Removed the photo."
     end
   end
 end

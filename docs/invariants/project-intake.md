@@ -24,7 +24,9 @@
   (which passes `discovered_at: nil` explicitly and says why at its own `create!`), not the v1 API,
   whose permit list does not name it. That is what lets `projects/_card` read
   `discovered_at.present?` as "the app made this, I did not" rather than as a proxy for it, and it
-  is half of the **New** badge (`discovered_at` set, `opened_at` still nil). **It is never read to
+  is half of the **New** badge (`discovered_at` set, `opened_at` still nil, and the status still the
+  column's `planning` — since 2026-11-02 "New" is the card's one status badge for such a project,
+  in place of "Planning", never beside a later status). **It is never read to
   decide whether to adopt.** `adoptable` still asks `nodes` and the claim and nothing else, so
   statelessness is untouched — a mark the sweep WRITES for a page and a mark the sweep READS to skip
   work are different things, and only the second would be the second source of truth.
@@ -44,10 +46,12 @@
   WRITE.** `ProjectsController#destroy` takes `dismiss=1`, which changes the **flash and nothing
   else** — both paths call `archive!`, so the write is identical by construction rather than by two
   callers agreeing, and a second route performing it would be the drift this codebase refuses. The
-  "Not a project" button renders on `projects/show` only when `discovered_at` is present: a project
-  made by hand was never adopted, so the phrase means nothing there. Archive's own `turbo_confirm`
-  says the previously-undocumented half out loud for a discovered project — its folder stays in the
-  library, and the app will not adopt it again.
+  "Stop treating this folder as a project" button ("Not a project" until 2026-11-02) renders in the
+  Danger zone of the edit area's Details tab (`projects/edit`, since the 2026-10-26 edit area moved
+  it off `projects/show`) only when `discovered_at` is present: a project made by hand was never
+  adopted, so the phrase means nothing there. Archive's own `turbo_confirm` says the
+  previously-undocumented half out loud for a discovered project — its folder stays in the library,
+  and the app will not adopt it again.
 
 - **IT NEVER MINTS `Projects/` AND NEVER CALLS `ensure_library_folder!`.** `projects_root` looks
   the folder up with `find_by`, never find-or-create, so a user with no `Projects/` folder at all
@@ -279,6 +283,17 @@
   addon-output file rather than per sweep-file — still calls `Maker::ProjectFolders.folder_for`
   directly; its own call volume is bounded by one addon save's output count, never by the
   library's whole inbox, so it does not need the same memo.
+  **`Maker::LooseFilingNotes` IS A THIRD READER OF THE SAME HASH, FOR THE PAGE (2026-11-02, the UX
+  audit's C3).** The Files panel's Loose group promised "filed on the next sweep" over a file the
+  pass refuses every time (its category folder already holds that name: `:conflict`), so each
+  loose row now says so itself — "design/x.svg already exists — rename one to file it" — and the
+  panel's caption promises the next scan only while some row has no such note, and never under a
+  working tree or an `autofile`-off project. It fetches `Maker::FilingRules.for` ONCE per render and
+  asks the hash per name with `Maker::ProjectFolders.ext_of`, exactly as `#place`'s private
+  `#folder_for` does, and looks for the occupant in the listing's own tree, so it costs one query
+  pair whatever the folder holds. It is a PREDICTION and writes nothing: a `.zip` is skipped (where
+  a board files is a content question, `#board_folder_for`), and a destination past the listing's
+  FILE_CAP is not seen — both fail toward the plain caption, never toward a wrong sentence.
 
 - **THE PAGE LISTS THE FOLDER AND NEVER FILES OR MINTS IT.** `Maker::ProjectFolderListing` reads
   `folder_node_id`, answers liveness through the LibraryTree, and creates nothing; the one writer of the FOLDER
@@ -316,6 +331,10 @@
   reason: the sweep asks whether a file already at this root should be filed; the relocate door is
   a user moving a README in from elsewhere, and refusing there would strand it outside the folder.
   Guard: `project_intake_test.rb` ("a README at the root is attached but never filed away").
+  **THE PAGE AGREES (2026-11-02, the UX audit's C3):** the README the project page's card renders
+  is not listed under the Files panel's Loose group — Loose is "what the next pass will file", and
+  this file never is — while a second README-named file at the root stays listed, its row saying
+  it stays (`Maker::LooseFilingNotes`). Guard: `project_repo_card_test.rb`.
 
 - **ROOT = INBOX, PLUS WHAT `other/` NO LONGER HOLDS — AND IT IS STATELESS.** Files at a project
   folder's own root are filed; anything in any other subfolder — including one filed "wrong" by
@@ -494,7 +513,8 @@
   reason `Maker::ProjectIntakeJob`'s own schedule declines on scannable backends (next
   bullet).
 - **AN INTERACTIVE SCAN DOOR MUST NOT FILE ON A SCANNABLE BACKEND — IT ENQUEUES AND STOPS.**
-  `Projects::ScansController` (the per-project "Scan folder" button) is the SECOND door that
+  `Projects::ScansController` (the project page's "Rescan library" button — it read "Scan folder"
+  until 2026-11-02, though it always scanned the whole library) is the SECOND door that
   refreshes the store on a user's command — `FilesController#rescan`, the Files page's "Rescan
   library" button, predates it and is `require_scannable!`-gated, so it never reaches this rule's
   chunk_remote half. On share/s3 this one calls `Library::ScanJob.enqueue_for` and

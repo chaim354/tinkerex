@@ -21,14 +21,16 @@
             a fragment, so a reader that opens an entry lands ON it rather than at the top of a page
             that may hold fifty. public_feed_test.rb asserts the two agree. %>
         <li class="log-entry" id="entry-<%= entry.id %>">
-          <time class="entry-time muted"><%= entry.logged_at.strftime("%Y-%m-%d") %></time>
+          <%= time_at(entry.logged_at, style: :date, class: "entry-time muted") %>
           <%# A div, not a p: Action Text emits block-level markup and a <p> cannot legally contain it. %>
           <div class="entry-body"><%= entry.body %></div>
           <% photos = entry.file_attachments.select { |a| pub.page_nodes.key?(a.node_id) } %>
           <% if photos.any? %>
             <div class="entry-photos">
               <% photos.each do |att| %>
-                <%= link_to pub.file_url_for(att.node_id), class: "photo-cell file-cell" do %>
+                <%# Named by the file (UX audit I): the image inside carries `alt=""`. %>
+                <%= link_to pub.file_url_for(att.node_id), class: "photo-cell file-cell",
+                            aria: { label: pub.page_nodes[att.node_id].name } do %>
                   <%= render "files/thumb", thumb: pub.thumbs.thumb(att.node_id), ext_label: "IMG",
                              url: pub.preview_url_for(att.node_id) %>
                 <% end %>

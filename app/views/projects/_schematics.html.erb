@@ -17,8 +17,13 @@
 %>
 <% kicad_rows = @listing.all_rows.select { |row| kicad?(row.node.name) }.sort_by { |row| row.node.name } %>
 <% if kicad_rows.any? %>
+  <%# ONE PANEL-HEAD SHAPE (2026-11-02, the UX audit's C10): this was the one panel with a bare
+      `<h2>`, so `.panel-head`'s alignment and spacing missed it. %>
   <section class="panel schematics-panel">
-    <h2><%= panel_title(@panel_layout, "schematics") %></h2>
+    <div class="panel-head">
+      <h2><%= panel_title(@panel_layout, "schematics") %></h2>
+      <span class="mono muted"><%= pluralize(kicad_rows.size, "file") %></span>
+    </div>
     <%= panel_intro(@panel_layout, "schematics") %>
     <ul class="schematics-list">
       <% kicad_rows.each do |row| %>

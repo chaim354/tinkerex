@@ -230,10 +230,29 @@ class FilesHelperTest < ActiveSupport::TestCase
   # a delete url" but "it has NOTHING ELSE": a note url would open a popover POSTing to an endpoint
   # no directory has, a download url would put a dead entry on every folder, and a `node_id` would
   # enrol folders in the thumbnail poll. An exact comparison is the only shape that catches a key
-  # someone adds by copying `file_menu_data`.
-  test "folder_menu_data is the action, the name and the delete url, and nothing else" do
-    assert_equal({ action: "contextmenu->filemenu#open", node_name: "cad", delete_url: file_path("dir-1") },
+  # someone adds by copying `file_menu_data`. The question its Delete asks joined it (UX audit B5,
+  # 2026-11-02): a folder delete takes everything inside, and the menu now says so.
+  test "folder_menu_data is the action, the name, the delete url and its question, and nothing else" do
+    assert_equal({ action: "contextmenu->filemenu#open", node_name: "cad", delete_url: file_path("dir-1"),
+                   delete_confirm: "Delete the folder cad and everything in it?" },
                  folder_menu_data("dir-1", "cad"))
+  end
+
+  # ONE QUESTION PER KIND, AND EVERY DELETE DOOR ASKS THROUGH IT (UX audit B5): a file goes to Trash
+  # and asks the plain question; a folder's cascades, and says it takes what is inside.
+  test "delete_confirm asks a folder about its contents and a file plainly" do
+    assert_equal "Delete the folder cad and everything in it?", delete_confirm("cad", kind: "dir")
+    assert_equal "Delete widget.stl?", delete_confirm("widget.stl", kind: "file")
+    assert_equal "Delete widget.stl?", file_menu_data(menu_node, nil)[:delete_confirm]
+  end
+
+  # THE TYPE LABEL READS `kind` AND `name` ONLY (UX audit D4/D7), so the port's own answers take it
+  # as they are — the file page's Type row was the raw MIME type, Trash's the raw `file`/`dir`.
+  test "file_type_label labels a FileInfo and a TrashEntry as the list labels a node" do
+    info = FileLayer::FileInfo.new(node_id: "n-1", name: "lid.lbrn2", kind: "file", size: 1, mtime: 1, content_token: "t")
+    assert_equal "LBRN2", file_type_label(info)
+    assert_equal "Folder", file_type_label(FileLayer::TrashEntry.new(node_id: "d-1", name: "cad", kind: "dir", size: nil, deleted_at: nil))
+    assert_equal "—", file_type_label(FileLayer::TrashEntry.new(node_id: "n-2", name: "Makefile", kind: "file", size: 1, deleted_at: nil))
   end
 
   # `node_name` IS THE CALLER'S, NEVER LOOKED UP. The menu's `confirm` reads it, and a lookup here

@@ -89,6 +89,22 @@ module Web
                    "an item's link is the page plus its own anchor, absolute"
     end
 
+    # A FEED READER KEYS ON THE ID, SO THE ID'S DATE IS THE UTC DAY WHATEVER THE APP'S ZONE. Every id
+    # was minted while config.time_zone was UTC; a deployment that sets TIME_ZONE must not turn an
+    # evening's items into new ones. 03:11 UTC on 2 November is the evening of 1 November in New
+    # York, so a date taken in the app's zone reads 2026-11-01 here and fails.
+    test "the feed's ids keep their UTC date when the app's zone is not UTC" do
+      instant = Time.utc(2026, 11, 2, 3, 11, 6)
+      @project.update_columns(created_at: instant)
+      late = add_entry!("Glued the base", instant)
+
+      Time.use_zone("America/New_York") { get path }
+
+      doc = feed
+      assert_equal "tag:tinkerex,2026-11-02:project/#{@project.id}", doc.at_xpath("/xmlns:feed/xmlns:id").text
+      assert_includes doc.xpath("//xmlns:entry/xmlns:id").map(&:text), "tag:tinkerex,2026-11-02:entry/#{late.id}"
+    end
+
     # --- 2. newest first, and the merge ---------------------------------------------
 
     # THE TWO KINDS ARE INTERLEAVED, NOT CONCATENATED, which is the only shape that can fail if

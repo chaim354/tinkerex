@@ -1,22 +1,32 @@
 <%#
   Named spreadsheets on this project. The grid itself lives on its own full-width page — a real
   grid inside a panel this size is unusable — so this panel is a list plus a create form.
+
+  THE COMPOSER IS THE PANELS' ONE PATTERN (2026-11-02, the UX audit's C4): "Add…" opens a labelled
+  Name field and an "Add sheet" submit, where the panel head held a bare field whose only name was
+  its "New sheet…" placeholder. A sheet with no name still gets one ("Sheet 2"), so the field is
+  optional and says so.
 %>
 <section class="panel sheets-panel<%= " panel--quiet" if @sheets.empty? %>" id="project-sheets">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "sheets") %></h2>
-    <%# text_field_tag, not f.text_field: this form has no model object, and the controller reads
-        params.dig(:sheet, :name), so the field needs that exact nested name. %>
-    <%= form_with url: project_sheets_path(@project), method: :post, class: "sheet-new-form" do %>
-      <%= text_field_tag "sheet[name]", nil, placeholder: "New sheet…" %>
-      <%= submit_tag "Add", class: "btn small" %>
-    <% end %>
+    <details class="composer sheet-add">
+      <summary class="btn small" aria-label="Add a sheet">Add…</summary>
+      <%# text_field_tag, not f.text_field: this form has no model object, and the controller reads
+          params.dig(:sheet, :name), so the field needs that exact nested name. %>
+      <%= form_with url: project_sheets_path(@project), method: :post, class: "sheet-new-form" do %>
+        <label class="field">
+          <span>Name <span class="muted">(optional)</span></span>
+          <%= text_field_tag "sheet[name]", nil, id: "sheet-name-#{@project.id}" %>
+        </label>
+        <%= submit_tag "Add sheet", class: "btn small" %>
+      <% end %>
+    </details>
   </div>
   <%= panel_intro(@panel_layout, "sheets") %>
 
-  <%# QUIET AT ZERO (stage 4, S4-1): no sheets is the heading and the New sheet field, which
-      already says what one is for -- the sentence under it named three uses and took a whole
-      panel to do it. %>
+  <%# QUIET AT ZERO (stage 4, S4-1): no sheets is the heading and the composer, which already says
+      what one is for -- the sentence under it named three uses and took a whole panel to do it. %>
   <% @sheets.each do |sheet| %>
     <div class="sheet-row">
       <%= link_to sheet.name, sheet_path(sheet) %>

@@ -30,8 +30,16 @@ module Maker
     validate :location_belongs_to_user, if: -> { location_id.present? }
     validate :supplier_belongs_to_user, if: -> { supplier_id.present? }
 
-    # quantity_cached <= min_quantity  ==>  needs restocking.
-    scope :low_stock, -> { where("quantity_cached <= min_quantity") }
+    # LOW STOCK MEANS "AT OR BELOW A MINIMUM THE MAKER SET", AND A MINIMUM OF 0 IS NONE SET. Every
+    # item is created with min_quantity 0 (the column default), so `quantity_cached <= min_quantity`
+    # alone called a brand-new item, and anything run down to nothing, "Low" before anyone had said
+    # how many they want to keep (UX audit 2026-11-01, E5). `<=` still holds above zero: an item
+    # exactly at its own minimum is low. The scope and the predicate are the ONE definition — the
+    # inventory list, its "Low stock" chip, the item page, Recent's Needs attention and v1's
+    # /low_stock all read one of the two, so they cannot disagree about a row.
+    scope :low_stock, -> { where("min_quantity > 0 AND quantity_cached <= min_quantity") }
+
+    def low_stock? = min_quantity.positive? && quantity_cached <= min_quantity
 
     # Recompute the denormalized balance from the immutable ledger (drift repair / migration).
     def rebuild_quantity_cached!

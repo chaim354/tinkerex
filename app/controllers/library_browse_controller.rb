@@ -71,7 +71,7 @@ class LibraryBrowseController < ApplicationController
     # listed FIRST so an ambiguous Accept (*/*) keeps getting the JSON it always got.
     respond_to do |format|
       format.json { render json: { node_id: node.node_id, name: node.name, kind: node.kind }, status: :created }
-      format.html { redirect_to files_path(folder: node.node_id), notice: "Folder “#{node.name}” created." }
+      format.html { redirect_to files_path(folder: node.node_id), notice: "Created the folder “#{node.name}”." }
     end
   rescue FileLayer::NotFound
     # KEPT, BUT NO LONGER FOR THE REASON IT WAS WRITTEN. This used to be the reserved-name answer on

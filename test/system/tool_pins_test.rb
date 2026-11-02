@@ -1,6 +1,7 @@
 require "application_system_test_case"
 
-# PINNING A TOOL IS A RIGHT CLICK (2026-10-22; toolmenu_controller.js). The request tests
+# PINNING A TOOL IS A RIGHT CLICK (2026-10-22; toolmenu_controller.js), and since 2026-11-02 also the
+# card's visible toggle, which test/system/tools_addon_page_test.rb drives. The request tests
 # (test/integration/web/tool_pins_test.rb, calculator_shell_test.rb) see the data each tool carries
 # and what the door does with a POST; only a browser can see the two joined — that a right click on
 # a card opens the menu, that its entry says what it will do, that choosing it pins the tool, and
@@ -19,7 +20,9 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
     end
   end
 
-  def card = find("a.addon-card", text: "Box Generator")
+  # A <div> since 2026-11-02, its title the link (tools/home/index): a card holding a pin <form>
+  # cannot be an <a>. The right-click data is still on the card.
+  def card = find(".addon-card", text: "Box Generator")
 
   test "a right click on an addon's card pins it, and a right click on its rail link unpins it" do
     visit tools_path
@@ -32,7 +35,7 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
     find(".file-menu button", text: "Pin to sidebar").click
 
     assert_current_path tools_path
-    assert_selector ".flash", text: "Box Generator pinned to the sidebar."
+    assert_selector ".flash", text: "Pinned Box Generator to the sidebar."
     assert_selector "aside.rail a.rail-tool-pin[href=\"#{tools_addon_path("boxes")}\"]", text: "Box Generator"
     assert_no_selector ".file-menu"
 
@@ -46,7 +49,7 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
     find("aside.rail a.rail-tool-pin", text: "Box Generator").right_click
     find(".file-menu button", text: "Unpin from sidebar").click
     assert_current_path projects_path
-    assert_selector ".flash", text: "Box Generator unpinned from the sidebar."
+    assert_selector ".flash", text: "Unpinned Box Generator from the sidebar."
     assert_no_selector "aside.rail a.rail-tool-pin"
     assert_no_console_errors
   end

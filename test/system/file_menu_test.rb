@@ -89,16 +89,17 @@ class FileMenuTest < ApplicationSystemTestCase
     assert_selector ".file-menu", text: "Add note"
 
     # Anywhere outside the menu — the page heading is far from wherever the right-click landed.
-    find("h1", text: "Files").click
+    find("h1", text: "Library").click
     assert_no_selector ".file-menu"
 
     assert_no_console_errors
   end
 
-  # DOWNLOAD, IN THE GRID, WHICH IS THE SURFACE THAT NEEDS IT. A grid card has no row-actions cell,
-  # so before this the only way to the bytes was to open the file first — the list at least had a
-  # Download link per row. The href is asserted rather than clicked: following it would hand the
-  # headless browser a real file transfer, and what is being tested is the menu's wiring, not
+  # DOWNLOAD, IN THE GRID AS WELL AS THE LIST. When this was written a grid card had no actions of
+  # its own, so the menu was the grid's only way to the bytes short of opening the file; since the UX
+  # audit (D2, 2026-11-02) a card carries visible Details/Download/Delete too, and the menu is the
+  # same entry reached by right-click or Shift+F10. The href is asserted rather than clicked:
+  # following it would hand the headless browser a real file transfer, and what is being tested is the menu's wiring, not
   # FilesController#blob (which files_flow_test.rb already drives end to end).
   #
   # test/integration/web/file_menu_wiring_test.rb asserts every SURFACE feeds the attribute; this
@@ -219,6 +220,90 @@ class FileMenuTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # THE MENU IS A MENU TO A KEYBOARD (UX audit D2 and §I). Opened with Shift+F10 from a focused row,
+  # it takes focus itself, is announced as a menu of menu items, moves with the arrows (wrapping) and
+  # Home/End, and Escape closes it with focus back on the row that opened it — so a keyboard user
+  # is never left at the top of the page with the menu gone. `document.activeElement` is the witness
+  # throughout, since nothing a screenshot shows tells a focused item from a hovered one.
+  #
+  # MUTATION-CHECKED (2026-11-02): with `this.returnFocus()` removed from the Escape listener in
+  # filemenu_controller.js#connect, the last assertion goes RED (focus is on <body>); restored, green.
+  test "the menu opens from the keyboard, moves with the arrows, and Escape returns focus to the row" do
+    create_node!(@user, node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
+    visit files_path(view: "list")
+    cell = find(".file-cell", text: "widget.stl")
+    page.execute_script("arguments[0].focus()", cell)
+
+    page.send_keys([ :shift, :f10 ])
+
+    assert_selector ".file-menu[role='menu'][aria-label='Actions for widget.stl']"
+    labels = all(".file-menu [role='menuitem']").map(&:text)
+    assert_equal [ "Add note", "Open", "Details", "Download", "Delete" ], labels
+    assert_equal labels.size, all(".file-menu > *").size, "an entry is not a menuitem"
+    assert_equal "Add note", focused_text
+
+    page.send_keys(:down)
+    assert_equal "Open", focused_text
+    page.send_keys(:end)
+    assert_equal "Delete", focused_text
+    page.send_keys(:down) # wraps
+    assert_equal "Add note", focused_text
+    page.send_keys(:up)   # and back
+    assert_equal "Delete", focused_text
+    page.send_keys(:home)
+    assert_equal "Add note", focused_text
+
+    page.send_keys(:escape)
+    assert_no_selector ".file-menu"
+    assert page.evaluate_script("document.activeElement === arguments[0]", cell), "focus did not return to the row"
+    assert_no_console_errors
+  end
+
+  # ENTER ACTIVATES THE FOCUSED ENTRY, through the same click listener a pointer uses, and the
+  # ContextMenu key opens the menu as Shift+F10 does. WebDriver has no code for the ContextMenu key,
+  # so it is dispatched as the event the controller reads; Escape out of the note popover it opens
+  # returns focus to the row as well.
+  test "Enter activates an entry and the ContextMenu key opens the menu" do
+    create_node!(@user, node_id: SecureRandom.uuid, name: "widget.stl", kind: "file")
+    visit files_path(view: "list")
+    cell = find(".file-cell", text: "widget.stl")
+    page.execute_script(<<~JS, cell)
+      arguments[0].focus()
+      arguments[0].dispatchEvent(new KeyboardEvent("keydown", { key: "ContextMenu", bubbles: true, cancelable: true }))
+    JS
+
+    assert_selector ".file-menu[role='menu']"
+    assert_equal "Add note", focused_text
+    page.send_keys(:enter)
+    assert_no_selector ".file-menu"
+    assert_selector ".note-popover textarea"
+    assert page.evaluate_script("document.activeElement === document.querySelector('.note-popover textarea')")
+
+    page.send_keys(:escape)
+    assert_no_selector ".note-popover"
+    assert page.evaluate_script("document.activeElement === arguments[0]", cell), "focus did not return to the row"
+    assert_no_console_errors
+  end
+
+  # A CELL MAY CARRY ITS OWN DELETE QUESTION, and the menu asks that one. A folder's delete takes
+  # everything inside it, so its row asks a wider question than a file's (FilesHelper writes it as
+  # `data-delete-confirm`, beside the row's own button), and the menu is one of the doors that must
+  # ask it. Set here on the cell directly, so this pins the controller's half whatever the helper
+  # writes; file_menu_wiring_test.rb is where the helper's half belongs.
+  test "the menu's Delete asks the cell's own question when it carries one" do
+    create_node!(@user, node_id: SecureRandom.uuid, name: "cad", kind: "dir")
+    visit files_path(view: "list")
+    folder = find("a.dir", text: "cad")
+    page.execute_script("arguments[0].dataset.deleteConfirm = 'Delete the folder cad and everything in it?'", folder)
+
+    folder.right_click
+    question = dismiss_confirm { find(".file-menu button", text: "Delete").click }
+    assert_equal "Delete the folder cad and everything in it?", question
+    assert @user.nodes.present.exists?(name: "cad"), "a dismissed delete deleted"
+    assert page.evaluate_script("document.activeElement === arguments[0]", folder), "focus did not return to the row"
+    assert_no_console_errors
+  end
+
   # project_with_folder gives a SOURCE folder ("parts") that is deliberately NOT the project's own
   # folder — this is a file sitting in the library, not yet part of any project, which is the
   # ordinary case the attach control exists for.
@@ -281,6 +366,10 @@ class FileMenuTest < ApplicationSystemTestCase
   end
 
   private
+
+    def focused_text
+      page.evaluate_script("document.activeElement && document.activeElement.textContent")
+    end
 
     # A REAL FILE WITH ITS BYTES ON DISK, where this used to drive Sync::Commit and put a chunk in
     # the in-process store. The collision test asserts "the original is untouched", which a bare

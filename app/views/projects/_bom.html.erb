@@ -4,6 +4,12 @@
   never render differently. ProjectsController#show loads @bom / @bom_lines / @bom_lines_shown /
   @bom_rollup / @items / @suppliers and folds the bom's file-line node ids into the page's ONE
   PageNodes union (@page_nodes) — this partial issues no query of its own.
+
+  THE COMPOSER IS IN THE HEAD, EMPTY OR NOT (2026-11-02, the UX audit's C4/C5): "+ Add panel →
+  Bill of materials" opened this panel with its heading and Open and no way to add the first line,
+  because the composer lived inside projects/_bom_lines, which an empty panel never renders. It is
+  projects/_bom_composer now, a direct child of `.panel-head` like every panel's composer, so it
+  sits on the right while closed and takes the row beneath the title when open (pages/projects.css).
 %>
 <section class="panel bom-panel<%= " panel--quiet" if @bom_lines.empty? %>" id="project-bom">
   <div class="panel-head">
@@ -12,15 +18,14 @@
       <span class="bom-rev mono muted">rev <%= @bom.revision %></span>
     <% end %>
     <%= link_to "Open", project_bom_path(@project), class: "btn small" %>
+    <%= render "projects/bom_composer", project: @project, items: @items, suppliers: @suppliers %>
   </div>
   <%= panel_intro(@panel_layout, "bom") %>
 
-  <%# QUIET AT ZERO (stage 4, S4-1): the empty BOM panel is its heading and Open. The composer
-      lives on the BOM page, one click away, and projects/_bom_lines is SHARED with that page --
-      whose own empty state is the place to invite a first line, so its sentence stays there. %>
+  <%# QUIET AT ZERO (stage 4, S4-1): the empty BOM panel is its heading, Open and the composer.
+      projects/_bom_lines is SHARED with the BOM page, whose own empty state says "No lines yet". %>
   <% if @bom_lines.any? %>
     <%= render "projects/bom_lines", lines: @bom_lines, shown: @bom_lines_shown, rollup: @bom_rollup,
-               nodes: @page_nodes, project: @project, bom: @bom, items: @items, suppliers: @suppliers,
-               more_path: project_bom_path(@project) %>
+               nodes: @page_nodes, project: @project, bom: @bom, more_path: project_bom_path(@project) %>
   <% end %>
 </section>

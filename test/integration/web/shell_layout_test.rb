@@ -155,12 +155,12 @@ module Web
       assert_select "main nav.breadcrumb", count: 0
       # The 3D models view (slice 5) is a Library page: its top bar carries a breadcrumb, not a title.
       get files_models_path
-      assert_select "header.topbar nav.breadcrumb a[href=?]", files_path, text: "Files"
+      assert_select "header.topbar nav.breadcrumb a[href=?]", files_path, text: "Library"
       assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "3D models"
       assert_select "main nav.breadcrumb", count: 0
     end
 
-    # Four tabs, not every sidebar entry: Trash is reached from the sidebar alone, so its page lights
+    # Four tabs, not every sidebar entry: Trash lives in the fifth tab's More sheet, so its page lights
     # no tab rather than a wrong one.
     test "the phone tab bar carries four tabs and lights none on a page it does not carry" do
       get trash_index_path
@@ -213,26 +213,20 @@ module Web
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "laser"
     end
 
-    # Collapsed (and below 1100px) project and pin links hide with their labels, so the lit one's
-    # FAMILY link carries the visible mark there. A class, never aria-current: the markup still lights
-    # exactly one link. shell_test.rb checks that the collapsed rail actually draws it.
-    test "a lit pin or project marks its family link for the collapsed rail" do
+    # In the icon rail (collapsed, or below 1100px) a project or pinned folder stays visible as a
+    # monogram tile and carries the lit mark itself (UX audit A2), so no FAMILY link is marked for
+    # it any more. shell_chrome_test.rb covers the tiles; this pins that the old family mark is gone.
+    test "a lit pin or project marks no family link" do
       laser = @user.nodes.create!(node_id: "dir-laser", name: "laser", kind: "dir")
       @user.maker_pins.create!(node_id: laser.node_id)
       project = @user.maker_projects.create!(name: "Desk Lamp")
 
       get files_path(folder: laser.node_id)
-      assert_select "aside.rail a.rail-family-lit", count: 1, text: "Library"
+      assert_select "aside.rail a.rail-family-lit", count: 0
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "laser"
       get project_path(project)
-      assert_select "aside.rail a.rail-family-lit", count: 1, text: "All projects"
+      assert_select "aside.rail a.rail-family-lit", count: 0
       assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "Desk Lamp"
-
-      # The family link lit in its own right is not ALSO marked, and nothing else is.
-      get files_path
-      assert_select "aside.rail a.rail-family-lit", count: 0
-      get projects_path
-      assert_select "aside.rail a.rail-family-lit", count: 0
     end
 
     test "a pin to a tombstoned folder is hidden and kept" do

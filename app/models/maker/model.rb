@@ -20,8 +20,12 @@ module Maker
     # result. Same state, two words, one screen. `capitalize` is gone from the badge (decision 5 of
     # the UI-cohesion spec: a text-transform cannot know that `want_to_print` reads "Wanted"), so a
     # label MUST come from here. Same shape as Maker::ProjectKind::LABELS, for the same reason.
+    #
+    # "WANT TO PRINT", NOT "WANTED" (UX audit 2026-11-01, E2): the chip said "Wanted" while the edit
+    # form, building its own options, said "Want to print". The form reads this hash now, and the
+    # label is the form's longer phrase, because "Wanted" on a model nobody chose read as a claim.
     PRINT_STATUS_LABELS = {
-      "want_to_print" => "Wanted", "printed" => "Printed", "failed" => "Failed"
+      "want_to_print" => "Want to print", "printed" => "Printed", "failed" => "Failed"
     }.freeze
 
     # Falls back to the humanised status rather than raising: `print_status` is validated, so an
@@ -32,6 +36,11 @@ module Maker
       PRINT_STATUS_LABELS.fetch(status.to_s) { status.to_s.tr("_", " ").upcase_first }
 
     def print_status_label = self.class.print_status_label(print_status)
+
+    # THE COLUMN'S DEFAULT IS NOT NEWS, SO IT WEARS NO BADGE (E2). Every model the sweep finds starts
+    # at it, so a badge saying so sat on every one of them and said nothing; a status somebody or a
+    # logged print SET is the one worth a badge. Read from the schema, so the two cannot disagree.
+    def default_print_status? = print_status == self.class.column_defaults["print_status"]
 
     # WHICH DOOR WROTE THE ROW. "import" is models#new; "auto" is Maker::ModelIntake's sweep over
     # the library. The two differ in exactly one user-visible way -- see ModelsController#destroy.
@@ -83,6 +92,35 @@ module Maker
     # nil. Reads loaded file_attachments; callers rendering many cards should include(:file_attachments).
     def cover_node_id
       self[:cover_node_id].presence || derived_cover_node_id
+    end
+
+    # WHAT TELLS ONE CARD FROM ANOTHER ON THE 3D MODELS VIEW (UX audit 2026-11-01, E1): the formats
+    # of the model's own meshes and the folder it sits in. The sweep makes one model per file on a
+    # shelf (docs/invariants/model-intake.md), so `tetra.stl`, `tetra.obj` and `tetra.off` side by
+    # side are three models titled "tetra", and the cards were identical. `folder` is the model's own
+    # folder when it has one, else its first mesh's folder; "" is the library root, and nil means the
+    # chain could not be resolved (a tombstoned ancestor), which the card leaves out.
+    #
+    # CONSTANT IN QUERIES, whatever the number of models: one pluck of the meshes' names and parents,
+    # and Maker::LibraryTree's one pluck of the dirs (path_for is its in-memory walk, the one ancestry
+    # definition). Reads the LOADED :file_attachments, as `hollow?` and the cover do.
+    CardFacts = Data.define(:extensions, :folder)
+
+    def self.card_facts(user, models)
+      return {} if models.empty?
+
+      meshes = models.to_h { |m| [ m.id, m.file_attachments.select { |a| a.role == "model" }.map(&:node_id) ] }
+      ids = meshes.values.flatten.uniq
+      nodes = ids.empty? ? {} : user.nodes.present.where(node_id: ids).pluck(:node_id, :name, :parent_node_id)
+                                    .to_h { |id, name, parent| [ id, [ name, parent ] ] }
+      tree = Maker::LibraryTree.new(user)
+      models.to_h do |m|
+        live = meshes[m.id].filter_map { |id| nodes[id] }
+        extensions = live.map { |name, _| File.extname(name).delete(".").upcase }.reject(&:empty?).uniq.sort
+        dir = m.folder_node_id.presence || (live.first.last if live.any?)
+        folder = tree.path_for(dir) if m.folder_node_id.present? || live.any?
+        [ m.id, CardFacts.new(extensions:, folder:) ]
+      end
     end
 
     # Return the model's library folder node, (re)creating `Models/<slug>` if folder_node_id is

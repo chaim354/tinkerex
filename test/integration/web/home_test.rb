@@ -98,7 +98,10 @@ module Web
       assert_select ".home-attention .attention-list .attention-row", count: 1
       assert_select ".home-attention .attention-row", text: /Benchy/
       assert_select ".home-attention .attention-row", text: /failed/i
-      assert_select ".home-attention .attention-row a.btn[href=?]", model_path(model), text: "Log a print"
+      # "LOG A PRINT" OPENS THE PRINT LOG (UX audit 2026-11-01, E6): the Details pane with the composer
+      # open, never the pane the model page picks for itself (its instructions PDF, when it has one).
+      assert_select ".home-attention .attention-row a.btn[href=?]",
+                    model_path(model, file: "details", log: 1, anchor: "print-log"), text: "Log a print"
     end
 
     # The live project is what makes this assertion able to fail: with the archived one alone, the
@@ -132,7 +135,8 @@ module Web
       get root_path
       assert_select ".home-attention .attention-row.attention-row--warn",
                     text: /M3×8 screw: 12 each left, minimum 50/
-      assert_select ".home-attention .attention-row a.btn[href=?]", inventory_item_path(low), text: "Restock"
+      # Restock lands on the item\x27s composer already set to Restocked (`?reason=`), not to Consumed.
+      assert_select ".home-attention .attention-row a.btn[href=?]", inventory_item_path(low, reason: "restocked"), text: "Restock"
       assert_select ".home-attention .attention-row", text: /Aardvark bracket/, count: 0
     end
 

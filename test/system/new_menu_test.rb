@@ -21,12 +21,13 @@ class NewMenuSystemTest < ApplicationSystemTestCase
 
   test "opening New loads the tools, and a tool link navigates the page" do
     visit projects_path
-    assert_no_selector "turbo-frame#new-menu-tools a", visible: :all, text: "Box Generator…"
+    assert_no_selector "turbo-frame#new-menu-tools a", visible: :all, text: "Box Generator"
 
     find("header.topbar .topbar-new > summary").click
     within("header.topbar .topbar-new") do
-      assert_selector "turbo-frame#new-menu-tools a.menu-item", text: "Box Generator…"
-      click_on "Box Generator…"
+      # The bare title, no trailing "…" (UX audit G3): it opens a page, as its siblings do.
+      assert_selector "turbo-frame#new-menu-tools a.menu-item", exact_text: "Box Generator"
+      click_on "Box Generator"
     end
     assert_current_path tools_addon_path("boxes")
     assert_no_console_errors

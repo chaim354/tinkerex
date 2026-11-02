@@ -36,12 +36,14 @@ class LibraryChooserTest < ApplicationSystemTestCase
     FileUtils.remove_entry(@mount) if @mount&.exist?
   end
 
+  # From `/`, as a fresh install is opened: with no account it shows the owner card, not a sign-in
+  # form (UX audit F5; auth_first_run_test.rb).
   test "the first account confirms a subfolder of the mount before anything is indexed" do
-    visit new_user_registration_path
+    visit root_path
     fill_in "user[email]", with: "owner@example.com"
     fill_in "user[password]", with: WebHelpers::PASSWORD
     fill_in "user[password_confirmation]", with: WebHelpers::PASSWORD
-    click_on "Sign up"
+    click_on "Create the owner account"
 
     unless @share
       assert_current_path "/"

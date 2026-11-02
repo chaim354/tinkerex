@@ -1,6 +1,17 @@
+<%# PASSWORD RESET REQUEST. On a server that cannot send mail the link this promises never arrives,
+    so the page says so and names the way that does work (UX audit F5): an administrator sets a new
+    password under Settings → Users (Settings::UsersController#reset_password). The note keys on
+    Tinkerex::MailSettings.deliverable?, as confirmations/new does, and is the same for every address,
+    so it tells a visitor nothing about which ones have accounts (account_enumeration_test.rb). %>
+<% content_for :title, "Forgot your password — Tinkerex" %>
 <div class="auth-card">
   <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
-  <h2>Forgot your password?</h2>
+  <h1>Forgot your password?</h1>
+
+  <% unless Tinkerex::MailSettings.deliverable? %>
+    <p class="auth-hint">This server can't send email yet, so no reset link will arrive. An
+      administrator can set a new password for you under Settings → Users.</p>
+  <% end %>
 
   <%= form_for(resource, as: resource_name, url: password_path(resource_name), html: { method: :post }) do |f| %>
     <%= render "users/shared/error_messages", resource: resource %>
@@ -11,7 +22,7 @@
     </div>
 
     <div class="actions">
-      <%= f.submit "Send me reset password instructions", class: "primary" %>
+      <%= f.submit "Send a reset link", class: "primary" %>
     </div>
   <% end %>
 

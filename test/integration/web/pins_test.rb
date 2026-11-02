@@ -16,9 +16,16 @@ module Web
       assert_select "details.menu form[action=?] input[name='node_id'][value=?]", pins_path, @dir.node_id
       assert_select "details.menu button", text: "Pin to sidebar"
 
+      # THE NOTICE NAMES THE FOLDER THROUGH current_user: a decoy with the same node_id under another
+      # user must not lend its name (an unscoped lookup would — T9's review).
+      decoy = User.create!(email: "pins-decoy-#{SecureRandom.hex(4)}@example.com", password: PASSWORD,
+                           confirmed_at: Time.current)
+      decoy.nodes.create!(node_id: @dir.node_id, name: "decoy", kind: "dir")
+
       post pins_path, params: { node_id: @dir.node_id }
       assert_redirected_to files_path(folder: @dir.node_id)
       assert_equal [ @dir.node_id ], @user.maker_pins.pluck(:node_id)
+      assert_equal "Pinned laser to the sidebar.", flash[:notice]
 
       follow_redirect!
       assert_select "details.menu button", text: "Unpin from sidebar"
@@ -55,7 +62,7 @@ module Web
       end
       post pins_path, params: { node_id: @dir.node_id }
       assert_redirected_to files_path(folder: @dir.node_id)
-      assert_equal "Pinned to the sidebar.", flash[:notice]
+      assert_equal "Pinned #{@dir.name} to the sidebar.", flash[:notice]
     ensure
       Maker::Pin.class_eval do
         alias_method :save, :__real_save

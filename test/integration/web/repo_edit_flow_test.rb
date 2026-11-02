@@ -298,7 +298,7 @@ class RepoEditFlowTest < ActionDispatch::IntegrationTest
     assert_select "[data-group='other'] [data-path='doomed.txt'][data-state='deleted']", 1
     assert_select "[data-group='clutter'] [data-path='.DS_Store']", 1
     assert_select "[data-group='other'] [data-path='.DS_Store']", 0
-    assert_match(/tinkerex never creates these/, response.body)
+    assert_match(/Tinkerex never creates these/, response.body)
 
     # `.gitignore`d NEVER APPEARS, IN ANY GROUP. git will not carry it without -f, so offering it
     # would be offering something that cannot happen.

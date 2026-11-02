@@ -16,6 +16,11 @@
 
   `.page-head` passes exactly its two slots (template_hygiene_test.rb): the title column and Done.
 
+  DONE MEANS "BACK TO THE PROJECT" AND NEVER SAVES (2026-11-02, the UX audit's C6): each tab's own
+  Save is the write, and its title says where Done goes. On Page layout it asks first while the
+  draft is unsaved — the editor's `turbo:before-visit` guard, which every link off that page meets,
+  this one included (layout_editor_controller.js).
+
   Locals: project; current — :details, :publishing or :layout.
 %>
 <% tabs = [ [ :details, "Details", edit_project_path(project) ],
@@ -27,7 +32,7 @@
     <h1><%= project.name_in_database %></h1>
   </div>
   <div class="head-actions">
-    <%= link_to "Done", project_path(project), class: "btn small edit-done" %>
+    <%= link_to "Done", project_path(project), class: "btn small edit-done", title: "Back to the project page" %>
   </div>
 </div>
 <nav class="tab-bar edit-tabs" aria-label="Edit <%= project.name_in_database %>">

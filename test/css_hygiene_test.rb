@@ -39,7 +39,7 @@ class CssHygieneTest < ActiveSupport::TestCase
     .panel-slot .panel-strip .layout-bar .layout-drawer
     .block-panel .block-link-card .page-intro .image-pick
     .panel-slot--tab .tabs .tab-bar .tab-pane .tab-link .tab-heading
-    .render-card dialog.calculator
+    .render-card dialog.calculator .field-hint
   ].freeze
 
   def read(name) = SHEETS_DIR.join(name).read

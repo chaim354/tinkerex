@@ -30,17 +30,22 @@
 
   NATIVE <details>, NOT A STIMULUS CONTROLLER: collapsing is what the element is for, it works
   before any JavaScript loads, and `models/_file_tree.html.erb` already uses it for exactly this.
+
+  `notes` (optional, { node_id => sentence }) is one line a row says about itself — Loose passes
+  Maker::LooseFilingNotes' "design/x.svg already exists — rename one to file it" (2026-11-02, C3).
+  Both renderings draw it, so Tiles and List say the same thing about the same file.
 %>
+<% notes = local_assigns.fetch(:notes, {}) %>
 <section class="attachment-group">
   <details <%= "open" if open %>>
     <summary class="attachment-group-head">
       <%= label %> <span class="muted">(<%= rows.size %>)</span>
     </summary>
     <% if view == "list" %>
-      <%= render "file_rows", rows: rows %>
+      <%= render "file_rows", rows: rows, notes: notes %>
     <% else %>
       <div class="attachments-grid">
-        <%= render partial: "file_tile", collection: rows, as: :row %>
+        <%= render partial: "file_tile", collection: rows, as: :row, locals: { notes: notes } %>
       </div>
     <% end %>
   </details>

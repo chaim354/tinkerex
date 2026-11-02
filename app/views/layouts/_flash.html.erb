@@ -1,17 +1,26 @@
 <%# Toasts (spec §5.5). The classes are the ones four system tests assert on. Only notice and
-    alert are drawn, exactly as the old layout did. A notice removes itself (toast_controller.js);
-    an alert stays until dismissed. %>
-<div class="flash-stack" data-controller="toast" aria-live="polite">
+    alert are drawn, exactly as the old layout did. A notice removes itself (toast_controller.js),
+    pausing while the pointer is over it or focus is inside it; an alert stays until dismissed; Escape
+    dismisses the focused one (UX audit A5). The stack sits at the bottom right, clear of the top
+    bar's New and Upload (shell.css). %>
+<div class="flash-stack" data-controller="toast" data-action="keydown.esc->toast#escape" aria-live="polite">
   <% if flash[:notice].present? %>
     <div class="flash flash-notice" role="status" data-toast-target="item">
       <span class="flash-text"><%= flash[:notice] %></span>
-      <button type="button" class="flash-close" aria-label="Dismiss" data-action="toast#dismiss">&times;</button>
+      <%# AN OPTIONAL NEXT STEP BESIDE THE NOTICE (UX audit B6): a controller may set
+          `flash[:notice_link] = { "label" => "Open Trash", "href" => trash_index_path }` so a notice
+          that moved something carries the one click that reaches it. A root-relative path only --
+          the partial renders whatever href it is handed, so a caller must never put a param in it. %>
+      <% if (link = flash[:notice_link]).is_a?(Hash) && link["label"].present? && link["href"].to_s.start_with?("/") %>
+        <%= link_to link["label"], link["href"], class: "flash-link" %>
+      <% end %>
+      <button type="button" class="flash-close" aria-label="Dismiss" title="Dismiss" data-action="toast#dismiss">&times;</button>
     </div>
   <% end %>
   <% if flash[:alert].present? %>
     <div class="flash flash-alert" role="alert" data-toast-target="item">
       <span class="flash-text"><%= flash[:alert] %></span>
-      <button type="button" class="flash-close" aria-label="Dismiss" data-action="toast#dismiss">&times;</button>
+      <button type="button" class="flash-close" aria-label="Dismiss" title="Dismiss" data-action="toast#dismiss">&times;</button>
     </div>
   <% end %>
 </div>

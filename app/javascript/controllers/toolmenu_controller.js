@@ -2,7 +2,9 @@ import { Controller } from "@hotwired/stimulus"
 
 // Right-click a tool → "Pin to sidebar" or "Unpin from sidebar" (2026-10-22). On every card in the
 // Tools gallery and on each pinned tool's link in the rail; Tools::PinsController does the work and
-// redirects back, so the sidebar the maker sees afterwards is the server's.
+// redirects back, so the sidebar the maker sees afterwards is the server's. THE SHORTCUT, NOT THE
+// ONLY WAY: since 2026-11-02 each gallery card also carries a visible Pin toggle that posts to the
+// same door (tools/home/_pin_toggle), because a right click is invisible and iOS has none.
 //
 // EVERY VALUE COMES FROM A `data-` ATTRIBUTE THE SERVER WROTE (ShellHelper#tool_menu_data), as in
 // filemenu_controller.js: the URL, whether the tool is pinned, and its name. A cell without a URL is

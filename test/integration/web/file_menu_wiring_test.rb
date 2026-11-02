@@ -8,8 +8,10 @@ module Web
   # THE SYSTEM TEST (test/system/file_menu_test.rb) PROVES THE MENU RENDERS; THIS PROVES EVERY
   # SURFACE FEEDS IT. They are different failures: the menu working on the list while the grid's
   # cards carry no download-url is invisible to a browser test that only ever visits one of them,
-  # and the grid is the surface that needs it most — a card has no row-actions cell, so the menu is
-  # its only route to the bytes without opening the file first.
+  # and the grid was the surface that needed it most — until 2026-11-02 a card had no actions of its
+  # own, so the menu was its only route to the bytes without opening the file first. Cards carry
+  # Details, Download and Delete under them since the UX audit's D2 (files_row_actions_test.rb); the
+  # menu still has to offer the same entries, and this is what says it does.
   #
   # BACKEND-NEUTRAL: these are route helpers on `nodes` rows, nothing touches the port.
   class FileMenuWiringTest < ActionDispatch::IntegrationTest
@@ -61,9 +63,9 @@ module Web
     end
 
     # DELETE IS THE MENU'S ONLY DESTRUCTIVE ENTRY AND IT MUST REACH EVERY MENU-BEARING ROW. The
-    # list has carried a `button_to "Delete"` in its row-actions cell since it shipped; the GRID has
-    # no row-actions cell at all, so before this a card's only route to deleting the file was to
-    # open it first. Swept across every row rather than asserted on one, for the reason this file
+    # list has carried a `button_to "Delete"` in its row-actions cell since it shipped; the GRID had
+    # no actions at all until the UX audit's D2 (2026-11-02), so before the menu a card's only route
+    # to deleting the file was to open it first. Swept across every row rather than asserted on one, for the reason this file
     # exists: an entry that works on the list and is missing from the grid is invisible to a browser
     # test that only ever visits one of them.
     test "every menu-bearing row carries a delete url" do

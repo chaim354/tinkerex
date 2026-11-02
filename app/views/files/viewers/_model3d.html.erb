@@ -49,10 +49,19 @@
       <%= render "files/viewers/zoomable", src: thumbnail_url, alt: "Preview of #{name}", name: name, card: true,
                  img_data: { modelviewer_target: "poster" } %>
     <% end %>
-    <p class="muted">Click <strong>View in 3D</strong> to load an interactive preview, or download the file.</p>
-    <%= link_to "Download #{name}", download_url, class: "btn" %>
+    <%# "CHOOSE", NOT "CLICK" (UX audit D8, 2026-11-02): a phone taps. A nil `download_url` is a page
+        whose own head already offers Download (files/_viewer's `poster_download`), so the poster does
+        not offer it a second time (D5). %>
+    <p class="muted">Choose <strong>View in 3D</strong> to load an interactive preview<%= ", or download the file" if download_url %>.</p>
+    <% if download_url %>
+      <%= link_to "Download #{name}", download_url, class: "btn" %>
+    <% end %>
+    <%# IT ASKS FIRST (UX audit B5): the chosen view is discarded and the automatic render takes the
+        file's picture back on every surface that shows its thumbnail. %>
     <% if preview_url && viewer_preview %>
-      <%= button_to "Back to automatic preview", preview_url, method: :delete, class: "linkbtn small" %>
+      <%= button_to "Back to automatic preview", preview_url, method: :delete, class: "linkbtn small",
+                    form: { data: { turbo_confirm: "Go back to the automatic preview of #{name}? " \
+                                                   "The view you chose as its picture is discarded." } } %>
     <% end %>
   </div>
 </div>

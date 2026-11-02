@@ -164,7 +164,8 @@
                 aria-label="Save all as SVG in the library"
                 title="Save all as SVG in the library">Save SVG</button>
       <% end %>
-      <button type="button" class="btn small ghost" data-action="measure#reset">Reset</button>
+      <%# "Reset view", the 3D viewer's word for the same control (UX audit D8, 2026-11-02). %>
+      <button type="button" class="btn small ghost" data-action="measure#reset">Reset view</button>
       <button type="button" class="btn small ghost" aria-label="Return to image"
               data-action="measure#showPoster">✕ Image</button>
     </span>
@@ -196,7 +197,10 @@
       <p class="muted">Generating preview…</p>
     <% else %>
       <p class="muted">No inline preview for this file.</p>
-      <%= link_to "Download #{name}", download_url, class: "btn" %>
+      <%# Nil where the page head offers Download already (files/_viewer's `poster_download`; D5). %>
+      <% if download_url %>
+        <%= link_to "Download #{name}", download_url, class: "btn" %>
+      <% end %>
     <% end %>
   </div>
 </div>

@@ -69,7 +69,9 @@ module Tools
         # into an exact CSS equality selector (`[title="(?-mix:...)"]`) and can never match real
         # text. Verified by reproducing both against rails-dom-testing 2.3.0 directly: `[title=?]`
         # finds 0 elements against this exact title, `:match('title', ?)` finds 1.
-        assert_select ":match('title', ?)", /Needs a newer version of this host/
+        # In the maker's words, the levels after (UX audit H): "host" and "level" are the API's.
+        assert_select ":match('title', ?)",
+                      /\ANeeds a newer Tinkerex than this server runs \(level #{Maker::Addons::Host::LEVEL + 1}; this server is level #{Maker::Addons::Host::LEVEL}\)\z/
       end
     end
 

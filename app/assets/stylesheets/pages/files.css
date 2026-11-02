@@ -6,6 +6,20 @@
   .files-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: var(--space-5) var(--space-4); }
   .files-grid .grid-card { align-items: stretch; }
   .files-grid .thumb { width: 100%; height: auto; aspect-ratio: 1 / 1; }
+  /* A CARD AND ITS ACTIONS (UX audit D2, 2026-11-02): `.grid-item` is the grid's cell, the card link
+     on top and the row's actions under it as icons — a 160px card has no room for three words. They
+     are always shown: hover-reveal is the list's, for a fine pointer, and a gallery's whole point is
+     that what it offers is on screen. Muted until pointed at, so a page of cards is not a page of
+     red bins; Delete turns its danger colour on hover and focus, never before. */
+  .grid-item { display: flex; flex-direction: column; min-width: 0; }
+  .grid-actions { display: flex; gap: var(--space-1); margin-top: var(--space-1); }
+  .grid-actions form { display: contents; }
+  .grid-actions .row-action { min-width: var(--control-height-small); min-height: var(--control-height-small);
+    border-radius: var(--radius-control); color: var(--fg-muted); text-decoration: none; }
+  .grid-actions .row-action:hover, .grid-actions .row-action:focus-visible { background: var(--raised); color: var(--fg); }
+  .grid-actions .row-action.danger:hover, .grid-actions .row-action.danger:focus-visible { color: var(--danger); }
+  .grid-actions .row-action .action-icon { display: block; }
+  .grid-actions .row-action-label { display: none; }
   .hidden-toggle { margin: 0 0 10px; font-size: 12px; }
 
   /* THE LIBRARY AND ITS INSPECTOR (structural redesign §5.1–5.2, slice 3). Hidden until a file is

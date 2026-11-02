@@ -181,7 +181,7 @@ module Maker
         line = e.respond_to?(:line) ? e.line : nil
         column = e.respond_to?(:column) ? e.column : nil
         problem = e.respond_to?(:problem) ? e.problem : e.message
-        return failure(line ? "Line #{line}, column #{column}: #{problem}." : "The YAML did not parse: #{problem}.")
+        return failure(line ? "Line #{line}, column #{column}: #{problem}." : "The layout text did not parse: #{problem}.")
       end
       return failure("The layout must be a mapping with `layout` and `panels`.") unless data.is_a?(Hash)
 

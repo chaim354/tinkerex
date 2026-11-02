@@ -198,7 +198,7 @@ module Web
       assert_select "td", text: "bracket.stl"
 
       post restore_trash_path(id)
-      assert_redirected_to files_path
+      assert_redirected_to trash_index_path # back on Trash since the UX audit's B6 (2026-11-02)
 
       node = @user.nodes.find_by!(node_id: id)
       assert_not node.deleted, "restore must clear the tombstone"

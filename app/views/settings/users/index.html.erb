@@ -3,16 +3,17 @@
 <%# ACCOUNTS, FOR AN ADMIN (Settings::UsersController). The list, then the add form, whose button is
     the page's one accent (design-system.md rule 13). The signed-in row links to the Account page,
     never to a page here: your own account is changed there, behind your password. %>
+<%= render "settings/crumbs", current: "Users" %>
+
 <div class="page-head">
   <h1>Users</h1>
-  <%= link_to "Settings", settings_path, class: "btn ghost small" %>
 </div>
 
 <p class="muted">
   <% if capabilities.syncable? %>
-    Each account has a library of its own on the sync server, made the first time it is used.
+    Each user has a library of their own on the sync server, made the first time it is used.
   <% else %>
-    Every account on this server sees the same library folder, and can open, change and delete every
+    Every user on this server sees the same library folder, and can open, change and delete every
     file in it. Add only people you would hand the folder to.
   <% end %>
 </p>
@@ -29,12 +30,12 @@
       <% if user.can_manage_accounts? %>
         <span class="settings-fact">admin</span>
       <% end %>
-      <span class="settings-fact"><%= user.last_sign_in_at ? "signed in #{time_ago_in_words(user.last_sign_in_at)} ago" : "never signed in" %></span>
+      <span class="settings-fact"><% if user.last_sign_in_at %>signed in <%= time_at(user.last_sign_in_at, style: :relative) %><% else %>never signed in<% end %></span>
     </li>
   <% end %>
 </ul>
 
-<h2>Add an account</h2>
+<h2>Add a user</h2>
 <% if @new_user.errors.any? %>
   <div class="form-errors" role="alert"><%= @new_user.errors.full_messages.to_sentence %>.</div>
 <% end %>
@@ -59,5 +60,5 @@
     <span>Admin</span>
     <%= f.check_box :admin, checked: @new_user.admin? %>
   </label>
-  <%= f.submit "Add account", class: "btn primary" %>
+  <%= f.submit "Add user", class: "btn primary" %>
 <% end %>

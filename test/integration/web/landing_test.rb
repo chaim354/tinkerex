@@ -35,7 +35,10 @@ module Web
                    confirmed_at: Time.current, handle: "demo")
     end
 
+    # An account exists: on a server with none, the card is the first-run one instead
+    # (auth_first_run_test.rb, UX audit F5), which has no sign-in form.
     test "demo mode off, / is the plain sign-in card and nothing of the landing" do
+      User.create!(email: "owner@example.com", password: SecureRandom.base58(32), confirmed_at: Time.current)
       get "/"
       assert_response :success
       assert_select "main#main.container.auth-main", 1
@@ -53,7 +56,7 @@ module Web
       assert_select ".landing-nav .brand .brand-name", text: "Tinkerex"
       assert_select ".landing-nav a[href=?]", INSTALL_URL, text: "Install"
       assert_select ".landing-nav a[href=?]", SOURCE_URL, text: "Source"
-      assert_select ".landing-nav a[href=?]", new_user_session_path, text: "Log in"
+      assert_select ".landing-nav a[href=?]", new_user_session_path, text: "Sign in"
       assert_select ".landing-hero h1", text: "Every file your workshop makes, previewed."
       # THE WALL IS THE APP'S OWN RENDERS (Tinkerex::Landing): one tile per TILES entry, each served
       # from app/assets/images/landing/wall with its alt text -- the only picture above the fold.
@@ -68,7 +71,7 @@ module Web
       assert_select ".landing-feature img:not([alt])", 0
       assert_select ".landing-own li", 4
       assert_select ".landing-footer a[href=?]", new_user_session_path
-      # The visitor's shell: no rail, no public header, and no sign-in form -- Log in is a link.
+      # The visitor's shell: no rail, no public header, and no sign-in form -- Sign in is a link.
       assert_select "aside.rail", 0
       assert_select "header.public-header", 0
       assert_select ".auth-card", 0

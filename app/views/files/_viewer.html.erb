@@ -1,4 +1,4 @@
-<%# locals: (viewer:, editable:, save:) %>
+<%# locals: (viewer:, editable:, save:, poster_download: true, in_repo: false) %>
 <%# EIGHT BRANCHES, EIGHT PARTIALS UNDER files/viewers/ (stage 4, S4-5), AND A NINTH THE MAKER'S PAGES
     ALONE RENDER: the workbook grid (_spreadsheet, 2026-10-21), whose data comes from a session-authed
     door, so a visitor's page shows an .xlsx as the download fallback instead. Each takes every URL as
@@ -15,7 +15,15 @@
     Public scan forbids inside that directory. A visitor's page keeps its own chain
     (public/files/view.html.erb) over the same eight partials. `editable:` and `save:` are the two
     facts about the OWNER's page the model pane switches off: the file page passes its own editable
-    answer and true; the pane passes false for both. %>
+    answer and true; the pane passes false for both.
+
+    TWO MORE, BOTH DEFAULTED SO THE PANE RENDERS AS IT DID (UX audit D5/D6, 2026-11-02).
+    `poster_download: false` drops a poster's own "Download NAME" where the page head already has a
+    Download — the file page passes it; `poster_download_url` is the one place that decision is
+    read, and a nil URL is what each poster takes as "no button". `in_repo` is whether this file is
+    inside a git working tree, which keeps the editor's and the grid's "keeps no history" sentence
+    off a file whose history git holds. %>
+<% poster_download_url = poster_download ? blob_file_path(viewer.node.node_id, download: 1) : nil %>
 <% if viewer.info.content_token.nil? %>
   <p class="muted">No content yet.</p>
 <% elsif viewer.kind == :image %>
@@ -28,17 +36,18 @@
 <% elsif viewer.kind == :gerber %>
   <%= render "files/viewers/gerber", layers: viewer.gerber_layers, single: viewer.gerber_single,
              thumbnail: viewer.thumbnail, thumbnail_url: preview_src(viewer.thumbnail), name: viewer.node.name,
-             download_url: blob_file_path(viewer.node.node_id, download: 1) %>
+             download_url: poster_download_url %>
 <% elsif viewer.kind == :text %>
   <%= render "files/viewers/code", blob_url: blob_file_path(viewer.node.node_id),
              ext: File.extname(viewer.node.name).downcase.delete("."), editable: editable,
-             save_url: file_path(viewer.node.node_id), base_token: viewer.info.content_token %>
+             save_url: file_path(viewer.node.node_id), base_token: viewer.info.content_token,
+             in_repo: in_repo %>
 <% elsif viewer.kind == :spreadsheet %>
   <%# An .xlsx (2026-10-21): the grid fetches the workbook and saves edits through its own door,
       Files::SpreadsheetsController. `save:` decides whether the grid can save at all — the file page
       can, the model page's pane shows the workbook read-only. %>
   <%= render "files/viewers/spreadsheet", data_url: file_spreadsheet_path(viewer.node.node_id),
-             save_url: (file_spreadsheet_path(viewer.node.node_id) if save),
+             save_url: (file_spreadsheet_path(viewer.node.node_id) if save), in_repo: in_repo,
              download_url: blob_file_path(viewer.node.node_id, download: 1),
              scripts: [ asset_path("jsuites.js"), asset_path("jspreadsheet.js") ],
              styles: [ asset_path("jsuites.css"), asset_path("jspreadsheet.css") ] %>
@@ -49,7 +58,7 @@
              colors: (viewer.manifest&.colors || []),
              unit_factor: (viewer.manifest&.unit_factor || 1.0),
              thumbnail: viewer.thumbnail, thumbnail_url: preview_src(viewer.thumbnail),
-             download_url: blob_file_path(viewer.node.node_id, download: 1),
+             download_url: poster_download_url,
              preview_url: file_preview_path(viewer.node.node_id), viewer_preview: viewer.thumbnail&.viewer? %>
 <% elsif viewer.kind == :measure %>
   <%# .lbrn/.lbrn2, .mage, .dxf, .svg — a picture at rest, with a button that swaps in a
@@ -69,7 +78,7 @@
              geometry_url: geometry_file_path(viewer.node.node_id),
              blob_url: blob_file_path(viewer.node.node_id), thumbnail: viewer.thumbnail,
              thumbnail_url: preview_src(viewer.thumbnail),
-             download_url: blob_file_path(viewer.node.node_id, download: 1),
+             download_url: poster_download_url,
              save: save,
              port_writable: capabilities.port_writable?, create_url: files_path,
              begin_url: begin_upload_files_path, finalize_url: finalize_upload_files_path,
@@ -82,5 +91,5 @@
       arm was already the catch-all. %>
   <%= render "files/viewers/static", kind: viewer.kind, thumbnail: viewer.thumbnail, name: viewer.node.name,
              thumbnail_url: preview_src(viewer.thumbnail),
-             download_url: blob_file_path(viewer.node.node_id, download: 1) %>
+             download_url: poster_download_url %>
 <% end %>

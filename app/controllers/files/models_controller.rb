@@ -48,6 +48,9 @@ module Files
       # renders, and the chosen sort holds inside each one.
       @groups = Maker::ModelProjects.group(current_user, @models)
       @covers = Maker::Previews::ThumbnailMap.for(current_user, @models.map(&:cover_node_id))
+      # EACH CARD'S EXTENSIONS AND FOLDER (UX audit E1): two queries whatever the number of models,
+      # read here rather than from the view so the page's queries are the controller's to count.
+      @card_facts = Maker::Model.card_facts(current_user, @models)
       @all_tags = current_user.maker_tags.order(:name).pluck(:name)
       @status = @filters[:status]
     end

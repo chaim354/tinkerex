@@ -16,14 +16,18 @@ module Web
       sign_in_web!(@user, password: PASSWORD)
     end
 
-    test "the trash page has a head with a ghost Back, column classes, and Restore as a button" do
+    test "the trash page is crumbed from the Library, with column classes and Restore as a button" do
       @root = use_fresh_share_library!
       node = create_node!(@user, node_id: SecureRandom.uuid, name: "old-bracket.stl", kind: "file")
       delete file_path(node.node_id)
       get trash_index_path
       assert_response :success
       assert_select ".page-head h1", text: "Trash"
-      assert_select ".page-head a.btn.ghost[href=?]", files_path, text: "← Back to Files"
+      # THE WAY BACK IS THE BREADCRUMB (UX audit A4): Library / Trash in the top bar, and no
+      # parent-named button left in the head.
+      assert_select "header.topbar nav.breadcrumb a[href=?]", files_path, text: "Library"
+      assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "Trash"
+      assert_select ".page-head a.btn.ghost", count: 0
       assert_select "table.files th.col-name", text: "Name"
       assert_select "table.files td.col-name", text: "old-bracket.stl"
       assert_select "table.files td.num.col-size"

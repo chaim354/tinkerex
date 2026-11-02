@@ -48,16 +48,20 @@ module Web
       assert_select "dialog.calculator", 0
     end
 
-    test "unpinned, the rail has no Calculator link and the Tools card offers the pin on a right click" do
+    test "unpinned, the rail has no Calculator link and the Tools card offers the pin, by button and right click" do
       get tools_path
       assert_select "aside.rail a.rail-calculator", 0
       assert_select "#calculator.calculator-card button[data-calculator-open]", text: "Open calculator"
-      # THE PIN IS A RIGHT CLICK, NOT A BUTTON (2026-10-22): the card carries the menu's data, and
-      # nothing on it is a pin control.
+      # THE PIN WAS A RIGHT CLICK ONLY (2026-10-22) AND IS A VISIBLE TOGGLE AS WELL SINCE 2026-11-02
+      # (UX audit G2): the card still carries the menu's data, and its one form is the toggle, after
+      # Open — which is still the control a closed menu hands focus back to.
       assert_select "#calculator.calculator-card[data-action=?][data-tool-pin-url=?][data-tool-pinned=false]",
                     "contextmenu->toolmenu#open", tools_pin_path("calculator")
-      assert_select "#calculator form", 0
-      assert_select "#calculator button", 1
+      assert_select "#calculator form", 1
+      assert_select "#calculator form.tool-pin-form[action=?] button.tool-pin[aria-pressed=false]",
+                    tools_pin_path("calculator"), text: "Pin to sidebar"
+      assert_equal %w[calculator-card-open tool-pin],
+                   css_select("#calculator button").map { |b| (b["class"].split & %w[calculator-card-open tool-pin]).first }
     end
 
     test "pinning puts a Calculator link in the rail on every page; it opens the modal and lights nothing" do

@@ -22,7 +22,15 @@ import { Controller } from "@hotwired/stimulus"
 // Library::ScanJob#perform), or no poll may have got an answer at all, and this page cannot tell
 // those apart. "Still scanning" would be a
 // guess again; "nothing yet" is what is actually known.
+//
+// WHILE IT WAITS IT SAYS SO (2026-11-02, the UX audit's B8). The element used to stay EMPTY for the
+// whole minute, so once the 6-second "Scanning your library" notice timed out the page carried no
+// sign that anything was happening. Before the deadline "Still scanning…" is TRUE — a scan was
+// started for this render and no poll has seen it finish — which is the difference from the end
+// state above. The element is a live region (set here; the three views render it bare), so the
+// change to the deadline sentence is announced.
 const NOTHING_YET = "Nothing yet — reload to check again."
+const WAITING = "Still scanning…"
 
 export default class extends Controller {
   static values = {
@@ -36,6 +44,8 @@ export default class extends Controller {
   connect() {
     this.stopped = false
     this.deadline = Date.now() + this.timeoutValue
+    this.element.setAttribute("aria-live", "polite")
+    this.element.textContent = WAITING
     this.tick()
   }
 

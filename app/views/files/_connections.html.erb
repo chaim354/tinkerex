@@ -62,7 +62,10 @@
       <h3 class="muted">Photos of this file</h3>
       <% @photos.each do |link, node| %>
         <div class="connection-row">
+          <%# THE LINK'S NAME IS THE FILE'S (UX audit I, 2026-11-02): its only content is a picture
+              whose alt is empty, so without `aria-label` it was an unnamed link. %>
           <%= link_to file_path(node.node_id), class: "photo-cell file-cell", title: node.name,
+                      aria: { label: node.name },
                       data: file_open_data(thumb_cell_data(node.node_id, "IMG")) do %>
             <%= render "files/thumb", thumb: @link_thumbs.thumb(node.node_id), ext_label: "IMG",
                        url: preview_src(@link_thumbs.thumb(node.node_id)) %>

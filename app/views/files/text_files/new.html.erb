@@ -1,7 +1,23 @@
-<%# A NAME AND NOTHING ELSE. The file is created empty and the editor on its own page is where the
-    content is written — which is what keeps this door's refusals to the two name questions the
-    controller asks, and why there is no content field whose bytes a refusal would have to preserve. %>
+<%# A NAME AND A FOLDER, AND NOTHING ELSE. The file is created empty and the editor on its own page is
+    where the content is written — which is what keeps this door's refusals to the name questions the
+    controller asks and the folder it may no longer find, and why there is no content field whose
+    bytes a refusal would have to preserve. %>
 <% content_for :title, "New text file — Tinkerex" %>
+
+<%# THE CRUMB SAYS WHERE IT WILL GO (UX audit D9, 2026-11-02): the folder the maker came from, then
+    this page. @folder_crumbs is Files::TextFilesController#folder_crumbs_for, empty at the root and
+    for a folder that is no longer there. %>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Folder path">
+    <%= link_to "Library", files_path %>
+    <% @folder_crumbs.each do |crumb| %>
+      <span class="sep" aria-hidden="true">/</span>
+      <%= link_to crumb.name, files_path(folder: crumb.node_id) %>
+    <% end %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page">New text file</span>
+  </nav>
+<% end %>
 
 <div class="page-head">
   <h1>New text file</h1>
@@ -11,7 +27,6 @@
   <%# PLAIN TAG HELPERS, NOT `f.text_field`. `form_with url:` with no model has a blank
       object_name, and `fields_for` on a blank one emits the literal bracket key Rack cannot parse
       (§14d, shipped twice). Flat names, read as params[:name] / params[:parent_node_id]. %>
-  <%= hidden_field_tag :parent_node_id, @parent_node_id %>
   <label class="field">
     <span>Name</span>
     <%= text_field_tag :name, params[:name], placeholder: "notes.txt", autofocus: true,
@@ -19,6 +34,17 @@
     <span class="field-hint muted">Include the extension — it is what decides how the file is
       previewed and edited.</span>
   </label>
+  <%# THE FOLDER IS A FIELD, NOT A HIDDEN VALUE (UX audit D9): it says where the file will go and lets
+      the maker choose another, which is also the way out of "That folder is no longer here" — the
+      refusal re-renders this page with the field. The chooser writes "" for the library root, which
+      the controller reads as the root; a folder that is gone keeps its id here, so pressing Create
+      again without choosing says so again rather than quietly writing to the root. %>
+  <div class="field">
+    <span>Folder</span>
+    <%= render "shared/folder_field", name: "parent_node_id", value: @parent_node_id.to_s,
+               label: @folder_label, children_url: library_children_path,
+               create_url: library_folders_path %>
+  </div>
   <div class="form-actions">
     <%= submit_tag "Create", class: "btn primary" %>
     <%= link_to "Cancel", files_path({ folder: @parent_node_id }.compact), class: "linkbtn" %>

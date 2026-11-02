@@ -56,7 +56,7 @@ module Settings
       @user.assign_attributes(password:, locked_at: nil, failed_attempts: 0, unlock_token: nil)
       @user.confirmed_at ||= Time.current
       if password_given?(@user, password) && @user.save
-        redirect_to edit_settings_user_path(@user), status: :see_other, notice: "New password set for #{@user.email}."
+        redirect_to edit_settings_user_path(@user), status: :see_other, notice: "Set a new password for #{@user.email}."
       else
         @user.restore_attributes(%i[locked_at failed_attempts unlock_token confirmed_at])
         render :edit, status: :unprocessable_entity
@@ -108,7 +108,7 @@ module Settings
     def require_account_manager!
       return if current_user.can_manage_accounts?
 
-      redirect_to settings_path, alert: "Only an admin can manage accounts.", status: :see_other
+      redirect_to settings_path, alert: "Only an admin can manage users.", status: :see_other
     end
 
     def set_user

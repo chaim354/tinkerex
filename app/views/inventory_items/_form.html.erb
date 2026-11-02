@@ -34,6 +34,7 @@
   <label class="field">
     <span>Minimum quantity</span>
     <%= f.number_field :min_quantity, step: "any" %>
+    <span class="field-hint muted">The item reads Low stock at or below this. Leave it at 0 for no minimum.</span>
   </label>
 
   <label class="field">
@@ -41,15 +42,26 @@
     <%= f.number_field :unit_cost, step: "any" %>
   </label>
 
-  <label class="field">
-    <span>Location</span>
-    <%= f.select :location_id, current_user.maker_locations.order(:name).pluck(:name, :id), include_blank: true %>
-  </label>
+  <%# AN EMPTY DROPDOWN SAYS WHERE ITS CHOICES COME FROM (UX audit 2026-11-01, E5): a maker with no
+      locations or suppliers met a blank select and nothing pointing at the page that fills it.
+      The hint sits outside the label's text so the select's accessible name stays "Location". %>
+  <% locations = current_user.maker_locations.order(:name).pluck(:name, :id) %>
+  <div class="field">
+    <label for="inventory_item_location_id">Location</label>
+    <%= f.select :location_id, locations, include_blank: true %>
+    <% if locations.empty? %>
+      <span class="field-hint muted">No locations yet. <%= link_to "Add one", locations_path %></span>
+    <% end %>
+  </div>
 
-  <label class="field">
-    <span>Supplier</span>
-    <%= f.select :supplier_id, current_user.maker_suppliers.order(:name).pluck(:name, :id), include_blank: true %>
-  </label>
+  <% suppliers = current_user.maker_suppliers.order(:name).pluck(:name, :id) %>
+  <div class="field">
+    <label for="inventory_item_supplier_id">Supplier</label>
+    <%= f.select :supplier_id, suppliers, include_blank: true %>
+    <% if suppliers.empty? %>
+      <span class="field-hint muted">No suppliers yet. <%= link_to "Add one", suppliers_path %></span>
+    <% end %>
+  </div>
 
   <label class="field">
     <span>Notes</span>
@@ -70,7 +82,7 @@
     <label class="field">
       <span>Initial quantity</span>
       <%= f.number_field :initial_quantity, step: "any" %>
-      <span class="field-hint muted">Posts an initial transaction; the balance is never edited directly.</span>
+      <span class="field-hint muted">Recorded as the item's first stock change. After that, stock moves through Adjust stock on the item's page.</span>
     </label>
   <% end %>
 

@@ -7,7 +7,7 @@ module Projects
       project = current_user.maker_projects.find_by!(slug: params[:project_id])
       entry = project.build_log_entries.new(entry_params.merge(user: current_user))
       if entry.save
-        redirect_to project_path(project), notice: "Log entry added."
+        redirect_to project_path(project), notice: "Added the log entry."
       else
         redirect_to project_panel_path(project, "build_log"), alert: entry.errors.full_messages.to_sentence
       end
@@ -17,7 +17,7 @@ module Projects
       entry = current_user.maker_build_log_entries.find(params[:id])
       project = entry.project
       entry.destroy!
-      redirect_to project_path(project), notice: "Entry deleted."
+      redirect_to project_path(project), notice: "Deleted the log entry."
     end
 
     private

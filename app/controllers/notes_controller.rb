@@ -16,7 +16,7 @@ class NotesController < ApplicationController
     note = current_user.maker_notes.new(node_id:, body: params.dig(:note, :body))
     if note.save
       respond_to do |f|
-        f.html { redirect_to file_path(node_id), notice: "Note added." }
+        f.html { redirect_to file_path(node_id), notice: "Added the note." }
         f.json { render json: { id: note.id, count: current_user.maker_notes.where(node_id:).count }, status: :created }
       end
     else
@@ -32,6 +32,6 @@ class NotesController < ApplicationController
     note = current_user.maker_notes.find(params[:id])
     node_id = note.node_id
     note.destroy!
-    redirect_to file_path(node_id), notice: "Note deleted."
+    redirect_to file_path(node_id), notice: "Deleted the note."
   end
 end

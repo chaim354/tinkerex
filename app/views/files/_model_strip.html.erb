@@ -25,7 +25,11 @@
     <div class="model-strip-title">
       <span class="eyebrow">3D model</span>
       <h2><%= link_to model.title, model_path(model) %></h2>
-      <span class="badge mstatus-<%= model.print_status %>"><%= model.print_status_label %></span>
+      <%# THE BADGE ONLY FOR A STATUS THAT SAYS SOMETHING (UX audit E2, 2026-11-02): every auto-found
+          model starts at the default, and a badge on all of them said nothing — the model page's rule. %>
+      <% unless model.default_print_status? %>
+        <span class="badge mstatus-<%= model.print_status %>"><%= model.print_status_label %></span>
+      <% end %>
       <% details = [ model.designer.presence, model.license.presence ].compact %>
       <% if details.any? || model.source_url.present? %>
         <p class="model-strip-meta muted">

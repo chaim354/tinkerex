@@ -2,7 +2,7 @@
 
 <% content_for :crumbs do %>
   <nav class="breadcrumb" aria-label="Model path">
-    <%= link_to "Files", files_path %>
+    <%= link_to "Library", files_path %>
     <span class="sep" aria-hidden="true">/</span>
     <%= link_to "3D models", files_models_path %>
     <span class="sep" aria-hidden="true">/</span>
@@ -10,27 +10,20 @@
   </nav>
 <% end %>
 
+<%# THE STATUS BADGE ONLY WHEN IT IS NEWS (UX audit 2026-11-01, E2): every model the sweep finds
+    starts at the column's default, so "Want to print" sat on all of them. A status somebody, or a
+    logged print, set is shown; the word is always Maker::Model::PRINT_STATUS_LABELS'. %>
 <div class="page-head">
   <div>
     <h1><%= @model.title %></h1>
-    <span class="badge mstatus-<%= @model.print_status %>"><%= @model.print_status_label %></span>
+    <% unless @model.default_print_status? %>
+      <span class="badge mstatus-<%= @model.print_status %>"><%= @model.print_status_label %></span>
+    <% end %>
   </div>
   <div class="head-actions">
     <%= link_to "Edit", edit_model_path(@model), class: "btn small" %>
     <% if @model.folder_node_id %>
-      <%= link_to "Open in Files", files_path(folder: @model.folder_node_id), class: "btn small" %>
-    <% end %>
-    <%# THE BUTTON MUST SAY WHAT THE CONTROLLER WILL ACTUALLY DO. An auto model is DISMISSED, not
-        destroyed -- the row survives so Maker::ModelIntake does not recreate it on the next sweep
-        -- so a button reading "Delete" over a confirm promising deletion describes the other
-        branch of models#destroy. Both halves already keep the files; what differs is the row. %>
-    <% if @model.auto? %>
-      <%= button_to "Remove from catalog", model_path(@model), method: :delete, class: "btn small danger",
-                    form: { data: { turbo_confirm: "Remove #{@model.title} from the catalog? " \
-                                                   "The files stay, and it won't be re-added by the next scan." } } %>
-    <% else %>
-      <%= button_to "Delete", model_path(@model), method: :delete, class: "btn small danger",
-                    form: { data: { turbo_confirm: "Delete #{@model.title}? (files are kept)" } } %>
+      <%= link_to "Open in Library", files_path(folder: @model.folder_node_id), class: "btn small" %>
     <% end %>
   </div>
 </div>
@@ -47,7 +40,7 @@
       <h2>Files <span class="muted">(<%= @file_count %>)</span></h2>
       <% if @file_tree.present? %>
         <div class="file-tree-box">
-          <%= render "file_tree", nodes: @file_tree, model: @model,
+          <%= render "models/file_tree", nodes: @file_tree, model: @model,
                      current: (@stage == :details ? nil : @stage.node_id) %>
         </div>
       <% else %>
@@ -70,4 +63,27 @@
     </section>
   </nav>
   <%= render "models/stage", model: @model, stage: @stage, viewer: @viewer %>
+</div>
+
+<%# THE DESTROY BUTTON SITS AT THE FOOT, NOT IN THE HEAD (UX audit 2026-11-01, E3): a full danger
+    button beside Edit was the loudest thing on the page for the rarest thing done on it. It is a
+    danger link with its consequence beside it, the shape of the project's Danger zone line.
+
+    THE BUTTON MUST SAY WHAT THE CONTROLLER WILL ACTUALLY DO. An auto model is DISMISSED, not
+    destroyed -- the row survives so Maker::ModelIntake does not recreate it on the next sweep
+    -- so a button reading "Delete" over a confirm promising deletion describes the other
+    branch of models#destroy. Both halves already keep the files; what differs is the row. The
+    Library's model strip (files/_model_strip) carries the same two branches in the same words
+    (docs/invariants/model-intake.md). %>
+<div class="model-foot">
+  <% if @model.auto? %>
+    <%= button_to "Remove from catalog", model_path(@model), method: :delete, class: "linkbtn danger small",
+                  form: { data: { turbo_confirm: "Remove #{@model.title} from the catalog? " \
+                                                 "The files stay, and it won't be re-added by the next scan." } } %>
+    <p class="muted">The files stay in your library, and the next scan will not add it again.</p>
+  <% else %>
+    <%= button_to "Delete", model_path(@model), method: :delete, class: "linkbtn danger small",
+                  form: { data: { turbo_confirm: "Delete #{@model.title}? (files are kept)" } } %>
+    <p class="muted">Deletes the catalog entry and its print log. The files stay in your library.</p>
+  <% end %>
 </div>

@@ -49,7 +49,7 @@ module Files
 
       respond_to do |f|
         f.json { render json: { url: url_for(preview.asset) }, status: :created }
-        f.html { redirect_to file_path(node.node_id), notice: "Preview saved." }
+        f.html { redirect_to file_path(node.node_id), notice: "Saved this view as the preview of #{node.name}." }
       end
     rescue FileLayer::FetchError
       refuse("The library isn't reachable right now. Try again in a moment.", status: :service_unavailable)
@@ -67,7 +67,7 @@ module Files
                         renderer_revision: Maker::Previews::Enqueue.revision_for_name(node.name, "thumbnail"))
         Maker::GeneratePreviewJob.perform_later(preview.id, filename: node.name)
       end
-      redirect_to file_path(node.node_id), notice: "Back to the automatic preview."
+      redirect_to file_path(node.node_id), notice: "Switched #{node.name} back to the automatic preview."
     end
 
     private

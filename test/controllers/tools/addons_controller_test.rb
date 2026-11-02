@@ -58,6 +58,11 @@ module Tools
       @user = User.create!(email: "addons-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
       sign_in_web!(@user, password: PASSWORD)
+      # MANIFEST DECLARES `fixture-svc`, SO WITHOUT A URL FOR IT THE ADDON IS UNAVAILABLE — and since
+      # 2026-11-02 an unavailable addon's page draws its reason instead of the mount (UX audit G3),
+      # which every shell test below reads. Configured by default; the tests ABOUT an unconfigured
+      # service delete it themselves, and teardown deletes it after every test either way.
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
       # Mirrors GeneratorsControllerTest/BoxesControllerTest: on the s3 CI leg, FileLayer.current
       # otherwise resolves to a REAL FileLayer::S3 pointed at CI's stub (non-existent) bucket
       # creds, so an unstubbed save 403s against actual AWS instead of exercising the save path.
@@ -75,9 +80,9 @@ module Tools
       Maker::Addons::ServiceProxy.reset!
       Rails.cache = @prior_cache
       FileLayer.reset!
-      # Centralised rather than per-test `ensure`s: several tests below now set this, and the
-      # sibling test that asserts a declared-but-unconfigured service is REFUSED depends on it
-      # being absent — so one leak turns that test green for the wrong reason.
+      # Centralised rather than per-test `ensure`s: setup sets this, and the sibling test that
+      # asserts a declared-but-unconfigured service is REFUSED deletes it first — so a leak into
+      # the next test file would turn that kind of test green for the wrong reason.
       ENV.delete("FIXTURE_SVC_SIDECAR_URL")
     end
 
@@ -350,6 +355,65 @@ module Tools
       ].each do |attribute|
         assert mount[attribute], "#{attribute} is gone — a published bundle reads it"
       end
+    end
+
+    # ---- what the page draws around the mount (UX audit G1, G3) ---------------------------------
+
+    test "the page heading is the title alone, under a Tools breadcrumb" do
+      get tools_addon_path("widgetkit")
+      assert_response :success
+      assert_select ".page-head h1", text: "Generators"
+      assert_not_includes css_select(".page-head h1").first.text, MANIFEST["icon"]
+      assert_select "nav.breadcrumb a[href=?]", tools_path, text: "Tools"
+      assert_select "nav.breadcrumb [aria-current=page]", text: "Generators"
+    end
+
+    # THE LOADING LINE IS SERVER-RENDERED INSIDE THE MOUNT, so it shows before any script runs, and
+    # the failure block is the host's own markup BESIDE the mount, hidden until addon_controller.js
+    # needs it. Only a browser can see either change state (test/system/addon_bundle_test.rb).
+    test "the mount starts with a loading line, and a hidden failure block waits beside it" do
+      get tools_addon_path("widgetkit")
+      assert_response :success
+      assert_select "[data-controller=addon] > [data-addon-target=mount] > p.addon-loading[data-addon-target=loading][role=status]",
+                    text: "Loading Generators…"
+      assert_select "[data-controller=addon] > .empty.addon-load-failed[data-addon-target=failure][hidden][role=alert]" do
+        assert_select "p", text: "Could not load Generators."
+        assert_select "details summary", text: "Details"
+        assert_select "details pre[data-addon-target=detail]", text: ""
+      end
+    end
+
+    # AN ADDON THAT CANNOT RUN HERE SAYS WHY ON ITS OWN PAGE, AND DOES NOT MOUNT. A pinned rail link
+    # or a bookmark still reaches the URL, and mounting there showed whatever the bundle's first
+    # failing call said ("Service request failed (404)"). The sentence is the gallery card's.
+    test "an unavailable addon's page states the reason instead of mounting the bundle" do
+      ENV.delete("FIXTURE_SVC_SIDECAR_URL")
+      get tools_addon_path("widgetkit")
+      assert_response :success
+      reason = Maker::Addons::Registry.find("widgetkit").unavailable_reason
+      assert_equal "Needs the fixture-svc service, which this server doesn't run", reason
+      assert_select "main .empty.addon-unavailable p", text: "#{reason}."
+      assert_select "main .empty.addon-unavailable a[href=?]", help_path(anchor: "tools")
+      assert_select "[data-controller=addon]", 0
+      assert_select "main", text: /Service request failed/, count: 0
+
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("min_host" => Maker::Addons::Host::LEVEL + 1) ])
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://sidecar.test"
+      get tools_addon_path("widgetkit")
+      assert_select "main .empty.addon-unavailable p", text: /\ANeeds a newer Tinkerex than this server runs/
+      assert_select "[data-controller=addon]", 0
+    end
+
+    # STILL COSMETIC, NOT A GATE (docs/invariants/addons.md): the page stops mounting, the doors
+    # behind it do not stop answering. If this ever goes red because someone made the controller
+    # refuse, that is a decision for the invariant file first, not a test to "fix".
+    test "an unavailable addon's doors still answer: greying out is not an access control" do
+      ENV.delete("FIXTURE_SVC_SIDECAR_URL")
+      assert_not Maker::Addons::Registry.find("widgetkit").available?
+      get tools_addon_asset_path("widgetkit", "generators.js")
+      assert_response :success
+      get tools_addon_states_path("widgetkit")
+      assert_response :success
     end
 
     test "an unknown addon key is a 404, not a 500" do
@@ -2027,6 +2091,7 @@ module Tools
     end
 
     test "a declared service with no configured URL is refused, not guessed at" do
+      ENV.delete("FIXTURE_SVC_SIDECAR_URL")
       post tools_addon_service_path(FIXTURE_KEY, "fixture-svc", "render")
       assert_response :not_found
     end

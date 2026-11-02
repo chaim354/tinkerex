@@ -372,8 +372,9 @@ Three environment variables decide this; none of them needs a code change (since
 | `SMTP_ADDRESS` (+ `SMTP_PORT`, `SMTP_USER_NAME`, `SMTP_PASSWORD`, `SMTP_DOMAIN`, `SMTP_AUTHENTICATION`, `SMTP_STARTTLS`) | | unset = no mail | Turns on SMTP delivery for confirmation and password-reset mail. Defaults: port 587, STARTTLS on, HELO domain = `APP_HOST`, `plain` auth when a user name is given. |
 | `MAIL_FROM` | an address | `no-reply@<APP_HOST>` | The sender of every message the app sends. |
 
-**The first account is the owner.** On a server with no user yet, the sign-up page works once
-even when registration is closed, and the account it creates is confirmed on the spot — no mail
+**The first account is the owner.** On a server with no user yet, the sign-in page shows a
+"Create the owner account" card in place of its form, and sign-up works once even when
+registration is closed, and the account it creates is confirmed on the spot — no mail
 server needed on day one — and signed straight in. After that the page answers "Sign-ups are
 closed" (403) and the link disappears, unless `REGISTRATION=open`.
 

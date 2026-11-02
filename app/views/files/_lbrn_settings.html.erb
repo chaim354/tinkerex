@@ -60,7 +60,9 @@
   <dl class="lbrn-summary">
     <%# A multi-page file has a size per page, in the table above, and no single job size. %>
     <% if meta["pages"].blank? && meta.dig("job", "width") %><dt>Job size</dt><dd><%= recipe_num(meta["job"]["width"]) %> × <%= recipe_num(meta["job"]["height"]) %> mm</dd><% end %>
-    <% if meta["material_height"] %><dt>Material</dt><dd><%= recipe_num(meta["material_height"]) %> mm</dd><% end %>
+    <%# LightBurn writes 0 when no material height was set, and "Material 0 mm" read as a fact about
+        the stock (UX audit D8, 2026-11-02): an unknown height is not shown. %>
+    <% if recipe_num(meta["material_height"]).to_f.positive? %><dt>Material</dt><dd><%= recipe_num(meta["material_height"]) %> mm</dd><% end %>
     <% if meta["machine"].present? %><dt>Machine</dt><dd><%= meta["machine"] %></dd><% end %>
     <% if meta["shape_count"] %><dt>Layers / shapes</dt><dd><%= Array(meta["layers"]).size %> / <%= meta["shape_count"] %></dd><% end %>
   </dl>

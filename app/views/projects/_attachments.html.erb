@@ -81,18 +81,23 @@
           door redirects back to this panel's anchor. projects/_folder_panel.html.erb carries the
           same markup over all three of Maker::Project::VIEWS; see its header for why Files omits
           `browser`. %>
+      <%# `aria-pressed` CARRIES THE STATE THE `active` CLASS DRAWS (2026-11-02, the UX audit's I):
+          a screen reader heard three plain buttons and no way to tell which view was on, where the
+          calculator's toggles have always said. %>
       <div class="view-toggle" role="group" aria-label="View">
         <% Maker::ProjectKind.offered_views("attachments").each do |value| %>
           <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
                         params: { view: { "attachments" => value } },
-                        class: "toggle#{' active' if view == value}" %>
+                        class: "toggle#{' active' if view == value}", "aria-pressed": (view == value).to_s %>
         <% end %>
       </div>
       <%# "Look at my library NOW", instead of waiting on library_scan's 15 minutes (share/s3) or
           remote_changelog_pull's 2 (chunk_remote). It scans the LIBRARY, not this folder — a scan
           cannot be aimed at a subfolder (Library::Reconciler compares against the whole catalog), so
-          the door refreshes the store and the existing chains do the per-project filing. %>
-      <%= button_to "Scan folder", project_scan_path(@project), method: :post, class: "linkbtn" %>
+          the door refreshes the store and the existing chains do the per-project filing. Which is
+          why it is called what the Library calls the same button, "Rescan library" (2026-11-02,
+          the UX audit's C7): "Scan folder" promised a narrower thing than it does. %>
+      <%= button_to "Rescan library", project_scan_path(@project), method: :post, class: "linkbtn" %>
       <%= link_to "Attach existing", new_project_attachment_path(@project), class: "linkbtn" %>
       <%# NO UPLOADER HERE (redesign slice 4): the top bar's Upload saves into this folder and is the
           hub's primary action, so the panel adding its own would be a second door to one place. %>
@@ -119,14 +124,15 @@
     </p>
   <% end %>
 
-  <%# WHAT THE SWEEP DID, ON THE PAGE (stage 4, S4-2; story 1.5). Both branches are facts the maker
-      needs and neither is an error: a project that files itself says when it last did, and one
-      that has been told not to says so where the files are, not only on the edit form. %>
+  <%# WHAT THE FILING PASS DID, ON THE PAGE (stage 4, S4-2; story 1.5). Both branches are facts the
+      maker needs and neither is an error: a project that files itself says when it last did, and
+      one that has been told not to says so where the files are, not only on the edit form. The
+      maker's word for the pass is "filing" (2026-11-02, the UX audit's C3); "sweep" is ours. %>
   <% if @project.autofile? %>
     <% if @project.last_sweep_moves.to_i.positive? && @project.last_swept_at.present? %>
       <p class="muted sweep-note">
-        Sweep filed <%= pluralize(@project.last_sweep_moves, "file") %>
-        · <%= time_ago_in_words(@project.last_swept_at) %> ago
+        Filed <%= pluralize(@project.last_sweep_moves, "file") %>
+        · <%= time_at(@project.last_swept_at, style: :relative) %>
       </p>
     <% end %>
   <% else %>
@@ -174,8 +180,13 @@
       like every other group, for the rare case an
       addon's own output happens to look like one. %>
   <% backups = @listing.backups.reject { |r| @generated_ids.include?(r.node_id) } %>
-  <% loose = @listing.loose.reject { |r| @generated_ids.include?(r.node_id) } %>
-  <% if @listing.tree.empty? && loose.empty? && backups.empty? && @linked_rows.empty? &&
+  <%# THE README THE CARD ABOVE RENDERS IS NOT LOOSE (2026-11-02, the UX audit's C3): it is the
+      project's own description, the filing pass never moves it (`:project_readme`), and listing it
+      under Loose beside "a README stays here" contradicted itself in one sentence. It is still in
+      Recently changed and in the Library. Only the card's row leaves: a second README-named file
+      stays listed, and its row says why it stays. %>
+  <% loose = @listing.loose.reject { |r| @generated_ids.include?(r.node_id) || r.node_id == @readme_row&.node_id } %>
+  <% if @listing.tree.empty? && loose.empty? && @readme_row.nil? && backups.empty? && @linked_rows.empty? &&
         @generated.empty? && @missing_attachment_count.zero? && !@listing.truncated? %>
     <%# THE TREE STAYS IN THIS TEST THOUGH ITS SECTIONS LEFT: the sentence is about the PROJECT,
         not about this panel, and a project whose folder holds nothing but subfolders has files —
@@ -216,17 +227,27 @@
           </div>
         <% end %>
 
-        <%# LOOSE FIRST — the sweep's inbox. Shown only when there is something in it; the note says
-            why these files sit apart from every real section instead of reading as forgotten. %>
+        <%# LOOSE FIRST — the filing pass's inbox. Shown only when there is something in it; the note
+            says why these files sit apart from every real section instead of reading as forgotten. %>
         <% if loose.any? %>
-          <%= render "attachment_group", key: "loose", label: "Loose", rows: loose, open: true, view: %>
-          <%# THE CAPTION MUST BE TRUE OF THIS FOLDER (stage 4, S4-1): the sweep does not file a
-              working tree's files, so promising it would be a lie about the one shape most real
-              project folders have. %>
+          <%# A ROW THE NEXT PASS CANNOT FILE SAYS SO ON ITSELF (C3): "design/x.svg already exists —
+              rename one to file it", where the caption below used to promise the next pass for it
+              too. Maker::LooseFilingNotes predicts it from the filing rules and the tree in memory.
+              Asked only where filing will run: a repository and an autofile-off project file
+              nothing, and their caption says so for every row at once. %>
+          <% files_itself = @project.autofile? && !@listing.root_repo? %>
+          <% notes = files_itself ? Maker::LooseFilingNotes.for(user: current_user, listing: @listing, rows: loose) : {} %>
+          <%= render "attachment_group", key: "loose", label: "Loose", rows: loose, open: true, view:, notes: notes %>
+          <%# THE CAPTION MUST BE TRUE OF THIS FOLDER (stage 4, S4-1): the filing pass does not file
+              a working tree's files, so promising it would be a lie about the one shape most real
+              project folders have — nor a project told not to file, nor a row that says it will
+              not be filed. %>
           <% if @listing.root_repo? %>
             <p class="muted loose-note">This folder is a git repository, so its files stay where they are.</p>
-          <% else %>
-            <p class="muted loose-note">Loose files are filed on the next sweep; a README stays here.</p>
+          <% elsif !@project.autofile? %>
+            <p class="muted loose-note">Automatic filing is off, so loose files stay where they are.</p>
+          <% elsif loose.any? { |r| !notes.key?(r.node_id) } %>
+            <p class="muted loose-note">Loose files are filed into their folders on the next scan.</p>
           <% end %>
         <% end %>
 

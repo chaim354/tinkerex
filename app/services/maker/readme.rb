@@ -73,7 +73,44 @@ module Maker
       NAMES.filter_map { |name| rows.find { |r| r.node.name == name } }.first
     end
 
-    def self.for(user:, rows:, base_path:, listing:, link:)
+    # WHERE A PICTURE IN THE MAKER'S OWN README LOADS FROM (2026-11-02, the UX audit's C2). The
+    # maker's `link` is the file's PAGE (Maker::RepoCard::DEFAULT_LINK), which is the right target
+    # for `[base](models/base.stl)` and the wrong one for `![plate](docs/plate.svg)`: an `<img>`
+    # pointed at an HTML page is a broken picture, which is what the hub drew while the public page
+    # — whose one link is the BYTE url, Maker::PublicProject#file_url_for — drew the same image. A
+    # picture takes the blob route the hero and an image block already load from.
+    MAKER_IMAGE_LINK = ->(id) { Rails.application.routes.url_helpers.blob_file_path(id) }
+
+    # The image arm a caller gets when it names none: the maker's page link implies the maker's
+    # picture link; any other link (the public page's byte url) already serves a picture, so nil.
+    # IDENTITY, NOT EQUALITY: RepoCard.for passes its default straight through, and
+    # ProjectsController#show names the same constant, so both maker callers are this one object.
+    def self.default_image_link(link) = link.equal?(Maker::RepoCard::DEFAULT_LINK) ? MAKER_IMAGE_LINK : nil
+
+    # Markdown under one folder, with relative links resolved by `link` and the PICTURES among them
+    # by `image_link` when one is given. Public so a content block (projects/_block_panel) renders
+    # through the same two arms as a README rather than a copy of them.
+    #
+    # Maker::Markdown yields an href without saying which element asked for it, so the image arm
+    # is applied AFTER rendering, and only to a `src` this resolver itself handed out — never to an
+    # href the author wrote. That pass parses the SANITISED output with the sanitiser's own HTML5
+    # parser and changes one attribute to a path this app built; it adds no element and keeps no
+    # id, so it cannot reopen what Maker::Markdown's single pass closes.
+    def self.render_markdown(text, base_path:, index:, link:, image_link: nil)
+      issued = {}
+      resolve = Maker::Markdown.folder_resolver(base_path, index) { |id| link.call(id).tap { |url| issued[url] = id } }
+      html = Maker::Markdown.render(text, &resolve)
+      return html if image_link.nil? || issued.empty?
+
+      fragment = Nokogiri::HTML5.fragment(html)
+      pictures = fragment.css("img[src]").select { |img| issued.key?(img["src"]) }
+      return html if pictures.empty?
+
+      pictures.each { |img| img["src"] = image_link.call(issued.fetch(img["src"])) }
+      fragment.to_html.html_safe # sanitised by Maker::Markdown.render; only a src changed since
+    end
+
+    def self.for(user:, rows:, base_path:, listing:, link:, image_link: default_image_link(link))
       row = row_in(rows)
       return nil if row.nil?
       if row.node.size.to_i > READ_LIMIT
@@ -87,9 +124,10 @@ module Maker
       # filenames) — either way this must degrade to a replacement character, never raise
       # Encoding::InvalidByteSequenceError out of a card into a 500 for the whole page.
       text = (truncated ? bytes.byteslice(0, CAP) : bytes).dup.force_encoding(Encoding::UTF_8).scrub
-      # THE ONE FOLDER RESOLVER (Maker::Markdown.folder_resolver): a content block resolves against
-      # the project folder with the same arithmetic, so the two cannot drift.
-      html = Maker::Markdown.render(text, &Maker::Markdown.folder_resolver(base_path, listing.path_index) { |id| link.call(id) })
+      # THE ONE FOLDER RESOLVER (Maker::Markdown.folder_resolver, through #render_markdown): a
+      # content block resolves against the project folder with the same arithmetic, so the two
+      # cannot drift.
+      html = render_markdown(text, base_path:, index: listing.path_index, link:, image_link:)
       new(html:, note: (truncated ? "Showing the first #{CAP / 1024} KB of this README." : nil))
     # TWO ARMS, ONE NOTE. The store not answering is an outage the layout's banner names
     # (app/models/current.rb); a README that is gone is not, so its arm raises nothing.

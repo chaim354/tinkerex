@@ -26,7 +26,7 @@
     duplicate the input's id and the accent; nothing in it is accent (design-system.md rule 13). %>
 <% if @recent_files.empty? %>
   <section class="panel home-section getting-started">
-    <div class="panel-head"><h2>Getting started</h2><%= link_to "Help explains all of this", "/help", class: "muted" %></div>
+    <div class="panel-head"><h2>Getting started</h2><%= link_to "Help explains all of this", help_path, class: "muted" %></div>
     <ol class="getting-started-steps">
       <li>
         <h3>Bring your files in</h3>
@@ -86,11 +86,15 @@
   <section class="panel home-section home-attention">
     <div class="panel-head"><h2>Needs attention</h2></div>
     <ul class="attention-list">
+      <%# "LOG A PRINT" OPENS THE PRINT LOG (UX audit 2026-11-01, E6): the model page's Details pane with
+          its composer open, never the pane the page would choose for itself — which is the first
+          instructions PDF whenever the model has one. Logging that next print is also what takes this
+          row away (HomeController::ATTENTION_WINDOW says how). %>
       <% @failed_prints.each do |run| %>
         <li class="attention-row attention-row--danger">
           <span class="attention-mark" aria-hidden="true"></span>
-          <span class="attention-text"><%= link_to run.model.title, model_path(run.model) %> failed on <%= run.printed_on.strftime("%Y-%m-%d") %><%= " on #{run.printer}" if run.printer.present? %>.</span>
-          <%= link_to "Log a print", model_path(run.model), class: "btn small" %>
+          <span class="attention-text"><%= link_to run.model.title, model_path(run.model) %> failed on <%= time_at(run.printed_on, style: :date) %><%= " on #{run.printer}" if run.printer.present? %>.</span>
+          <%= link_to "Log a print", model_path(run.model, file: "details", log: 1, anchor: "print-log"), class: "btn small" %>
         </li>
       <% end %>
       <%# LOW STOCK, AFTER THE FAILED PRINTS — a second attention source (stage 2, S2-3), sharing
@@ -99,8 +103,8 @@
       <% @low_stock.each do |item| %>
         <li class="attention-row attention-row--warn">
           <span class="attention-mark" aria-hidden="true"></span>
-          <span class="attention-text"><%= item.name %>: <%= number_with_precision(item.quantity_cached, precision: 3, strip_insignificant_zeros: true) %> <%= item.unit %> left, minimum <%= number_with_precision(item.min_quantity, precision: 3, strip_insignificant_zeros: true) %>.</span>
-          <%= link_to "Restock", inventory_item_path(item), class: "btn small" %>
+          <span class="attention-text"><%= link_to item.name, inventory_item_path(item) %>: <%= inventory_quantity(item.quantity_cached) %> <%= item.unit %> left, minimum <%= inventory_quantity(item.min_quantity) %>.</span>
+          <%= link_to "Restock", inventory_item_path(item, reason: "restocked"), class: "btn small" %>
         </li>
       <% end %>
     </ul>

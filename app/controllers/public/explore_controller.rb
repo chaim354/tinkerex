@@ -22,7 +22,14 @@ module Public
       # Maker::Taggable#tagged_with joins maker_tags BY NAME and is not user-scoped, which is what
       # makes it correct here: /explore is cross-user by definition.
       scope = scope.tagged_with(@tag) if @tag
-      @projects = scope.order(updated_at: :desc).limit(PAGE).to_a
+      # ONE PAST THE PAGE, SO THE HEAD CAN TELL "THESE ARE ALL" FROM "THESE ARE THE NEWEST" (UX audit
+      # G4). It read "60 projects" when there were 300. The extra row is fetched and dropped — the
+      # same statement, so the page's query count does not move (page_query_budget_test.rb). `id`
+      # breaks an `updated_at` tie as Public::UsersController's does, so which row falls off the end
+      # is the database's answer to a total order rather than to a coin toss.
+      @projects = scope.order(updated_at: :desc, id: :desc).limit(PAGE + 1).to_a
+      @more = @projects.size > PAGE
+      @projects = @projects.first(PAGE)
       # Tag chips over PUBLIC projects only, most used first, capped — ONE grouped query, never one
       # count per tag. `.count` on a grouped relation answers {name => count}.
       @chips = Maker::Tag.joins(:taggings)

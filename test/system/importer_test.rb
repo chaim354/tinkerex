@@ -19,7 +19,9 @@ require "zip"
 #   - The title input has NO `name` attribute at all (this section is not a Rails form; the
 #     controller drives everything via fetch()). It is reached by its wrapping label's text
 #     ("Title"), not by "model[title]".
-#   - The submit button reads "Create model", not "Import".
+#   - The submit button is found by its `submit` target, not by its label: it read "Create model"
+#     until 2026-11-02 and the UX audit renamed it "Import" to agree with the page's title — a
+#     label is the view's to change, and what this file tests is the controller behind it.
 #   - importer_controller.js#renderSummary groups the count BY ROLE ("N model files · N images ·
 #     N PDF"), never a bare total -- so "3 file" (the plan's literal assertion) never appears
 #     anywhere in the DOM. The bundle below unzips to 2 model files + 1 PDF (the dotfile is
@@ -76,7 +78,7 @@ class ImporterTest < ApplicationSystemTestCase
     # fails, JSZip is fine and the upload loop is not.
     assert_selector "[data-importer-target='summary']", text: "2 model files · 0 images · 1 PDF"
 
-    click_on "Create model"
+    find("[data-importer-target='submit']").click
 
     model = nil
     assert_eventually("the model was never created") do
@@ -143,7 +145,7 @@ class ImporterTest < ApplicationSystemTestCase
     fill_in "Title", with: "Widget"
     attach_file(zip.path)
     assert_selector "[data-importer-target='summary']", text: "2 model files · 0 images · 0 PDF"
-    click_on "Create model"
+    find("[data-importer-target='submit']").click
 
     model = nil
     assert_eventually("the model was never created") do
@@ -158,6 +160,87 @@ class ImporterTest < ApplicationSystemTestCase
     assert_no_console_errors
   ensure
     zip&.close!
+  end
+
+  # A RUN THAT SKIPPED A FILE STAYS AND SAYS SO (UX audit B7). The importer wrote "imported N,
+  # skipped M" into its status line and navigated to the model on the very next line, so the report
+  # was never seen; now it stays on this page, the status says what landed with a link to the model,
+  # the alert names what did not and why, and the submit stays disabled — the model exists, and a
+  # second press would make another. The refusal is the share door's own clobber answer, handed
+  # back for one file by replacing `fetch` in the page: the real collision cannot be staged, since
+  # the model's folder is made fresh by the import itself.
+  #
+  # MUTATION-CHECKED (2026-11-02): with importer_controller.js navigating to the model whenever
+  # anything landed (the old `window.location.href = …` after a partial run), the status wait goes
+  # RED — the page has moved on to the model, so there is no status line left to read; restored,
+  # green.
+  test "an import that skipped a file stays on the page with the report" do
+    visit new_model_path
+    page.execute_script(<<~JS)
+      const real = window.fetch
+      window.fetch = (url, opts = {}) => {
+        const file = opts.body instanceof FormData ? opts.body.get("file") : null
+        if (file && file.name === "tail.stl") {
+          return Promise.resolve(new Response(JSON.stringify({ error: '"3D models/x/tail_segments/tail.stl" already exists' }),
+                                              { status: 422, headers: { "Content-Type": "application/json" } }))
+        }
+        return real(url, opts)
+      }
+    JS
+    fill_in "Title", with: "Articulated Dragon"
+    attach_file(@zip.path)
+    assert_selector "[data-importer-target='summary']", text: "2 model files · 0 images · 1 PDF"
+    find("[data-importer-target='submit']").click
+
+    assert_selector "[data-importer-target='status']", text: "Imported 2 of 3 files.", wait: 30
+    model = @user.maker_models.find_by!(title: "Articulated Dragon")
+    assert_selector "[data-importer-target='status'] a[href$='#{model_path(model)}']", text: "Open the model"
+    assert_equal "This one was not added: tail.stl (the folder already has a file with that name).",
+                 find(".flash-stack .flash.flash-alert .flash-text").text
+    assert_current_path new_model_path
+    assert_selector "[data-importer-target='submit'][disabled]"
+    assert_equal 2, model.file_attachments.count
+    assert_no_console_errors
+  end
+
+  # A MODEL THE SERVER COULD NOT MAKE IS EXPLAINED, NEVER SHOWN AS A CODE. ModelsController answers an
+  # unreachable library with `{ error: "fetch_error" }` at 503 — a code, which the importer printed
+  # as "Import failed: fetch_error" — and a name taken mid-import with a sentence at 422. The first
+  # gets the upload doors' wording (lib/chunk_upload.js#failureReason), the second is the server's
+  # sentence; the submit comes back after each, since no model was made. Answered by replacing
+  # `fetch` for `POST /models.json` in the page: neither state can be staged on demand.
+  #
+  # MUTATION-CHECKED (2026-11-02): with importer_controller.js#createFailure printing
+  # `e.serverError` before anything else (as the catch did), the first alert reads "Import failed:
+  # fetch_error" — RED; restored, green.
+  test "a model the server could not make is explained, never shown as a code" do
+    visit new_model_path
+    page.execute_script(<<~JS)
+      window.__modelAnswer = { status: 503, body: { error: "fetch_error" } }
+      const real = window.fetch
+      window.fetch = (url, opts = {}) => String(url).includes("/models.json")
+        ? Promise.resolve(new Response(JSON.stringify(window.__modelAnswer.body),
+                                       { status: window.__modelAnswer.status, headers: { "Content-Type": "application/json" } }))
+        : real(url, opts)
+    JS
+    fill_in "Title", with: "Articulated Dragon"
+    attach_file(@zip.path)
+    assert_selector "[data-importer-target='summary']", text: "2 model files · 0 images · 1 PDF"
+
+    find("[data-importer-target='submit']").click
+    assert_equal "Import failed: the library could not be reached. Try again in a moment.",
+                 find(".flash-stack .flash.flash-alert .flash-text").text
+    assert_no_text "fetch_error"
+    find(".flash-stack .flash.flash-alert .flash-close").click
+    assert_no_selector ".flash-stack .flash.flash-alert"
+
+    page.execute_script("window.__modelAnswer = { status: 422, body: { error: 'That name was just taken — try again.' } }")
+    find("[data-importer-target='submit']:not([disabled])").click
+    assert_equal "Import failed: that name was just taken — try again.",
+                 find(".flash-stack .flash.flash-alert .flash-text").text
+    assert_selector "[data-importer-target='submit']:not([disabled])"
+    refute @user.maker_models.exists?, "a model was made"
+    assert_no_console_errors(ignoring: [ /fetch_error/, /just taken/ ])
   end
 
   private

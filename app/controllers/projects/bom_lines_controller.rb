@@ -7,10 +7,15 @@ module Projects
   # Consume is the ledger's one door, Maker::InventoryTransaction.apply!, posted with the project
   # so the transaction records what it was for.
   #
-  # PLAIN FORMS + REDIRECTS ONLY, no turbo_stream — unlike Projects::TasksController, which answers
-  # twice to avoid a full-page repaint on every check-off. A BOM line is added, removed or consumed
-  # far less often than a task is toggled, so the no-JS path IS the path here, not a fallback.
+  # PLAIN FORMS + REDIRECTS ON SUCCESS, no turbo_stream — unlike Projects::TasksController, which
+  # answers twice to avoid a full-page repaint on every check-off. A BOM line is added, removed or
+  # consumed far less often than a task is toggled, so the no-JS path IS the path here, not a
+  # fallback. A REFUSED LINE KEEPS WHAT WAS TYPED (2026-11-02, the UX audit's B3): it comes back as
+  # the open composer with its error and every field as posted (Projects::ComposerRefusal), 422 —
+  # where a redirect with an alert used to hand back an empty form, the part name gone.
   class BomLinesController < ApplicationController
+    include Projects::ComposerRefusal
+
     # The project panel's row cap — ProjectsController#show slices @bom_lines to this many for the
     # table and points "Showing N of M" at the full page. Shared with the panel view via this
     # constant rather than a duplicated literal.
@@ -19,10 +24,13 @@ module Projects
 
     def create
       project = current_user.maker_projects.find_by!(slug: params[:project_id])
-      attrs = line_params.to_h.symbolize_keys
+      # `posted` IS WHAT THE MAKER TYPED, KEPT WHOLE for a refusal to hand back; `attrs` is what
+      # the line is built from, with the unchosen targets dropped below.
+      posted = line_params.to_h.symbolize_keys
+      attrs = posted.dup
       kind = params.dig(:bom_line, :target_kind).to_s
       unless TARGETS.include?(kind)
-        return back_to(project, alert: "Pick what the line points at: stock, a file, or a part name.")
+        return refuse(project, posted, kind, "Pick what the line points at: stock, a file, or a part name.")
       end
       # EXACTLY ONE TARGET, CHOSEN BY THE RADIO: the other two inputs are dropped here so a
       # filled-in but unchosen field can never make the model's exactly_one_target refuse a line
@@ -36,14 +44,14 @@ module Projects
         # The composer's unit field is for file and text lines. A stock line is counted in its
         # item's unit, which Maker::BomLine#unit reads from the item at every door (audit F-S16-2),
         # so nothing is looked up or copied here; a foreign item is the model's to refuse.
-        return back_to(project, alert: "Pick a stock item.") if attrs[:inventory_item_id].blank?
+        return refuse(project, posted, kind, "Pick a stock item.") if attrs[:inventory_item_id].blank?
       when "file"
         # SCOPED TO THIS USER'S LIVE NODES, not a bare Node.find_by — an unscoped lookup would let
         # a crafted node_id point a line at another tenant's file (CLAUDE.md §8).
         node = current_user.nodes.present.find_by(node_id: attrs[:node_id], kind: "file")
-        return back_to(project, alert: "That file isn't in your library.") unless node
+        return refuse(project, posted, kind, "That file isn't in your library. Choose another.") unless node
       when "text"
-        return back_to(project, alert: "Enter a part name.") if attrs[:part_name].blank?
+        return refuse(project, posted, kind, "Enter a part name.") if attrs[:part_name].blank?
       end
 
       # THE BOM AND ITS FIRST LINE LAND TOGETHER OR NOT AT ALL. The bom is minted lazily by the
@@ -59,7 +67,7 @@ module Projects
       if line.persisted?
         back_to(project, notice: "Added #{line_label(line)}.")
       else
-        back_to(project, alert: line.errors.full_messages.to_sentence)
+        refuse(project, posted, kind, "Not added: #{line.errors.full_messages.to_sentence}.")
       end
     end
 
@@ -87,6 +95,18 @@ module Projects
     end
 
     private
+
+    # The composer again, open, holding what was posted — the draft line (never saved, never
+    # attached to a bom), the chosen radio, and the chosen file's name for the chooser's label. Its
+    # two pick lists are re-read here, the queries the panel's own render pays.
+    def refuse(project, posted, kind, error)
+      file_name = posted[:node_id].presence && current_user.nodes.present.find_by(node_id: posted[:node_id])&.name
+      refuse_in_composer(project, id: "bom-composer", partial: "projects/bom_composer",
+                         locals: { project:, draft: Maker::BomLine.new(posted), kind:, file_name:, error:,
+                                   items: current_user.maker_inventory_items.order(:name).pluck(:name, :id),
+                                   suppliers: current_user.maker_suppliers.order(:name).pluck(:name, :id) },
+                         title: "Add a line to the bill of materials")
+    end
 
     def line_params
       params.require(:bom_line).permit(

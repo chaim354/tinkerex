@@ -1,8 +1,15 @@
 <% content_for :title, "Inventory — Tinkerex" %>
 
+<%# SUPPLIERS AND LOCATIONS ARE REACHED FROM HERE (UX audit 2026-11-01, E5): they were linked only
+    from the Settings hub, while this page and the item form's dropdowns that name them never said
+    where they are kept. Quiet buttons beside the one accent, New item. %>
 <div class="page-head">
   <h1>Inventory</h1>
-  <%= link_to "New item", new_inventory_item_path, class: "btn primary" %>
+  <div class="page-actions">
+    <%= link_to "Suppliers", suppliers_path, class: "btn small" %>
+    <%= link_to "Locations", locations_path, class: "btn small" %>
+    <%= link_to "New item", new_inventory_item_path, class: "btn primary" %>
+  </div>
 </div>
 
 <form class="toolbar inventory-toolbar" method="get" action="<%= inventory_items_path %>">
@@ -13,13 +20,15 @@
       links from them would stamp `&sort=name&dir=asc` onto every chip even on a plain first visit —
       noisy, and it is not what a bookmarked/shared chip URL should freeze in. %>
   <span class="chips">
-    <%# "All" resets category/low AND tag -- it is the one hard reset in this row. %>
+    <%# "All" resets category/low, tag, supplier and location -- it is the one hard reset in this row. %>
     <%= link_to "All", inventory_items_path(q: params[:q], sort: params[:sort], dir: params[:dir]),
-                class: "filter chip#{' active' if @category.nil? && !@low}" %>
-    <%= link_to "Low stock (#{@low_count})", inventory_items_path(q: params[:q], low: 1, tag: @tag, sort: params[:sort], dir: params[:dir]),
+                class: "filter chip#{' active' if @category.nil? && !@low && inventory_place_params.empty?}" %>
+    <%= link_to "Low stock (#{@low_count})", inventory_items_path(q: params[:q], low: 1, tag: @tag, sort: params[:sort], dir: params[:dir],
+                                                                    **inventory_place_params),
                 class: "filter chip#{' active' if @low}" %>
     <% @categories.each do |cat| %>
-      <%= link_to cat, inventory_items_path(q: params[:q], category: cat, tag: @tag, sort: params[:sort], dir: params[:dir]),
+      <%= link_to cat, inventory_items_path(q: params[:q], category: cat, tag: @tag, sort: params[:sort], dir: params[:dir],
+                                            **inventory_place_params),
                   class: "filter chip#{' active' if @category == cat}" %>
     <% end %>
     <%#
@@ -31,8 +40,17 @@
     %>
     <% @item_tags.each do |t| %>
       <%= link_to t, inventory_items_path(q: params[:q], category: @category, low: (@low ? 1 : nil),
-                                          tag: t, sort: params[:sort], dir: params[:dir]),
+                                          tag: t, sort: params[:sort], dir: params[:dir], **inventory_place_params),
                   class: "filter chip#{' active' if @tag == t}" %>
+    <% end %>
+    <%# THE SUPPLIER OR LOCATION A COUNT LINK NARROWED TO (E5), shown as the active chip it is, and
+        rendered only while it applies. Choosing it again drops that one facet and keeps the rest. %>
+    <% { "Supplier" => [ @supplier, :supplier ], "Location" => [ @location, :location ] }.each do |word, (place, key)| %>
+      <% next unless place %>
+      <%= link_to "#{word}: #{place.name}",
+                  inventory_items_path(q: params[:q], category: @category, low: (@low ? 1 : nil), tag: @tag,
+                                       sort: params[:sort], dir: params[:dir], **inventory_place_params.except(key)),
+                  class: "filter chip active", title: "Show every #{word.downcase}" %>
     <% end %>
   </span>
   <span class="toolbar-spacer"></span>
@@ -40,6 +58,7 @@
       navigation link, not through this form — so it rides as a hidden field to survive a search
       or sort-key change. `sort`'s current value IS the select below; it needs no hidden twin. %>
   <input type="hidden" name="dir" value="<%= @dir %>">
+  <% inventory_place_params.each do |key, id| %><input type="hidden" name="<%= key %>" value="<%= id %>"><% end %>
   <%# A VISIBLE LABEL, so all four list pages label their sort the same way (UI-cohesion slice 4).
       `aria-label` goes with it rather than staying alongside: a visible <label for> is the
       accessible name, and keeping both leaves two sources for it. %>
@@ -52,8 +71,12 @@
   <span class="toolbar-count"><%= count_label(@items.size, "item") %></span>
 </form>
 
-<% if @items.empty? %>
-  <p class="empty">No inventory yet. Add your first item.</p>
+<%# TWO EMPTIES, AND THEY ASK FOR DIFFERENT THINGS (E3): a filter that matches nothing offers the way
+    back, an inventory with nothing in it offers the first item. %>
+<% if @items.empty? && @filtered %>
+  <p class="empty">No items match. <%= link_to "Clear filters", inventory_items_path %></p>
+<% elsif @items.empty? %>
+  <p class="empty">No inventory yet. <%= link_to "Add your first item", new_inventory_item_path %>.</p>
 <% else %>
   <table class="table inventory-table">
     <thead>
@@ -62,7 +85,7 @@
         <th class="col-part">Part #</th>
         <%= inventory_sort_header "Category", "category", col: "col-category" %>
         <%= inventory_sort_header "On hand", "quantity", col: "col-onhand" %>
-        <th class="col-min">Min</th>
+        <th class="col-min">Minimum</th>
         <th class="col-location">Location</th>
         <th class="col-supplier">Supplier</th>
         <%= inventory_sort_header "Updated", "updated", col: "col-updated" %>
@@ -70,19 +93,19 @@
     </thead>
     <tbody>
       <% @items.each do |item| %>
-        <% low = item.quantity_cached <= item.min_quantity %>
+        <% low = item.low_stock? %>
         <tr class="<%= "low-stock" if low %>">
           <td class="col-name">
             <%= link_to item.name, inventory_item_path(item) %>
-            <% if low %><span class="badge low-stock">Low</span><% end %>
+            <% if low %><span class="badge low-stock">Low stock</span><% end %>
           </td>
           <td class="col-part mono"><%= item.part_number.presence || "—" %></td>
           <td class="col-category"><%= item.category.presence || "—" %></td>
-          <td class="num col-onhand"><%= number_with_precision(item.quantity_cached, precision: 3, strip_insignificant_zeros: true) %> <%= item.unit %></td>
-          <td class="num col-min"><%= number_with_precision(item.min_quantity, precision: 3, strip_insignificant_zeros: true) %></td>
+          <td class="num col-onhand"><%= inventory_quantity(item.quantity_cached) %> <%= item.unit %></td>
+          <td class="num col-min"><%= item.min_quantity.positive? ? inventory_quantity(item.min_quantity) : "—" %></td>
           <td class="col-location"><%= item.location&.name || "—" %></td>
           <td class="col-supplier"><%= item.supplier&.name || "—" %></td>
-          <td class="col-updated muted"><%= item.updated_at.strftime("%Y-%m-%d") %></td>
+          <td class="col-updated muted"><%= time_at(item.updated_at, style: :date) %></td>
         </tr>
       <% end %>
     </tbody>

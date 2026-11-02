@@ -121,17 +121,21 @@ module Web
       assert_match(/private again/, flash[:notice])
     end
 
-    test "a change that is not a visibility change keeps the old wording, and Details still lands on the page" do
+    test "a change that is not a visibility change just says it saved, and Details still lands on the page" do
       patch project_path(@project), params: { project: { name: "Lamp" } }
       assert_redirected_to project_path(@project.reload)
-      assert_equal "Project updated.", flash[:notice]
+      assert_equal "Saved Lamp.", flash[:notice]
     end
 
-    test "a refusal from the Publishing tab lands back on the tab, not on the Details form" do
+    # RE-RENDERED, NOT REDIRECTED (UX audit B3, 2026-11-02): the refusal stays on the tab with its
+    # sentence in the form and the typed choice kept, so nothing the maker set is thrown away.
+    test "a refusal from the Publishing tab re-renders the tab with the error, not the Details form" do
       patch project_path(@project), params: { project: { visibility: "public" }, return_to: "publishing" }
 
-      assert_redirected_to publishing_project_path(@project)
-      assert_match(/handle/i, flash[:alert])
+      assert_response :unprocessable_entity
+      # No handle yet, so the tab shows the Claim-handle form rather than the visibility radios; the
+      # kept-input half of B3 is pinned with a handle in project_edit_area_test.
+      assert_select "section.publish-panel .form-errors[role=alert]", text: /handle/i
       assert_equal "private", @project.reload.visibility
     end
 

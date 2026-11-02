@@ -70,7 +70,7 @@ Every one of these must be present and non-empty, and `api_version` must be exac
 |---|---|---|
 | `key` | string | The addon's id. It is the URL segment (`/tools/<key>`), the asset directory name, and the default scope for saved states. |
 | `title` | string | Display name in the gallery and the page heading. |
-| `icon` | string | An emoji shown beside the title. |
+| `icon` | string | Required, and not drawn: since 2026-11-02 the gallery shows a tile with the first letter of your `title` instead, because this interface draws no emoji. An emoji here is still accepted. |
 | `description` | string | One line, shown in the gallery and under the page heading. |
 | `api_version` | string | `"1"`. A manifest declaring any other value is skipped, and the reason reported — see below. |
 | `entry` | string | Path to the entry module, relative to your addon's directory. |
@@ -169,8 +169,10 @@ You do not need to pin `@maker/addon-sdk`. The host pins it for every addon page
 
 `min_host` is compared against `host.level` (§3). If it is **higher** than this host's level, your
 addon is still built and still **listed** — greyed out, with a reason naming both numbers
-("asks for level 4, this host is level 3"). It is deliberately not hidden: an addon that silently
-never appears reads as a broken deploy, which sends an operator looking in the wrong place.
+("Needs a newer Tinkerex than this server runs (level 4; this server is level 3)"), and its page at
+`/tools/<key>` shows the same sentence instead of mounting your bundle. It is deliberately not
+hidden: an addon that silently never appears reads as a broken deploy, which sends an operator
+looking in the wrong place.
 
 Two things to know before you rely on it:
 
@@ -239,7 +241,9 @@ underscores, so `"fixture-svc"` reads `FIXTURE_SVC_SIDECAR_URL` — and a manife
 URL, because one would be an SSRF primitive aimed at the deployment's internal network.
 
 **If any declared service has no URL there, your addon is greyed out in the gallery**, with a reason
-naming the service and the exact variable to set — the same way a too-new `min_host` greys it out. A
+naming the service (the variable to set is in the operator's half of Help and in `docs/INSTALL.md`,
+never on the card), and its page shows that sentence instead of mounting your bundle — the same way
+a too-new `min_host` greys it out. A
 blank counts as missing, not as configured. That is deliberate, and better than the alternative:
 before this, such an addon rendered as a normal clickable tile, mounted, and then failed on its first
 `service.*` call with a bare 404 — which reads as "this addon is broken" rather than "this deployment
@@ -250,7 +254,7 @@ Two consequences worth designing around:
 - **Declare only what you actually call.** A service listed "just in case" makes your addon
   unavailable on every deployment that has not deployed that sidecar.
 - **Greying is cosmetic, not a gate.** The addon's URL still resolves and its endpoints still answer;
-  what changes is the card. Do not build a security argument on it.
+  what changes is the card and what the page draws. Do not build a security argument on it.
 
 #### `service_timeouts` — asking for longer, within a ceiling you do not set
 

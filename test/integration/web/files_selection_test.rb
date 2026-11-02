@@ -131,9 +131,34 @@ module Web
       get files_path(folder: @dir.node_id, selected: @stl.node_id, view: "list")
       assert_select "th a[href*='selected=#{@stl.node_id}']", minimum: 1
       assert_select ".view-toggle a[href*='selected=#{@stl.node_id}']", count: 2
-      # An ignored selection rides along nowhere.
+      # An ignored selection rides along nowhere. A row's own Details link (UX audit D2, 2026-11-02)
+      # selects ITS file, never the page's, so it is the one link allowed `selected=` here — and the
+      # ignored id must be on none of them.
       get files_path(folder: @dir.node_id, selected: @sub.node_id, view: "list")
-      assert_select "a[href*='selected=']", count: 0
+      assert_select "a[href*='selected=']:not(.row-action)", count: 0
+      assert_select "a[href*='selected=#{@sub.node_id}']", count: 0
+    end
+
+    # DETAILS IS ON THE ROW AND THE CARD, NOT ONLY BEHIND RIGHT-CLICK (UX audit D2): a link to this
+    # listing with that file selected, which #index renders with the panel open — so it works with no
+    # JavaScript — and which `selection#details` opens in place, reading the file off
+    # `data-selection-id` rather than the href.
+    test "every file row and card carries a Details link that opens the panel on that file" do
+      %w[list grid].each do |view|
+        get files_path(folder: @dir.node_id, view:)
+        links = css_select("a.row-action[data-action~='selection#details']")
+        rendered = css_select("[data-selection-target='item']").map { |el| el["data-selection-id"] }
+        refute_empty rendered, "#{view}: the fixture rendered no file"
+        assert_equal rendered.sort, links.map { |a| a["data-selection-id"] }.sort, "#{view}: a file lost its Details"
+        links.each do |a|
+          assert_equal files_path(folder: @dir.node_id, selected: a["data-selection-id"]), a["href"]
+          assert_equal "Details for #{@user.nodes.find_by!(node_id: a["data-selection-id"]).name}", a["aria-label"]
+        end
+      end
+
+      get files_path(folder: @dir.node_id, selected: @stl.node_id, view: "grid")
+      assert_select ".library.has-inspector"
+      assert_select "turbo-frame#inspector[src=?]", inspector_file_path(@stl.node_id)
     end
 
     test "a photo tile crops and a screenshot keeps contain" do

@@ -410,9 +410,11 @@ root to: "home#index"
   # UNDER /inventory BECAUSE THAT IS WHAT THEY SERVE (2026-09-10): SECTIONS lit Inventory while the
   # URL said settings. The redirect keeps the old path alive. Unlike shelves, these stay: Inventory
   # is still a section with its own sidebar place, so the URL and the lit item still agree there.
-  resources :suppliers, only: %i[index create destroy], path: "inventory/suppliers"
+  # `edit`/`update` (UX audit 2026-11-01, E5): a supplier or location is renamed and annotated on a
+  # page of its own; the list stays the place to add and remove.
+  resources :suppliers, only: %i[index create edit update destroy], path: "inventory/suppliers"
   get "settings/suppliers", to: redirect("/inventory/suppliers")
-  resources :locations, only: %i[index create destroy], path: "inventory/locations"
+  resources :locations, only: %i[index create edit update destroy], path: "inventory/locations"
   get "settings/locations", to: redirect("/inventory/locations")
 
   resources :models do

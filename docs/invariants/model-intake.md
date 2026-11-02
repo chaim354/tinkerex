@@ -5,7 +5,8 @@
 > `app/services/maker/model_intake/prune.rb`, `app/services/maker/model_folder.rb`,
 > `app/services/maker/model_projects.rb`,
 > `app/views/files/_model_strip.html.erb`, `Files::ModelsController` (the 3D models view),
-> `ModelsController`'s file-tree helpers and its `/models` redirect, or the `origin` / `auto_node_id` /
+> the model page's file-tree helpers (`Models::Page`, which `ModelsController#show` and the print log's
+> refusal share) and `ModelsController`'s `/models` redirect, or the `origin` / `auto_node_id` /
 > `folder_node_id` / `dismissed_at` columns on `maker_models`. The arc that produced it —
 > measurements, what each guard caught, what was deliberately left out — is in `docs/STATUS.md`.
 

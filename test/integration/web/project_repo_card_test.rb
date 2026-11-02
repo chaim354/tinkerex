@@ -209,7 +209,10 @@ module Web
     test "a project whose own folder is the repository gets the card, Commits and History, and an honest caption" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      root = make_root_repo!(user, project)
+      # A SECOND ROOT FILE beside the README: the card's README is not listed under Loose
+      # (2026-11-02, the UX audit's C3), so a root holding only a README has no Loose group and no
+      # caption to be honest in.
+      root = make_root_repo!(user, project, files: { "README.md" => "# Lamp\n\nA lamp.\n", "main.c" => "int main(void) { return 0; }\n" })
 
       get project_path(project)
 
@@ -219,7 +222,9 @@ module Web
       assert_select ".attachments-panel .panel-head a[href=?]", repo_commit_path(root.node_id), text: "Commits"
       assert_select ".attachments-panel .panel-head a[href=?]", repo_history_path(root.node_id), text: "History"
       assert_select "p.loose-note", text: /This folder is a git repository/
-      assert_select "p.loose-note", text: /filed on the next sweep/, count: 0
+      assert_select "p.loose-note", text: /filed into their folders/, count: 0
+      assert_select ".attachment-group .grid-name", text: "main.c"
+      assert_select ".attachment-group .grid-name", text: "README.md", count: 0
     end
 
     # A PLAIN FOLDER'S README RENDERS TOO, through the same Maker::Readme reader with no git facts
@@ -231,6 +236,10 @@ module Web
       project.ensure_library_folder!(user)
       File.write(File.join(library_root, "Projects", project.slug, "README.md"), "# Tray\n\nWalnut.\n")
       Library::ScanJob.new.perform(user_id: user.id)
+      # A LOOSE FILE THE SCAN HAS NOT FILED YET, as a row: the scan files whatever is at the root, so
+      # one written before it would already sit in design/ and leave Loose empty.
+      user.nodes.create!(node_id: SecureRandom.uuid, name: "cut.svg", kind: "file", mtime: 1, size: 6,
+                         parent_node_id: project.reload.folder_node_id)
 
       get project_path(project)
 
@@ -238,7 +247,12 @@ module Web
       assert_select ".attachments-panel .readme-card .markdown h1", text: "Tray"
       assert_select ".attachments-panel .readme-card .repo-facts", count: 0
       assert_select ".attachments-panel .panel-head a", text: "Commits", count: 0
-      assert_select "p.loose-note", text: /filed on the next sweep/
+      assert_select "p.loose-note", text: /Loose files are filed into their folders on the next scan/
+      # THE README IS THE CARD, NOT A LOOSE FILE (2026-11-02, the UX audit's C3): it was listed under
+      # Loose beside a caption saying a README stays put. `cut.svg` is what Loose holds.
+      assert_select ".attachment-group-head", text: /Loose \(1\)/
+      assert_select ".attachment-group .grid-name", text: "cut.svg"
+      assert_select ".attachment-group .grid-name", text: "README.md", count: 0
     end
   end
 end

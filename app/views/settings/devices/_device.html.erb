@@ -1,0 +1,22 @@
+<%# ONE DESKTOP DEVICE'S ROW, ON BOTH PAGES THAT LIST THEM (UX audit F6): your own Settings → Devices
+    and an admin's view of another account (settings/users/edit). One partial, so the two show the
+    same columns -- the day it was added, when it was last used -- and the same verb: Sign out, or
+    Remove once it has expired, which is only tidying a row whose token is already refused.
+
+    Locals: device, idle_limit (Device.idle_limit), url (the DELETE that signs it out), owner (nil on
+    your own page; the account's email on an admin's page, which the confirmation names). %>
+<% expired = device.expired?(idle_limit) %>
+<% confirm =
+     if expired then "Remove #{device.name} from this list?"
+     elsif owner then "Sign #{device.name} out of #{owner}? It will need that account's password to sign in again."
+     else "Sign out #{device.name}? It will need your password to sign in again."
+     end %>
+<li>
+  <span class="settings-name"><%= device.name %></span>
+  <% if expired %><span class="badge">Expired</span><% end %>
+  <span class="settings-fact">added <%= time_at(device.created_at, style: :date) %></span>
+  <span class="settings-fact"><% if device.last_seen_at %>used <%= time_at(device.last_seen_at, style: :relative) %><% else %>never used<% end %></span>
+  <%= button_to expired ? "Remove" : "Sign out", url, method: :delete,
+                class: "linkbtn danger small settings-remove",
+                form: { data: { turbo_confirm: confirm } } %>
+</li>

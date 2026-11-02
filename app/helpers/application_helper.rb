@@ -55,6 +55,61 @@ module ApplicationHelper
     url_for(preview.asset)
   end
 
+  # EVERY TIMESTAMP ON A PAGE, IN ONE ZONE AND ONE OF THREE SPELLINGS (UX audit D1, 2026-11-02).
+  # The audit counted three clocks and six formats on one evening's pages: Rails columns printed in
+  # UTC, file mtimes in the process's own zone, the History panel in the browser's, as
+  # `%Y-%m-%d %H:%M`, `...:%S`, `%Y-%m-%d`, `%B %d, %Y`, `toLocaleString()` and "10 minutes ago".
+  #
+  #   :absolute  2026-11-01 22:09     the default: a row, a panel, an entry
+  #   :date      2026-11-01           where the day is the fact (added, updated, printed, released)
+  #   :relative  10 minutes ago       where recency is the fact (a repo's head, a device's last use)
+  #
+  # Always a `<time>`: `datetime` is ISO 8601 in the app's zone and `title` the full local time with
+  # the zone's abbreviation, so a relative or date-only label still answers "exactly when?" on
+  # hover. The zone is config.time_zone's (lib/tinkerex/time_zone.rb), applied HERE to whatever
+  # arrives -- a TimeWithZone, a process-local ::Time from `Time.at` or Rugged -- which is what makes
+  # a note and the file it is about, saved in the same minute, read the same minute. A Date has no
+  # time of day: it prints its day in every style but :relative and carries no title. nil renders
+  # as "" so a call site keeps its own placeholder (`time_at(x).presence || "—"`).
+  #
+  # These three are the whole vocabulary: no `strftime`, `to_fs(` or `time_ago_in_words` in
+  # app/views (test/integration/web/time_format_test.rb), and the History panel prints the label
+  # FilesController#history builds with #time_label rather than the browser's own.
+  TIME_FORMATS = { absolute: "%Y-%m-%d %H:%M", date: "%Y-%m-%d" }.freeze
+  TIME_TITLE = "%Y-%m-%d %H:%M:%S %Z".freeze
+  TIME_STYLES = %i[absolute date relative].freeze
+
+  def time_at(time, style: :absolute, **attrs)
+    # The style is checked BEFORE the nil shortcut, so a typo at a nullable call site fails on the
+    # first render rather than only once the column holds a value.
+    raise ArgumentError, "time style #{style.inspect} is not one of #{TIME_STYLES.join(', ')}" unless TIME_STYLES.include?(style)
+    return "" if time.nil?
+
+    if plain_date?(time)
+      return content_tag(:time, time_label(time, style:), datetime: time.iso8601, **attrs)
+    end
+
+    at = time.in_time_zone
+    content_tag(:time, time_label(at, style:), datetime: at.iso8601, title: at.strftime(TIME_TITLE), **attrs)
+  end
+
+  # The label alone, as plain text, for a caller that is not a view: FilesController#history sends
+  # it to history_controller.js as `at_label`.
+  def time_label(time, style: :absolute)
+    raise ArgumentError, "time style #{style.inspect} is not one of #{TIME_STYLES.join(', ')}" unless TIME_STYLES.include?(style)
+    return "" if time.nil?
+    return relative_label(time.in_time_zone) if style == :relative
+    return time.strftime(TIME_FORMATS[:date]) if plain_date?(time)
+
+    time.in_time_zone.strftime(TIME_FORMATS.fetch(style))
+  end
+
+  # A FileInfo / Node mtime is unix NANOSECONDS (reading it as seconds is the overflow bug this
+  # codebase has shipped twice). The instant only: #time_at puts it in the app's zone.
+  def time_from_nanos(nanos)
+    nanos && Time.at(nanos / 1_000_000_000)
+  end
+
   private
 
   # The referer as a root-relative path, or nil when there isn't a usable same-origin one.
@@ -68,10 +123,22 @@ module ApplicationHelper
     return nil unless uri.host == request.host && uri.port == request.port
     return nil unless uri.scheme == request.scheme
     return nil if uri.path.blank?
+    # A path that begins with "//" is a protocol-relative URL to a browser: `redirect_to` would raise
+    # OpenRedirectError on it (a 500 after the action already ran) and an href would leave the site.
+    return nil if uri.path.start_with?("//")
 
     uri.query.present? ? "#{uri.path}?#{uri.query}" : uri.path
   rescue URI::InvalidURIError
     nil
+  end
+
+  def plain_date?(time) = time.is_a?(Date) && !time.is_a?(DateTime)
+
+  # "in 3 minutes" for a time ahead of the clock, which a commit by an author whose clock runs fast
+  # can be; "3 minutes ago" for everything else.
+  def relative_label(at)
+    words = distance_of_time_in_words(at, Time.current)
+    at.future? ? "in #{words}" : "#{words} ago"
   end
 
   # ONE SPELLING FOR "HOW MANY OF THESE ARE THERE" (UI-cohesion spec §2.7). The app wrote counts

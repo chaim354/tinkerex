@@ -6,8 +6,10 @@ module ShellHelper
   THEMES = %w[light dark system].freeze
 
   # controller_path's FIRST segment, so projects/tasks, models/print_runs and tools/addons all
-  # resolve to their family. A controller not listed here lights nothing, which is correct for
-  # Devise's pages (they render without the rail anyway).
+  # resolve to their family — or, for an entry holding a "/", the WHOLE controller path, so one
+  # controller can join a section its first segment does not name (users/registrations below). A
+  # controller not listed here lights nothing, which is correct for Devise's signed-out pages (they
+  # render without the rail anyway).
   SECTIONS = {
     "home" => %w[home],
     "files" => %w[files library_browse notes repo_commits repo_histories],
@@ -27,7 +29,11 @@ module ShellHelper
     # are, and the old paths 301 (config/routes.rb) and must keep doing so.
     # /settings/shelves is the Shelves page (2026-10-20: the folders filed into inside each
     # project), a setting like its siblings, so `shelves` names no section of its own.
-    "settings" => %w[settings],
+    #
+    # THE ACCOUNT PAGE (Devise's registrations#edit, /users/edit) IS A SETTINGS PAGE: the hub links
+    # to it, so it lights Settings rather than nothing (UX audit F1). By its whole path, not `users`:
+    # the other users/* controllers are Devise's signed-out doors, which have no rail to light.
+    "settings" => %w[settings users/registrations],
     # /help lights the rail foot's Help, as the hub lights Settings: a page the rail links to must
     # not render with nothing lit (design-system.md rule 8).
     "help" => %w[help]
@@ -60,7 +66,13 @@ module ShellHelper
     # A calculator: the body, its display, and two rows of keys drawn as dots (.01 segments, the help
     # icon's trick for a dot that draws in every engine). The rail's pinned Calculator link and the
     # Tools card (2026-10-21).
-    calculator: "M4 1.5h8v13H4z M6 4h4v2.5H6z M6.25 9.5v.01 M8 9.5v.01 M9.75 9.5v.01 M6.25 12v.01 M8 12v.01 M9.75 12v.01"
+    calculator: "M4 1.5h8v13H4z M6 4h4v2.5H6z M6.25 9.5v.01 M8 9.5v.01 M9.75 9.5v.01 M6.25 12v.01 M8 12v.01 M9.75 12v.01",
+    # Three bars, for the phone tab bar's fifth tab, More (UX audit A1): the sheet holding every rail
+    # destination the four tabs do not carry. Bars, not three dots, because a 1.5px stroke draws a
+    # dot too small to read at 16px.
+    more: "M2.5 4h11 M2.5 8h11 M2.5 12h11",
+    # A person, for the More sheet's Account item: a head and shoulders.
+    account: "M8 2.5a2.75 2.75 0 1 0 0 5.5 2.75 2.75 0 0 0 0-5.5z M2.5 14c.6-2.9 2.8-4.5 5.5-4.5s4.9 1.6 5.5 4.5"
   }.freeze
 
   # An unknown or absent cookie is the default, LIGHT ("Paper") since the 2026-10-08 redesign: the
@@ -72,7 +84,13 @@ module ShellHelper
     THEMES.include?(value) ? value : "light"
   end
 
+  # THE RAIL COOKIE HAS THREE STATES, AND ABSENT IS ONE OF THEM. Absent (or junk) follows the width:
+  # the full rail from 1100px, the icon rail below. `collapsed` and `expanded` are the maker's own
+  # choice from the Collapse button, and an explicit choice beats the width default, so `expanded`
+  # keeps the full rail at 1024px too (UX audit A2) — the button did nothing there before, because
+  # the viewport's media query set the track whatever the cookie said. Below 720px there is no rail.
   def rail_collapsed? = cookies[:rail] == "collapsed"
+  def rail_expanded? = cookies[:rail] == "expanded"
 
   # IS THIS A PUBLIC SURFACE? `respond_to?` because a public controller stands on
   # ActionController::Base and Devise's own pages have neither helper. Extracted from
@@ -110,17 +128,21 @@ module ShellHelper
   # signed-in owner previewing their own public page renders NO rail, so the class alone would
   # leave an empty rail-wide column and push the whole page off-centre — and at 375px it is what
   # the phone sweep's `scrollWidth <= innerWidth` assertion would catch.
+  #
+  # `rail--expanded` is the other explicit choice, and it too sets only the track: it exempts the
+  # body from the ≤1099px media query's narrow track (shell.css), and the icon rail follows the width.
   def body_classes
     signed_in = shell_signed_in?
     classes = []
     classes << "app-shell" if signed_in
     classes << "rail--collapsed" if signed_in && rail_collapsed?
+    classes << "rail--expanded" if signed_in && rail_expanded?
     classes.join(" ")
   end
 
   def rail_section
     head = controller_path.split("/").first
-    SECTIONS.find { |_key, heads| heads.include?(head) }&.first
+    SECTIONS.find { |_key, heads| heads.include?(head) || heads.include?(controller_path) }&.first
   end
 
   # --- The places sidebar (structural redesign spec §4.1, slice 2). Each list is ONE query
@@ -146,8 +168,11 @@ module ShellHelper
 
   # Inventory earns its sidebar entry once it is used — or while the maker is standing in it, so the
   # page they are on is never one with no lit link.
+  # Memoised like the two lists above: the rail and the phone's More sheet both ask.
   def sidebar_inventory?
-    rail_section == "inventory" || current_user.maker_inventory_items.exists?
+    return @sidebar_inventory if defined?(@sidebar_inventory)
+
+    @sidebar_inventory = rail_section == "inventory" || current_user.maker_inventory_items.exists?
   end
 
   # THE ONE ANSWER TO "WHICH LINK IS LIT", so exactly one is. A key, compared by sidebar_aria:
@@ -200,14 +225,33 @@ module ShellHelper
       tool_name: label }.merge(extra)
   end
 
-  # COLLAPSED — and below 1100px whatever the cookie says — project, pin and pinned-addon links hide
-  # with their labels (shell.css), so a lit one would leave the rail with nothing lit to see. Its
-  # family link carries the mark there instead: Library for a pin, All projects for a project, Tools
-  # for a pinned addon (they all wear the Tools glyph, so icons alone could not tell them apart). A CLASS, never
-  # aria-current, so the markup still lights exactly one link; shell.css draws it only when narrow.
-  def sidebar_family_lit?(family) = { pin: :library, project: :all_projects, tool: :tools }[sidebar_current&.first] == family
+  # IN THE ICON RAIL (collapsed, or below 1100px without the `expanded` cookie) A PINNED ADDON'S LINK
+  # HIDES WITH ITS LABEL (shell.css), so a lit one would leave the rail with nothing lit to see: they
+  # all wear the Tools glyph, so icons alone could not tell them apart, and Tools carries the mark
+  # there instead. A CLASS, never aria-current, so the markup still lights exactly one link;
+  # shell.css draws it only in the icon rail.
+  #
+  # PROJECTS AND PINNED FOLDERS NO LONGER NEED THIS (UX audit A2): the icon rail draws each as a
+  # monogram tile (`rail_monogram`), so the lit one stays visible and carries the mark itself. They
+  # used to hide too, and the eight projects and every pin simply vanished at 1024px.
+  def sidebar_family_lit?(family) = { tool: :tools }[sidebar_current&.first] == family
 
-  # The phone tab bar: four destinations, each lit by the same answer the sidebar uses.
+  # A project's or a pinned folder's face in the icon rail: the first letter or digit of its name, in
+  # a tile. aria-hidden, because the link's `title` (the full name) is its accessible name there —
+  # the label beside it is display:none in the icon rail and names nothing. A name with no letter
+  # or digit at all falls back to a middle dot rather than drawing whatever symbol it starts with
+  # (the interface draws no emoji, design-system.md rule 13).
+  #
+  # THE LETTER IS DRAWN FROM AN ATTRIBUTE (`::before { content: attr(data-monogram) }`, shell.css),
+  # NEVER A TEXT NODE: the link's text must stay exactly the name, which is what every lit-link
+  # assertion reads, and a text node would have made "Desk Lamp" read "DDesk Lamp".
+  def rail_monogram(name)
+    tag.span(class: "rail-monogram", "aria-hidden": "true",
+             data: { monogram: name.to_s[/[[:alnum:]]/]&.upcase || "·" })
+  end
+
+  # The phone tab bar: four destinations, each lit by the same answer the sidebar uses. The fifth
+  # tab, More, is `tabbar_more_links`.
   def tabbar_links
     current = sidebar_current&.first
     [
@@ -219,6 +263,44 @@ module ShellHelper
       [ "Projects", projects_path, :projects, %i[project all_projects].include?(current) ],
       [ "Tools", tools_path, :tools, %i[tools tool].include?(current) ]
     ]
+  end
+
+  # THE PHONE TAB BAR'S FIFTH TAB (UX audit A1). Below 720px the rail is display:none, so every rail
+  # destination the four tabs above do not carry lives in a sheet behind "More" — or a phone has no
+  # way to Settings, Trash, Help or Sign out at all (the theme control and Sign out are rendered by
+  # layouts/_tabbar beside these, being a control and a form rather than places). Lit by the same
+  # `sidebar_current` as everything else, so "which link is lit" still has one answer; the More tab
+  # itself lights through CSS (`:has()` on a lit item, shell.css), never a second decision here.
+  # Inventory follows the rail's own rule (`sidebar_inventory?`). The Account page lights Settings,
+  # as it does in the rail (SECTIONS), so its own item here never lights.
+  def tabbar_more_links
+    current = sidebar_current&.first
+    links = []
+    links << [ "Inventory", inventory_items_path, :inventory, current == :inventory ] if sidebar_inventory?
+    links << [ "Trash", trash_index_path, :trash, current == :trash ]
+    links << [ "Settings", settings_path, :settings, current == :settings ]
+    links << [ "Account", edit_user_registration_path, :account, false ]
+    links << [ "Help", help_path, :help, current == :help ]
+    links
+  end
+
+  # THE THEME BUTTON NAMES WHAT A CLICK DOES, NOT WHAT IS ON (UX audit A6): "Theme: light" read as a
+  # label for the page rather than a control. Keyed by the CURRENT theme, so the rail cycles light ->
+  # dark -> system -> light (theme_controller.js#cycle) and each state names its next step. The
+  # controller reads this map from the button's `data-theme-actions-value`, so the words live here
+  # once rather than in Ruby and JavaScript both.
+  THEME_ACTIONS = { "light" => "Switch to dark", "dark" => "Use system theme", "system" => "Switch to light" }.freeze
+
+  def theme_action_label = THEME_ACTIONS.fetch(ui_theme)
+
+  # THE SEARCH SHORTCUT'S HINT, PER PLATFORM (UX audit A7): ⌘K on a Mac, iPhone or iPad and Ctrl+K
+  # elsewhere, read from the user agent the way CalculationsHelper#calculator_shortcut reads it.
+  # rail_controller.js listens for both chords, so a user agent read wrongly costs a label, never the
+  # shortcut; `aria-keyshortcuts` names both, platform-neutrally.
+  SEARCH_KEYS = "Control+K Meta+K".freeze
+
+  def search_shortcut
+    request.user_agent.to_s.match?(/Macintosh|iPhone|iPad/) ? "⌘K" : "Ctrl+K"
   end
 
   def rail_icon(name)

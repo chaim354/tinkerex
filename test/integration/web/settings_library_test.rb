@@ -360,9 +360,10 @@ module Web
       assert_select "button[name=start_over]", 0
       if @share
         assert_select "strong code", "Workshop"
-        assert_match(/1 file indexed/, response.body)
-        assert_select "p.muted", /An admin changes the library folder, for every account on this server\./
-        assert_select ".flash-alert", /refused: UnsafeScan 9\/10.*An\s+admin can choose the folder again here\./m
+        assert_match(/1 file scanned/, response.body)
+        assert_select "p.muted", /An admin changes the library folder, for every user on this server\./
+        assert_select ".flash-alert", /stopped before it changed anything.*An\s+admin can choose the folder again here\./m
+        assert_no_match(/UnsafeScan/, response.body, "the raw refusal never prints")
         assert_no_match(/Start over/, response.body, "the next step is the admin's")
       else
         assert_select "p.muted", /There is no folder to choose/
@@ -381,7 +382,7 @@ module Web
       assert_select "form[action=?]", settings_library_path, 0
       if @share
         assert_select "p", "This server's library folder has not been chosen yet."
-        assert_select "p.muted", /An admin chooses the library folder for every account on this server\./
+        assert_select "p.muted", /An admin chooses the library folder for every user on this server\./
         assert_no_match(/Your library will be/, response.body)
         assert_no_match(/LIBRARY_HOST_PATH/, response.body)
       end
@@ -414,14 +415,14 @@ module Web
       get settings_library_path
       if @share
         assert_select "strong code", "Workshop"
-        assert_match(/0 files indexed/, response.body)
+        assert_match(/0 files scanned/, response.body)
         assert_select "button[name=start_over]", 0, "nothing to start over from"
       end
 
       live_node!
       get settings_library_path
       if @share
-        assert_match(/1 file indexed/, response.body)
+        assert_match(/1 file scanned/, response.body)
         assert_select "button.btn.primary:not([name])", "Switch to this folder"
         assert_select "button[name=start_over][value=\"1\"][data-turbo-confirm*=?]", "Nothing is deleted from disk"
       else
@@ -435,7 +436,8 @@ module Web
       get settings_library_path
 
       if @share
-        assert_select ".flash-alert", /The last scan of this folder was refused: UnsafeScan 9\/10/
+        assert_select ".flash-alert", /The last scan of this folder stopped before it changed anything/
+        assert_no_match(/UnsafeScan/, response.body, "the raw refusal never prints")
       else
         assert_select ".flash-alert", 0
       end

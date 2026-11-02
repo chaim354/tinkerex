@@ -262,7 +262,7 @@ module Web
       patch project_panels_path(@project), params: { layout: draft.to_json }
 
       assert_redirected_to project_path(@project)
-      assert_equal "Page layout saved.", flash[:notice]
+      assert_equal "Saved the page layout.", flash[:notice]
       panels = @project.reload.panels
       assert_equal [ models_key, "tasks", "attachments" ], panels["order"].first(3)
       assert_equal %w[tasks], panels["hidden"]

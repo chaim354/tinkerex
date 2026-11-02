@@ -17,40 +17,85 @@ import { Controller } from "@hotwired/stimulus"
 //
 // WHICH MEANS EVERY ENTRY IS INDEPENDENTLY OPTIONAL, and since 2026-09-10 that is load-bearing
 // rather than incidental: a FOLDER's cell carries the delete url alone.
+//
+// IT IS A MENU TO A KEYBOARD AND A SCREEN READER TOO (2026-11-02, the UX audit's D2 and §I). It was a
+// bare `div` of buttons and links appended to <body>: nothing announced it, focus stayed on the row
+// behind it, and a keyboard user who opened it with Shift+F10 had to Tab through the whole page to
+// reach it. Now it is the WAI-ARIA menu pattern: `role="menu"` holding `role="menuitem"` entries
+// that sit out of the Tab order (tabIndex -1) and take focus one at a time — the first on open,
+// Up/Down (wrapping) and Home/End to move, Enter/Space to activate, Escape to close with focus back
+// on the row that opened it, and Tab to close and carry on from that row. Shift+F10 and the
+// ContextMenu key open it from a focused row, anchored under the row rather than at a pointer that
+// was never there.
 export default class extends Controller {
   connect() {
     this.onDocClick = () => this.close()
-    this.onKey = (e) => { if (e.key === "Escape") this.close() }
+    this.onKey = (e) => {
+      if (e.key !== "Escape" || !(this.menu || this.popover)) return
+      this.close()
+      this.returnFocus()
+    }
+    // DELEGATED, because the menu-bearing cells are server-rendered links whose `data-action`
+    // already names the contextmenu door (FilesHelper#file_menu_data); a second per-cell action for
+    // the keyboard would have to be added to every surface that writes that payload.
+    this.onCellKey = (e) => {
+      if (!(e.key === "ContextMenu" || (e.key === "F10" && e.shiftKey))) return
+      const cell = e.target.closest?.(MENU_CELL)
+      if (!cell || !this.element.contains(cell) || !hasMenu(cell)) return
+      e.preventDefault()
+      this.show(cell, belowOf(cell))
+    }
     document.addEventListener("click", this.onDocClick)
     document.addEventListener("keydown", this.onKey)
+    this.element.addEventListener("keydown", this.onCellKey)
   }
 
   disconnect() {
     document.removeEventListener("click", this.onDocClick)
     document.removeEventListener("keydown", this.onKey)
+    this.element.removeEventListener("keydown", this.onCellKey)
     this.close()
   }
 
   // data-action="contextmenu->filemenu#open" on each menu-bearing cell.
   open(event) {
     const cell = event.currentTarget
-    const noteUrl = cell.dataset.noteUrl
-    const deleteUrl = cell.dataset.deleteUrl
     // THE GATE ASKS WHETHER THERE IS A MENU TO SHOW, NOT WHETHER THERE ARE NOTES. It read
     // `if (!noteUrl) return` until 2026-09-10, which was correct while every menu-bearing cell was a
     // FILE and every file had notes. A folder has a delete url and nothing else, so the old gate
     // would have opened no menu for it AT ALL — silently, because a contextmenu handler that returns
     // early is indistinguishable from one that never ran, and the browser's own menu appears in its
-    // place. Any new entry must widen this too, or it ships behind a gate that hides it.
-    if (!noteUrl && !deleteUrl) return
+    // place. Any new entry must widen `hasMenu` too, or it ships behind a gate that hides it.
+    if (!hasMenu(cell)) return
     event.preventDefault()
-    this.close()
+    // A POINTER INSIDE THE CELL is where a right-click put it; anything else (a keyboard-raised
+    // contextmenu reports the page origin, or a point the row no longer covers) anchors under the row.
+    this.show(cell, pointerInside(cell, event) ? { x: event.pageX, y: event.pageY } : belowOf(cell))
+  }
 
+  show(cell, at) {
+    this.close()
+    // WHERE FOCUS GOES BACK TO: the focused element when that is inside the cell (a project row is a
+    // `tr` around its link), else the cell itself when it can take focus, else its first link.
+    const active = document.activeElement
+    this.returnTo = (active && active !== document.body && cell.contains(active)) ? active
+      : (cell.matches(FOCUSABLE) ? cell : cell.querySelector(FOCUSABLE))
+
+    const noteUrl = cell.dataset.noteUrl
+    const deleteUrl = cell.dataset.deleteUrl
     const href = cell.getAttribute("href") || cell.querySelector("a")?.getAttribute("href")
     this.menu = document.createElement("div")
     this.menu.className = "file-menu"
-    this.menu.style.left = `${event.pageX}px`
-    this.menu.style.top = `${event.pageY}px`
+    this.menu.setAttribute("role", "menu")
+    this.menu.setAttribute("aria-label", cell.dataset.nodeName ? `Actions for ${cell.dataset.nodeName}` : "Actions")
+    this.menu.style.left = `${at.x}px`
+    this.menu.style.top = `${at.y}px`
+    this.menu.addEventListener("keydown", (e) => this.navigate(e))
+    // NO BROWSER MENU OVER THIS ONE. Where the ContextMenu key raises `contextmenu` on key-UP
+    // (Windows), it lands on the menu item that took focus on key-down, outside every cell — so the
+    // cell's own handler never sees it and the native menu would open on top of this one. A
+    // right-click on an entry is answered the same way.
+    this.menu.addEventListener("contextmenu", (e) => e.preventDefault())
 
     // GUARDED NOW THAT THE GATE NO LONGER IMPLIES IT. Before, reaching this line proved `noteUrl`
     // was present; a folder reaches it with none, and `openPopover(undefined)` would POST to
@@ -59,15 +104,15 @@ export default class extends Controller {
       const add = document.createElement("button")
       add.type = "button"
       add.textContent = "Add note"
-      add.addEventListener("click", (e) => { e.stopPropagation(); this.closeMenu(); this.openPopover(noteUrl, event.pageX, event.pageY) })
-      this.menu.appendChild(add)
+      add.addEventListener("click", (e) => { e.stopPropagation(); this.closeMenu(); this.openPopover(noteUrl, at.x, at.y) })
+      this.add(add)
     }
 
     if (href) {
       const open = document.createElement("a")
       open.href = href
       open.textContent = "Open"
-      this.menu.appendChild(open)
+      this.add(open)
     }
 
     // DETAILS — the Library's side panel for this file (2026-10-21). The CELL is asked first, through
@@ -85,7 +130,7 @@ export default class extends Controller {
         const asked = this.dispatch("details", { target: cell, cancelable: true })
         if (asked.defaultPrevented) e.preventDefault()
       })
-      this.menu.appendChild(details)
+      this.add(details)
     }
 
     // The URL already carries ?download=1, so FilesController#blob answers
@@ -99,7 +144,7 @@ export default class extends Controller {
       const dl = document.createElement("a")
       dl.href = downloadUrl
       dl.textContent = "Download"
-      this.menu.appendChild(dl)
+      this.add(dl)
     }
 
     // "Edit in <Addon>" — only for a file an addon produced. Built from data- attributes the server
@@ -115,7 +160,7 @@ export default class extends Controller {
       const edit = document.createElement("a")
       edit.href = addonUrl
       edit.textContent = cell.dataset.addonOpenLabel || "Edit in its generator"
-      this.menu.appendChild(edit)
+      this.add(edit)
     }
 
     // DELETE IS LAST AND IS THE ONLY DESTRUCTIVE ITEM — last so a mis-aimed click lands on
@@ -130,10 +175,14 @@ export default class extends Controller {
     //
     // `confirm` FIRST, with the wording the list row's `button_to` and the file page's button
     // already use, so the three delete doors ask one question — a fourth phrasing for one action is
-    // exactly the divergence this menu exists to close. `dataset.nodeName` reads `data-node-name`;
-    // it is NOT the DOM's `nodeName`, because `dataset` is a DOMStringMap and has no such property.
+    // exactly the divergence this menu exists to close. A cell may carry that question whole, as
+    // `data-delete-confirm` written by the same helper that writes the row's (a folder's is wider
+    // than a file's: it takes everything inside); without one it is "Delete NAME?".
+    // `dataset.nodeName` reads `data-node-name`; it is NOT the DOM's `nodeName`, because `dataset`
+    // is a DOMStringMap and has no such property.
     if (deleteUrl) {
       const name = cell.dataset.nodeName || "this item"
+      const question = cell.dataset.deleteConfirm || `Delete ${name}?`
       const del = document.createElement("button")
       del.type = "button"
       del.className = "danger"
@@ -141,7 +190,7 @@ export default class extends Controller {
       del.addEventListener("click", (e) => {
         e.stopPropagation()
         this.closeMenu()
-        if (!window.confirm(`Delete ${name}?`)) return
+        if (!window.confirm(question)) return this.returnFocus()
         const form = document.createElement("form")
         form.method = "post"
         form.action = deleteUrl
@@ -151,9 +200,52 @@ export default class extends Controller {
         document.body.appendChild(form)
         form.submit()
       })
-      this.menu.appendChild(del)
+      this.add(del)
     }
     document.body.appendChild(this.menu)
+    this.items()[0]?.focus()
+  }
+
+  add(item) {
+    item.setAttribute("role", "menuitem")
+    item.tabIndex = -1
+    this.menu.appendChild(item)
+  }
+
+  items() {
+    return this.menu ? Array.from(this.menu.querySelectorAll("[role='menuitem']")) : []
+  }
+
+  // The menu's own keys. Escape is the document listener's (it also closes the note popover).
+  navigate(e) {
+    const items = this.items()
+    const at = items.indexOf(document.activeElement)
+    const move = (i) => { e.preventDefault(); items[(i + items.length) % items.length]?.focus() }
+    switch (e.key) {
+      case "ArrowDown": return move(at + 1)
+      case "ArrowUp": return move(at < 0 ? items.length - 1 : at - 1)
+      case "Home": return move(0)
+      case "End": return move(items.length - 1)
+      case "Enter":
+      case " ":
+        // ONE ACTIVATION FOR EVERY ENTRY. A button activates on Enter and Space natively and a link
+        // on Enter only; preventing the default and clicking makes Space work on a link too, and
+        // makes each entry run through the same click listener a pointer runs through.
+        if (at < 0) return
+        e.preventDefault()
+        e.stopPropagation()
+        return items[at].click()
+      case "Tab":
+        // Closes, and lets the Tab carry on from the row — not from <body>, where focus would land
+        // once the focused item is removed.
+        this.closeMenu()
+        return this.returnFocus()
+    }
+  }
+
+  returnFocus() {
+    const to = this.returnTo
+    if (to?.isConnected) to.focus()
   }
 
   openPopover(noteUrl, x, y) {
@@ -164,14 +256,14 @@ export default class extends Controller {
     pop.style.top = `${y}px`
     pop.addEventListener("click", (e) => e.stopPropagation())
     pop.innerHTML = `
-      <textarea rows="3" placeholder="Add a note…"></textarea>
+      <textarea rows="3" placeholder="Add a note…" aria-label="Note"></textarea>
       <div class="note-popover-actions">
         <button type="button" data-role="save" class="btn small">Save</button>
         <button type="button" data-role="cancel" class="linkbtn">Cancel</button>
-        <span class="note-popover-status"></span>
+        <span class="note-popover-status" role="status"></span>
       </div>`
     const ta = pop.querySelector("textarea")
-    pop.querySelector('[data-role="cancel"]').addEventListener("click", () => this.closePopover())
+    pop.querySelector('[data-role="cancel"]').addEventListener("click", () => { this.closePopover(); this.returnFocus() })
     pop.querySelector('[data-role="save"]').addEventListener("click", () => this.save(noteUrl, ta.value, pop))
     document.body.appendChild(pop)
     this.popover = pop
@@ -182,8 +274,9 @@ export default class extends Controller {
     if (!body.trim()) return
     const status = pop.querySelector(".note-popover-status")
     status.textContent = "Saving…"
+    let res, data
     try {
-      const res = await fetch(noteUrl, {
+      res = await fetch(noteUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -192,15 +285,41 @@ export default class extends Controller {
         },
         body: JSON.stringify({ note: { body } })
       })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) throw new Error(data.error || `failed (${res.status})`)
-      window.location.reload()
-    } catch (e) {
-      status.textContent = e.message
+      data = await res.json().catch(() => ({}))
+    } catch (_e) {
+      status.textContent = "Not saved: the server could not be reached. Try again."
+      return
     }
+    // The notes endpoint's refusal is a sentence written for a maker (a validation message); a bare
+    // status from something in front of Rails is not, so it is not shown.
+    if (!res.ok) {
+      status.textContent = data.error ? `Not saved: ${data.error}` : "Not saved. Try again in a moment."
+      return
+    }
+    window.location.reload()
   }
 
   closeMenu() { this.menu?.remove(); this.menu = null }
   closePopover() { this.popover?.remove(); this.popover = null }
   close() { this.closeMenu(); this.closePopover() }
+}
+
+// The cells that carry a menu: the payload's `data-action` names this door
+// (FilesHelper#file_menu_data / #folder_menu_data), whatever else it also names.
+const MENU_CELL = "[data-action~='contextmenu->filemenu#open']"
+const FOCUSABLE = "a[href], button, [tabindex]"
+
+function hasMenu(cell) {
+  return !!(cell.dataset.noteUrl || cell.dataset.deleteUrl)
+}
+
+function pointerInside(cell, event) {
+  if (!event.clientX && !event.clientY) return false
+  const r = cell.getBoundingClientRect()
+  return event.clientX >= r.left && event.clientX <= r.right && event.clientY >= r.top && event.clientY <= r.bottom
+}
+
+function belowOf(cell) {
+  const r = cell.getBoundingClientRect()
+  return { x: r.left + window.scrollX, y: r.bottom + window.scrollY }
 }

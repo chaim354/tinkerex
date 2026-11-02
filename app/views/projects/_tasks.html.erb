@@ -22,14 +22,47 @@
   every folder key dropped and no fixed key touched), so asking for it here keeps the two
   renderings identical — the property render_tasks' own comment exists to protect.
 %>
+<%#
+  THE COMPOSER IS THE PANELS' ONE PATTERN (2026-11-02, the UX audit's C4): a `details.composer` in
+  the head opened by "Add…", a labelled field, and a submit that names the thing ("Add task") —
+  where Tasks alone had a bare inline field whose only name was its placeholder. After an add the
+  stream renders it OPEN again (@task_composer_open), so a run of tasks is typed one after another
+  without reopening it; a refusal renders it open with the error inside and the title kept
+  (@task_draft), which is what "the composer" means for the other five panels too.
+%>
 <% layout = @panel_layout || @project.panel_layout %>
 <section class="panel tasks-panel<%= " panel--quiet" if @tasks.empty? %>" id="project-tasks">
-  <div class="panel-head"><h2><%= panel_title(layout, "tasks") %></h2></div>
+  <div class="panel-head">
+    <h2><%= panel_title(layout, "tasks") %></h2>
+    <%# `scope:` is what names the params, and it is not optional here: a model-less form_with has a
+        blank object_name, and `fields_for :task` on one emits name="[task][title]" — which Rack
+        parses to the literal key "[task]", so params.require(:task) 400s on every Add. Don't
+        reintroduce fields_for alongside scope either; that nests to task[task][title]. The field
+        states its value, so it never falls back to a @task ivar. %>
+    <details class="composer task-add" <%= "open" if @task_composer_open || @task_error.present? %>>
+      <summary class="btn small" aria-label="Add a task">Add…</summary>
+      <%= form_with url: project_tasks_path(@project), scope: :task, method: :post, class: "task-form" do |f| %>
+        <%# THE ERROR HAS TO RENDER HERE, not in the layout's flash. A turbo_stream response replaces
+            this panel and nothing else, so a `redirect_to ... alert:` would set a flash no response
+            ever draws — the user would type an invalid task, watch the panel redraw unchanged, and
+            be told nothing. `@task_error` is set only on the turbo_stream branch; the HTML branch
+            still flashes. Inside the composer since 2026-11-02, beside the field it is about. %>
+        <% if @task_error.present? %>
+          <p class="flash-alert task-error" role="alert"><%= @task_error %></p>
+        <% end %>
+        <label class="field">
+          <span>Task</span>
+          <%= f.text_field :title, value: @task_draft, required: true, id: "task-title-#{@project.id}" %>
+        </label>
+        <%= f.submit "Add task", class: "btn small" %>
+      <% end %>
+    </details>
+  </div>
   <%= panel_intro(layout, "tasks") %>
 
   <%# QUIET AT ZERO (stage 4, S4-1): three headed groups reading "(0)" is not information. The
-      turbo-stream target, the error line and the add form below are unchanged, so an Add that
-      creates the first task replaces this element with the three groups as before. %>
+      turbo-stream target and the composer in the head are unchanged by it, so an Add that creates
+      the first task replaces this element with the groups as before. %>
   <% if @tasks.any? %>
     <%# AND AN EMPTY GROUP IS SUPPRESSED TOO, WHICH THE PANEL-LEVEL GUARD ABOVE DOES NOT COVER. That
         one hides the groups only when EVERY status is empty; a project with two todos still rendered
@@ -52,20 +85,4 @@
     <% end %>
   <% end %>
 
-  <%# THE ERROR HAS TO RENDER HERE, not in the layout's flash. A turbo_stream response replaces this
-      element and nothing else, so a `redirect_to ... alert:` would set a flash no response ever
-      draws — the user would type an invalid task, watch the panel redraw unchanged, and be told
-      nothing. `@task_error` is set only on the turbo_stream branch; the HTML branch still flashes. %>
-  <% if @task_error.present? %>
-    <p class="flash-alert task-error"><%= @task_error %></p>
-  <% end %>
-
-  <%# `scope:` is what names the params, and it is not optional here: a model-less form_with has a
-      blank object_name, and `fields_for :task` on one emits name="[task][title]" — which Rack parses
-      to the literal key "[task]", so params.require(:task) 400s on every Add. Don't reintroduce
-      fields_for alongside scope either; that nests to task[task][title]. %>
-  <%= form_with url: project_tasks_path(@project), scope: :task, method: :post, class: "task-form" do |f| %>
-    <%= f.text_field :title, placeholder: "Add a task…", required: true %>
-    <%= f.submit "Add", class: "btn small" %>
-  <% end %>
 </section>

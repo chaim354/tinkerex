@@ -24,12 +24,23 @@
   (Maker::PublicProject#permits?) and a path rebuilt from ROOT + slug can name a folder that is
   not it: Maker::ProjectDiscovery keeps the folder's own name (`Projects/Desk Lamp`) and slugifies
   the slug (`desk-lamp`) — project_folders.rb records the same trap for ProjectIntake#place.
+
+  A REFUSED SAVE RE-RENDERS THIS TAB WITH WHAT WAS TYPED (2026-11-02, the UX audit's B3): the radios
+  and the licence read the ASSIGNED values, and the reasons sit at the top of the panel — above both
+  branches, because a refusal for want of a handle lands on the claim form, not the publish form.
+  WHAT THE PAGE SAYS ABOUT THE LIVE PAGE READS THE SAVED ROW (`saved`), never the typed choice: a
+  refused "Public" must not hand the maker a URL to copy for a page that is still private.
 %>
+<% saved = project.visibility_in_database %>
 <section class="panel publish-panel">
   <div class="panel-head">
     <h2>Public page</h2>
     <%= link_to "Preview", preview_project_path(project), class: "linkbtn small" %>
   </div>
+
+  <% if project.errors.any? %>
+    <div class="form-errors flash-alert" role="alert"><%= project.errors.full_messages.to_sentence %></div>
+  <% end %>
 
   <% if project.user.handle.blank? %>
     <%# A HANDLE BEFORE A URL: the public page lives at /u/<handle>/<slug>, so with none there is
@@ -80,17 +91,20 @@
         <% if folder_path.present? %><span class="mono"><%= folder_path %></span><% else %>the project's library folder<% end %>,
         and every file attached to the project or its build log, downloadable by anyone who can open the page.</p>
 
+      <%# THE EDIT AREA'S THREE TABS END ALIKE (2026-11-02, the UX audit's C6): a Save that names
+          what it saves, then the same Cancel back to the project. %>
       <div class="form-actions">
-        <%= f.submit "Save publishing", class: "btn small primary" %>
+        <%= f.submit "Save publishing", class: "btn primary" %>
+        <%= link_to "Cancel", project_path(project), class: "linkbtn edit-cancel" %>
       </div>
     <% end %>
 
-    <%# `publicly_listed?`, NOT `published?` — which covers unlisted too, and the bare URL is DEAD
-        for an unlisted project: the token IS the credential, so a link without `k` 404s exactly
-        like a wrong one (publishing_test.rb pins that 404). Handing a maker a URL to copy that
+    <%# PUBLIC ONLY (the saved row's `publicly_listed?`), NOT `published?` — which covers unlisted
+        too, and the bare URL is DEAD for an unlisted project: the token IS the credential, so a
+        link without `k` 404s exactly like a wrong one (publishing_test.rb pins that 404). Handing a maker a URL to copy that
         does not work is worse than showing none; the unlisted block below shows the one that does.
         The project page head's "Public page" link makes the same distinction, the other way round. %>
-    <% if project.publicly_listed? %>
+    <% if saved == "public" %>
       <% url = public_project_url(project.user.handle, project.slug) %>
       <%# THE CONTROLLER WRAPS THE VALUE AND THE BUTTON, AND THE VALUE IS THE `source` TARGET —
           S4-3's mount (files/show.html.erb). copy_controller.js's last resort, when the clipboard
@@ -102,10 +116,10 @@
       </div>
     <% end %>
 
-    <% if project.unlisted? %>
-      <% link = public_project_url(project.user.handle, project.slug, k: project.unlisted_token) %>
+    <% if saved == "unlisted" %>
+      <% link = public_project_url(project.user.handle, project.slug, k: project.attribute_in_database(:unlisted_token)) %>
       <div class="publish-unlisted" data-controller="copy" data-copy-text-value="<%= link %>">
-        <p class="muted">The link IS the credential — anyone holding it can open the page.</p>
+        <p class="muted">Anyone with this link can open the page. Making a new link stops the old one working.</p>
         <span class="mono" data-copy-target="source"><%= link %></span>
         <button type="button" class="btn small" data-action="copy#copy">Copy</button>
         <%= button_to "New link", project_unlisted_token_path(project), method: :post, class: "btn small",

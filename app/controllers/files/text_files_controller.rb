@@ -12,10 +12,13 @@ module Files
   class TextFilesController < ApplicationController
     def new
       @parent_node_id = params[:parent_node_id].presence
+      describe_folder
     end
 
     def create
       @parent_node_id = params[:parent_node_id].presence
+      # Read before the write so every refusal below re-renders the form with the folder named.
+      describe_folder
       name = params[:name].to_s.strip
       # TWO QUESTIONS IN THE SAME BREATH (§14b). `valid_leaf_name?` answers syntax; `reserved?`
       # answers the library's own namespace (.trash, .maker-tmp-*, .git, OS clutter). The upload
@@ -30,15 +33,16 @@ module Files
       return refuse(result.status, result.error) unless result.ok
 
       redirect_to file_path(result.node_id), notice: "Created #{name}."
-    rescue FileLayer::UnsupportedOperation => e
+    rescue FileLayer::UnsupportedOperation
       # THE CLOBBER REFUSAL, WHICH Maker::TextSave RAISES TO ITS CALLER UNCHANGED (its own header
       # says so): a name already taken here is this door's sentence to word, not the service's.
-      # Un-rescued it is a 500 on an ordinary typo.
-      refuse(:unprocessable_entity, e.message)
-    rescue FileLayer::FetchError => e
+      # Un-rescued it is a 500 on an ordinary typo. WORDED HERE, never the port's message
+      # (`"notes/a.txt" already exists`, a String's inspect; UX audit D10, 2026-11-02).
+      refuse(:unprocessable_entity, "A file named #{name} is already in this folder. Choose another name.")
+    rescue FileLayer::FetchError
       # §14a maps FetchError once, at the door: an unmounted share is retryable, not "your file is
-      # gone". FilesController#update carries the identical arm.
-      refuse(:service_unavailable, e.message)
+      # gone". FilesController#update carries the identical arm, and the same sentence.
+      refuse(:service_unavailable, FilesController::UNREACHABLE)
     rescue FileLayer::NotFound
       # THE PARENT WENT AWAY BETWEEN OPENING THE FORM AND SUBMITTING IT, and this arm is NOT
       # theoretical: `parent_node_id` rides as a hidden field, so another tab's Delete, a device
@@ -63,6 +67,28 @@ module Files
     def refuse(status, message)
       flash.now[:alert] = message
       render :new, status:
+    end
+
+    # WHERE THE FILE WILL GO, FOR THE FORM TO SAY (UX audit D9, 2026-11-02): the folder field's label
+    # in the chooser's own spelling ("/Projects/catan", or its root label) and the breadcrumb's
+    # folders. Maker::LibraryTree is one pluck of the user's folders, the reader the Library's flat
+    # view and the file page's Path row use. A folder that is gone — a stale link, another tab's
+    # Delete — reads "Choose a folder" with no crumbs, rather than claim the root it would not be:
+    # the label must not disagree with the value in the direction that looks like it worked.
+    def describe_folder
+      tree = Maker::LibraryTree.new(current_user)
+      # nil for an id that is not a live folder, "" for the root (no id), the path otherwise.
+      path = tree.path_for(@parent_node_id)
+      @folder_label =
+        if path.nil? then "Choose a folder"
+        elsif path.empty? then "/ (library root)"
+        else "/#{path}"
+        end
+      # ancestors_of runs nearest-first and ends with nil for the root; the crumb runs root-first.
+      ids = path.present? ? tree.ancestors_of(@parent_node_id).compact.reverse : []
+      @folder_crumbs = ids.map do |id|
+        Maker::LibraryTree::Entry.new(node_id: id, parent_node_id: tree.parent_of(id), name: tree.name_of(id))
+      end
     end
   end
 end

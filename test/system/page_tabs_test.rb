@@ -87,8 +87,8 @@ class PageTabsTest < ApplicationSystemTestCase
     assert_operator keys.index("tasks"), :>, keys.index("tab:new-1"), keys.inspect
     within(tab_slot) { assert_selector ".tab-slot-count", text: "1 panel" }
 
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Page layout saved."
+    click_on "Save layout"
+    assert_selector ".flash-notice", text: "Saved the page layout."
     assert_selector "nav.tab-bar a.tab-link", text: "Build"
     assert_selector "section.tab-pane#tab-build section.tasks-panel"
     # ONE Tasks panel on the page, and it is inside the pane — the honest form of "it left the top
@@ -184,21 +184,55 @@ class PageTabsTest < ApplicationSystemTestCase
     within(slot("build_log")) { click_on "Hide" }
     within(slot(a)) { assert_selector ".tab-slot-count", text: count }
     within(slot(a)) { fill_in "Name this tab", with: "" }
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Not saved: a tab needs a name"
+    click_on "Save layout"
+    # AN ALERT, NOT A NOTICE (the UX audit's B2): a notice reads "Done" in front of "Not saved".
+    assert_selector ".flash-alert", text: "Not saved: a tab needs a name", count: 1
+    assert_no_selector ".flash-notice"
     assert_current_path edit_layout_project_path(@project)
-    assert_no_selector ".flash-alert"
     assert_selector "#{slot('build_log')}.panel-slot--hidden"
+    # THE SAME REFUSAL TWICE IS ONE ALERT, and it stays until dismissed rather than timing out.
+    click_on "Save layout"
+    assert_selector ".flash-alert", text: "Not saved: a tab needs a name", count: 1
+    find(".flash-alert .flash-close").click
+    assert_no_selector ".flash-alert"
 
-    within(slot(a)) { click_on "Delete" }
+    # DELETE ASKS, AND SAYS THE PANELS STAY (C10): the tab holds panels, so a click is not enough.
+    # Dismissed, the separator stays; accepted, it goes.
+    dismiss_confirm(/\ADelete this tab\? Its \d+ panels stay on the page and join the panels above it\.\z/) do
+      within(slot(a)) { click_on "Delete" }
+    end
+    assert_selector slot(a)
+    accept_confirm(/\ADelete this tab\?/) { within(slot(a)) { click_on "Delete" } }
     assert_no_selector slot(a)
-    click_on "Save"
-    assert_selector ".flash-notice", text: "Page layout saved."
+    click_on "Save layout"
+    assert_selector ".flash-notice", text: "Saved the page layout."
     assert_no_selector "div.tabs"
     assert_selector "div.project-panels > div.panel-slot > section.tasks-panel"
     panels = @project.reload.panels
     assert_empty panels["order"].grep(/\Atab:/)
     assert_includes panels["hidden"], "build_log"
+  end
+
+  # A SEPARATOR MOVES BY KEYBOARD (the UX audit's C10), with the Up and Down a panel's strip has: the
+  # button keeps focus after the move, so a second press goes where the first did, and the panel the
+  # tab passed over is now inside it. Mutation-checked: deleting the two buttons from
+  # projects/_tab_slot turns the first `find` red.
+  test "a tab moves up and down by its own buttons, and the panels below it join it" do
+    a = tk("3f9a1b2c4d5e")
+    @project.update!(panels: { "order" => [ "attachments", "photos", "tasks", a, "build_log" ], "titles" => { a => "Build" } })
+    open_editor
+    within(slot(a)) { find("button[aria-label='Move this tab up']").click }
+    assert_equal "Move this tab up", page.evaluate_script("document.activeElement.getAttribute('aria-label')")
+    keys = slot_keys
+    assert_equal keys.index("tasks"), keys.index(a) + 1, "the tab moved above Tasks: #{keys.inspect}"
+
+    click_on "Save layout"
+    assert_selector ".flash-notice", text: "Saved the page layout."
+    assert_selector "section.tab-pane#tab-build section.tasks-panel"
+    order = @project.reload.panels["order"]
+    tab = order.find { |k| k.start_with?("tab:") }
+    assert_operator order.index("tasks"), :>, order.index(tab)
+    assert_no_console_errors
   end
 
   # "+ ADD PANEL" INTO A TAB (slice 6): an empty BOM alone in the second tab leaves no pane and no bar
@@ -225,7 +259,7 @@ class PageTabsTest < ApplicationSystemTestCase
 
   test "Apply mints a separator slot for a tab the pasted text creates" do
     open_editor
-    click_on "Edit as YAML"
+    click_on "Edit as text"
     # A textarea's VALUE is not its text node, so no Capybara matcher can wait on the server's
     # answer arriving; poll it (slice 1's suite records the same).
     wait_until(message: "the drawer never filled") { find("textarea.layout-yaml").value.include?("layout: 1") }

@@ -29,7 +29,9 @@
           <div class="project-model">
             <%= render "models/card", model: model, thumb: @page_thumbs.thumb(model.cover_node_id) %>
             <% if @project_models.linked_ids.include?(model.id) %>
-              <%= button_to "Detach", model_project_path(model, @project), method: :delete, class: "btn small",
+              <%# The page's one destructive shape (2026-11-02, the UX audit's C4): this Detach was a
+                  plain `btn small`, the one destructive control on the hub that did not say so. %>
+              <%= button_to "Detach", model_project_path(model, @project), method: :delete, class: "linkbtn danger small",
                             form: { data: { turbo_confirm: "Detach #{model.title} from #{@project.name}?" } } %>
             <% end %>
           </div>

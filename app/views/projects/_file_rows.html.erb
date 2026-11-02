@@ -26,7 +26,15 @@
   @generated in the first place). The label is parsed rather than re-derived because nothing renders
   the bare addon title today outside this cell — see AddonOrigins' own comment on why `title` isn't
   a key in that hash.
+
+  A LINKED ROW KEEPS ITS TWO CONTROLS (2026-11-02, the UX audit's C8): Detach and Move into
+  project, the tile's corner (projects/_linked_actions), in an actions column that renders only
+  when a row here is Linked — switching the panel to List used to drop both, leaving a Linked file
+  with no way to act on it from the hub. Optional local `notes` ({ node_id => sentence }) puts the
+  tile's one-line note under the name here too.
 %>
+<% notes = local_assigns.fetch(:notes, {}) %>
+<% actions = rows.any?(&:linked?) %>
 <table class="table project-files">
   <thead>
     <tr>
@@ -35,6 +43,7 @@
       <th class="num col-size">Size</th>
       <th class="col-modified">Modified</th>
       <th class="col-origin">Origin</th>
+      <% if actions %><th class="col-actions"><span class="label-hidden">Actions</span></th><% end %>
     </tr>
   </thead>
   <tbody>
@@ -42,13 +51,19 @@
       <% node = row.node %>
       <% origin = @addon_origins[row.node_id] %>
       <%= tag.tr(data: file_menu_data(node, origin)) do %>
-        <td class="col-name"><%= link_to node.name, file_path(row.node_id), data: file_open_data %></td>
+        <td class="col-name">
+          <%= link_to node.name, file_path(row.node_id), data: file_open_data %>
+          <% if (note = notes[row.node_id]) %><span class="row-note muted"><%= note %></span><% end %>
+        </td>
         <td class="muted col-section"><%= row.section.presence || "Loose" %></td>
         <td class="num muted col-size"><%= node.size ? number_to_human_size(node.size) : "—" %></td>
         <td class="muted col-modified">
-          <%= node.mtime ? Time.at(node.mtime / 1_000_000_000).strftime("%Y-%m-%d %H:%M") : "—" %>
+          <%= node.mtime ? time_at(time_from_nanos(node.mtime)) : "—" %>
         </td>
         <td class="muted col-origin"><%= origin ? origin[:title] : "—" %></td>
+        <% if actions %>
+          <td class="col-actions"><%= render "projects/linked_actions", row: row, node: node, tile: false %></td>
+        <% end %>
       <% end %>
     <% end %>
   </tbody>

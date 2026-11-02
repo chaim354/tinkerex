@@ -1,14 +1,14 @@
-<% content_for :title, "Files — Tinkerex" %>
+<% content_for :title, "Library — Tinkerex" %>
 
 <%#
   Breadcrumb: root -> current folder, each segment a link. Root always shows; @crumbs is [] at
-  the root, so this collapses to just "Files" there. Segments walk down the path the controller
+  the root, so this collapses to just "Library" there. Segments walk down the path the controller
   built by climbing parent_node_id (already user-scoped), so nothing here re-derives the tree or
   trusts params[:folder] a second time. aria-current marks the leaf for assistive tech.
 %>
 <% content_for :crumbs do %>
   <nav class="breadcrumb" aria-label="Folder path">
-    <%= link_to "Files", files_path %>
+    <%= link_to "Library", files_path %>
     <% @crumbs.each_with_index do |crumb, i| %>
       <span class="sep" aria-hidden="true">/</span>
       <% if i == @crumbs.length - 1 %>
@@ -26,9 +26,13 @@
 
 <%# THE PAGE'S ONE PRIMARY ACTION IS UPLOAD, AND IT LIVES IN THE TOP BAR (structural redesign
     slice 4; layouts/_topbar_upload.html.erb), which uploads into this folder — FilesController#index
-    hands it the validated @folder through FolderDestination, as `primary`. The page head keeps the
-    quiet New text file and an overflow menu for the rest of what used to stack above the list —
-    rescan, the folder's own actions — rendered only when it would have an item. %>
+    hands it the validated @folder through FolderDestination, as `primary`. The page head keeps an
+    overflow menu for the rest of what used to stack above the list — rescan, the folder's own
+    actions — rendered only when it would have an item.
+
+    NEW TEXT FILE LIVES IN THE TOP BAR'S New ▾ ONLY (UX audit D5, 2026-11-02). It was a page-head
+    button here as well, one control in two places; New ▾ creates in this same folder
+    (FolderDestination), so nothing is lost by its going. %>
 <% adoptable_folder = @folder && @folder_project.nil? &&
                       Maker::ProjectDiscovery.adoptable_name?(@folder.name) &&
                       !(@folder.parent_node_id.nil? && @folder.name == Maker::ProjectFolders::ROOT) %>
@@ -42,24 +46,8 @@
 <% menu_items = capabilities.scannable? || @folder_project.present? || adoptable_folder ||
                 @folder.present? %>
 <div class="page-head">
-  <h1>Files</h1>
+  <h1>Library</h1>
   <div class="page-actions">
-    <%#
-      NEW TEXT FILE (2026-09-10). QUIET, NOT ACCENT: this page already spends its accent on the top
-      bar's Upload, and decision 3 of the UI-cohesion spec allows exactly one —
-      test/system/accent_spend_test.rb pins /files to ["Upload"] and reddens naming this route if
-      `primary` appears here.
-
-      NOT GATED ON A CAPABILITY. The write goes through Maker::TextSave to
-      Maker::Addons::LibraryOutput.write_bytes!, which is the one place the `port_writable?` branch
-      is still written out (§14d), so this one link works on all three backends — unlike the top
-      bar's Upload, whose whole branch exists because those two flows are genuinely different doors.
-
-      `@folder` IS THE FOLDER BEING VIEWED, so the file lands where the maker is standing. It is nil
-      at the library root and in flat/search mode, and `url_for` drops a nil param.
-    %>
-    <%= link_to "New text file", new_files_text_file_path(parent_node_id: @folder&.node_id),
-                class: "btn" %>
     <% if menu_items %>
       <details class="menu" data-controller="menu">
         <summary class="btn icon" aria-label="More actions" title="More actions">⋯</summary>

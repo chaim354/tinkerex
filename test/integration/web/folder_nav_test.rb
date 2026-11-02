@@ -87,14 +87,14 @@ module Web
       assert_response :success
 
       # root -> cad -> sub, each a link to the right ?folder= (or files_path for the root).
-      assert_select "nav.breadcrumb a[href=?]", files_path,                  text: "Files"
+      assert_select "nav.breadcrumb a[href=?]", files_path,                  text: "Library"
       assert_select "nav.breadcrumb a[href=?]", files_path(folder: "dir-cad"), text: "cad"
       assert_select "nav.breadcrumb a[href=?]", files_path(folder: "dir-sub"), text: "sub"
     end
 
-    test "at the root the breadcrumb is just Files" do
+    test "at the root the breadcrumb is just Library" do
       get files_path
-      assert_select "nav.breadcrumb a", text: "Files", count: 1
+      assert_select "nav.breadcrumb a", text: "Library", count: 1
       # No folder segments at the root.
       assert_select "nav.breadcrumb a[href=?]", files_path(folder: "dir-cad"), count: 0
     end
@@ -107,7 +107,7 @@ module Web
       # Fell back to root: root children shown, nested hidden.
       assert_select "a", text: "root-file.txt"
       assert_select "a", text: "nested.stl", count: 0
-      assert_select "nav.breadcrumb a", text: "Files", count: 1
+      assert_select "nav.breadcrumb a", text: "Library", count: 1
     end
 
     test "a file's node_id is not accepted as a folder (kind guard) -> root" do
@@ -117,7 +117,7 @@ module Web
       # A file has no children, so if it were accepted the page would be empty; instead we render
       # root (root-file.txt present), proving the kind guard rejected it rather than scoping to it.
       assert_select "a", text: "root-file.txt"
-      assert_select "nav.breadcrumb a", text: "Files", count: 1
+      assert_select "nav.breadcrumb a", text: "Library", count: 1
     end
 
     test "another user's folder id does not leak and falls back to root" do
@@ -130,7 +130,7 @@ module Web
       # Renders OUR root, never their folder's contents, never their folder name in the breadcrumb.
       assert_select "a", text: "root-file.txt"
       assert_no_match(/theirs/, response.body, "a foreign folder must not leak into our view")
-      assert_select "nav.breadcrumb a", text: "Files", count: 1
+      assert_select "nav.breadcrumb a", text: "Library", count: 1
     end
 
     # A deleted directory must not be navigable — `present` scope everywhere.
@@ -138,7 +138,7 @@ module Web
       @user.nodes.find_by!(node_id: "dir-cad").update!(deleted: true)
       get files_path(folder: "dir-cad")
       assert_response :success
-      assert_select "nav.breadcrumb a", text: "Files", count: 1
+      assert_select "nav.breadcrumb a", text: "Library", count: 1
     end
   end
 end

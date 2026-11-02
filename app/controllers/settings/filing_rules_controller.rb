@@ -16,13 +16,20 @@ module Settings
   # 124 chips. The action, its route and its tests stay because the row-level edit is a real verb a
   # later control can reach for, and dropping a working action to match today's markup is how a
   # route comes back subtly different.
+  #
+  # A REFUSAL RE-RENDERS THE SHELVES PAGE (UX audit B3; Settings::ShelvesPage), with 422: an added
+  # extension's error and its typed text in the card it was typed into, and #update's -- which no
+  # control on the page reaches -- at the head of the page, naming the extension.
   class FilingRulesController < ApplicationController
+    include Settings::ShelvesPage
+
     def create
       rule = current_user.maker_filing_rules.new(filing_rule_params)
       if rule.save
-        redirect_to settings_shelves_path, notice: "Filing rule for .#{rule.ext} added."
+        redirect_to settings_shelves_path, notice: "Added .#{rule.ext} to the #{rule.folder}/ shelf."
       else
-        redirect_to settings_shelves_path, alert: rule.errors.full_messages.to_sentence
+        @new_rule = rule
+        render_shelves_refusal
       end
     end
 
@@ -36,9 +43,10 @@ module Settings
     def update
       rule = current_user.maker_filing_rules.find(params[:id])
       if rule.update(params.require(:filing_rule).permit(:folder))
-        redirect_to settings_shelves_path, notice: "Filing rule for .#{rule.ext} updated."
+        redirect_to settings_shelves_path, notice: "Moved .#{rule.ext} to the #{rule.folder}/ shelf."
       else
-        redirect_to settings_shelves_path, alert: rule.errors.full_messages.to_sentence
+        @failed_rule = rule
+        render_shelves_refusal
       end
     end
 
@@ -47,7 +55,7 @@ module Settings
     def destroy
       rule = current_user.maker_filing_rules.find(params[:id])
       rule.destroy!
-      redirect_to settings_shelves_path, notice: "Filing rule for .#{rule.ext} removed."
+      redirect_to settings_shelves_path, notice: "Removed .#{rule.ext} from the #{rule.folder}/ shelf."
     end
 
     private

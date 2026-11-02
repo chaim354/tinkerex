@@ -64,6 +64,28 @@ class RepoHistoryFlowTest < ActionDispatch::IntegrationTest
     assert body["restorable"], "a share library holds the working tree, so a restore can be committed"
   end
 
+  # THE PANEL PRINTS THE SERVER'S WORDS, NOT THE BROWSER'S (UX audit D1). `at_label` is the absolute
+  # form every other timestamp in the app uses, in the app's zone, and `time` is the same instant in
+  # that zone for the row's <time datetime>. Asked under a zone that is not UTC and whose date
+  # differs from UTC's for part of the day, so a label built in UTC, or in the process's own zone,
+  # cannot pass by coinciding with it.
+  test "history JSON labels each entry in the app's zone, the way every other timestamp reads" do
+    make_repo_with_commits!(count: 2, touch_every: 1)
+    node = @user.nodes.present.find_by!(name: "tracked.txt")
+
+    entries = Time.use_zone("Asia/Tokyo") do
+      get history_file_path(node.node_id), as: :json
+      JSON.parse(response.body).fetch("entries")
+    end
+
+    assert_equal 2, entries.size
+    entries.each do |entry|
+      at = Time.iso8601(entry.fetch("time"))
+      assert entry.fetch("time").end_with?("+09:00"), "time is the instant in the app's zone: #{entry["time"]}"
+      assert_equal at.in_time_zone("Asia/Tokyo").strftime("%Y-%m-%d %H:%M"), entry.fetch("at_label")
+    end
+  end
+
   # THE HONEST-EMPTINESS RULE (spec part 3), AND THE REASON `stopped` EXISTS AT ALL. A capped walk
   # that found nothing must not be reported in a way a view could render as "this file has no
   # earlier history" — path filtering is sparse, so this is the ORDINARY outcome on a real

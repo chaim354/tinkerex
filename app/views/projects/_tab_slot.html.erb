@@ -3,7 +3,13 @@
   `.panel-slot`, so Sortable drags it by the same handle; it carries `data-kind="tab"` and
   `data-name`, which is all of its draft. No strip, no
   width, no eye, no pencil -- a tab has none of those (decision 5). Delete removes the separator
-  only; its panels join the group above. The count hint is the controller's (countTabs).
+  only; its panels join the group above, and it asks first unless the tab is nameless and empty.
+  The count hint is the controller's (countTabs).
+
+  UP AND DOWN, LIKE A PANEL'S STRIP (2026-11-02, the UX audit's C10): a separator was the one slot
+  only a drag could move, and the strip's own reason for Up/Down applies to it — ordering is never
+  mouse-only. The same two actions, so `step` refocuses the button after the move exactly as it
+  does on a panel.
 
   Locals: key, name.
 %>
@@ -14,5 +20,7 @@
   <input type="text" class="tab-name" maxlength="<%= Maker::ProjectKind::TAB_NAME_MAX %>" value="<%= name %>"
          placeholder="Name this tab" aria-label="Tab name" data-action="input->layout-editor#tabName">
   <span class="muted tab-slot-count" data-layout-editor-target="tabCount"></span>
+  <button type="button" class="linkbtn small" data-action="layout-editor#up" aria-label="Move this tab up">▲</button>
+  <button type="button" class="linkbtn small" data-action="layout-editor#down" aria-label="Move this tab down">▼</button>
   <button type="button" class="linkbtn small danger" data-action="layout-editor#deleteTab" aria-label="Delete this tab">Delete</button>
 </div>

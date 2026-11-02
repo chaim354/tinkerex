@@ -31,6 +31,11 @@ module Users
     LAST_ADMIN_REFUSAL = "You are this server's only admin. Make another account an admin under " \
                          "Settings → Users before deleting yours.".freeze
 
+    # The Delete section's two password refusals (#destroy), in the page's words rather than
+    # Devise's "Current password is invalid".
+    DELETE_PASSWORD_BLANK = "Type your password to delete this account.".freeze
+    DELETE_PASSWORD_WRONG = "That is not your current password, so nothing was deleted.".freeze
+
     # A DELIVERY FAILURE MUST NOT LOOK LIKE A BROKEN APP, BECAUSE THE ACCOUNT ALREADY EXISTS.
     # Devise mails the confirmation from an `after_commit` on the user, so the row is COMMITTED
     # before the SMTP connection is even attempted. Production leaves `raise_delivery_errors` at
@@ -107,8 +112,14 @@ module Users
     # Require the current password, which is the same bar Devise already sets for merely
     # CHANGING a password. Deleting everything should not be the cheaper operation.
     #
-    # NOT a `before_action`: the failure has to re-render the settings page with the error
-    # attached to the resource, which needs the same resource that #edit renders.
+    # NOT a `before_action`: the failure has to re-render the Account page, which needs the same
+    # resource that #edit renders.
+    #
+    # A REFUSAL IS THE DELETE SECTION'S, NEVER THE RESOURCE'S (UX audit F2). Written onto
+    # `resource.errors` it rendered at the top of the page, under the email-and-password form, while
+    # the Delete section the maker had just used said nothing. `@delete_error` is read by that section
+    # alone (users/registrations/edit), and the resource stays clean so the update form shows no error
+    # it did not cause. Guard: account_page_test.rb ("a refused delete shows its error in the Delete section").
     def destroy
       # THE LAST ADMIN STAYS WHILE ANYONE ELSE IS HERE (2026-10-21): accounts are managed at Settings →
       # Users by an admin, so deleting the only one leaves accounts nobody can manage but a console.
@@ -117,26 +128,25 @@ module Users
       # and the demo account is not "anyone else": it can never be made an admin, so counting it would
       # keep an owner with only the demo beside them (OVH) from ever deleting their account.
       others = User.where.not(id: resource.id).where.not(email: Tinkerex::Demo.email.to_s)
-      if resource.last_account_manager? && others.exists?
-        resource.errors.add(:base, LAST_ADMIN_REFUSAL)
-        clean_up_passwords(resource)
-        set_minimum_password_length
-        respond_with_navigational(resource) { render :edit, status: :unprocessable_entity }
-        return
-      end
+      return refuse_delete(LAST_ADMIN_REFUSAL) if resource.last_account_manager? && others.exists?
 
       supplied = params.dig(:user, :current_password).to_s
       if resource.valid_password?(supplied)
         super
       else
-        resource.errors.add(:current_password, supplied.blank? ? :blank : :invalid)
-        clean_up_passwords(resource)
-        set_minimum_password_length
-        respond_with_navigational(resource) { render :edit, status: :unprocessable_entity }
+        refuse_delete(supplied.blank? ? DELETE_PASSWORD_BLANK : DELETE_PASSWORD_WRONG)
       end
     end
 
     protected
+
+    # SAVING LANDS BACK ON THE ACCOUNT PAGE (UX audit F1), with Devise's notice, rather than on Recent:
+    # the maker was here to change something and should see it changed. A password change that does
+    # not keep the session (Devise.sign_in_after_change_password off) still goes to sign-in, as
+    # Devise's own answer does, because this page needs a session.
+    def after_update_path_for(resource)
+      sign_in_after_change_password? ? edit_user_registration_path : super
+    end
 
     # The first account is the owner: confirmed on the spot, because a self-hoster has no mail server
     # on day one (Devise's own create path -- build, save, then branch on active_for_authentication?
@@ -155,6 +165,13 @@ module Users
     end
 
     private
+
+    def refuse_delete(message)
+      @delete_error = message
+      clean_up_passwords(resource)
+      set_minimum_password_length
+      respond_with_navigational(resource) { render :edit, status: :unprocessable_entity }
+    end
 
     def require_registration_open!
       return if Tinkerex::Registration.open?

@@ -1,0 +1,41 @@
+<% content_for :title, "Edit #{@supplier.name_in_database} — Tinkerex" %>
+
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Inventory path">
+    <%= link_to "Inventory", inventory_items_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to "Suppliers", suppliers_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= @supplier.name_in_database %></span>
+  </nav>
+<% end %>
+
+<div class="page-head">
+  <h1>Edit <%= @supplier.name_in_database %></h1>
+</div>
+
+<%# Rename a supplier and keep its notes (UX audit 2026-11-01, E5). `scope: :supplier` because the
+    model is namespaced (Maker::Supplier would name the params maker_supplier[...], which the
+    controller's require(:supplier) refuses; CLAUDE.md §14d). A refusal re-renders here (422). %>
+<%= form_with model: @supplier, scope: :supplier, url: supplier_path(@supplier), method: :patch,
+              class: "inventory-form" do |f| %>
+  <% if @supplier.errors.any? %>
+    <div class="form-errors flash-alert"><%= @supplier.errors.full_messages.to_sentence %></div>
+  <% end %>
+  <label class="field">
+    <span>Name</span>
+    <%= f.text_field :name, required: true, autofocus: true %>
+  </label>
+  <label class="field">
+    <span>URL</span>
+    <%= f.url_field :url %>
+  </label>
+  <label class="field">
+    <span>Notes</span>
+    <%= f.text_area :notes, rows: 4 %>
+  </label>
+  <div class="form-actions">
+    <%= f.submit "Save changes", class: "btn primary" %>
+    <%= link_to "Cancel", suppliers_path, class: "linkbtn" %>
+  </div>
+<% end %>

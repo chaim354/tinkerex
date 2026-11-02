@@ -1,6 +1,6 @@
 <%# The static hero content: an image cover, else a server-rendered thumbnail of the cover file,
     else the empty placeholder. Reused as the resting poster behind the 3D viewer. Reads the
-    @cover_att / @model / @covers / @page_nodes ivars set by ModelsController#show.
+    @cover_att / @model / @covers / @page_nodes ivars set by Models::Page (ModelsController#show).
 
     BOTH LIVE BRANCHES ASK ABOUT LIVENESS, AND THE SECOND ONE IS THE EASY MISS. @cover_att comes out
     of the already-partitioned @attachments, so the image branch is covered by construction; the
@@ -14,13 +14,26 @@
     comes from @page_nodes, the same live map the elsif reads, so a dead cover still falls through. %>
 <% if @cover_att && Maker::FileAttachment.inline_image?(@page_nodes[@model.cover_node_id]&.name.to_s) %>
   <%= image_tag blob_file_path(@model.cover_node_id), class: "model-hero-img", alt: @model.title %>
+<%# THE RENDER IS THE CARD, INK ON PAPER (UX audit 2026-11-01, E7; design-system rule 5). The cell
+    is a plain wrapper and the `.thumb` inside it the card: it used to wear `.thumb` itself, painted
+    `--raised` by pages/models.css, which outranked the component's `--thumb-stage` under the
+    multiply blend, so in Graphite a render's white ground went the panel's dark colour.
+
+    NO PICTURE COMING, NO EMPTY CARD (E3): when the cover's render has finished without one (an
+    unsupported format, a failed render) and the model has a file the 3D viewer opens, a big blank
+    card above "View in 3D" said nothing, so one line says it instead. A render still in flight keeps
+    its card and spinner, because a picture is on its way. %>
 <% elsif @page_nodes.key?(@model.cover_node_id) %>
-  <span class="thumb file-cell model-hero-thumb"
-        data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
-        data-thumbs-target="cell" data-node-id="<%= @model.cover_node_id %>" data-ext="">
-    <%= render "files/thumb", thumb: @covers.thumb(@model.cover_node_id), ext_label: "",
-               url: preview_src(@covers.thumb(@model.cover_node_id)) %>
-  </span>
+  <% cover_thumb = @covers.thumb(@model.cover_node_id) %>
+  <% if @viewable_3d.present? && cover_thumb && !cover_thumb.showable? && !cover_thumb.in_flight? %>
+    <p class="model-hero-note muted">There is no preview picture for this model. <strong>View in 3D</strong> shows it.</p>
+  <% else %>
+    <span class="file-cell model-hero-thumb"
+          data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>"
+          data-thumbs-target="cell" data-node-id="<%= @model.cover_node_id %>" data-ext="">
+      <%= render "files/thumb", thumb: cover_thumb, ext_label: "", url: preview_src(cover_thumb) %>
+    </span>
+  <% end %>
 <% else %>
   <span class="model-hero-empty" aria-hidden="true"><%= rail_icon(:models) %></span>
 <% end %>

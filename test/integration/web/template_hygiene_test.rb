@@ -101,13 +101,21 @@ module Web
     UNSWEPT_TEMPLATES = %w[
       repo_commits/show.html.erb repo_histories/show.html.erb files/inspector_gone.html.erb
       landings/show.html.erb
+      projects/composer_page.html.erb
     ].freeze
+    # projects/composer_page is rendered only by a REFUSED POST (Projects::ComposerRefusal, the no-JS
+    # arm of a 422 composer re-render), never by a GET this sweep can issue; its body is swept for
+    # `<%`, `%>` and § by ProjectHubAuditTest "a refused composer page leaks no template comment".
 
     setup do
       # HERMETIC BY FIXTURE (§14c): the addon pages below read `test/fixtures/addons`, never the
       # sibling `tinkerex-addons` checkout a fresh clone does not have.
       @prior_addon_source_path = ENV["ADDON_SOURCE_PATH"]
       ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
+      # The fixture addons declare the `fixture-svc` service; without its URL the addon page renders
+      # its "unavailable" state (UX audit G3) and the MOUNT branch's comments would go unswept.
+      @prior_fixture_svc = ENV["FIXTURE_SVC_SIDECAR_URL"]
+      ENV["FIXTURE_SVC_SIDECAR_URL"] = "http://fixture-svc.invalid"
 
       # STAGE 3, S3-4: THE HANDLE COMES FIRST AND CANNOT BE ADDED LATER IN THIS SETUP. A project
       # refuses to leave `private` while its maker has none, and once one is published the handle
@@ -325,6 +333,9 @@ module Web
       # ledger table both render (an item with no transactions would leave `table.ledger`'s tbody
       # empty and the balance-walk untouched).
       @inventory_item = @user.maker_inventory_items.create!(name: "M3 bolt", unit: "each", min_quantity: 5)
+      # The supplier and location EDIT pages (UX audit E5) render only over a row.
+      @supplier = @user.maker_suppliers.create!(name: "McMaster")
+      @location = @user.maker_locations.create!(name: "Bin A1")
       # THE INVENTORY ARM of the search page (tinkerex#286) — see the model and file fixtures above.
       @user.maker_inventory_items.create!(name: "Lamp cord", unit: "m", min_quantity: 0)
       Maker::InventoryTransaction.apply!(item: @inventory_item, user: @user, delta: 3, reason: "initial")
@@ -449,6 +460,11 @@ module Web
 
     teardown do
       ENV["ADDON_SOURCE_PATH"] = @prior_addon_source_path
+      if @prior_fixture_svc.nil?
+        ENV.delete("FIXTURE_SVC_SIDECAR_URL")
+      else
+        ENV["FIXTURE_SVC_SIDECAR_URL"] = @prior_fixture_svc
+      end
     end
 
     # A file shaped like one in a real library. THE CONTENT TOKEN IS LOAD-BEARING, not decoration:
@@ -587,6 +603,8 @@ module Web
         # Stage 2, S2-3 (Task B): renders fine over zero rows, so no fixture is needed here.
         "suppliers" => suppliers_path,
         "locations" => locations_path,
+        "supplier edit" => edit_supplier_path(@supplier),
+        "location edit" => edit_location_path(@location),
         "tools gallery" => tools_path,
         # The New ▾ menu's lazy tool list (slice 2): a fragment, swept like a page so a comment
         # leak in it would show. The sweep's ADDON_SOURCE_PATH points at the fixtures, so it lists.

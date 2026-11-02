@@ -11,17 +11,17 @@
     details and the other two inside CLOSED ones, so the row markup exists once rather than
     three times — three copies is how a change reclassifies clutter as an ordinary add and
     still passes two thirds of the assertions. `checked` is the whole safety story: it is true
-    for the tinkerex-edited group and false for the other two, deliberately (spec part 1), and
+    for the Tinkerex-edited group and false for the other two, deliberately (spec part 1), and
     the mutation that flips either of the false ones is what test/integration/web has a case for.
     The ROWS come from @staging, the same RepoCommitsController::Staging whose offered_paths the
     commit accepts, so a checkbox drawn here and a path the commit takes cannot disagree. %>
 <% groups = [
-     { key: "pending", title: "Edited in tinkerex", rows: @staging.pending, checked: true, open: true,
+     { key: "pending", title: "Edited in Tinkerex", rows: @staging.pending, checked: true, open: true,
        note: nil },
      { key: "other", title: "Other changes", rows: @staging.other, checked: false, open: false,
-       note: "Changed outside tinkerex. Nothing here is committed unless you tick it." },
+       note: "Changed outside Tinkerex. Nothing here is committed unless you tick it." },
      { key: "clutter", title: "OS clutter", rows: @staging.clutter, checked: false, open: false,
-       note: "tinkerex never creates these." }
+       note: "Tinkerex never creates these." }
    ].reject { |group| group[:rows].empty? } %>
 <% listed = groups.flat_map { |group| group[:rows] } %>
 
@@ -60,11 +60,15 @@
           <ul class="commit-rows">
             <% group[:rows].each do |row| %>
               <% path = row.path %>
+              <%# THE PATH IS THE CHECKBOX'S LABEL (UX audit I, 2026-11-02), so it names the box to a
+                  screen reader and a click on it ticks the box. The id is a DIGEST of the path, not
+                  `parameterize`, which folds "a.txt" and "a-txt" into one id — harmless while no
+                  label pointed at it, and a label ticking the wrong box once one does. %>
+              <% box_id = "path_#{group[:key]}_#{Digest::SHA256.hexdigest(path).first(16)}" %>
               <li data-path="<%= path %>" data-state="<%= row.state %>">
                 <div class="commit-row-head">
                   <% if row.committable? %>
-                    <%= check_box_tag "paths[]", path, group[:checked],
-                                      id: "path_#{group[:key]}_#{path.parameterize}" %>
+                    <%= check_box_tag "paths[]", path, group[:checked], id: box_id %>
                   <% else %>
                     <%# THE ONLY NON-COMMITTABLE STATE THAT REACHES THIS PAGE IS :ignored, and the
                         interesting instance is a path that is TRACKED and ALSO matched by
@@ -80,7 +84,11 @@
                         nothing is worse than no tick. %>
                     <span class="muted">ignored by .gitignore</span>
                   <% end %>
-                  <code><%= path %></code>
+                  <% if row.committable? %>
+                    <label for="<%= box_id %>"><code><%= path %></code></label>
+                  <% else %>
+                    <code><%= path %></code>
+                  <% end %>
                   <span class="commit-row-state muted"><%= row.state %></span>
                   <span class="plus">+<%= row.additions %></span>
                   <span class="minus">−<%= row.deletions %></span>
@@ -123,6 +131,10 @@
       </p>
     <% end %>
 
+    <%# A VISIBLE LABEL, NOT THE PLACEHOLDER ALONE (UX audit D6/I, 2026-11-02), and the Commit button
+        carries the page's one accent: `.editor-bar`'s reset in pages/preview.css used to cancel
+        `.primary` here, so the page's whole action read like any other button. %>
+    <label class="commit-message-label" for="message">Commit message</label>
     <%= text_area_tag :message, nil, rows: 3, placeholder: "What changed?", class: "commit-message" %>
     <div class="editor-bar">
       <%= submit_tag "Commit", class: "primary" %>

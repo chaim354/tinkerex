@@ -66,4 +66,39 @@ class ThumbSpinnerTest < ApplicationSystemTestCase
     end
     assert_no_console_errors
   end
+
+  # GIVING UP SAYS "TAKING LONGER", AND ONLY THE SERVER SAYS "NOT SUPPORTED" (UX audit D8). The poll
+  # stops after ~80 s and resolves what is still spinning to a static badge; that is the PAGE's
+  # patience running out, not an answer, so its title must not claim the type has no preview. A real
+  # `unsupported` from /files/thumbnails keeps that title. Driven through the controller's own
+  # give-up path (the 41st try) rather than by waiting 80 s; the unsupported half is the real poll,
+  # answered for a node tombstoned after the page rendered (the server's `node.nil?` arm).
+  #
+  # MUTATION-CHECKED (2026-11-02): with resolveStragglers back to a bare `setIcon(cell)`, the first
+  # assertion goes RED (the title is "Preview not supported"); restored, green.
+  test "a poll that gives up says the preview is taking longer, and only the server says not supported" do
+    slow = create_node!(@user, node_id: SecureRandom.uuid, name: "slow.stl", kind: "file", mtime: 1, size: 1)
+    gone = create_node!(@user, node_id: SecureRandom.uuid, name: "gone.stl", kind: "file", mtime: 1, size: 1)
+    visit files_path(view: "grid")
+    assert_selector ".files-grid [data-thumbs-target~='cell'][data-node-id='#{slow.node_id}'] .thumb-spinner"
+
+    gone.update!(deleted: true)
+    unsupported = ".files-grid [data-node-id='#{gone.node_id}'] .thumb-icon[title='Preview not supported']"
+    assert_selector unsupported, wait: 10
+    assert_selector ".files-grid [data-node-id='#{slow.node_id}'] .thumb-spinner" # still on its way
+
+    page.execute_script(<<~JS)
+      const grid = document.querySelector(".files-grid")
+      const poll = window.Stimulus.getControllerForElementAndIdentifier(grid, "thumbs")
+      clearTimeout(poll.timer)
+      poll.tries = 41
+      poll.poll()
+    JS
+    slow_icon = ".files-grid [data-node-id='#{slow.node_id}'] .thumb-icon"
+    assert_selector "#{slow_icon}[title^='Preview is taking longer than usual']"
+    assert_no_selector "#{slow_icon}[title='Preview not supported']"
+    assert_no_selector ".files-grid [data-node-id='#{slow.node_id}'] .thumb.thumb-failed"
+    assert_selector unsupported # the server's answer is left as it was
+    assert_no_console_errors
+  end
 end

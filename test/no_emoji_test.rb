@@ -5,7 +5,9 @@ require "ripper"
 # stylesheets; this guards the rest of the source a page is built from: templates (compiled, so `<%# %>`
 # comments are not read), helpers and controllers (Ripper, comment tokens skipped), and scripts (comments
 # stripped). Pictographs only — U+1F300–U+1FAFF — because ✓, ✕ and ✎ are typographic marks a status
-# carries as words. An addon's manifest `icon` is data the bundle supplies, not this repo's source.
+# carries as words. An addon's manifest `icon` is data the bundle supplies, not this repo's source,
+# so this scan cannot see it: the gallery does not draw it (tools/home/_addon_mark), and
+# test/integration/web/tools_gallery_test.rb reads the RENDERED gallery for emoji instead.
 class NoEmojiTest < ActiveSupport::TestCase
   PICTOGRAPH = /[\u{1F300}-\u{1FAFF}]/
 

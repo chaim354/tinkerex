@@ -1,6 +1,9 @@
 require_relative "boot"
 
 require "rails/all"
+# Before Bundler.require and the initializers, because the class body below reads it and lib/ is
+# not on the load path yet (the same reason config/puma.rb requires its lib file by path).
+require_relative "../lib/tinkerex/time_zone"
 
 # Require the gems listed in Gemfile, including any gems
 # you've limited to :test, :development, or :production.
@@ -49,12 +52,17 @@ module Tinkerex
     # byte-identical, which is exactly the shape of a fix that looks done and is not.
     config.action_cable.mount_path = nil
 
+    # ONE ZONE FOR EVERY TIME ON THE PAGE: TIME_ZONE, else the host's, else UTC; always UTC in the
+    # test env; a TIME_ZONE that names no zone refuses a production boot (lib/tinkerex/time_zone.rb).
+    # ApplicationHelper#time_at shows every timestamp in it -- a file's mtime as well as a Rails
+    # column -- and the unzoned schedules in config/recurring.yml fire on its clock.
+    config.time_zone = Tinkerex::TimeZone.resolve
+
     # Configuration for the application, engines, and railties goes here.
     #
     # These settings can be overridden in specific environments using the files
     # in config/environments, which are processed later.
     #
-    # config.time_zone = "Central Time (US & Canada)"
     # config.eager_load_paths << Rails.root.join("extras")
   end
 end

@@ -102,6 +102,15 @@ module Web
       assert_select ".readme-editor", 0
     end
 
+    # A REFUSED SAVE COMES BACK AS THE OPEN EDITOR (2026-11-02, the UX audit's B3), 422, with the
+    # sentence inside it and the draft in the textarea — never a redirect and an alert that drop the
+    # draft. Answers the sentence.
+    def refusal
+      assert_response :unprocessable_entity
+      assert_nil flash[:alert], "a refusal must not ride a redirect's flash"
+      css_select("details.readme-editor#readme-editor[open] .form-errors[role=alert]").text
+    end
+
     # --- the save ------------------------------------------------------------------------------
 
     test "saving an existing README rewrites it in place, keeps the node, and the card shows it" do
@@ -113,7 +122,7 @@ module Web
             params: { content: "# Lamp\n\n## Build steps\n", base_token: token_for(user, node) }
 
       assert_redirected_to project_path(project)
-      assert_equal "README saved.", flash[:notice]
+      assert_equal "Saved the README.", flash[:notice]
       assert_equal node.node_id, readme_node(user, project).node_id, "a replace must reuse the node (§14a)"
       assert_equal "# Lamp\n\n## Build steps\n", FileLayer.current.read(user, node_id: node.node_id)
 
@@ -140,9 +149,31 @@ module Web
 
       patch project_readme_path(project), params: { content: "# New\n", base_token: "stale" }
 
-      assert_redirected_to project_path(project)
-      assert_match(/changed since you opened it/, flash[:alert])
+      assert_match(/changed since you opened it/, refusal)
       assert_equal "# Old\n", FileLayer.current.read(user, node_id: node.node_id)
+      # THE DRAFT IS KEPT, LIVE, WITH THE TOKEN IT WAS POSTED WITH (2026-11-02, the UX audit's B3):
+      # a second Save is refused again rather than winning over the version that moved it, and the
+      # editor is told not to fetch the README over the draft.
+      assert_select "#readme-editor[open][data-readme-draft-value=true][data-readme-url-value='']" do
+        assert_select "textarea[name=content]:not([disabled])", text: /\A\s*# New\s*\z/
+        assert_select "input[type=hidden][name=base_token][value=stale]"
+        assert_select "input[type=submit]:not([disabled])"
+        assert_select ".form-errors a[href=?]", file_path(node.node_id), text: "Open the current README"
+      end
+    end
+
+    # UNDER TURBO THE EDITOR ALONE IS REPLACED, so the rest of the page — the card it sits in, every
+    # other panel — is untouched by the refusal.
+    test "a refused save under Turbo replaces only the editor, holding the draft" do
+      user = sign_in
+      project = project_with_folder!(user, readme: "# Old\n")
+
+      patch project_readme_path(project), params: { content: "# New\n", base_token: "stale" }, as: :turbo_stream
+
+      assert_response :unprocessable_entity
+      assert_select "turbo-stream[action=replace][target=readme-editor]", 1
+      assert_select "turbo-stream", 1
+      assert_includes response.body, "# New"
     end
 
     # THE SAME REFUSAL, FOR THE HALF THE CATALOG CANNOT SEE. The token above is nonsense, so the row
@@ -151,10 +182,9 @@ module Web
     # That was an overwrite until `expect_token:` reached the port (§14a) — and on a share there is
     # no version to restore the lost text from.
     #
-    # THIS DOOR ANSWERS WITH A REDIRECT AND AN ALERT, NOT A 409, which is not an inconsistency to
-    # tidy: it always redirects (see the controller's header — the point of the feature is landing
-    # back on the project page), and the message is the one the stale test above asserts, because
-    # both arms of the check produce the same refusal.
+    # THIS DOOR ANSWERS WITH ITS EDITOR AND A 422, NOT A 409 (since 2026-11-02; it redirected with
+    # an alert before, which dropped the draft): the message is the one the stale test above
+    # asserts, because both arms of the check produce the same refusal.
     test "a README save racing a desktop edit the scan has not seen keeps the desktop bytes" do
       user = sign_in
       project = project_with_folder!(user, readme: "# Old\n")
@@ -165,8 +195,8 @@ module Web
       patch project_readme_path(project), params: { content: "# From the browser\n",
                                                     base_token: token_for(user, node) }
 
-      assert_redirected_to project_path(project)
-      assert_match(/changed since you opened it/, flash[:alert])
+      assert_match(/changed since you opened it/, refusal)
+      assert_select "#readme-editor textarea[name=content]", text: /\A\s*# From the browser\s*\z/
       assert_equal "# From the desktop\n", File.read(on_disk),
                    "the edit the catalog had not observed must survive the save that raced it"
     end
@@ -183,8 +213,8 @@ module Web
 
       patch project_readme_path(project), params: { content: "# From the browser\n", base_token: "" }
 
-      assert_redirected_to project_path(project)
-      assert_match(/A README appeared while you were writing/, flash[:alert])
+      assert_match(/A README appeared while you were writing/, refusal)
+      assert_select "#readme-editor textarea[name=content]", text: /\A\s*# From the browser\s*\z/
       assert_equal "# Appeared from the desktop\n", File.read(on_disk)
     end
 
@@ -195,7 +225,7 @@ module Web
 
       patch project_readme_path(project), params: { content: "  ", base_token: token_for(user, node) }
 
-      assert_match(/needs some text/, flash[:alert])
+      assert_match(/needs some text/, refusal)
       assert_equal "# Old\n", FileLayer.current.read(user, node_id: node.node_id)
     end
 

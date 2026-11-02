@@ -70,8 +70,10 @@ module Web
       assert_match(/confirmation link has been sent/i, body,
                    "the page the user lands on must say an email was sent; got flash " \
                    "#{flash.to_hash.inspect}")
-      assert_no_match(/You need to sign in or sign up before continuing/i, body,
-                      "a maker who just signed up must not be told to sign up")
+      # The failure app's alert, read from the locale rather than spelled here: a literal copy of the
+      # old wording would pass forever once the string changed (it did, UX audit F4).
+      assert_not_includes body, I18n.t("devise.failure.unauthenticated"),
+                          "a maker who just signed up must not be told to sign in first"
     end
 
     test "it lands on the sign-in page, so the notice survives a single hop" do

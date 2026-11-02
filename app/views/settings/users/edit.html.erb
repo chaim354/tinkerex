@@ -4,15 +4,15 @@
     admin, sign out its desktop devices, delete it. Never the signed-in account, which set_user
     sends to the Account page. "Set password" is the accent (design-system.md rule 13); Delete is the danger button, behind a typed
     address rather than a click-through confirm, because it cannot be undone. %>
+<%= render "settings/crumbs", trail: [ [ "Users", settings_users_path ] ], current: @user.email %>
+
 <div class="page-head">
   <h1><%= @user.email %></h1>
-  <%= link_to "Users", settings_users_path, class: "btn ghost small" %>
 </div>
 
 <p class="muted">
   <%= @user.can_manage_accounts? ? "An admin." : "Not an admin." %>
-  <%= @user.last_sign_in_at ? "Last signed in #{time_ago_in_words(@user.last_sign_in_at)} ago." : "Has never signed in." %>
-  <%= "Locked after too many wrong passwords." if @user.access_locked? %>
+  <% if @user.last_sign_in_at %>Last signed in <%= time_at(@user.last_sign_in_at, style: :relative) %>.<% else %>Has never signed in.<% end %>
 </p>
 
 <section class="user-manage">
@@ -39,21 +39,26 @@
 <section class="user-manage">
   <h2>Admin</h2>
   <% if @user.can_manage_accounts? %>
-    <p class="muted">Can add, change and delete accounts on the Users page.</p>
+    <p class="muted">Can add, change and delete users on the Users page.</p>
+    <%# Confirmed (UX audit B5), naming the account: one click takes away what that person may do
+        on this server, and nothing on the page says so until after. Make admin needs no confirm;
+        it is undone by this button. %>
     <%= button_to "Remove admin", set_admin_settings_user_path(@user), method: :patch,
-                  params: { admin: "0" }, class: "btn" %>
+                  params: { admin: "0" }, class: "btn",
+                  form: { data: { turbo_confirm: "Remove admin from #{@user.email}? They can no longer add, change or delete users." } } %>
   <% elsif Tinkerex::Demo.demo?(@user) %>
     <p class="muted">The shared demo account cannot be an admin.</p>
   <% else %>
-    <p class="muted">An admin can add, change and delete accounts on the Users page.</p>
+    <p class="muted">An admin can add, change and delete users on the Users page.</p>
     <%= button_to "Make admin", set_admin_settings_user_path(@user), method: :patch,
                   params: { admin: "1" }, class: "btn" %>
   <% end %>
 </section>
 
-<%# THE ACCOUNT'S DESKTOP DEVICES (pentest H1b): the same rows as its own Settings → Devices, and a
-    Sign out per row that posts to revoke_device. Read off @user here rather than set by the action,
-    because three actions render this template and each would have to remember to set it. %>
+<%# THE ACCOUNT'S DESKTOP DEVICES (pentest H1b): the same rows as its own Settings → Devices -- one
+    partial, settings/devices/_device, so the columns and the verb cannot drift apart (UX audit F6) --
+    each posting to revoke_device. Read off @user here rather than set by the action, because three
+    actions render this template and each would have to remember to set it. %>
 <section class="user-manage">
   <h2>Devices</h2>
   <% devices = @user.devices.to_a.sort_by(&:last_active_at).reverse %>
@@ -61,23 +66,21 @@
   <% if devices.empty? %>
     <p class="muted">No desktop app is signed in to <%= @user.email %>.</p>
   <% else %>
+    <p class="muted">Signing a device out ends its access to this server.
+      <% if capabilities.syncable? %>It can still sync files until it is removed from the sync server
+      too, which this page cannot do yet.<% end %></p>
     <ul class="settings-list">
       <% devices.each do |device| %>
-        <li>
-          <span class="settings-name"><%= device.name %></span>
-          <% if device.expired?(idle_limit) %><span class="badge">Expired</span><% end %>
-          <span class="settings-fact"><%= device.last_seen_at ? "used #{time_ago_in_words(device.last_seen_at)} ago" : "never used" %></span>
-          <%= button_to "Sign out", revoke_device_settings_user_path(@user, device_id: device.id), method: :delete,
-                        class: "linkbtn danger small settings-remove",
-                        form: { data: { turbo_confirm: "Sign #{device.name} out of #{@user.email}?" } } %>
-        </li>
+        <%= render "settings/devices/device", device: device, idle_limit: idle_limit,
+                                              url: revoke_device_settings_user_path(@user, device_id: device.id),
+                                              owner: @user.email %>
       <% end %>
     </ul>
   <% end %>
 </section>
 
 <section class="user-manage">
-  <h2>Delete this account</h2>
+  <h2>Delete this user</h2>
   <p>Removes <%= @user.email %> and everything it has in Tinkerex: its projects, tasks, notes, tags,
     pins, previews and its copy of the library catalog. Every file in the library stays where it is.
     <% if capabilities.syncable? %>Its library on the sync server is not removed.<% end %>
@@ -92,6 +95,6 @@
       <span>Type <%= @user.email %> to confirm</span>
       <%= f.text_field :confirm_email, required: true, autocomplete: "off", spellcheck: false %>
     </label>
-    <%= f.submit "Delete account", class: "btn danger" %>
+    <%= f.submit "Delete user", class: "btn danger" %>
   <% end %>
 </section>

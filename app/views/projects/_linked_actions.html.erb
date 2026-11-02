@@ -1,0 +1,20 @@
+<%#
+  A LINKED FILE'S TWO CONTROLS, written once for its tile (projects/_file_tile) and its list row
+  (projects/_file_rows) — the List view lost both until 2026-11-02 (the UX audit's C8), which left
+  a Linked file in List with no way to detach it or bring it into the folder. Detach severs the
+  reference and keeps the file; Move into project is Maker::AttachToProject#relocate under the
+  file's own name, the door the collision prompt's "Move it in as…" posts to.
+
+  RENDERED FOR EVERY ROW AND DRAWS NOTHING FOR ONE THAT IS NOT LINKED, so the decision lives here
+  once rather than at both callers. `tile: true` wraps the pair in the tile's `.tile-meta` corner.
+
+  Locals: row (a Maker::ProjectFolderListing::Row), node (its Node), tile (Boolean). Reads @project.
+%>
+<% if row.linked? %>
+  <%= tag.div(class: ("tile-meta" if tile)) do %>
+    <%= button_to "Detach", attachment_path(row.attachment), method: :delete, class: "linkbtn danger small tile-detach",
+                  form: { data: { turbo_confirm: "Detach #{node.name} from #{@project.name}? The file stays in your library." } } %>
+    <%= button_to "Move into project", relocate_project_attachments_path(@project),
+                  params: { node_id: row.node_id }, class: "btn small tile-move" %>
+  <% end %>
+<% end %>

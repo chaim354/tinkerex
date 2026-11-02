@@ -4,6 +4,8 @@
   tree — so a maker writes documentation the same way whichever shape their project has.
 
   Locals: project, row (the README's Maker::ProjectFolderListing::Row, or nil when there is none).
+  Optional — A REFUSED SAVE (2026-11-02, the UX audit's B3; Projects::ReadmesController): draft (the
+  text that was posted), base_token (the token it was posted with), error, open.
 
   CLOSED, AND LAZY (the modelviewer `lazy` argument): readme_controller.js fetches the README's
   bytes on the first toggle-open and not before, so a project page nobody edits pays no port read
@@ -18,37 +20,57 @@
   is nothing a blank submit could destroy, and a disabled control is DROPPED from a submission —
   so this is also what lets "Write a README" work with no JavaScript at all.
 
+  A DRAFT IS THE BUFFER, NOT THE FILE. A refused save renders this partial with what the maker
+  typed in the textarea, live from the start, and `data-readme-draft-value` tells the controller
+  not to fetch: fetching would overwrite the draft with the very bytes it was refused against.
+  The token is the one the draft was POSTED with, so saving it again over a README that moved is
+  refused again rather than quietly winning; the error says how to see the current version.
+
   PLAIN TAG HELPERS, NOT `f.text_area`. `form_with url:` with no model has a blank object_name, and
   a field built through the builder would be named "content" anyway — but `fields_for` on a blank
   object_name emits the literal bracket key Rack cannot parse (§14d, shipped twice). Flat names,
   read as params[:content] / params[:base_token], exactly as FilesController#update reads them.
 %>
-<details class="composer readme-editor" data-controller="readme" data-action="toggle->readme#reveal"
-         data-readme-url-value="<%= row ? blob_file_path(row.node_id) : "" %>">
+<% draft = local_assigns[:draft] %>
+<% error = local_assigns[:error] %>
+<% drafting = !draft.nil? %>
+<details class="composer readme-editor" id="readme-editor" data-controller="readme" data-action="toggle->readme#reveal"
+         data-readme-url-value="<%= row && !drafting ? blob_file_path(row.node_id) : "" %>"
+         data-readme-draft-value="<%= drafting %>" <%= "open" if local_assigns[:open] %>>
   <summary class="btn small"><%= row ? "Edit README" : "Write a README" %></summary>
-  <% if row %>
+  <% if error.present? %>
+    <div class="form-errors flash-alert composer-error" role="alert">
+      <%= error %>
+      <% if row %><%= link_to "Open the current README", file_path(row.node_id), target: "_blank", rel: "noopener" %><% end %>
+    </div>
+  <% end %>
+  <% if row && !drafting %>
     <%# WITH JAVASCRIPT OFF AN EXISTING README SHOWS A DISABLED, EMPTY TEXTAREA — the bytes are
         fetched by readme_controller.js and the controls stay disabled until they arrive (a Save
         before that would blank the file). Silent is safe and still unkind, so say why. The
         no-README case needs no script: the template is in the textarea and the controls are live. %>
-    <noscript><p class="muted">Editing this README needs JavaScript; without it the file can only be replaced from the Files page.</p></noscript>
+    <noscript><p class="muted">Editing this README needs JavaScript; without it the file can only be replaced from the Library.</p></noscript>
   <% end %>
 
   <%= render "shared/no_history_note" %>
 
   <%= form_with url: project_readme_path(project), method: :patch, class: "readme-form",
                 data: { action: "submit->readme#sync" } do %>
-    <% if row %>
+    <% if drafting %>
+      <%= hidden_field_tag :base_token, local_assigns[:base_token] %>
+    <% elsif row %>
       <%= hidden_field_tag :base_token, FileLayer.current.stat(current_user, node_id: row.node_id)&.content_token %>
     <% end %>
     <div class="readme-mount" data-readme-target="mount"></div>
-    <%= text_area_tag :content, (row ? "" : Maker::Readme.template_for(project)),
-                      rows: 16, disabled: row.present?, spellcheck: true,
+    <% locked = row.present? && !drafting %>
+    <label class="label-hidden" for="readme-source">README text</label>
+    <%= text_area_tag :content, (drafting ? draft : (row ? "" : Maker::Readme.template_for(project))),
+                      id: "readme-source", rows: 16, disabled: locked, spellcheck: true,
                       class: "readme-source", data: { readme_target: "input" } %>
     <div class="readme-bar">
-      <%= submit_tag "Save README", class: "btn small", disabled: row.present?,
+      <%= submit_tag "Save README", class: "btn small", disabled: locked,
                      data: { readme_target: "submit" } %>
-      <span class="muted readme-status" data-readme-target="status"></span>
+      <span class="muted readme-status" data-readme-target="status" aria-live="polite"></span>
     </div>
   <% end %>
 </details>

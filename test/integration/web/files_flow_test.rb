@@ -426,7 +426,7 @@ module Web
       sign_in
       get files_path
       assert_response :success
-      assert_select "h1", "Files"
+      assert_select "h1", "Library"
     end
 
     test "upload -> list -> download byte-for-byte" do

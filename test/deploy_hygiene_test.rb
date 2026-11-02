@@ -168,6 +168,28 @@ class DeployHygieneTest < ActiveSupport::TestCase
     assert_empty ovh.hosts & lan, "an internet-facing destination must not route a LAN-only name"
   end
 
+  # A TIME_ZONE THAT NAMES NO ZONE REFUSES THE BOOT (lib/tinkerex/time_zone.rb, UX audit D1), so a
+  # typo here is a deploy that never comes up. Read off the MERGED config, because deploy.yml sets
+  # it once and every overlay inherits it through env.clear's deep merge, ovh included; an overlay
+  # that overrides it is checked the same way. Asked of the module the boot asks, never a copy of
+  # its rule.
+  test "every destination's TIME_ZONE names a zone the boot accepts" do
+    require "kamal"
+    zones = LIBRARY_DESTINATIONS.to_h { |destination|
+      config = Kamal::Configuration.create_from(
+        config_file: ROOT.join("config/deploy.yml"), destination: destination
+      )
+      [ destination || "base", at(config.raw_config, "env", "clear").to_h["TIME_ZONE"] ]
+    }
+    assert zones.values.any?, "no destination sets TIME_ZONE -- the container's clock is UTC, so every time would read UTC"
+    zones.each do |destination, zone|
+      next if zone.nil?
+
+      assert Tinkerex::TimeZone.zone?(zone.to_s),
+             "#{destination}: TIME_ZONE=#{zone.inspect} is not a zone, and production refuses to boot on it"
+    end
+  end
+
   test "every destination names the host its mail links are built from, and kamal-proxy routes that name" do
     # config/environments/production.rb builds confirmation and reset links from APP_HOST and
     # falls back to a loud `.invalid` placeholder. Until 2026-10-12 NO destination set it, so the

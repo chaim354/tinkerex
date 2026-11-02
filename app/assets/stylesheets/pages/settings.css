@@ -3,7 +3,8 @@
    Stage 2, S2-6: the hub (.settings-hub, one link + one fact per row) and the theme choice.
    Stage 4, S4-2: Filing left that shape for a grid of folder cards (.filing-cards), and since
    2026-10-20 those cards are the Shelves page (/settings/shelves); only its add forms still borrow
-   .settings-add. */
+   .settings-add. The Account page (users/registrations/edit) and Devise's signed-out cards are
+   styled here too: they are this area's pages (UX audit F1, F4). */
 @layer pages {
   .settings-list { list-style: none; padding: 0; margin: 0 0 20px; max-width: 640px; }
   .settings-list li { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
@@ -12,7 +13,16 @@
   .settings-fact { font: 11px/1.4 var(--font-mono); color: var(--fg-muted); }
   .settings-list .settings-remove { margin-left: auto; }
   .settings-add { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; max-width: 640px; }
-  .settings-add label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-muted); }
+  /* ONE FIELD STYLE (UX audit F8): an add form's label reads like `.field > span` everywhere else
+     (13px, weight 500, ink), whether its markup carries `.field` or not -- the Suppliers and
+     Locations forms do not. It was 11px and muted, a third label style beside the two `.field`
+     spellings. A `.field` in a row form drops its bottom margin, which would lift the inputs above
+     the row's button; the label's own gap does that job. */
+  .settings-add label { display: flex; flex-direction: column; gap: var(--space-1); font-size: 13px; font-weight: 500; color: var(--fg); }
+  .settings-add .field { margin-bottom: 0; }
+  .settings-add .field > span { margin-bottom: 0; }
+  /* A refusal inside a row form takes the whole row, above its fields (UX audit B3). */
+  .settings-add > .form-errors { flex-basis: 100%; margin-bottom: 0; }
   /* The hub has no Remove button to anchor to the right, so its own fact takes that job. */
   .settings-hub .settings-fact { margin-left: auto; }
   .theme-choice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
@@ -25,24 +35,43 @@
 
      ONE COLUMN AT 375px, WHICH IS THE PHONE RULE (rule 11) AND IS ARITHMETIC, NOT LUCK: the shell
      gives `main.container` 12px of side padding below 719px, so the grid has 351px to fill and
-     `auto-fill` fits exactly one 300px-minimum track, stretched to 351px by the 1fr. `.empty` is a
+     `auto-fill` fits exactly one track, stretched to 351px by the 1fr. The track's minimum is
+     min(300px, 100%) so a narrower container can never be pushed wider than itself. `.empty` is a
      40px-padded full-width component, so the card that has no rules is deliberately let out of that
      size here -- it is a one-line "nothing yet", not an empty page. A custom folder name is a leaf
      name (up to 255 bytes), so the heading wraps anywhere rather than pushing the track wider. --- */
-  .filing-cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+  .filing-cards { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(300px, 100%), 1fr)); }
   .filing-card { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; }
   .filing-card .filing-folder { font-size: 13px; margin: 0 0 8px; overflow-wrap: anywhere; }
   .filing-exts { list-style: none; padding: 0; margin: 0 0 10px; display: flex; flex-wrap: wrap; gap: 6px; }
   .filing-card .chip { display: inline-flex; align-items: center; gap: 4px; }
-  .filing-card .chip form { display: inline; margin: 0; }
   .filing-card .settings-add { max-width: none; }
+
+  /* PLAIN CHIPS UNTIL THE SHELF IS BEING EDITED (UX audit F7). Every chip's remove form is in the
+     page; it shows only while its card's "Edit extensions" `details` is open. `:has()` is the switch
+     because the chips come BEFORE the control that reveals them, where a sibling combinator cannot
+     reach; visible is the DEFAULT and the hiding sits inside `@supports selector(:has(*))`, so a browser
+     without `:has()` (or without `@supports selector()`) shows the removes all the time rather than never. */
+  .filing-card .chip form { margin: 0; }
+  @supports selector(:has(*)) {
+    .filing-card .chip form { display: none; }
+    .filing-card:has(.shelf-exts-edit[open]) .chip form { display: inline; }
+  }
+  /* A 24px target however small the glyph (UX audit I "Targets"), inside the chip's own height. */
+  .filing-chip-remove { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; margin-right: -6px; text-decoration: none; font-size: 14px; line-height: 1; }
+  .shelf-exts-edit > summary { cursor: pointer; width: fit-content; padding: var(--space-1) 0; }
+  .shelf-exts-edit[open] > summary { margin-bottom: var(--space-2); }
+  .shelf-exts-edit > .form-errors { margin-bottom: var(--space-2); }
 
   /* Shelves (2026-10-20): a card's head row, its view/group form, a group's bar, the two add
      forms. The cards themselves are the Filing page's `.filing-card`, unchanged. */
   .shelf-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
   .shelf-card-head form { display: inline; margin: 0; }
+  .shelf-card > .form-errors { margin: 10px 0 0; }
   .shelf-settings { display: flex; flex-wrap: wrap; align-items: end; gap: 8px; margin-top: 10px; }
-  .shelf-settings label { display: grid; gap: 2px; font-size: 12px; }
+  .shelf-settings label { display: grid; gap: var(--space-1); font-size: 13px; font-weight: 500; }
+  .shelf-settings .field { margin-bottom: 0; }
+  .shelf-settings .field > span { margin-bottom: 0; }
   .shelf-group { margin-top: var(--space-5); }
   .shelf-group-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 10px; }
   .shelf-group-bar .group-head { margin: 0; }
@@ -62,4 +91,16 @@
 
   /* --- Users (2026-10-21): one account's page, three sections read top to bottom. --- */
   .user-manage { max-width: 640px; margin-top: var(--space-5); }
+
+  /* --- The Account page (UX audit F1): a Settings page of three `.panel`s at the settings width,
+     not Devise's card stretched to the container. `.account-delete`'s own margin is shell.css's,
+     from when the page was one card; here the grid's gap spaces every panel alike. A hint under a
+     field is components.css's `.field-hint`, a quiet sentence and not a second label. --- */
+  .account-page { display: grid; gap: var(--space-4); max-width: 640px; }
+  .account-page .account-delete { margin-top: 0; }
+  .account-page .form-actions { margin-top: var(--space-2); }
+
+  /* --- Devise's signed-out cards (UX audit F4): the card's heading is the page's h1 now, at the size
+     the card's h2 had, so the card reads as it did. --- */
+  .auth-card h1 { font-size: 18px; line-height: 1.3; margin: 0 0 16px; }
 }

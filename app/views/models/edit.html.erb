@@ -2,7 +2,7 @@
 
 <% content_for :crumbs do %>
   <nav class="breadcrumb" aria-label="Model path">
-    <%= link_to "Files", files_path %>
+    <%= link_to "Library", files_path %>
     <span class="sep" aria-hidden="true">/</span>
     <%= link_to "3D models", files_models_path %>
     <span class="sep" aria-hidden="true">/</span>
@@ -23,8 +23,10 @@
   <label class="field"><span>License</span><%= f.text_field :license %></label>
   <label class="field"><span>Source URL</span><%= f.url_field :source_url %></label>
   <label class="field"><span>Tags (comma-separated)</span><%= f.text_field :tag_list, value: @model.tag_list %></label>
+  <%# THE OPTIONS' WORDS ARE Maker::Model::PRINT_STATUS_LABELS' (UX audit 2026-11-01, E2): this select
+      built its own ("Want to print") while the filter chip said "Wanted" for the same state. %>
   <label class="field"><span>Status</span>
-    <%= f.select :print_status, Maker::Model::PRINT_STATUSES.map { |s| [ s.tr("_", " ").capitalize, s ] } %>
+    <%= f.select :print_status, Maker::Model::PRINT_STATUSES.map { |s| [ Maker::Model.print_status_label(s), s ] } %>
   </label>
   <label class="field"><span>Notes</span><%= f.text_area :notes, rows: 5, placeholder: "Markdown supported…" %></label>
   <div class="form-actions">

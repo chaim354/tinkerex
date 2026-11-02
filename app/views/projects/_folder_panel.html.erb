@@ -54,12 +54,14 @@
           posts `view[<key>]=<value>` and the door redirects back to this panel's own anchor.
           A SECOND COPY OF THIS MARKUP LIVES IN projects/_attachments.html.erb, offering two of the
           three: Files has no browser to mount (there is no Dir for the folder's own root unless it
-          is a working tree), and a control that does nothing is worse than one that is absent. %>
-      <div class="view-toggle" role="group" aria-label="View">
+          is a working tree), and a control that does nothing is worse than one that is absent.
+          `aria-pressed` says which is on to a screen reader, the way the `active` class draws it
+          (2026-11-02, the UX audit's §I). %>
+      <div class="view-toggle" role="group" aria-label="View of <%= dir.name %>">
         <% Maker::ProjectKind.offered_views(key).each do |value| %>
           <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
                         params: { view: { key => value } },
-                        class: "toggle#{' active' if view == value}" %>
+                        class: "toggle#{' active' if view == value}", "aria-pressed": (view == value).to_s %>
         <% end %>
       </div>
     </div>

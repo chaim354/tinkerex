@@ -22,6 +22,9 @@ class ProjectsController < ApplicationController
   # tiles and the build-log photos — and both ask the same question of the same table.
   include PageNodes
 
+  # "status" IS ONLY A STABLE BASE: SQL sorts the column alphabetically, and the view re-sorts that
+  # page into lifecycle order (ProjectsHelper#projects_in_order, over Maker::Project::STATUSES), so
+  # what the maker sees under "Status" is Planning → Active → Paused → Done, not Active → Done → …
   SORTS = { "recent" => { updated_at: :desc }, "name" => { name: :asc },
             "status" => { status: :asc, name: :asc } }.freeze
 
@@ -42,8 +45,9 @@ class ProjectsController < ApplicationController
   # One flat list of live projects, newest activity first. `?archived=1` swaps in the archived
   # ones. ARCHIVED IS THE ONE STATUS THAT DECIDES WHICH LIST A PROJECT IS IN; the other four are
   # shown and set rather than filtered on — the form offers active, paused and done (stage 4,
-  # S4-6), the project page badges them, and each card here badges them beside the link (slice 6).
-  # `planning` is the column default and is never badged.
+  # S4-6), the project page badges them, and each card here badges EVERY status beside the link
+  # (2026-11-02, the UX audit's C7; slice 6 left Planning unbadged), with "New" standing in for
+  # Planning on a discovered project nobody has opened yet (projects/_card).
   def index
     # `== "1"`, not `.present?`: a checkbox submits "0" for off, and `.present?` would read that as
     # "show me the archive" — the opposite page.
@@ -494,6 +498,10 @@ class ProjectsController < ApplicationController
       @absent_panels = ON_DEMAND.select do |key|
         @panel_layout.visible?(key) && key != @add_panel && !panel_has_rows?(key)
       end
+      # "Also in this project" (the UX audit's C1): the hidden panels that hold rows, decided here
+      # beside the on-demand panels (design-system.md rule 14). ProjectsHelper#project_hidden_rows
+      # reads this, and computes it itself where nothing set it.
+      @hidden_rows = Maker::ProjectHiddenRows.for(project: @project, layout: @panel_layout, sheets: @sheets)
     end
     # `layout/panel` renders the one body and stops; the whole page is the default render.
     render partial: "projects/panel_body", locals: { key: @panel_key, extra: {} }, layout: false if @panel_key
@@ -536,7 +544,8 @@ class ProjectsController < ApplicationController
     @project = current_user.maker_projects.new(project_params)
     if demo_may_publish?(@project) && @project.save
       failure = ensure_project_folder(@project)
-      redirect_to project_path(@project), notice: created_notice(@project, failure)
+      redirect_to project_path(@project), notice: created_notice(@project, failure),
+                                          alert: (folder_failure_alert(failure) if failure)
     else
       render :new, status: :unprocessable_entity
     end
@@ -555,9 +564,7 @@ class ProjectsController < ApplicationController
   # the project has no folder or it is in the trash — the partial then says "the project's library
   # folder", as the panel always did.
   def publishing
-    id = @project.folder_node_id.presence
-    tree = id && Maker::LibraryTree.new(current_user)
-    @folder_path = tree&.dir?(id) ? tree.path_for(id) : nil
+    load_publishing
   end
 
   # ASSIGN, THEN ASK, THEN SAVE -- `update` in two steps so the demo's refusal below sees the state
@@ -573,13 +580,20 @@ class ProjectsController < ApplicationController
     # `return_to` is NOT a URL: it is the literal string "publishing", resolved here to THIS
     # project's own tab, so there is nothing to sanitise and no open redirect to get wrong (the same
     # reason ApplicationHelper#back_target_path refuses to take a URL param, §14d).
+    #
+    # A REFUSAL RE-RENDERS THE TAB IT CAME FROM, WITH WHAT WAS TYPED (2026-11-02, the UX audit's B3).
+    # It used to redirect there with the reasons in an alert, which reloaded the SAVED choices: the
+    # maker's pick of visibility and licence went, and the reason floated in a toast away from the
+    # form it was about. Details always re-rendered; the Publishing tab now does the same, 422 so
+    # Turbo renders the answer in place, and projects/_publish reads the saved row for what it says
+    # about the live page.
     from_publishing = params[:return_to] == "publishing"
     if demo_may_publish?(@project) && @project.save
       redirect_to (from_publishing ? publishing_project_path(@project) : project_path(@project)), notice: publish_notice
+    elsif from_publishing
+      load_publishing
+      render :publishing, status: :unprocessable_entity
     else
-      return redirect_to publishing_project_path(@project), alert: @project.errors.full_messages.to_sentence if
-        from_publishing
-
       render :edit, status: :unprocessable_entity
     end
   end
@@ -587,7 +601,8 @@ class ProjectsController < ApplicationController
   # Soft archive — the model's lifecycle op (keeps the record + its history). Hard delete is a
   # deliberately deferred secondary affordance.
   #
-  # "NOT A PROJECT" AND "ARCHIVE" ARE ONE WRITE AND TWO SENTENCES (stage 4, S4-6; story 1.6).
+  # "STOP TREATING THIS FOLDER AS A PROJECT" (labelled "Not a project" until 2026-11-02) AND
+  # "ARCHIVE" ARE ONE WRITE AND TWO SENTENCES (stage 4, S4-6; story 1.6).
   # Archiving IS the dismissal mechanism — the claim lookup in Maker::ProjectDiscovery#adoptable is
   # unscoped, so an archived project keeps folder_node_id and the sweep passes over its folder
   # forever (docs/invariants/project-intake.md). That was true and undocumented; the maker had to
@@ -610,13 +625,22 @@ class ProjectsController < ApplicationController
   # just reappeared — landing back on the archived view it left would read as a no-op.
   def unarchive
     @project.unarchive!
-    redirect_to projects_path, notice: "Restored #{@project.name}."
+    # THE BUTTON'S VERB (UX audit B7): the control reads "Unarchive", so the notice does too.
+    redirect_to projects_path, notice: "Unarchived #{@project.name}."
   end
 
   private
 
   def set_project
     @project = current_user.maker_projects.find_by!(slug: params[:id])
+  end
+
+  # What the Publishing tab reads beyond the project — #publishing's own comment says why it is the
+  # tree's path — loaded by both renders of the tab: the GET, and #update's refusal.
+  def load_publishing
+    id = @project.folder_node_id.presence
+    tree = id && Maker::LibraryTree.new(current_user)
+    @folder_path = tree&.dir?(id) ? tree.path_for(id) : nil
   end
 
   # THE SHARED DEMO PUBLISHES NOTHING (Tinkerex::Demo), so this server never hosts a visitor's project
@@ -722,26 +746,43 @@ class ProjectsController < ApplicationController
   # IT RETURNS THE FAILURE NOW RATHER THAN SWALLOWING IT (stage 4, S4-6; story 1.2). "Project
   # created." over a folder that was never made is the one flash a maker cannot act on: the next
   # save from LightBurn goes to a directory that does not exist, and the only record was a log
-  # line. The CLASS NAME is what the sentence carries, because FileLayer::FetchError (try again)
-  # and FileLayer::UnsupportedOperation (never succeeds on retry) are different problems.
+  # line. FileLayer::FetchError (try again) and everything else (FileLayer::UnsupportedOperation
+  # never succeeds on retry) are different problems, so the answer says WHICH — as a symbol, never
+  # the class name, which used to reach the flash verbatim (the UX audit's C10: a maker cannot act
+  # on "FileLayer::FetchError"). The class and message still go to the log, where an operator reads.
   def ensure_project_folder(project)
     project.ensure_library_folder!(current_user)
     nil
+  rescue FileLayer::FetchError => e
+    Rails.logger.warn("[projects] folder ensure failed for #{project.slug}: #{e.class} #{e.message}")
+    :unreachable
   rescue StandardError => e
     Rails.logger.warn("[projects] folder ensure failed for #{project.slug}: #{e.class} #{e.message}")
-    e.class.name
+    :refused
   end
 
   # THE FOLDER IS NAMED FROM THE SLUG, NOT LOOKED UP — and that is exact rather than approximate
   # HERE and only here: #create always reaches ensure_library_folder!'s minting branch (a brand-new
   # project has no folder_node_id), and that branch builds [ROOT, slug] literally. A project ADOPTED
   # in place never comes through this action, so no sentence built here can name the wrong path.
+  #
+  # THE FAILURE IS AN ALERT BESIDE THE NOTICE, never folded into it (2026-11-02): the project WAS
+  # created, which is news, and its folder was not, which is a problem — and a problem in a
+  # `flash-notice` is drawn under the word "Done". Each names the next step in the maker's terms.
+  # "The next time you open the project" is literal: #show re-ensures the folder on every render.
   def created_notice(project, failure)
-    if failure
-      "Project created, but its folder could not be made (#{failure}). It will be retried the " \
-        "next time you upload."
+    return "Created #{project.name}." if failure
+
+    "Created #{project.name}. Its folder is #{Maker::ProjectFolders::ROOT}/#{project.slug}."
+  end
+
+  def folder_failure_alert(failure)
+    if failure == :unreachable
+      "The library could not be reached, so the project folder was not created yet. It is made " \
+        "the next time you open the project while the library is available."
     else
-      "Project created. Its folder is #{Maker::ProjectFolders::ROOT}/#{project.slug}."
+      "The project folder could not be made in the library; a file or folder there may already " \
+        "have its name. It is tried again each time you open the project."
     end
   end
 
@@ -773,7 +814,7 @@ class ProjectsController < ApplicationController
   end
 
   # WHAT A VISIBILITY CHANGE ACTUALLY DID, IN THE MAKER'S TERMS (stage 4, S4-4; story 5.2). "Project
-  # updated." was the whole feedback for publishing until now — no URL, and no word about the fact
+  # updated." (now "Saved NAME.") was the whole feedback for publishing until now — no URL, and no word about the fact
   # that EVERY visible file in the project's folder — and every file attached to the project or its
   # build log, wherever it lives — became downloadable (Maker::PublicProject#permits?). A maker
   # cannot consent to what nobody told them.
@@ -781,7 +822,7 @@ class ProjectsController < ApplicationController
   # `saved_change_to_visibility?` RATHER THAN `published?`: the sentence is about the CHANGE, so a
   # save that touched the name must not re-announce a publication that happened last week.
   def publish_notice
-    return "Project updated." unless @project.saved_change_to_visibility?
+    return "Saved #{@project.name}." unless @project.saved_change_to_visibility?
     return "#{@project.name} is private again. Its public page is gone." unless @project.published?
 
     url = public_project_url(@project.user.handle, @project.slug,

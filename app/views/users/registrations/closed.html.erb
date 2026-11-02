@@ -1,6 +1,11 @@
+<%# A CLOSED SERVER'S SIGN-UP PAGE (Users::RegistrationsController#require_registration_open!, 403).
+    It tells a visitor who to ask and nothing operational (UX audit F5): no environment variable and no
+    console task, which are the operator's and live in docs/INSTALL.md. %>
+<% content_for :title, "Sign-ups are closed — Tinkerex" %>
 <div class="auth-card">
   <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
-  <h2>Sign-ups are closed</h2>
-  <p>This server is not taking new accounts. If someone runs it for you, ask them for an account. An admin adds one under Settings → Users; from the console, <code>bin/rails tinkerex:owner</code> does the same, and <code>REGISTRATION=open</code> opens sign-ups.</p>
+  <h1>Sign-ups are closed</h1>
+  <p>This server is not taking new accounts. This server's administrator adds accounts, so if someone
+    runs it for you, ask them for one.</p>
   <%= render "users/shared/links" %>
 </div>

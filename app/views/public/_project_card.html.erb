@@ -20,7 +20,9 @@
     cover thumbnail?) answered from whatever each caller actually holds, not two answers to one
     condition.
   %>
-  <%= link_to public_project_path(project.user.handle, project.slug), class: "card-cover" do %>
+  <%# NAMED BY THE PROJECT (UX audit I): its only content is an image with `alt=""` or an
+      aria-hidden placeholder, so without a label it is a link a screen reader announces as nothing. %>
+  <%= link_to public_project_path(project.user.handle, project.slug), class: "card-cover", aria: { label: project.name } do %>
     <%# THE PUBLIC PREVIEW ROUTE, NEVER `url_for(thumb.asset)` (hardening, 2026-09-08;
         tinkerex#278). A blob URL is unauthenticated and never expires, so this card's cover kept
         answering after its project went private — the route asks `Maker::PublicProject#deliverable!`
@@ -36,9 +38,10 @@
       <span class="thumb project-thumb-empty" aria-hidden="true"><%= rail_icon(:projects) %></span>
     <% end %>
   <% end %>
-  <h3 class="card-title">
+  <%# An h2: the card sits directly under the page's h1 on both lists (UX audit I, Headings). %>
+  <h2 class="card-title">
     <%= link_to project.name, public_project_path(project.user.handle, project.slug) %>
-  </h3>
+  </h2>
   <span class="muted">by <%= link_to "@#{project.user.handle}", public_user_path(project.user.handle) %></span>
   <% if project.description.present? %>
     <p class="muted card-blurb"><%= truncate(project.description, length: 160) %></p>
@@ -50,7 +53,5 @@
       <% end %>
     </div>
   <% end %>
-  <time class="muted card-time" datetime="<%= project.updated_at.iso8601 %>">
-    <%= project.updated_at.strftime("%Y-%m-%d") %>
-  </time>
+  <%= time_at(project.updated_at, style: :date, class: "muted card-time") %>
 </article>

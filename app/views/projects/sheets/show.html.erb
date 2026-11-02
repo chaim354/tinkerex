@@ -76,8 +76,10 @@
         <%= f.submit "Rename", class: "btn small" %>
       <% end %>
       <%= link_to "Export CSV", sheet_path(@sheet, format: :csv), class: "linkbtn" %>
-      <%= button_to "Delete", sheet_path(@sheet), method: :delete, class: "linkbtn danger",
-                    form: { data: { turbo_confirm: "Delete #{@sheet.name}?" } } %>
+      <%# The page's one destructive shape, `linkbtn danger small` (2026-11-02, the UX audit's C4),
+          and a confirm that says what goes with it. %>
+      <%= button_to "Delete", sheet_path(@sheet), method: :delete, class: "linkbtn danger small",
+                    form: { data: { turbo_confirm: "Delete the sheet #{@sheet.name}? Its rows go with it." } } %>
     </div>
   </div>
 

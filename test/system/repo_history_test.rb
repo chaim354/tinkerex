@@ -29,6 +29,11 @@ class RepoHistoryTest < ApplicationSystemTestCase
 
   setup { @user = sign_in_as("repo-history@example.com") }
 
+  # True when the editor's leave-guard would make the browser ask: the guard's answer to a cancelable
+  # `beforeunload` is to prevent it (editor_controller.js#guard).
+  GUARD_HOLDS = '(() => { const e = new Event("beforeunload", { cancelable: true }); ' \
+                "window.dispatchEvent(e); return e.defaultPrevented })()".freeze
+
   # The oids the panel will list, from the same service the endpoint uses. Selecting rows by
   # `data-oid` rather than by their message text is not fussiness: a short_oid is eight hex
   # characters, so `find(".history-row", text: "c0")` can match the OTHER row whenever its abbrev
@@ -52,7 +57,7 @@ class RepoHistoryTest < ApplicationSystemTestCase
   end
 
   def entry(subject, oid: "a" * 40)
-    { oid:, short_oid: oid[0, 8], subject:, author: "Seed", time: "2026-08-30T10:00:00Z" }
+    { oid:, short_oid: oid[0, 8], subject:, author: "Seed", time: "2026-08-30T10:00:00Z", at_label: "2026-08-30 10:00" }
   end
 
   test "the panel lists this file's commits, views one, diffs it, and restores it" do
@@ -67,6 +72,11 @@ class RepoHistoryTest < ApplicationSystemTestCase
     # all; a panel showing the repository's whole log would pass a "rows appeared" check.
     assert_selector ".history-row", count: 2
     assert_equal %w[c4 c0], all(".history-row .history-subject").map(&:text)
+    # THE SERVER'S LABEL, NOT THE BROWSER'S (UX audit D1): each row's when is FilesController#history's
+    # `at_label`, the absolute form every other timestamp in the app reads in, inside a <time> whose
+    # datetime is the instant. toLocaleString() printed the browser's own form here ("11/1/2026,
+    # 10:09:06 PM" in the audit), in the browser's zone.
+    assert_selector ".history-row .history-meta time[datetime]", count: 2, text: /\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}\z/
     # An exhausted walk with rows says nothing further — silence about older changes is TRUE here,
     # and this is the only condition under which it is.
     assert_no_selector ".history-note"
@@ -90,7 +100,11 @@ class RepoHistoryTest < ApplicationSystemTestCase
     # this line is what sends them to read why.
     assert_no_selector ".history-diff .cm-chunkButtons"
 
-    within(older) { click_on "Restore" }
+    # ASKED FIRST, IN WORDS THAT NAME WHAT IS LOST (UX audit B5). The restore writes over the working
+    # copy and reloads the page, taking any unsaved editor text with it; the question says so, and
+    # the date is the row's own, so the maker knows WHICH version they are bringing back.
+    question = accept_confirm { within(older) { click_on "Restore" } }
+    assert_match(/\ARestore the version from .+\? This replaces the current file and any unsaved edit\.\z/, question)
 
     # THE FLASH IS BOTH THE ASSERTION AND THE WAIT. It exists only on the reloaded page, so a query
     # for it matches NOTHING until the document swaps — which is what makes it safe to run across a
@@ -109,6 +123,74 @@ class RepoHistoryTest < ApplicationSystemTestCase
     # reviews it, which is what makes an accidental restore one click from undone.
     visit repo_commit_path(root.node_id)
     assert_selector "[data-path='tracked.txt']"
+  end
+
+  # NO IS NO: A DISMISSED RESTORE SENDS NOTHING. The question exists because the restore is not
+  # free — it replaces the working copy and the page reload takes the editor's unsaved text — so
+  # answering it No must leave the bytes, the commit box and the page exactly as they were. The
+  # pending-edit count is the server's own witness that no POST arrived, since a restore that ran
+  # records a Maker::RepoEdit even when nothing on screen changes.
+  #
+  # MUTATION-CHECKED (2026-11-02): with the `window.confirm` guard deleted from
+  # history_controller.js#restore, `dismiss_confirm` finds no dialog and this goes RED
+  # (Capybara::ModalNotFound); restored, green.
+  test "a Restore answered No changes nothing" do
+    root = make_repo_with_commits!(count: 8, touch_every: 4)
+    node = @user.nodes.present.find_by!(name: "tracked.txt")
+    oids = history_oids(root, "tracked.txt")
+    path = File.join(library_root, "many", "tracked.txt")
+    before = File.read(path)
+
+    visit file_path(node.node_id)
+    older = find(".history-row[data-oid='#{oids.last}']")
+    question = dismiss_confirm { within(older) { click_on "Restore" } }
+    assert_includes question, "This replaces the current file and any unsaved edit."
+
+    assert_no_selector ".flash-notice", text: "Restored"
+    assert_selector ".history-row", count: 2 # the panel is still the panel, not a reloaded page
+    assert_equal before, File.read(path)
+    assert_equal 0, Maker::RepoEdit.where(user: @user).count, "a restore was recorded"
+    assert_no_console_errors
+  end
+
+  # A RESTORE OVER AN UNSAVED EDIT ASKS ONCE, NOT TWICE. The editor guards an unsaved edit with the
+  # browser's "Leave site?" prompt on a reload (editor_controller.js), and the restore reloads the
+  # page — so without the `editor:discard` event history_controller.js sends after a yes, the maker
+  # who just agreed to lose the edit would be asked again in the browser's words.
+  #
+  # THE PROMPT ITSELF CANNOT BE WATCHED: WebDriver accepts every beforeunload prompt on its own, so
+  # a version of this test that waited for one passed with the event deleted (measured, 2026-11-02).
+  # What is watched instead is the guard's own answer — a cancelable `beforeunload` dispatched in
+  # the page is `defaultPrevented` exactly when the browser would ask — taken first while the edit
+  # is unsaved (so the case can fail at all), then again from inside the discard event, recorded in
+  # sessionStorage because the reload follows at once.
+  #
+  # MUTATION-CHECKED (2026-11-02): with the dispatch deleted from #restore, the recorded answer is
+  # missing (nil, not "false") — RED; restored, green.
+  test "a Restore over an unsaved edit stands the editor's leave-guard down" do
+    root = make_repo_with_commits!(count: 8, touch_every: 4)
+    node = @user.nodes.present.find_by!(name: "tracked.txt")
+    oids = history_oids(root, "tracked.txt")
+
+    visit file_path(node.node_id)
+    assert_selector ".cm-editor", wait: 10
+    content = find(".cm-content")
+    content.click
+    content.send_keys(:end, " UNSAVED")
+    assert page.evaluate_script(GUARD_HOLDS), "the unsaved edit is not guarded, so this case proves nothing"
+
+    page.execute_script(<<~JS)
+      sessionStorage.removeItem("guard-after-discard")
+      document.addEventListener("editor:discard", () =>
+        sessionStorage.setItem("guard-after-discard", String(#{GUARD_HOLDS})))
+    JS
+    older = find(".history-row[data-oid='#{oids.last}']")
+    accept_confirm { within(older) { click_on "Restore" } }
+
+    assert_selector ".flash-notice", text: "Restored"
+    assert_equal "false", page.evaluate_script("sessionStorage.getItem('guard-after-discard')")
+    assert_equal "v0\n", File.read(File.join(library_root, "many", "tracked.txt"))
+    assert_no_console_errors
   end
 
   # THE CASE THE WHOLE PANEL EXISTS FOR. 260 commits, and other-1.txt was touched by exactly one of

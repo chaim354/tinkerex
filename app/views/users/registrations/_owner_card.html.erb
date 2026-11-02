@@ -1,0 +1,40 @@
+<%# THE FIRST-RUN CARD (UX audit F5): what a server with no account shows, on the sign-in page and on
+    the sign-up page alike. It is the existing first-account door (Tinkerex::Registration: with no
+    user in the database sign-up is allowed once, and Users::RegistrationsController#build_resource
+    makes that account the confirmed owner and admin), so it posts to sign-up and changes nothing about
+    who may use it. It says nothing operational: a visitor reading it learns what the account is,
+    never an environment variable or a console task.
+
+    No links block: with no account there is nobody to sign in, no password to reset and no
+    confirmation to resend. Needs `resource` (a User) and Devise's helpers, which both doors have. %>
+<% content_for :title, "Create the owner account — Tinkerex" %>
+<div class="auth-card owner-card">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
+  <h1>Create the owner account</h1>
+  <p class="auth-hint">This is the server's first account. It becomes the owner and needs no email
+    confirmation. As this server's administrator, it adds every other account under Settings → Users.</p>
+
+  <%= form_for(resource, as: resource_name, url: registration_path(resource_name)) do |f| %>
+    <%= render "users/shared/error_messages", resource: resource %>
+
+    <div class="field">
+      <%= f.label :email %>
+      <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
+    </div>
+
+    <div class="field">
+      <%= f.label :password %>
+      <%= f.password_field :password, autocomplete: "new-password" %>
+      <span class="auth-hint"><%= @minimum_password_length || Devise.password_length.min %> characters minimum</span>
+    </div>
+
+    <div class="field">
+      <%= f.label :password_confirmation %>
+      <%= f.password_field :password_confirmation, autocomplete: "new-password" %>
+    </div>
+
+    <div class="actions">
+      <%= f.submit "Create the owner account", class: "primary" %>
+    </div>
+  <% end %>
+</div>

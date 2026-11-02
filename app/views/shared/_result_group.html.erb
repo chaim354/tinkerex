@@ -16,6 +16,11 @@
     node_names  Hash     -- optional, defaults to {}. THE :note ARM ONLY: node_id => file name,
                             built by SearchController#index over the CAPPED rows, because a note
                             has no page of its own and the row is a link to the file it is on.
+    folders     Hash     -- optional, defaults to {}. THE :file, :folder AND :model ARMS:
+                            record id => [folder node_id, library path] for the rows rendered
+                            (FilesHelper#result_folders), drawn under the name so three
+                            "tetra.stl" rows can be told apart (UX audit D11, 2026-11-02). An
+                            absent key draws nothing; "" is the library root, named "Library".
 
   A FILE ROW IS A NAME LINK, DELIBERATELY NOT thumb_cell_data — this list has no polling cell to
   seed (docs/invariants/files-preview.md), just a name and an extension label. It and the :note
@@ -30,6 +35,7 @@
   <% total = local_assigns.fetch(:total, records.size) %>
   <% more_path = local_assigns.fetch(:more_path, nil) %>
   <% more_label = local_assigns.fetch(:more_label, "See all") %>
+  <% folders = local_assigns.fetch(:folders, {}) %>
   <section class="result-group result-group--<%= kind %>">
     <h2><%= title %> <span class="muted"><%= total %></span></h2>
     <ul class="result-list">
@@ -42,8 +48,15 @@
               <span class="result-sub"><%= truncate(record.description, length: 80) %></span>
             <% end %>
           <% when :model %>
-            <%= link_to record.title, model_path(record) %>
-            <span class="badge mstatus-<%= record.print_status %>"><%= record.print_status_label %></span>
+            <span class="result-name">
+              <%= link_to record.title, model_path(record) %>
+              <%= render "shared/result_folder", where: folders[record.id] %>
+            </span>
+            <%# A badge only for a status that says something — the model page's and the strip's rule
+                (UX audit E2): every auto-found model starts at the default. %>
+            <% unless record.default_print_status? %>
+              <span class="badge mstatus-<%= record.print_status %>"><%= record.print_status_label %></span>
+            <% end %>
           <% when :inventory_item %>
             <%= link_to record.name, inventory_item_path(record) %>
             <span class="result-sub"><%= [
@@ -51,7 +64,10 @@
               record.location&.name
             ].compact.join(" · ") %></span>
           <% when :file %>
-            <%= link_to record.name, file_path(record.node_id), data: file_open_data %>
+            <span class="result-name">
+              <%= link_to record.name, file_path(record.node_id), data: file_open_data %>
+              <%= render "shared/result_folder", where: folders[record.id] %>
+            </span>
             <span class="result-sub"><%= File.extname(record.name).delete(".").upcase.first(4) %></span>
           <% when :folder %>
             <%#
@@ -60,7 +76,10 @@
               says what it is instead, since a bare name in a list of files would read as a file
               with no type.
             %>
-            <%= link_to record.name, files_path(folder: record.node_id) %>
+            <span class="result-name">
+              <%= link_to record.name, files_path(folder: record.node_id) %>
+              <%= render "shared/result_folder", where: folders[record.id] %>
+            </span>
             <span class="result-sub">Folder</span>
           <% when :note %>
             <%#

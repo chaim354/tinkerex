@@ -1,9 +1,14 @@
+<%# RESEND THE CONFIRMATION LINK. With no mail the link never arrives, so the page says so and names
+    the way that works, as passwords/new does: an administrator's new password confirms the account
+    too (Settings::UsersController#reset_password). Nothing operational for a visitor (UX audit F5). %>
+<% content_for :title, "Resend the confirmation link — Tinkerex" %>
 <div class="auth-card">
   <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
-  <h2>Resend confirmation instructions</h2>
+  <h1>Resend the confirmation link</h1>
 
   <% unless Tinkerex::MailSettings.deliverable? %>
-    <p class="auth-hint">This server can't send email yet (<code>SMTP_ADDRESS</code> is not set), so nothing will arrive until whoever runs it configures mail.</p>
+    <p class="auth-hint">This server can't send email yet, so nothing will arrive. An administrator can
+      confirm your account by setting a new password for it under Settings → Users.</p>
   <% end %>
 
   <%= form_for(resource, as: resource_name, url: confirmation_path(resource_name), html: { method: :post }) do |f| %>
@@ -16,7 +21,7 @@
     </div>
 
     <div class="actions">
-      <%= f.submit "Resend confirmation instructions", class: "primary" %>
+      <%= f.submit "Resend the link", class: "primary" %>
     </div>
   <% end %>
 

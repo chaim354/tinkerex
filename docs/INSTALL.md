@@ -61,11 +61,11 @@ problem. The app refuses to boot on a misconfiguration rather than starting and 
 
 ### First run: the first account is the owner
 
-With no account yet, the sign-up page works and says so: *"This is the server's first account. It
-becomes the owner and needs no email confirmation."* Create it; you are signed in, as the server's
-admin. **After that, sign-ups are closed** — the page answers "Sign-ups are closed" and the link
-disappears — and an admin adds more accounts under Settings → Users (section 4). No mail server is
-involved in any of this.
+With no account yet, opening the server shows **Create the owner account** in place of the sign-in
+form, and says what it is: *"This is the server's first account. It becomes the owner and needs no
+email confirmation."* Create it; you are signed in, as the server's admin. **After that, sign-ups
+are closed** — the sign-up page answers "Sign-ups are closed" and the link disappears — and an admin
+adds more accounts under Settings → Users (section 4). No mail server is involved in any of this.
 
 **Then the app asks once which folder is the library.** The next screen names the mounted folder — *the folder your docker-compose.yml is in*, or the path you
 typed in `LIBRARY_HOST_PATH` — and says what will happen to it: it is indexed every 15 minutes,
@@ -242,13 +242,13 @@ account indexes the *same* folder, so an open sign-up would hand any visitor you
 sign-ups belong to the sync server, an advanced backend where each account has its own library —
 section 9.)
 
-**Adding an account.** The first account is the server's admin, and an admin manages accounts under
+**Adding a user.** The first account is the server's admin, and an admin manages users under
 **Settings → Users**, with no mail involved:
 
-- **Add an account**: an email, a password you choose and pass on to the person (at least 10
+- **Add a user**: an email, a password you choose and pass on to the person (at least 10
   characters, shown as you type it), and whether it is an admin too. It is confirmed on the spot.
   Every account on a folder or bucket library sees the same files, and can change and delete them.
-- **On an account's own page**: set a new password (this also confirms the account and signs it
+- **On a user's own page**: set a new password (this also confirms the account and signs it
   out of every browser and every desktop app), sign out one of its desktop apps, make it an admin or
   stop it being one, or delete it, by typing its address. Deleting removes its projects, notes, tags
   and its copy of the catalog; every file in the library stays. On a sync-server library, a desktop
@@ -355,6 +355,8 @@ file sets the ones marked *set by compose*; the rest come from `.env`.
 | `SECRET_KEY_BASE` | no | generated on the first start, kept at `storage/secret_key_base` in the volume | Signs sessions and cookies. Set it to use your own (`openssl rand -hex 64`); a blank value counts as unset. Changing or losing it signs everyone out and nothing else. |
 | `LIBRARY_BACKEND` | no (the image defaults to `share`) | `share` | Where the files live. `share` (a folder) is the default and what this page installs; leave it unset. The other two values, `s3` and `chunk_remote`, are the advanced backends in section 9, a work in progress. Chosen per deployment, never per user. An explicit blank refuses the boot, and so does any value other than these three spelled exactly (`S3`, or a stray space, included). |
 | `LIBRARY_PATH` | no | `/library` (the image default) | The folder mounted inside the container. The library is this folder or one chosen inside it in the browser (section 2). The boot checks that it exists, is a directory, and is writable by the app's user — by writing a probe file, because mode bits lie on network mounts. |
+| `TIME_ZONE` | no | the host's zone (`TZ`, else the zone `/etc/localtime` links to), else `UTC` — inside the image that is `UTC` | The zone every time on the page is shown in, as a tz database name such as `America/New_York` or `Europe/Berlin`. Set it: the container's clock is UTC whatever the host's is. The nightly jobs (the trash purge, the cleanups) run on this clock too. A name the app does not know refuses the boot, and the name is matched exactly, so `america/new_york` or a stray space is refused as well. |
+| `TZ` | no | — | The usual container zone variable: used when `TIME_ZONE` is unset and it names a zone, ignored otherwise. Set `TIME_ZONE` instead; if you set both, keep them equal, because the nightly jobs read `TZ` first. |
 | `APP_HOST` | with `SMTP_ADDRESS` | `APP_HOST-IS-NOT-SET.invalid`, which without SMTP only ever lands in a message nothing can deliver | The host name (no scheme) that links in email point at; also the default HELO domain and the domain of the default sender. The boot refuses `SMTP_ADDRESS` without it. |
 | `FORCE_SSL` | when behind TLS | off | Set to `1` when the server is reached over HTTPS through a reverse proxy: redirects plain HTTP, marks cookies secure, makes mail links `https`. Setting it with no TLS in front locks you out. |
 | `CLOUDFLARE_ONLY` | no | off | Set to `1` when Cloudflare proxies your domain and the reverse proxy in front of the app appends the connecting address to `X-Forwarded-For` (Kamal's kamal-proxy does): every request whose connection did not come from one of Cloudflare's published ranges (`config/cloudflare_ips.yml`) is answered 403, so nobody can reach the app around Cloudflare by asking your server's address directly. Behind a proxy that is not Cloudflare it refuses everything; with no proxy appending that address it protects nothing, because a request without the header is let through. |

@@ -100,17 +100,40 @@
     grow with attachments, tasks or build-log entries" holds without a counter cache. The file
     count is the FOLDER's (@listing.total), not maker_file_attachments — an attachment to a node
     living elsewhere in the library (Linked) is counted separately, right here, rather than folded
-    into the first number. %>
+    into the first number.
+
+    IT COUNTS ONLY WHAT THE PAGE SHOWS (2026-11-02, the UX audit's C1/C7). "0 of 0 tasks done · 0
+    sheets" sat above a page with no Tasks and no Sheets panel, and a laser project's "1 sheet"
+    named a panel its preset hides. A panel that is absent (empty, on demand) or hidden says
+    nothing here; one the project's type hid while it holds rows is named on the line below
+    instead, with a way to it. %>
+<% hidden_rows = @editing ? [] : project_hidden_rows %>
 <% done = @tasks.count { |t| t.status == "done" } %>
 <p class="project-stats">
   <span><b><%= @listing.total %></b> <%= "file".pluralize(@listing.total) %></span>
   <% if @linked_rows.any? %>
     <span><b><%= @linked_rows.size %></b> linked</span>
   <% end %>
-  <span><b><%= done %> of <%= @tasks.size %></b> <%= "task".pluralize(@tasks.size) %> done</span>
-  <span><b><%= @entries.size %></b> log <%= "entry".pluralize(@entries.size) %></span>
-  <span><b><%= @sheets.size %></b> <%= "sheet".pluralize(@sheets.size) %></span>
+  <% if panel_on_page?(@panel_layout, "tasks", @absent_panels) %>
+    <span><b><%= done %> of <%= @tasks.size %></b> <%= "task".pluralize(@tasks.size) %> done</span>
+  <% end %>
+  <% if panel_on_page?(@panel_layout, "build_log", @absent_panels) %>
+    <span><b><%= @entries.size %></b> log <%= "entry".pluralize(@entries.size) %></span>
+  <% end %>
+  <% if panel_on_page?(@panel_layout, "sheets", @absent_panels) %>
+    <span><b><%= @sheets.size %></b> <%= "sheet".pluralize(@sheets.size) %></span>
+  <% end %>
 </p>
+<%# "ALSO IN THIS PROJECT" (C1): the panels the project's TYPE hides that hold rows, each linked
+    to its own page where it has one (the BOM page, a lone sheet) and otherwise to the layout editor
+    at that panel, whose strip carries its Show control. Never in the editor, which draws every
+    panel. Maker::ProjectHiddenRows decides; ProjectsHelper words and links. %>
+<% if hidden_rows.any? %>
+  <p class="project-also muted">
+    Also in this project:
+    <%= safe_join(hidden_rows.map { |entry| link_to hidden_row_label(entry, @panel_layout), hidden_row_path(@project, entry) }, " · ") %>
+  </p>
+<% end %>
 
 <%#
   THE PANELS, AS DATA (stage 4, S4-7; story 6.5). Ten hard-coded renders became one loop over

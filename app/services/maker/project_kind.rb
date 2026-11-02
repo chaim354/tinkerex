@@ -430,6 +430,19 @@ module Maker
                  repo_ids:, block_kinds:, shelf_views:, shelf_groups:)
     end
 
+    # THE PANELS THIS KIND'S PRESET HIDES AND THE MAKER HAS NOT ANSWERED (2026-11-02, the UX audit's
+    # C1): #layout_for takes the preset's hidden set only while the stored column names no `hidden`
+    # of its own, and the first layout the maker saves writes one — after which every hidden panel
+    # is the maker's choice, made in an editor that drew it ghosted. Before that, a laser project
+    # hides `bom wiring releases sheets` without anyone having seen them, which is how catan's
+    # three-line BOM, release and sheet became unreachable from its own page. Read here, beside the
+    # merge it describes, so "hidden by the preset" cannot drift from what #layout_for does.
+    def self.preset_hidden(kind:, overrides:)
+      return [] if overrides.is_a?(Hash) && overrides.key?("hidden")
+
+      PRESETS.fetch(kind.to_s, PRESETS.fetch(DEFAULT))[:hidden] - ALWAYS
+    end
+
     # `Array#&` FILTERS, DEDUPS AND KEEPS THE RECEIVER'S ORDER in one operation, which is all three
     # things this needs — and it is what makes the read total: a key that is not in the vocabulary
     # simply is not there, whatever wrote it. THE VOCABULARY IS AN ARGUMENT, not PANELS, because it

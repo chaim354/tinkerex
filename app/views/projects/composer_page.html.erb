@@ -1,0 +1,25 @@
+<%#
+  A REFUSED COMPOSER, ON A PAGE OF ITS OWN — the no-JavaScript half of Projects::ComposerRefusal
+  (2026-11-02, the UX audit's B3). Under Turbo a refusal replaces the composer in place on the page
+  the maker was on; without it there is no page to patch, so the door answers 422 with this: the
+  same composer partial, open, the error inside it and every typed value in its field, under the
+  project's crumbs. Nothing typed is lost either way, which a redirect-with-alert could not promise.
+
+  Locals: partial (the composer's partial name), locals (its locals), title (what the page is for).
+%>
+<% content_for :title, "#{title} — #{@project.name} — Tinkerex" %>
+<% content_for :crumbs do %>
+  <nav class="breadcrumb" aria-label="Project path">
+    <%= link_to "Projects", projects_path %>
+    <span class="sep" aria-hidden="true">/</span>
+    <%= link_to @project.name, project_path(@project) %>
+    <span class="sep" aria-hidden="true">/</span>
+    <span aria-current="page"><%= title %></span>
+  </nav>
+<% end %>
+
+<div class="page-head"><h1><%= title %></h1></div>
+
+<div class="composer-page panel">
+  <%= render partial, **locals %>
+</div>

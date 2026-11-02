@@ -60,11 +60,14 @@ module Web
       get files_models_path
       assert_response :success
       assert_select "h1", text: "3D models"
-      assert_select "header.topbar nav.breadcrumb a[href=?]", files_path, text: "Files"
+      assert_select "header.topbar nav.breadcrumb a[href=?]", files_path, text: "Library"
       assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "3D models"
       assert_select ".model-card[href=?]", model_path(shown), count: 1
       assert_select ".model-card", text: /Gone/, count: 0
-      assert_select ".page-head a.btn.primary[href=?]", new_model_path, text: "Import model"
+      # "ADD MODEL", WITH TWO ROUTES (UX audit 2026-11-01, E3): the primary is a menu, not the zip import alone.
+      assert_select ".page-head details.menu > summary.btn.primary", text: "Add model ▾"
+      assert_select ".page-head details.menu a.menu-item[href=?]", new_model_path, text: "Import a Printables zip"
+      assert_select ".page-head details.menu a.menu-item[href=?]", help_path(anchor: "models"), text: "From a file in your library"
       # NO POINTER AT SETTINGS (2026-10-20): which folders are models is a built-in rule now
       # (Maker::ModelIntake::SHELVES), and /settings/shelves is the project-folder Shelves page,
       # which says nothing about this view. The "Settings -> Shelves" hint that sat here went.

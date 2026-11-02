@@ -5,7 +5,7 @@
               url: (project.persisted? ? project_path(project) : projects_path),
               method: (project.persisted? ? :patch : :post), class: "project-form" do |f| %>
   <% if project.errors.any? %>
-    <div class="form-errors flash-alert">
+    <div class="form-errors flash-alert" role="alert">
       <%= project.errors.full_messages.to_sentence %>
     </div>
   <% end %>
@@ -55,7 +55,7 @@
 
     IT PRESETS, IT DOES NOT OVERWRITE: an explicit show/hide/reorder is stored separately in
     `panels` and keeps winning, so changing the type here rearranges only the panels the maker has
-    not spoken about. The chooser at the foot of the project page is where those live.
+    not spoken about. The Page layout tab is where those live.
 
     `f.select` UNDER THE FORM'S `scope: :project` IS WHAT MAKES THE NAME `project[kind]`, which is
     the key ProjectsController#project_params permits — a namespaced model would otherwise scope to
@@ -67,14 +67,15 @@
     <%= f.select :kind,
                  options_for_select(Maker::Project::KINDS.map { |k| [ Maker::ProjectKind.label(k), k ] },
                                     project.kind) %>
-    <span class="field-hint muted">Presets which panels this project's page shows, and which file
-      its hero prefers.</span>
+    <span class="field-hint muted">Presets which panels this project's page shows, and which kind
+      of file it uses as the cover when you have not chosen one.</span>
   </label>
 
-  <%# VISIBILITY AND LICENCE MOVED TO THE PUBLISH PANEL (stage 4, S4-4), on the project page, where
-      the three states can carry their meanings and a handle can be claimed inline. They are not
-      duplicated here: one column with two controls is the shape §14a keeps recording, and
-      `project_params` still permits both because the panel posts to this same #update. %>
+  <%# VISIBILITY AND LICENCE MOVED TO THE PUBLISH PANEL (stage 4, S4-4) — the edit area's Publishing
+      tab since 2026-10-26 — where the three states can carry their meanings and a handle can be
+      claimed inline. They are not duplicated here: one column with two controls is the shape §14a
+      keeps recording, and `project_params` still permits both because the tab posts to this same
+      #update. %>
 
   <%#
     THE COVER IMAGE, choosable here rather than only inferred. `Maker::Project#cover_node_id` falls
@@ -138,8 +139,11 @@
       just leaves them where you put them.</span>
   </label>
 
+  <%# On Details this row ends the way Publishing's and Page layout's do (2026-11-02, the UX audit's C6):
+      a Save that names what it saves, then the same `linkbtn edit-cancel` back to the project. %>
   <div class="form-actions">
     <%= f.submit(project.persisted? ? "Save changes" : "Create project", class: "btn primary") %>
-    <%= link_to "Cancel", (project.persisted? ? project_path(project) : projects_path), class: "linkbtn" %>
+    <%= link_to "Cancel", (project.persisted? ? project_path(project) : projects_path),
+                class: (project.persisted? ? "linkbtn edit-cancel" : "linkbtn") %>
   </div>
 <% end %>

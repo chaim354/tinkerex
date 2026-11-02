@@ -33,7 +33,10 @@ module Web
     end
 
     test "the chip and the badge must say the same word for one state" do
-      dragon = @user.maker_models.create!(title: "Dragon", print_status: "want_to_print")
+      # A NON-DEFAULT status: since the UX audit (E2, 2026-11-02) the model page badges a status only
+      # when it is not the schema default (`want_to_print`), so the default could never reach the
+      # badge here and the test would fail for the wrong reason.
+      dragon = @user.maker_models.create!(title: "Dragon", print_status: "printed")
       get files_models_path
       assert_response :success
 
@@ -45,9 +48,9 @@ module Web
       chip = css_select(".chips .chip").map { |e| e.text.strip }
       get model_path(dragon)
       assert_response :success
-      badge = css_select(".badge[class*=mstatus-want_to_print]").map { |e| e.text.strip }
+      badge = css_select(".badge[class*=mstatus-printed]").map { |e| e.text.strip }
       refute_empty badge, "no status badge rendered — the fixture is not reaching the model page"
-      label = Maker::Model::PRINT_STATUS_LABELS.fetch("want_to_print")
+      label = Maker::Model::PRINT_STATUS_LABELS.fetch("printed")
       assert_includes chip, label, "the filter chip does not use the one label source"
       assert_equal [ label ], badge, "the badge says something the filter chip does not"
     end

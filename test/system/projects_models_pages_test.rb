@@ -9,7 +9,7 @@ require "application_system_test_case"
 #   - Rendering the build-log composer open (`<details class="composer" open>` in
 #     projects/_build_log.html.erb) reddens test 1 at its closed-before-the-click assertion:
 #     `expected not to find visible css ".build-log-panel details.composer[open]", found 1 match:
-#     "Add entry"`.
+#     "Add entry"` (the summary has read "Add…" since 2026-11-02).
 #   - Deleting `.attachment-tile:hover .tile-meta, .attachment-tile:focus-within .tile-meta
 #     { opacity: 1 }` from pages/projects.css reddens test 2 AFTER the hover: `expected to find
 #     visible css ".attachment-tile .tile-detach" but there were no matches. Also found "", which
@@ -57,15 +57,15 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     click_link "Build log"
     assert_current_path project_path(@project, add: "build_log")
     assert_no_selector ".build-log-panel details.composer[open]"
-    find(".build-log-panel details.composer > summary", text: "Add entry").click
+    find(".build-log-panel details.composer > summary", text: "Add…").click
     assert_selector ".build-log-panel details.composer[open] lexxy-editor", visible: true
     find(".build-log-panel lexxy-editor [contenteditable='true']").click
     find(".build-log-panel lexxy-editor [contenteditable='true']").send_keys("Shade printed in PETG.")
-    # "Save entry" — AND THIS LINE IS THE EVIDENCE FOR THE RENAME. It read `click_on "Add entry"`
-    # until 2026-09-10, at which point BOTH the disclosure that opens the composer and the submit
-    # that saves it carried that label, 150px apart in one panel (§1A.8). Capybara resolved the
-    # ambiguity silently; a maker reading the panel could not.
-    click_on "Save entry"
+    # "Add entry" ON THE SUBMIT, "Add…" ON THE OPENER (2026-11-02, the UX audit's C4: the six
+    # panels' one composer pattern). Until 2026-09-10 BOTH the disclosure and the submit read "Add
+    # entry", 150px apart in one panel (§1A.8); Capybara resolved the ambiguity silently, a maker
+    # reading the panel could not. The opener's "Add…" is what keeps them two labels.
+    click_on "Add entry"
     assert_selector ".log-timeline .log-entry .entry-body", text: "Shade printed in PETG."
     assert_no_console_errors
   end

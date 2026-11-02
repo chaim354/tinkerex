@@ -5,13 +5,18 @@
   chip here: a count over `published` would disclose that the project exists, and a chip over an
   empty public set would lead to an empty page.
 %>
-<% content_for :title, "Explore" %>
+<% content_for :title, "Explore — Tinkerex" %>
 <% content_for :container_class, "public-main" %>
 
 <div class="page-head">
   <div class="page-title">
     <h1>Explore</h1>
-    <span class="mono muted"><%= pluralize(@projects.size, "project") %></span>
+    <%# A COUNT ONLY WHEN IT IS THE TOTAL (UX audit G4). The list stops at
+        Public::ExploreController::PAGE, and the controller fetches one more to know whether it did,
+        so a full page says what it is rather than reporting the cap as the number of projects. %>
+    <span class="mono muted">
+      <%= @more ? "Showing the #{@projects.size} most recent" : pluralize(@projects.size, "project") %>
+    </span>
   </div>
 </div>
 
@@ -23,8 +28,10 @@
       <%= link_to "All", public_explore_path, class: "tag-chip" %>
     <% end %>
     <% @chips.each do |name, count| %>
+      <%# The chosen chip says so to a screen reader as well as in ink (aria-current: these are
+          links, so aria-pressed would be invalid; files/_ext_filter makes the same call). %>
       <%= link_to "#{name} (#{count})", public_explore_path(tag: name),
-                  class: "tag-chip#{' active' if name == @tag}" %>
+                  class: "tag-chip#{' active' if name == @tag}", aria: { current: ("page" if name == @tag) } %>
     <% end %>
   </div>
 <% end %>

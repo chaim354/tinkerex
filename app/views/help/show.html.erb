@@ -32,20 +32,19 @@
     <% if capabilities.scannable? %>
       <% if capabilities.presignable? %>
         <p>Your library is a storage bucket. Anything put into it by other means appears here
-          within 15 minutes, or straight away with <em>Rescan library</em> under ⋯ on the
-          <%= link_to "Files", files_path %> page.</p>
+          within 15 minutes, or straight away with <em>Rescan library</em> under ⋯ in the
+          <%= link_to "Library", files_path %>.</p>
       <% else %>
         <p>Your library is a folder on this server. Anything put there — over a NAS share, by a
           slicer or another program, by copying it in — appears here within 15 minutes, or
-          straight away with <em>Rescan library</em> under ⋯ on the <%= link_to "Files", files_path %>
-          page.</p>
+          straight away with <em>Rescan library</em> under ⋯ in the <%= link_to "Library", files_path %>.</p>
         <p>The library is the whole folder the server was given, or a folder inside it, chosen by an
           admin in <%= link_to "Library folder", settings_library_path %> under Settings, since it is
-          every account's library; other accounts see it there but cannot change it. Changing it keeps
+          every user's library; other users see it there but cannot change it. Changing it keeps
           your files' projects, notes and tags when the new folder holds the same files, as when the
           old one was moved or renamed, and is refused when it holds a different set of files.
           <em>Start over with this folder</em> is for that case: it forgets every file the library
-          had indexed, with their previews, notes and pins and the 3D models found among them. Your
+          had scanned, with their previews, notes and pins and the 3D models found among them. Your
           projects, tasks, inventory and BOMs stay, and a project keeps its folder when the new
           library has one at the same path, such as <code>Projects/Desk Lamp</code>. It deletes and
           moves nothing on disk.</p>
@@ -59,6 +58,9 @@
     <% end %>
     <p><em>Upload</em>, in the top bar, puts files in the folder you are looking at; on a page with
       no folder it asks which one.</p>
+    <p>The search box in the top bar looks through everything at once: files, folders, projects,
+      3D models, inventory, notes and tags. <kbd>Ctrl+K</kbd> (<kbd>⌘K</kbd> on a Mac) jumps to it
+      from anywhere.</p>
     <% if capabilities.versioned? %>
       <p>Saving over a file keeps the version before it.</p>
     <% else %>
@@ -73,15 +75,17 @@
     <h2 id="projects">Projects</h2>
     <p>A folder directly under <code>Projects/</code> becomes a project within 15 minutes, with its
       files attached. <em>New project</em> makes a project and its folder together, and
-      <em>Make this folder a project</em>, under ⋯ on a folder's Files page, turns a folder
-      anywhere else into one where it stands.</p>
-    <p>Files dropped loose at the top of a project's folder are filed into type folders —
-      <code>models/</code>, <code>docs/</code>, <code>images/</code> and so on — by the next
-      sweep, following the rules in <%= link_to "Shelves", settings_shelves_path %>. A README
-      stays at the top, and nothing inside a git repository is moved.</p>
+      <em>Make this folder a project</em>, under ⋯ on a folder's page in the Library, turns a
+      folder anywhere else into one where it stands.</p>
+    <p>Each project's folder has shelves: type folders such as <code>models/</code>,
+      <code>docs/</code> and <code>images/</code>, each taking the file types listed for it in
+      <%= link_to "Shelves", settings_shelves_path %> under Settings. Files dropped loose at the top
+      of a project's folder are filed onto their shelf on the next scan. A README stays at the
+      top, and nothing inside a git repository is moved.</p>
     <p><em>Archive</em> puts a project away and leaves its folder where it is; the app will not make
       that folder into a project again. <em>Unarchive</em> brings it back.</p>
-    <p>A project is private until you publish it from its Publish panel. Pick a handle first (also
+    <p>A project is private until you publish it from the Publishing tab of its edit page
+      (<em>Edit</em> on the project). Pick a handle first (also
       on your <%= link_to "Account", edit_user_registration_path %> page), then choose
       <em>Unlisted</em>, for anyone with the link, or <em>Public</em>, listed on
       <%= link_to "Explore", public_explore_path %> and on your handle's page. Visitors see the
@@ -97,6 +101,29 @@
       top-level folder or a <code>models/</code> folder is one model holding what is inside it. A
       project's own folder is never a model, and
       removing a model from the catalog leaves its files where they are.</p>
+    <p>To add a model from a file you already have, put the file in one of those folders, by
+      uploading it there or moving it in the <%= link_to "Library", files_path %>; it becomes a model
+      on the next scan. A model downloaded from Printables as a zip is brought in whole with
+      <em>Add model</em> › <%= link_to "Import a Printables zip", new_model_path %>, which unpacks it
+      into <code>Models/</code> with its pictures and instructions.</p>
+    <p>A model's page keeps its print log. Logging a failed print puts it under <em>Needs
+      attention</em> on <%= link_to "Recent", root_path %> for a week, until a later print of that
+      model is logged or its status is changed.</p>
+  </section>
+
+  <section aria-labelledby="inventory">
+    <h2 id="inventory">Inventory</h2>
+    <p><%= link_to "Inventory", inventory_items_path %> keeps the parts and materials you have on
+      hand. Each item's page shows its stock and a record of every change to it. <em>Adjust
+      stock</em> there takes an amount and a reason: <em>Consumed</em> takes the amount away,
+      <em>Restocked</em> adds it, and <em>Adjusted</em> takes a correction with its sign, such as
+      −2. An item with a minimum quantity reads <em>Low stock</em> at or below it, and shows on
+      Recent under <em>Needs attention</em>; a minimum of 0 means none is set.</p>
+    <p><%= link_to "Suppliers", suppliers_path %> are where you buy things and
+      <%= link_to "Locations", locations_path %> are where they are kept, a drawer inside a cabinet
+      if you like. Both are reached from the Inventory page, can be renamed and given notes, and
+      each one's item count opens the items it holds. A line on a project's bill of materials can
+      name an inventory item, and its <em>Consume</em> takes that many out of stock.</p>
   </section>
 
   <section aria-labelledby="tools">
@@ -106,8 +133,8 @@
       server sets up beside it; until they do, the tool's card is greyed out and names the service
       it needs. The Box Generator needs the boxes service and OpenSCAD the openscad service;
       Generators needs none.</p>
-    <p>Any tool can be pinned to the sidebar: right-click its card on the Tools page and choose Pin
-      to sidebar, and right-click it there again to unpin it.</p>
+    <p>Any tool can be pinned to the sidebar: press Pin to sidebar on its card on the Tools page (or
+      right-click the card); press it again, or right-click the tool in the sidebar, to unpin.</p>
     <p>The calculator is built in. Open it from its card on the Tools page, or from the sidebar once
       it is pinned, and it opens over whatever page you are on. <kbd>Alt+C</kbd> (<kbd>⌥C</kbd> on a Mac)
       opens it too, anywhere you are not typing. It works in millimetres, centimetres, metres,

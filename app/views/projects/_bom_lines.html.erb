@@ -1,7 +1,9 @@
 <%#
-  The bill of materials' table + rollup + composer — rendered by BOTH surfaces
-  (projects/_bom, the project page's capped panel; projects/boms/show, the full page) so they
-  can never drift apart the way projects/_tasks warns a per-surface copy would.
+  The bill of materials' table + rollup — rendered by BOTH surfaces (projects/_bom, the project
+  page's capped panel; projects/boms/show, the full page) so they can never drift apart the way
+  projects/_tasks warns a per-surface copy would. THE COMPOSER IS projects/_bom_composer since
+  2026-11-02: the panel draws it in its head even with no line (the UX audit's C5), and a refusal
+  re-renders it alone (B3), neither of which a partial that draws only over lines could do.
 
   Locals:
     lines     — EVERY line on the bom (Maker::BomRollup is built over this; nil-safe, pass [])
@@ -10,10 +12,8 @@
     rollup    — a Maker::BomRollup over `lines`
     nodes     — { node_id => Node } for design-file targets, the caller's PageNodes union —
                 NEVER queried per row here (CLAUDE.md §14a's constant-in-N budget test)
-    project   — the Maker::Project the composer posts against
+    project   — the Maker::Project the rows belong to
     bom       — the current Maker::Bom, or nil before the first line exists
-    items     — [[name, id], …] for the stock-target select
-    suppliers — [[name, id], …] for the supplier select
     more_path — project_bom_path(project) on the panel (renders "Showing N of M"); nil on the
                 full page, which already shows every line
 %>
@@ -73,7 +73,12 @@
               <%= button_to "Consume", consume_bom_line_path(line), class: "btn small bom-consume",
                             form: { data: { turbo_confirm: "Consume #{number_with_precision(line.quantity, precision: 3, strip_insignificant_zeros: true)} #{item.unit} of #{item.name} for #{project.name}?" } } %>
             <% end %>
-            <%= button_to "Remove", bom_line_path(line), method: :delete, class: "linkbtn danger small bom-remove" %>
+            <%# REMOVE CONFIRMS, NAMING THE PART (2026-11-02, the UX audit's B5): it sat unconfirmed
+                beside a Consume that does confirm. The line's own reference where it has one, else
+                the thing it points at — the words the row itself shows. %>
+            <% part = line.reference.presence || item&.name || node&.name || line.part_name.presence || "this line" %>
+            <%= button_to "Remove", bom_line_path(line), method: :delete, class: "linkbtn danger small bom-remove",
+                          form: { data: { turbo_confirm: "Remove #{part} from the bill of materials?" } } %>
           </td>
         </tr>
       <% end %>
@@ -95,64 +100,3 @@
   %>
   <p class="bom-rollup"><%= fragments.join(" · ") %></p>
 <% end %>
-
-<%# scope: :bom_line — WITHOUT it, a model-less form_with(url:) has a blank object_name, and
-    fields_for-style bracketing breaks (CLAUDE.md §14d, the trap projects/_tasks.html.erb's own
-    comment records). Every field below is a plain f.* call for exactly that reason. %>
-<details class="composer bom-add">
-  <summary class="btn small">Add line</summary>
-  <%= form_with url: project_bom_lines_path(project), scope: :bom_line, method: :post, class: "bom-add-form" do |f| %>
-    <div class="composer-fields">
-      <label class="field">
-        <span>Reference</span>
-        <%= f.text_field :reference %>
-      </label>
-      <label class="field">
-        <span>Quantity</span>
-        <%= f.number_field :quantity, step: "any", value: 1 %>
-      </label>
-      <label class="field">
-        <span>Unit</span>
-        <%= f.select :unit, Maker::BomLine::UNITS %>
-      </label>
-    </div>
-
-    <%# EXACTLY ONE TARGET, CHOSEN BY THE RADIO: Projects::BomLinesController#create is what
-        actually enforces this (it drops the other two inputs server-side before the line is
-        built), so a client that fills more than one field and picks the "wrong" radio still gets
-        the target it chose, never a validation error about a field it never meant to set. %>
-    <fieldset class="bom-target">
-      <legend>Target</legend>
-      <label>
-        <%= f.radio_button :target_kind, "stock" %>
-        <span>Stock</span>
-        <%= f.select :inventory_item_id, items, include_blank: true %>
-      </label>
-      <label>
-        <%= f.radio_button :target_kind, "file" %>
-        <span>File</span>
-        <%= render "shared/folder_field", name: "bom_line[node_id]",
-                   children_url: library_children_path, create_url: library_folders_path,
-                   mode: "file", root_label: "Choose a file…" %>
-      </label>
-      <label>
-        <%= f.radio_button :target_kind, "text" %>
-        <span>Part name</span>
-        <%= f.text_field :part_name, placeholder: "e.g. 22 AWG wire" %>
-      </label>
-    </fieldset>
-
-    <div class="composer-fields">
-      <label class="field">
-        <span>Supplier</span>
-        <%= f.select :supplier_id, suppliers, include_blank: true %>
-      </label>
-      <label class="field">
-        <span>Notes</span>
-        <%= f.text_field :notes %>
-      </label>
-    </div>
-
-    <%= f.submit "Add line", class: "btn small primary" %>
-  <% end %>
-</details>

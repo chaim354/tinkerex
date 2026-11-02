@@ -28,7 +28,10 @@ module Web
       assert_select "form.toolbar.models-toolbar a.filter.chip.active", text: "All"
       assert_select "form.toolbar.models-toolbar a.filter.chip", text: "Printed"
       assert_select "form.toolbar.models-toolbar select[name='sort']"
-      assert_select ".page-head a.btn.primary[href=?]", new_model_path, text: "Import model"
+      # "ADD MODEL", WITH TWO ROUTES (UX audit 2026-11-01, E3): the primary is a menu, not the zip import alone.
+      assert_select ".page-head details.menu > summary.btn.primary", text: "Add model ▾"
+      assert_select ".page-head details.menu a.menu-item[href=?]", new_model_path, text: "Import a Printables zip"
+      assert_select ".page-head details.menu a.menu-item[href=?]", help_path(anchor: "models"), text: "From a file in your library"
     end
 
     # THE VIEW'S OWN SEARCH USES THE FILES IDIOM (LOWER, ESCAPE), because /search's "See all" lands
@@ -63,10 +66,14 @@ module Web
       assert_no_match "\u{1F9CA}", response.body
     end
 
-    test "the model page's actions are buttons and its print log is a closed composer" do
+    # THE DESTROY BUTTON IS AT THE FOOT, A DANGER LINK WITH ITS CONSEQUENCE BESIDE IT (UX audit
+    # 2026-11-01, E3), not a full danger button in the head beside Edit.
+    test "the model page's actions are buttons, its destroy sits at the foot, and its print log is a closed composer" do
       get model_path(@model)
       assert_select ".head-actions a.btn[href=?]", edit_model_path(@model), text: "Edit"
-      assert_select ".head-actions form[action=?] button.btn.danger", model_path(@model), text: "Delete"
+      assert_select ".head-actions form[action=?]", model_path(@model), count: 0
+      assert_select ".model-foot form[action=?] button.linkbtn.danger", model_path(@model), text: "Delete"
+      assert_select ".model-foot p", text: /files stay in your library/
       assert_select ".print-log details.composer:not([open]) > summary", text: "Log a print"
       assert_select ".print-log details.composer form.print-form[action=?] input[type='submit'][value='Log a print']",
                     model_print_runs_path(@model)

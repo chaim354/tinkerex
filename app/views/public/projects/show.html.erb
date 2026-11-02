@@ -14,7 +14,7 @@
   and "+ Add panel" opens one quiet for a visit. That is decided in ProjectsController#show, so
   nothing on this page changed.
 %>
-<% content_for :title, "#{@project.name} — @#{@pub.handle}" %>
+<% content_for :title, "#{@project.name} — @#{@pub.handle} — Tinkerex" %>
 <% content_for :container_class, "public-main" %>
 
 <% unless @project.publicly_listed? %>
