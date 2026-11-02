@@ -100,8 +100,13 @@
   /* MIGRATED VERBATIM (old projects.css): .attach-to-project, .attach-form, .attach-form select,
      .project-chip, .project-chip form, .chip-x, .chip-x:hover — these live on files/show. */
   .attach-to-project { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
-  .attach-form { display: inline-flex; align-items: center; gap: 8px; }
-  .attach-form select { max-width: 260px; }
+  /* A <select>'s min-content is its LONGEST OPTION, and the options are project names. The 260px cap
+     is what bounds the form's min-content, so it stays a LENGTH (a `min(260px, 100%)` is a cyclic
+     percentage there, dropped, and the whole option came back: measured, 596px); the form wraps
+     and the select shrinks below it on a narrower line. One long project name otherwise pushed
+     every file page 37px past a 375px phone (UX audit J; test/system/narrow_names_test.rb). */
+  .attach-form { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: 100%; }
+  .attach-form select { max-width: 260px; min-width: 0; }
   .project-chip { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 10px;
     border: 1px solid var(--line); border-radius: 999px; font-size: 13px; }
   .project-chip form { display: inline; }

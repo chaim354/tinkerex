@@ -331,6 +331,9 @@
   .release-version { font-weight: 600; }
   .release-notes { margin: 8px 0; }
   .release-files { margin-top: 6px; }
+  /* The path as the release recorded it, often one unbroken export name: it wraps anywhere, or the
+     table's min-content is the whole path and the panel runs off a phone (UX audit J). */
+  .release-files .col-path { overflow-wrap: anywhere; }
   .release-files .col-size { width: 1%; white-space: nowrap; }
   .release-files .col-state { width: 1%; white-space: nowrap; }
   .release-files .col-dl { width: 1%; white-space: nowrap; text-align: right; }
@@ -380,7 +383,9 @@
   .picker-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .picker-name { overflow-wrap: anywhere; }
   .picker-folder { font-size: 11px; overflow-wrap: anywhere; }
-  .picker-result form { flex: 0 0 auto; margin: 0; }
+  /* HALF THE ROW AT MOST: "Attach and move into NAME" carries the project's name (`.btn-name`, so it
+     wraps), and a form sized to that label left the file's own name a zero-width column (UX audit J). */
+  .picker-result form { flex: 0 0 auto; margin: 0; max-width: 50%; }
   .sheet-head { align-items: flex-start; }
   .sheet-head h1 { margin: 0 0 4px; }
   .sheet-rename { display: inline-flex; gap: 6px; }

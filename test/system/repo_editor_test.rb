@@ -41,7 +41,16 @@ class RepoEditorTest < ApplicationSystemTestCase
 
   def open_editor
     visit file_path(@node.node_id)
+    show_source
     assert_selector ".cm-editor", wait: 10 # the bundle loaded, parsed and mounted
+  end
+
+  # THE FIXTURES ARE MARKDOWN, AND A MARKDOWN FILE OPENS ON ITS RENDERED VIEW (2026-11-02, the UX
+  # audit's D8; files/_markdown_view): the editor is the Source pane, mounted while hidden, so every
+  # case here presses Source first, as a maker would before typing.
+  def show_source
+    within(".markdown-view .view-toggle") { click_on "Source" }
+    assert_selector ".markdown-view button[aria-pressed=true]", text: "Source"
   end
 
   # READS THE TWO EDITABILITY FACTS OFF THE LIVE EditorState rather than off the DOM, for
@@ -206,6 +215,9 @@ class RepoEditorTest < ApplicationSystemTestCase
         sessionStorage.setItem("guard-after-reload-click", String(#{GUARD_HOLDS})))
     JS
     within(".editor-status") { click_on "Reload" }
+    # A RELOADED MARKDOWN PAGE OPENS ON RENDERED AGAIN, now of the bytes on disk; Source is the editor.
+    assert_selector ".markdown-rendered", text: "edited elsewhere", wait: 10
+    show_source
     assert_selector ".cm-content", text: "edited elsewhere", wait: 10
     assert_equal "false", page.evaluate_script("sessionStorage.getItem('guard-after-reload-click')")
     assert_no_selector ".cm-content", text: "MINE"
@@ -253,6 +265,7 @@ class RepoEditorTest < ApplicationSystemTestCase
   # of a hunk, so it exists only if the extension ran.
   test "the commit box diffs the working tree against HEAD, in the browser" do
     visit file_path(@node.node_id)
+    show_source
     assert_selector ".cm-editor", wait: 10
     type_and_save("CHANGED")
     assert_selector ".editor-status", text: "Saved"
@@ -300,6 +313,7 @@ class RepoEditorTest < ApplicationSystemTestCase
                     "the fixture has to be over the cap or this case cannot fail"
     big = seed_plain_file!("huge.md", body)
     visit file_path(big.node_id)
+    show_source
     assert_selector ".cm-editor", wait: 10
 
     assert_equal({ "readOnly" => true, "editable" => false }, editability_facts)

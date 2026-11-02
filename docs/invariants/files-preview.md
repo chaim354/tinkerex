@@ -761,6 +761,32 @@ extension match a basename by coincidence.
 into `docs/` on the user's NAS — a change to their files, not to a preview. Same split `.scad`
 carries: role answers *where a file lives*, content type answers *how it is shown*.
 
+## A Markdown file page renders, and the source view is one press away
+
+**`.md` AND `.markdown` OPEN ON A RENDERED VIEW (2026-11-02, the UX audit's D8)**: `files/_markdown_view`
+wraps the file page's viewer chain in a Rendered / Source toggle (`.view-toggle`, `aria-pressed`;
+`markdown_view_controller.js`), Rendered pressed. Five rules:
+
+- **`Maker::FileAttachment::MARKDOWN_EXTS` is a DISPLAY subset of the `document` role**, PHOTO_EXTS's
+  shape: nothing is added to `ROLE_BY_EXT`, the role stays `document`, and `file_attachment_test.rb`
+  asserts each extension is one. `.txt`/`.rst`/`.tex` are prose with nothing to render.
+- **ONE PORT READ, OF THE FILE THE PAGE IS ABOUT** (`Maker::MarkdownFile`, from `FilesController#show`).
+  The source viewer fetches its bytes in the browser, so the rendered view is the only server read,
+  gated on the catalog's size at `Maker::Readme::READ_LIMIT` (256 KB) before anything is read. It is
+  not a catalog pull and touches no metadata in the store, which is what §2/§14a forbid on a GET.
+- **THE README CARD'S RENDERER AND ITS TWO ARMS**, `Maker::Readme.render_markdown`: a relative link opens
+  the file's page, a picture loads its blob, raw HTML goes through `Maker::Markdown`'s one sanitising
+  pass. Links resolve against the file's folder and the folders beneath it (breadth-first off the
+  LibraryTree the Path row already plucks, `.git` never entered), whose files are ONE capped query —
+  constant in the folder's size (`page_query_budget_test.rb`). Past a cap a link is its own text.
+- **EVERY FAILURE IS THE SOURCE VIEW**: an over-cap file says "Too large to render; showing the
+  source.", an unreachable store says `FilesController::UNREACHABLE` and raises the banner (a
+  `Current.library_unreachable` setter), a file gone since the stat says nothing. None shows a toggle.
+- **THE SOURCE PANE IS THE SAME CHAIN, MOUNTED HIDDEN**, so an editable `.md` is the editor exactly as
+  before (git-editing.md). A Save there makes Rendered stale; the editor's `editor:saved` tells the
+  toggle, and pressing Rendered reloads the page. The model page's pane and a visitor's file page
+  keep the source view alone.
+
 ## `/files/thumbnails` MUST answer for a node with no row
 
 This was `next unless p`, which **omits the key** — and `thumbs_controller`'s `if (!entry) continue`
@@ -923,8 +949,9 @@ selected file: a Turbo Frame body rendered **without the layout**, built from `f
   `details_url`, the file's own folder with `?selected=` (a root file's carries no folder).
   **Every link to a file page on a signed-in page opts in through `FilesHelper#file_open_data`** —
   tiles, list names, photos, the hero, an image block, BOM part names, search results, the
-  connections panel, the repo browser (`lib/file_chooser.js`) — **except rendered Markdown and a
-  `.btn` action**, and that is the whole exclusion list. `template_hygiene_test.rb`'s fileopen sweep
+  connections panel, the repo browser (`lib/file_chooser.js`) — **except rendered Markdown (a README
+  card, a text block, a Markdown file's own Rendered view) and a `.btn` action**, and that is the
+  whole exclusion list. `template_hygiene_test.rb`'s fileopen sweep
   goes red on any other file-page link in `pages` that lacks it; never widen its two exclusions. It
   reads server HTML, so the repo browser's JS-built rows are pinned in `repo_browser_test.rb`.
 

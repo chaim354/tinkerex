@@ -12,6 +12,10 @@
   </div>
 
   <% if meta["layers"].present? %>
+    <%# IT SCROLLS INSIDE THE PANEL (UX audit J): the headers are nowrap and a layer's own name can be
+        one unbroken run, so on a phone the table may need more than the column; design-system.md
+        rule 11 is that anything keeping its width scrolls inside its own container. %>
+    <div class="lbrn-table-scroll">
     <table class="lbrn-layers">
       <thead>
         <tr><th>Layer</th><th>Mode</th><th class="num">Speed <span class="lbrn-unit">mm/s</span></th><th class="num">Power</th><th class="num">Passes</th></tr>
@@ -51,6 +55,7 @@
         <% end %>
       </tbody>
     </table>
+    </div>
   <% end %>
 
   <% if meta["pages"].present? %>

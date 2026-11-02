@@ -95,6 +95,12 @@ visitor's page have nothing to warn about). Keyed on the CAPABILITY and never on
 so a note that renders everywhere — the same defect as one that renders nowhere — needs a second
 definition to happen, which is what one partial prevents.
 
+**ON A `.md` FILE PAGE THAT SOURCE VIEW IS BEHIND A TOGGLE (2026-11-02, the UX audit's D8).** The page
+opens on a Rendered view (`files/_markdown_view`, `Maker::MarkdownFile`) and the editor, its note and
+its Save bar are the Source pane, unchanged and mounted while hidden — every rule in this file binds
+there exactly as before. A Save in Source announces itself (`editor:saved`), and pressing Rendered
+after one reloads the page, so the rendered view is never of bytes the save replaced.
+
 **What still holds, unchanged, and what breaks if you undo any of it.**
 
 - **The bytes go through the port**, `Maker::TextSave` → `Maker::Addons::LibraryOutput.write_bytes!`

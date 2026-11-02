@@ -52,8 +52,9 @@
                         "aria-label": "Attach #{node.name}" %>
         <% else %>
           <% label = row.moves ? "Attach and move into #{@project.name}" : "Attach" %>
+          <%# `.btn-name` when the label carries the project's name, so a long one wraps (UX audit J). %>
           <%= button_to label, project_attachments_path(@project),
-                        params: { node_id: node.node_id }, class: "btn small",
+                        params: { node_id: node.node_id }, class: (row.moves ? "btn small btn-name" : "btn small"),
                         "aria-label": "#{label.sub('Attach', "Attach #{node.name}")}" %>
         <% end %>
       </div>

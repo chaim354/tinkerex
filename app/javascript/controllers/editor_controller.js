@@ -161,6 +161,9 @@ export default class extends Controller {
       // CLEAN AS OF WHAT WAS SENT, not as of now: typing during the save leaves the newer text dirty.
       this.cleanDoc = sent
       this.report(this.view.state.doc.eq(sent) ? "Saved" : "Saved. Your newer changes are not saved yet.")
+      // `editor:saved`, for a view of the same file that the save just made stale — a Markdown
+      // file's Rendered pane (markdown_view_controller.js) — so it can load the new bytes.
+      this.dispatch("saved")
     } finally {
       this.button.disabled = false
     }

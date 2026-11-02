@@ -16,6 +16,8 @@
   </div>
 
   <% if meta["operations"].present? %>
+    <%# Scrolls inside the panel, as files/_lbrn_settings' table does (UX audit J). %>
+    <div class="lbrn-table-scroll">
     <table class="lbrn-layers">
       <thead>
         <tr>
@@ -47,6 +49,7 @@
         <% end %>
       </tbody>
     </table>
+    </div>
   <% end %>
 
   <% if meta["pages"].present? %>

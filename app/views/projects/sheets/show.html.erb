@@ -67,7 +67,10 @@
   <div class="page-head sheet-head">
     <div>
       <h1><%= @sheet.name %></h1>
-      <span class="sheet-status muted" data-sheet-target="status">Saved</span>
+      <%# A LIVE REGION (UX audit I, 2026-11-02), as the workbook grid's .spreadsheet-status is: the
+          autosave's "Saving…" / "Not saved — …" is the one place a failed save shows, so it is
+          announced rather than only drawn. sheet_controller.js writes its text, never the element. %>
+      <span class="sheet-status muted" role="status" data-sheet-target="status">Saved</span>
     </div>
     <div class="head-actions">
       <%= form_with model: @sheet, scope: :sheet, url: sheet_path(@sheet), method: :patch,

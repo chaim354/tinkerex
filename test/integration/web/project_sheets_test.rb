@@ -185,6 +185,8 @@ module Web
       # while every save failed. Asserting the nesting, not just the presence, is what catches it.
       assert_select "[data-controller=sheet] [data-sheet-target=status]"
       assert_select "[data-controller=sheet] [data-sheet-target=grid]"
+      # THE STATUS IS A LIVE REGION (UX audit I): a failed autosave is announced, not only drawn.
+      assert_select "span.sheet-status[role=status][data-sheet-target=status]", text: "Saved"
     end
 
     test "the grid page loads the vendored library only on this page" do
