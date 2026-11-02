@@ -77,6 +77,18 @@ module Web
     # includes — the argument for it (why the match is anchored on the attribute's opening quote)
     # lives there now.
 
+    # NOTHING A VISITOR CANNOT DO, AND OPENING A TOOL IS ONE OF THEM: the maker's page offers "Open
+    # in <tool>" through a lazy frame (file_page_test.rb); a visitor has no library for a tool to
+    # save into and no session for /tools to answer, so the frame — and the request it would make —
+    # is the maker's page's alone.
+    test "a visitor's file page carries no Open-with frame" do
+      get view_path_for(@f[:base].node_id)
+
+      assert_response :success
+      assert_select "turbo-frame#open-with", count: 0
+      assert_no_match %r{/tools/open_with}, response.body
+    end
+
     test "a permitted model file gets the 3D viewer, pointed at the PUBLIC named byte route" do
       get view_path_for(@f[:base].node_id)
 

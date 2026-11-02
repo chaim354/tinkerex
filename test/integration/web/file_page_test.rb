@@ -24,6 +24,19 @@ module Web
       assert_select ".page-actions a.btn.ghost", count: 1, text: "Back"
     end
 
+    # "OPEN IN <TOOL>" IS A LAZY FRAME, NOT PART OF THIS RENDER (host level 4). The page itself never
+    # reads the addon registry — a manifest fetch over HTTP behind a 5-minute cache, the cost
+    # addon_origin_surfaces_test.rb pins at zero fetches for a file no addon made — so the buttons
+    # arrive by a second request, into a frame the page only POINTS at. `target="_top"` because a
+    # link inside a frame otherwise navigates the frame, and the tool page has no frame to fill.
+    test "the page actions hold a lazy Open-with frame pointed at this file's tool list" do
+      get file_path(@node.node_id)
+      assert_response :success
+      assert_select ".page-actions turbo-frame#open-with[src=?][loading=lazy][target=_top]",
+                    tools_open_with_path(file: @node.node_id), count: 1
+      assert_select "turbo-frame#open-with a", count: 0, message: "the page must not render the buttons itself"
+    end
+
     test "the notes composer is a closed details that still holds the whole form" do
       get file_path(@node.node_id)
       assert_select ".notes-panel details.composer:not([open]) > summary", text: "Add a note"

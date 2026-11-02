@@ -103,8 +103,19 @@
   </div>
 <% end %>
 
+<%# IN SECTIONS, BY THE MANIFEST'S `category` (host level 4; Tools::HomeController::SECTIONS names
+    the four and their order). Computed in the controller, an empty one never drawn; every card is
+    still `.addon-card`, so the count home_controller_test.rb pins keeps meaning what it says. The
+    same `.tools-section`/`.tools-section-head`/`.tools-grid` the built-in section draws with —
+    no new selector (design-system.md). `index` is the card's position in @addons, not in its
+    section, so title ids stay unique across sections. %>
+<% @sections.each do |heading, addons| %>
+<% section_id = "tools-section-#{heading.parameterize}" %>
+<section class="tools-section" aria-labelledby="<%= section_id %>">
+<h2 class="tools-section-head" id="<%= section_id %>"><%= heading %></h2>
 <div class="tools-grid">
-  <% @addons.each_with_index do |addon, index| %>
+  <% addons.each do |addon| %>
+    <% index = @addons.index(addon) %>
     <% if addon.available? %>
       <%#
         A CARD THAT HOLDS A BUTTON IS NOT A LINK (2026-11-02). A <form> cannot sit inside an <a>, so
@@ -148,4 +159,6 @@
       which is what makes publishing a bundle the whole deploy. A card that has to be written here
       is the signal that an addon has not actually migrated. %>
 </div>
+</section>
+<% end %>
 </div>

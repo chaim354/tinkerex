@@ -609,6 +609,10 @@ module Web
         # The New ▾ menu's lazy tool list (slice 2): a fragment, swept like a page so a comment
         # leak in it would show. The sweep's ADDON_SOURCE_PATH points at the fixtures, so it lists.
         "new menu tools" => tools_new_menu_path,
+        # The file page's "Open in <tool>" buttons (host level 4), the other lazy fragment the
+        # registry answers. Swept over a file no fixture tool opens, so the frame renders empty —
+        # the comment sits above the loop, so an empty frame is enough to see it leak.
+        "open with" => tools_open_with_path(file: "n-src"),
         # 2026-10-21: the calculator modal's Save to project form, its lazy frame's fragment.
         "calculator save form" => new_calculation_path(project_id: @project.id),
         "tools addon" => tools_addon_path("fixture"),

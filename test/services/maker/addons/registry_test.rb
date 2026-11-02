@@ -597,6 +597,52 @@ module Maker
         Rails.logger = previous
       end
 
+      # ---- opens (host level 4) -------------------------------------------------------------------
+
+      # THE ONE READING OF `opens`, PINNED ENTRY BY ENTRY: a dot is added where the author left it
+      # off, case is folded, and an entry that is not an extension is DROPPED rather than raised on,
+      # as every optional key degrades (a manifest comes from a source this process does not control).
+      # Dropped SILENTLY here — Maker::Addons::Check reports the spelling to the author (check_test.rb).
+      test "opens is normalised: a leading dot added, case folded, non-extensions dropped" do
+        Source.stub = FakeAddonSource.new(manifests: [
+          MANIFEST.merge("opens" => [ "gcode", ".NC", " .Tap ", "g code", "", "..", 3, nil, ".stl" ])
+        ])
+        Rails.cache.clear
+        assert_equal [ ".gcode", ".nc", ".tap", ".stl" ], Registry.find("generators").opens
+      end
+
+      test "opens is [] when the manifest omits it, and when it is not an array" do
+        assert_equal [], Registry.find("generators").opens
+
+        [ ".stl", { "ext" => ".stl" }, 7 ].each do |bad|
+          Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("opens" => bad) ])
+          Rails.cache.clear
+          assert_equal [], Registry.find("generators").opens, "opens #{bad.inspect} must read as []"
+        end
+      end
+
+      # ---- category (the gallery's sections) ------------------------------------------------------
+
+      test "the three category names carry onto the Addon" do
+        %w[generate inspect reference].each do |name|
+          Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("category" => name) ])
+          Rails.cache.clear
+          assert_equal name, Registry.find("generators").category
+        end
+      end
+
+      # EXACT NAMES, NOT CASE-FOLDED, and anything else is nil — `layout`'s rule: a value a newer
+      # addon invents for a host we have not shipped must degrade to "absent", never raise.
+      test "an unknown, differently-cased or absent category reads as nil" do
+        assert_nil Registry.find("generators").category
+
+        [ "Generate", "other", "", 3, [ "generate" ] ].each do |bad|
+          Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("category" => bad) ])
+          Rails.cache.clear
+          assert_nil Registry.find("generators").category, "category #{bad.inspect} must read as nil"
+        end
+      end
+
       private
 
       def with_env(pairs)

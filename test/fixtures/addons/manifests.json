@@ -44,6 +44,8 @@
     "services": [ "fixture-svc" ],
     "service_timeouts": { "fixture-svc": 90 },
     "min_host": 1,
+    "opens": [ ".txt" ],
+    "category": "inspect",
     "permissions": [
       { "name": "library:read", "reasoning": "Reads back what it just wrote, to prove the bytes survived" }
     ]

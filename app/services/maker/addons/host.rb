@@ -31,7 +31,17 @@ module Maker
       # capability table gives it — "creating, updating and deleting states DIRECTLY" — which this
       # is not: a save door that revises writes library bytes, and cannot rename or delete a state
       # without one.
-      LEVEL = 3
+      #
+      # 4 — "Open with": a file page links to every tool whose manifest `opens` its extension, and
+      # the tool page resolves `?file=` into `host.launch.fileId`/`fileName` (the SDK's `launch`
+      # getter fills both with null on an older host). THE SECOND BUMP THAT FLIPS NOTHING, for level
+      # 3's reason exactly: this is the EXISTING `library:read` door being pointed at a file BY THE
+      # HOST rather than by a picker, so a capability would be answered `true` for exactly the hosts
+      # that answer `library:read` true and would carry no information. `min_host: 4` is how a bundle
+      # requires it — and spec §2 says a tool should NOT: a level-3 host ignores `opens`, reads
+      # `fileId` as null, and the tool still works through its own picker, which is what lets the
+      # host and the bundles deploy in either order.
+      LEVEL = 4
 
       CAPABILITIES = {
         "library:write"   => true,   # POST /tools/:key — the save door

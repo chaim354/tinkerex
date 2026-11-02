@@ -130,6 +130,8 @@ title, so treat the report as an error even though the gallery does not.
 | `shares_states_with` | array of strings | The addon keys you consent to sharing *your* saved states with. The other half of `states_key`; on its own it grants nothing. |
 | `min_host` | integer | The lowest `host.level` your bundle works against. A host below it lists your addon **greyed out with a reason** rather than running it. Must be a JSON integer. |
 | `permissions` | array of objects | What your addon asks for, as `{ "name": …, "reasoning": … }`. Shown to the operator. **`library:read` must be declared or `files.read` answers 403**; every other name is display only — see §4. |
+| `opens` | array of strings | The file extensions your tool can open — `[".gcode", ".nc"]`. A file page in the library links to every available tool whose `opens` names its extension, as "Open in <your title>", and the tool receives the file as `host.launch.fileId`/`fileName` (§3, host level 4). Each entry is stripped and lowercased, and the leading dot is optional on input (`"gcode"` reads as `".gcode"`); an entry that is not an extension (`"g code"`, `""`) is **dropped, not refused** — `addons:check` names it, the gallery serves the rest. Anything but an array reads as `[]`. |
+| `category` | string | Which section of the gallery your card sits in: `"generate"` (Make a file), `"inspect"` (Look inside a file) or `"reference"` (Calculate and look up). Anything else, including absent, lands in "Other" — and is listed in the top bar's New ▾ menu, as `generate` is; an `inspect` or `reference` tool is not, because New makes something in the folder it was opened from. Cosmetic: nothing gates on it. |
 | `version` | string | Your bundle's own version string. Read onto the addon, displayed nowhere yet. |
 | `author` | string | Who wrote it. Read, displayed nowhere yet. |
 | `license` | string | The bundle's licence. Read, displayed nowhere yet. |
@@ -169,7 +171,7 @@ You do not need to pin `@maker/addon-sdk`. The host pins it for every addon page
 
 `min_host` is compared against `host.level` (§3). If it is **higher** than this host's level, your
 addon is still built and still **listed** — greyed out, with a reason naming both numbers
-("Needs a newer Tinkerex than this server runs (level 4; this server is level 3)"), and its page at
+("Needs a newer Tinkerex than this server runs (level 5; this server is level 4)"), and its page at
 `/tools/<key>` shows the same sentence instead of mounting your bundle. It is deliberately not
 hidden: an addon that silently never appears reads as a broken deploy, which sends an operator
 looking in the wrong place.
@@ -421,7 +423,7 @@ and is not a way to ask whether a real host is present. Use `await host.capabili
 
 ### `host.level`
 
-An integer — the host's capability level. **`3` today.** It rises when the host gains capabilities,
+An integer — the host's capability level. **`4` today.** It rises when the host gains capabilities,
 in the same change that flips them on, so `min_host` (§2) can name a floor.
 
 | Level | Added |
@@ -429,15 +431,23 @@ in the same change that flips them on, so `min_host` (§2) can name a floor.
 | 1 | The SDK itself: `files.save`, `files.pickFolder`, `files.url`, `state.list`, `service.*`, `capabilities()`, `on("teardown")` |
 | 2 | The file plane: binary bodies on `files.save`, `files.read`, `files.pickFile` |
 | 3 | State revisions: `stateId` on `files.save`, `state.revisions`, `host.launch`, and `revision` on each entry from `state.list` |
+| 4 | Open with: the manifest's `opens` and `category` keys, and `fileId`/`fileName` on `host.launch` — the file a file page opened your tool on |
 
 ```js
-console.log(host.level)  // 3
+console.log(host.level)  // 4
 ```
 
 **Level 3 flipped no capability, and that is the point.** Revising is the same `library:write` door
 growing an optional parameter, so a capability name would be `true` for exactly the hosts that
 answer `library:write` true and would tell you nothing — the same reasoning as binary output at
 level 2 (§7). `min_host: 3` is how you require it; there is nothing to feature-detect.
+
+**Level 4 flipped none either, for the same reason, and you should not require it.** Open with is
+the existing `library:read` door being pointed at a file by the host instead of by your picker. A
+tool that declares `opens` works on a level-3 host too: the key is ignored there, `host.launch.fileId`
+reads `null`, and the tool is reached from the gallery and opens files through `files.pickFile` as it
+always did. So keep `min_host` at what the tool otherwise needs and always offer your own picker —
+that is what lets a bundle and a host ship in either order.
 
 ### `host.addon`
 
@@ -449,10 +459,11 @@ host.addon.key  // "hole-jig"
 
 Only `key` is present at this level.
 
-### `host.launch` (host level 3)
+### `host.launch` (host level 3; `fileId`/`fileName` at level 4)
 
-Synchronous. `{ stateId }` — which saved item this page was opened for, or `stateId: null` when it
-was not opened for one.
+Synchronous. `{ stateId, fileId, fileName }` — which saved item this page was opened for, or
+`stateId: null` when it was not opened for one; and which library file it was opened **on**, with
+its name, or `fileId: null, fileName: null` when it was not opened on one.
 
 ```js
 export default {
@@ -482,6 +493,32 @@ Three things to know:
 - **It is SDK-only.** The raw `ctx` handed to `mount` does not carry it, so a bundle still on the
   raw-`ctx` path (§6) cannot read the deep link at all. This is the first thing the SDK offers that
   raw `ctx` does not.
+
+**`fileId` and `fileName` (host level 4)** are the file a file page's "Open in <your title>" button
+opened your tool on — the user reached you through `/tools/<key>?file=<node_id>`, a link the host
+builds for every available tool whose `opens` (§2) names that file's extension. The same three
+things hold, and one more:
+
+- **An unknown, deleted or foreign id resolves to `null` and the page renders normally** — a hint,
+  exactly as `stateId` is; a stale bookmark must not break your tool. The id is yours to hand to
+  `files.read`, whose own `not_found` answers for a file that went away between the page and the read.
+- **Both are always present**, `null` on a level-3 host (which never sends them) as on a page not
+  opened on a file; the SDK fills them in.
+- **The name travels because `files.read` answers bytes with no name.** You need it to tell `.stl`
+  from `.obj`, and to name what you write back (`<name>-summary.md`).
+- **Still offer your own picker.** On a level-3 host, and on a page reached from the gallery, both
+  read `null`, and a tool whose only way to a file is this hint has no way at all there.
+
+```js
+async mount(el, ctx) {
+  if (host.launch.fileId) {
+    const bytes = await host.files.read(host.launch.fileId)
+    inspect(host.launch.fileName, bytes)      // opened on a file: read it at once
+  } else {
+    offerPicker()                             // reached from the gallery, or an older host
+  }
+}
+```
 
 And, like everything else here, read it through `host` **at call time** — a `const { launch } = host`
 at module top level goes on reporting the previous mount's deep link after a client-side navigation.
@@ -732,8 +769,16 @@ const text = new TextDecoder().decode(buf)        // for a .scad, .dxf, .svg, G-
 often do; decoding for you would be a guess you cannot undo. One line of `TextDecoder` is the whole
 cost.
 
-**Where a `nodeId` comes from:** `pickFile`, or the `files` list on a `state.list()` entry. There is
-no way to enumerate the library.
+**Where a `nodeId` comes from:** `pickFile`, the `files` list on a `state.list()` entry, or
+`host.launch.fileId`. There is no way to enumerate the library.
+
+**Open with (host level 4).** A file page in the library links to every available tool whose
+manifest `opens` (§2) names the file's extension — "Open in G-code Inspector" beside Download — and
+the link opens your tool with that file as `host.launch.fileId` and its name as `fileName`, the
+tool's save starting in the file's folder. Read it with `files.read` as you would a picked file. The
+buttons are loaded lazily by the file page and never by the right-click file menu, so a tool that
+opens a common kind costs the library nothing until a file page is open; nothing about it changes
+what your tool may read, which is still every file of the signed-in user's, declared or not.
 
 **What `library:read` is, exactly.** Your manifest must declare it in `permissions` (§2) or this
 endpoint answers **403 `forbidden_capability`** — and that check is a *declaration-consistency*
@@ -1303,7 +1348,8 @@ built against the other.
 
 8. **`host.level` only ever rises**, and a level that shipped keeps meaning what it meant. Reading
    `host.level >= N` is a stable way to require a feature the host announced without a capability of
-   its own (binary output at 2, revising at 3).
+   its own (binary output at 2, revising at 3, Open with at 4 — though that one should be read, not
+   required: §3's `host.level`).
 
 ---
 
@@ -1325,6 +1371,7 @@ up when the host ships it — no new release of your bundle required.
 | Outbound HTTP to anything but a declared sidecar | Not reserved. The host makes no arbitrary outbound requests on an addon's behalf, by design; a future permission model would name specific origins. |
 | ~~Binary file output~~ | **Shipped at host level 2.** It never got a capability of its own: it is the same `library:write` door growing a second body type, so a second name would be `true` exactly when `library:write` is and would carry no information. `min_host: 2` is how a bundle requires it. |
 | ~~Revising a saved state instead of creating a second one~~ | **Shipped at host level 3**, as `stateId` on `files.save`, with `state.revisions` for the history and `host.launch` for the deep link. Same reasoning as the row above — an optional parameter on an existing door, so no capability name. `min_host: 3` is how a bundle requires it. |
+| ~~Opening a tool on the file the maker is looking at~~ | **Shipped at host level 4**, as the manifest's `opens` and `fileId`/`fileName` on `host.launch`. Same reasoning again — the existing `library:read` door pointed at a file by the host — so no capability name, and a tool should NOT require it (§3): on a level-3 host it still works through its own picker. |
 | Async / long-running jobs — submit, poll, collect | Not reserved. Every sidecar call is synchronous and holds a host thread for its duration, which is why `service_timeouts` (§2) has a ceiling; a job surface would be named `jobs:*` once something needs one. |
 
 ```js

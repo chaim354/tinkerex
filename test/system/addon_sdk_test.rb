@@ -505,8 +505,9 @@ class AddonSdkTest < ApplicationSystemTestCase
   # compatibility default is unreachable from a real page: dropping `stateId: null` while keeping the
   # spread left the whole file GREEN, because the spread still found the server's own key. The
   # fixture calls the getter with a level-2 ctx (no `launch` at all) so the answer a published bundle
-  # would get from an older host is a string this assertion can read.
-  LEVEL_2_LAUNCH = '{"stateId":null}'.freeze
+  # would get from an older host is a string this assertion can read. Three nulls since level 4:
+  # `fileId` and `fileName` are filled the same way, for the same reason.
+  LEVEL_2_LAUNCH = '{"stateId":null,"fileId":null,"fileName":null}'.freeze
 
   test "host.launch carries the resolved deep link, and none is not an error" do
     user = User.find_by!(email: "sdk@example.com")
@@ -516,10 +517,48 @@ class AddonSdkTest < ApplicationSystemTestCase
 
     visit "/tools/sdk-fixture?state=#{state.id}"
     assert_selector "[data-role=sdk-launch]",
-                    exact_text: "launch:#{state.id} old:#{LEVEL_2_LAUNCH}"
+                    exact_text: "launch:#{state.id} file:none:none old:#{LEVEL_2_LAUNCH}"
 
     visit "/tools/sdk-fixture"
-    assert_selector "[data-role=sdk-launch]", exact_text: "launch:none old:#{LEVEL_2_LAUNCH}"
+    assert_selector "[data-role=sdk-launch]", exact_text: "launch:none file:none:none old:#{LEVEL_2_LAUNCH}"
+    assert_no_console_errors
+  end
+
+  # ---- Open with (host level 4) --------------------------------------------------------------
+
+  # A FILE PAGE OPENS THE TOOLS THAT READ ITS KIND, AND HANDS THE TOOL THE FILE. The sdk-fixture
+  # manifest declares `opens: [".txt"]`, so a `.txt` file's page offers "Open in SDK Fixture" — in a
+  # LAZY frame the page only points at (file_page_test.rb pins the frame; this drives it in a browser,
+  # where lazy means a second request after the page is up) — and following it, the bundle reads
+  # `host.launch.fileId` and `fileName` through the SDK: the id to `files.read`, the name because
+  # `read` answers bytes with none.
+  #
+  # BOTH FILES COME FROM ONE REAL SAVE through the fixture's "Save and read back", for the reason the
+  # pickFile test gives: a node built with nodes.create! has a NULL storage_path, which cannot exist
+  # on share or s3. The `.3mf` beside it is the negative case — nothing opens that kind, so its page's
+  # frame loads and stays empty.
+  test "a .txt file page offers Open in SDK Fixture, and the tool receives the file's id and name" do
+    user = User.find_by!(email: "sdk@example.com")
+    folder = Maker::LibraryFolder.create_child!(user, parent_node_id: nil, name: "open-with")
+    visit "/tools/sdk-fixture?parent=#{folder.node_id}&bname=open-no.3mf&tname=open-me.txt"
+    click_button "Save and read back"
+    assert_selector "[data-role=sdk-roundtrip-result]", text: "bin=#{BINARY_HEX}"
+    txt = user.nodes.present.find_by!(name: "open-me.txt", kind: "file")
+    bin = user.nodes.present.find_by!(name: "open-no.3mf", kind: "file")
+
+    visit "/files/#{txt.node_id}"
+    assert_selector "h1", text: "open-me.txt"
+    within("turbo-frame#open-with") { click_link "Open in SDK Fixture" }
+
+    assert_selector "h1", text: "SDK Fixture"
+    assert_selector "[data-role=sdk-launch]",
+                    exact_text: "launch:none file:#{txt.node_id}:open-me.txt old:#{LEVEL_2_LAUNCH}"
+
+    # THE NEGATIVE CASE WAITS FOR THE FRAME TO FINISH — Turbo marks a loaded frame `complete` — so
+    # "no link" is asserted about a frame that answered, not one that has not been asked yet.
+    visit "/files/#{bin.node_id}"
+    assert_selector "turbo-frame#open-with[complete]"
+    assert_no_selector "turbo-frame#open-with a"
     assert_no_console_errors
   end
 

@@ -119,6 +119,76 @@ module Tools
       assert_default "d-new", "/new"
     end
 
+    # STEP 2 — `?file=` (host level 4): the tool starts in the folder of the file it was opened on,
+    # over the newest output's folder. A tool opened from a file page saves beside that file.
+    test "?file= starts the tool in that file's folder, over the newest output's" do
+      dir("d-prints", "prints")
+      dir("d-new", "new")
+      file("n-part", "part.gcode", "d-prints")
+      file("n-new", "new.svg", "d-new")
+      saved("n-new", at: 1.minute.ago)
+      get tools_addon_path("destkit", file: "n-part")
+      assert_default "d-prints", "/prints"
+    end
+
+    # `?in=` STILL WINS: New ▸ <tool> from a folder names the folder the maker is looking at.
+    test "?in= wins over ?file=" do
+      dir("d-jigs", "jigs")
+      dir("d-prints", "prints")
+      file("n-part", "part.gcode", "d-prints")
+      get tools_addon_path("destkit", in: "d-jigs", file: "n-part")
+      assert_default "d-jigs", "/jigs"
+    end
+
+    # MAPPED UP, FOR STEP 4'S REASON: a file the intake sweep filed into `Projects/<slug>/models/`
+    # has its project's folder as the place a save starts, so a same-name save meets the 409
+    # question at the project root rather than the terminal 422 inside the category folder.
+    # The project folder is ROWS ONLY (`project_folder_rows!`) — never a mkdir through the port.
+    test "a ?file= inside a project's category folder starts the tool at the project folder" do
+      project = @user.maker_projects.create!(name: "Desk Lamp")
+      folder = project_folder_rows!(@user, project)
+      dir("d-models", "models", folder.node_id)
+      file("n-lamp", "lamp.stl", "d-models")
+      get tools_addon_path("destkit", file: "n-lamp")
+      assert_default folder.node_id, "/Projects/desk-lamp"
+    end
+
+    # THE ROOT IS AN ANSWER HERE TOO, as it is for `?state=` (the `[nil]` rule below): a file at the
+    # library root starts its tool at the root, not in whatever folder a newer output went to.
+    test "a ?file= at the library root keeps the tool at the root, not where a newer output went" do
+      file("n-root", "root.gcode", nil)
+      dir("d-new", "new")
+      file("n-new", "new.svg", "d-new")
+      saved("n-new", at: 1.minute.ago)
+      get tools_addon_path("destkit", file: "n-root")
+      assert_default "", "/ (library root)"
+    end
+
+    # A MISS FALLS THROUGH, NEVER ERRORS — `?in=`'s rule, one step later. A folder's id, a tombstone,
+    # a stranger's file, an unknown id and an array each fall through to the newest output's folder,
+    # which is why that output sits in a folder of its own: unguarded, the array's IN lookup resolves
+    # `n-jigs` and the tool starts in `d-jigs`.
+    test "a stale, foreign, folder or non-String ?file= falls through to the next step" do
+      dir("d-cad", "cad")
+      dir("d-jigs", "jigs")
+      dir("d-gone", "gone", deleted: true)
+      file("n-old", "old.svg", "d-cad")
+      saved("n-old", at: 1.hour.ago)
+      file("n-jigs", "jig.gcode", "d-jigs")
+      file("n-trashed", "trashed.gcode", "d-jigs", deleted: true)
+      file("n-orphan", "orphan.gcode", "d-gone")
+      other = User.create!(email: "o-#{SecureRandom.hex(4)}@example.com", password: PASSWORD, confirmed_at: Time.current)
+      other.nodes.create!(node_id: "n-theirs", name: "theirs.gcode", kind: "file", mtime: 1, size: 1,
+                          content_hash: "h-theirs", current_version_id: "v-theirs")
+
+      [ "nope", "d-jigs", "n-trashed", "n-theirs", "n-orphan" ].each do |stale|
+        get tools_addon_path("destkit", file: stale)
+        assert_default "d-cad", "/cad"
+      end
+      get "#{tools_addon_path('destkit')}?file[]=n-jigs&file[]=nope"
+      assert_default "d-cad", "/cad"
+    end
+
     # EACH SKIPPED OUTPUT SITS IN A FOLDER OF ITS OWN, so skipping it is visible. The trashed one used
     # to share `d-live` with the answer, and dropping `outputs.deleted` passed (measured): landing on
     # the tombstone named the same folder as skipping it did.

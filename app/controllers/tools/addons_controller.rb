@@ -615,25 +615,29 @@ module Tools
 
     # WHERE A SAVE STARTS (structural redesign spec §7, as slice 4's plan amended it). The bundle shows
     # this folder in its OWN "Save into" field and the user changes it there; this decides only where
-    # that field begins. Four steps, first answer wins:
+    # that field begins. Five steps, first answer wins:
     #
     #   1. `?in=` naming a live folder of this user's (New ▸ <tool> from a folder sets it).
-    #   2. `?state=` naming one of this tool's saved states: the folder its LATEST save's output lives
+    #   2. `?file=` naming a live file of this user's (a file page's "Open in <tool>" sets it, host
+    #      level 4): the folder that file sits in, MAPPED UP to its owning project's folder for step
+    #      4's reason — a tool opened on `Projects/<slug>/models/part.stl` saves beside the project,
+    #      where a same-name save meets the 409 question rather than the category folder's 422.
+    #   3. `?state=` naming one of this tool's saved states: the folder its LATEST save's output lives
     #      in now. Every reopen link ("Edit in Boxes") already carries `state=`, so a revision starts
     #      where its file is and #resolve_placements' owned arm replaces it in place there.
-    #   3. The folder of this tool's most recent live output, MAPPED UP to its owning project's folder
+    #   4. The folder of this tool's most recent live output, MAPPED UP to its owning project's folder
     #      when it sits inside one. The eager intake nudge files `Projects/<slug>/x.svg` into
     #      `design/`; a same-name save into `design/` is #refuse_taken_names!'s terminal 422, where the
     #      project root reaches #resolve_placements' 409 "save as revision 2" offer —
     #      test/system/box_revisions_test.rb's join test reaches that offer through this step.
-    #   4. nil, the library root.
+    #   5. nil, the library root.
     #
     # NEVER SESSION OR USER STATE: this replaced the global current project, whose names
     # test/architecture_invariants_test.rb now forbids.
     def tool_destination_node_id
       return @tool_destination_node_id if defined?(@tool_destination_node_id)
 
-      @tool_destination_node_id = destination_from_param || destination_from_outputs
+      @tool_destination_node_id = destination_from_param || destination_from_file_or_outputs
     end
 
     # Step 1. A String only, for #find_addon_state's reason: `?in[]=a&in[]=b` arrives as an Array, and
@@ -645,9 +649,29 @@ module Tools
       current_user.nodes.present.find_by(node_id: id, kind: "dir")&.node_id
     end
 
-    # Steps 2–4. `empty?`, NEVER `any?`: `[nil]` is the answer "its output is at the library root",
+    # Steps 2–5. Step 2 lives HERE and not as a third `||` operand, because the library ROOT is one of
+    # its answers and nil is how this chain spells the root: a file at the root starts its tool at
+    # the root, exactly as step 3's `[nil]` does for an output saved there, rather than falling
+    # through to wherever a newer output went.
+    #
+    # THE FILE'S FOLDER MUST BE A LIVE DIR, asked of the request's own Maker::LibraryTree (one pluck,
+    # already built for the picker) rather than a second query. A live file under a tombstoned folder
+    # is reachable on share and s3 between a NAS reorganisation and the scan that tombstones its
+    # children; `owning_project_folder` answers nil for that broken chain, and `|| parent` would then
+    # start the tool INSIDE THE TOMBSTONE. A folder that is gone falls through, as a stale `?in=` does.
+    def destination_from_file_or_outputs
+      if (file = launch_file)
+        parent = file.parent_node_id
+        return nil if parent.nil?
+        return owning_project_folder(parent) || parent if library_tree.dir?(parent)
+      end
+
+      destination_from_outputs
+    end
+
+    # Steps 3–5. `empty?`, NEVER `any?`: `[nil]` is the answer "its output is at the library root",
     # and `[nil].any?` is false — the spelling that turns a reopened box saved at the root into a
-    # fall-through to step 3, which starts it in whatever folder a newer box went to.
+    # fall-through to step 4, which starts it in whatever folder a newer box went to.
     def destination_from_outputs
       if (state = find_addon_state(params[:state]))
         rows = latest_output_folder(addon_states.where(id: state.id))
@@ -775,6 +799,34 @@ module Tools
     # with an empty hidden field into a 404 — with a red mutation to prove it.
     def launch_state_id = find_addon_state(params[:state])&.id
 
+    # THE `?file=` HINT (host level 4), VALIDATED — the live file of this user's that the tool was
+    # opened on, or nil. A HINT EXACTLY AS `?state=` AND `?in=` ARE: a folder's id, a tombstone, a
+    # stranger's file, an unknown id and a value that is not one id at all each answer nil, and the
+    # page renders normally with `launch.fileId` null — a link that outlived its file (a bookmark, a
+    # file since deleted) must never take the tool down. The id is never an instruction here: the
+    # bundle reads the bytes through `host.files.read`, whose own 404 answers for a file that has
+    # gone between the page and the read.
+    #
+    # A STRING ONLY, for #find_addon_state's reason: `?file[]=a&file[]=b` arrives as an Array, and
+    # `find_by(node_id: [...])` is an IN lookup that RESOLVES — to whichever of the user's own files
+    # the planner meets first, a file nobody named, which the bundle would then read and name its
+    # output after. `kind: "file"` because a directory has no bytes to read and no name worth handing
+    # over; `present` because a tombstone's bytes are in the trash.
+    #
+    # MEMOISED on `defined?`, not `||=`, because nil is the ordinary answer and must not be looked
+    # up twice: #addon_ctx and #destination_from_file_or_outputs both ask.
+    def launch_file
+      return @launch_file if defined?(@launch_file)
+
+      @launch_file = find_launch_file(params[:file])
+    end
+
+    def find_launch_file(raw)
+      return nil unless raw.is_a?(String) && raw.present?
+
+      current_user.nodes.present.find_by(node_id: raw, kind: "file")
+    end
+
     # 404, AND RESCUED INSIDE #file RATHER THAN LEFT TO THE CLASS-LEVEL `rescue_from
     # FileLayer::NotFound` — which answers 422 with "Your library refused that write." That arm is
     # correct for the SAVE door, where NotFound means the port refused a write the caller could have
@@ -835,12 +887,18 @@ module Tools
         #
         # THE SDK NOW EXPOSES THIS WHOLE HASH as `host.launch` (app/javascript/maker/addon_sdk.js),
         # and its getter re-asserts the always-present rule from the other side — it answers
-        # `{stateId: null, ...ctx.launch}`, so a bundle running against a LEVEL-2 host, which sends
-        # no `launch` key at all, still reads an object rather than `undefined`. Note the
-        # consequence for anyone changing this line: emitting the key but dropping `stateId` from
-        # inside it would NOT surface as a missing value on that path, since the getter's default
-        # would silently supply the null. Keep the key here.
-        launch: { stateId: launch_state_id }
+        # `{stateId: null, fileId: null, fileName: null, ...ctx.launch}`, so a bundle running against
+        # a LEVEL-2 host, which sends no `launch` key at all, still reads an object rather than
+        # `undefined`. Note the consequence for anyone changing this line: emitting the key but
+        # dropping any of the three from inside it would NOT surface as a missing value on that
+        # path, since the getter's default would silently supply the null. Keep all three here.
+        #
+        # `fileId` AND `fileName` (host level 4), from `?file=` through #launch_file — the file a
+        # file page's "Open in <tool>" opened this tool on, or nil. THE NAME TRAVELS BECAUSE
+        # `host.files.read` ANSWERS BYTES WITH NO NAME: a bundle needs it to tell `.stl` from `.obj`
+        # and to name what it writes back, and the alternative — the bundle asking the host for a
+        # node's name — is an endpoint that does not exist and a URL shape the SDK exists to hide.
+        launch: { stateId: launch_state_id, fileId: launch_file&.node_id, fileName: launch_file&.name }
       }
     end
 

@@ -46,6 +46,18 @@ module Maker
         end
       end
 
+      # AN `opens` ENTRY REGISTRY DROPS IS REPORTED HERE WITH ITS SPELLING, AND NOWHERE ELSE: Registry
+      # serves the rest silently (one bad entry must not take a tool down), so this is the one place
+      # the author learns "g code" is not an extension. The tool itself stays OK — the entry is
+      # dropped, not the addon — which is why the count is 1 and this is the only problem.
+      test "an opens entry that is not an extension is reported with its spelling" do
+        with_addons([ MANIFEST.merge("opens" => [ "g code", ".stl" ]) ]) do |root|
+          result = Check.run(root)
+          assert_equal 1, result.count
+          assert_equal [ { key: "widget", reason: %(opens: "g code" is not an extension) } ], result.problems
+        end
+      end
+
       test "a missing entry file is reported" do
         with_addons([ MANIFEST ], files: { "widget/dep.js" => "" }) do |root|
           assert_equal [ { key: "widget", reason: "entry: widget.js does not exist" } ], Check.run(root).problems
@@ -82,10 +94,11 @@ module Maker
       # empty result can only mean the key was never joined. The nested key has nothing planted: it is
       # the case that shows the files are not checked at all (one problem, not "no <key>/ directory").
       # THE ROUTER IS ASKED, NOT A LIST. `a.b` is split into key "a" + format "b", and `new_menu` is an
-      # earlier route (Tools::HomeController#new_menu) — both build, list and link, then open a
-      # different page. Their folders and files exist, so only the routing question can report them.
+      # earlier route (Tools::HomeController#new_menu), as is `open_with` (its #open_with, the file
+      # page's frame) — each builds, lists and links, then opens a different page. Their folders and
+      # files exist, so only the routing question can report them.
       test "a key the host routes somewhere else is reported" do
-        %w[a.b new_menu].each do |key|
+        %w[a.b new_menu open_with].each do |key|
           with_addons([ MANIFEST.merge("key" => key) ], files: { "#{key}/widget.js" => "", "#{key}/dep.js" => "" }) do |root|
             assert_equal [ { key:, reason: "/tools/#{key} does not reach this tool — the host routes that URL elsewhere" } ],
                          Check.run(root).problems, "key #{key.inspect}"

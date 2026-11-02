@@ -376,7 +376,8 @@
   the direct `PATCH`/`DELETE /tools/:key/states/:id` endpoints, which this is not; `host.state
   .revisions` therefore gates on **`state:list`**, the read side it actually belongs to, or it would
   throw on every host there is. The level is pinned in **two** places on purpose (`host_test.rb`'s
-  ledger and the rendered-ctx literal), and both must move at level 4.
+  ledger and the rendered-ctx literal); both moved at level 4 (the second bump that flipped nothing,
+  the `fileName` bullet below) and both must move again at the next.
 - **`GET /tools/:key/states` STAYS ONE ENTRY PER SAVED ITEM FOR THE LIFE OF `api_version: "1"`, AND
   `revision` IS AN ADDITIVE KEY ON IT — never a `revisions` array.** That is exactly what let every
   already-published bundle keep working across this change (§14c: publishing a bundle IS the deploy,
@@ -389,10 +390,10 @@
   HARMONISE THEM.** An unknown, foreign or other-addon id must never 404 the tool — a stale bookmark
   or a deleted box would take the page down — while a save or a history read naming one is a bundle
   bug that must not silently do something else. `#find_addon_state` decides nothing itself for
-  exactly that reason. The SDK's `host.launch` getter answers `{stateId: null, ...ctx.launch}` so a
-  bundle on a LEVEL-2 host (which sends no `launch` key at all) still reads an object rather than
-  `undefined` — which means dropping `stateId` from inside the server's hash would NOT surface as a
-  missing value. **Keep the key in `addon_ctx`.**
+  exactly that reason. The SDK's `host.launch` getter answers `{stateId: null, fileId: null,
+  fileName: null, ...ctx.launch}` so a bundle on a LEVEL-2 host (which sends no `launch` key at all)
+  still reads an object rather than `undefined` — which means dropping `stateId` from inside the
+  server's hash would NOT surface as a missing value. **Keep the key in `addon_ctx`.**
 - **WHERE A SAVE STARTS IS `Tools::AddonsController#tool_destination_node_id`: FOUR STEPS, FIRST
   ANSWER WINS, AND NEVER SESSION OR USER STATE.** (1) `?in=` naming a live folder of the user's —
   New ▸ <tool> sets it to the folder the menu was opened from; (2) `?state=` naming one of this
@@ -427,6 +428,45 @@
   bad value costs only a link to the tool's own default. There is no stricter door to harmonise it
   with: the save never reads `?in=`, since the bundle's field sends its choice as `folderNodeId`, and
   `Tools::LibraryFolders#chosen_parent_node_id` resolves that on its own.
+- **`?file=` IS A HINT EXACTLY AS `?in=` AND `?state=` ARE: A STRING ONLY, VALIDATED AS A LIVE FILE
+  OF THIS USER'S, AND ANY MISS ANSWERS nil — NEVER AN ERROR** (host level 4,
+  `Tools::AddonsController#launch_file`). A folder's id, a tombstone, a stranger's file and an
+  unknown id each render the tool with `launch.fileId` null, because a link that outlived its file
+  must not take the tool down; the bundle reads the bytes through `host.files.read`, whose own 404
+  answers for a file that went between the page and the read. The `is_a?(String)` check is
+  load-bearing for `#find_addon_state`'s reason: `?file[]=a&file[]=b` is an IN lookup that RESOLVES,
+  to a file nobody named, which the bundle would then read and name its output after. It is also
+  step 2 of where a save starts (`#tool_destination_node_id`): the file's folder, mapped up to its
+  owning project's folder for step 4's reason, and the ROOT is one of its answers — a file at the
+  root starts its tool at the root, as `?state=`'s `[nil]` does — which is why the step lives inside
+  `#destination_from_file_or_outputs` and not as a third `||` operand. The folder must be a live dir
+  of the request's own `Maker::LibraryTree`, or `owning_project_folder`'s nil for a broken chain
+  would start the tool inside the tombstone. `Tools::HomeController#open_with` reads the same hint
+  the same way (a String, a live file, `kind: "file"`) and renders its frame empty for every miss.
+- **THE OPEN-WITH FRAME IS LAZY, AND THE RIGHT-CLICK FILE MENU DELIBERATELY HAS NO ENTRY FOR IT.**
+  `files/show.html.erb` points a `loading="lazy"` turbo-frame at `GET /tools/open_with?file=`, and
+  the file page's own render never touches the addon registry — `addon_origin_surfaces_test.rb` pins
+  that at zero manifest fetches for a file no addon made. Listing tools means reading the registry,
+  a manifest fetch over HTTP behind a 5-minute cache, and that is exactly why `Maker::AddonOrigin`
+  consults it only when a node query found a hit: on an addon-source outage an unconditional read is
+  a slow Files page for a maker who has never opened `/tools`. The file menu is built per row on the
+  Files index, so an entry there would be that read on EVERY Files render; the file page already
+  pays one when the file has an origin, and the frame pays it once, on demand, in a request of its
+  own. Two things not to undo: the route is TWO segments and sits ABOVE `tools/:key` (the routes
+  comment's standing rule; move it and the frame fills with a 404 — `home_controller_test.rb`'s
+  open_with tests are the mutation check), and the frame carries `target="_top"`, because a link
+  inside a frame navigates the frame and the tool page has no frame to answer with.
+- **`fileName` TRAVELS IN `launch` BECAUSE `files.read` ANSWERS BYTES WITH NO NAME.** A bundle
+  needs the name to tell `.stl` from `.obj` and to name what it writes back, and the only other way
+  to it is an endpoint that does not exist — a node's name by id — plus a URL shape the SDK exists
+  to hide. All three keys are ALWAYS present in `addon_ctx[:launch]`, null when empty, for
+  `stateId`'s reason: the SDK's getter answers `{stateId: null, fileId: null, fileName: null,
+  ...ctx.launch}`, so dropping one from the server's hash would NOT surface as a missing value —
+  the getter would quietly supply the null, and `addon_sdk_test.rb`'s Open-with journey is what goes
+  red. `Host::LEVEL` 4 flipped no capability, for level 3's reason (the existing `library:read` door
+  pointed at a file by the host), and spec §2 says a tool must NOT require it: a level-3 host ignores
+  `opens`, reads both as null, and the tool still works through its own picker, which is what lets
+  the host and the bundles deploy in either order.
 - **THE FILE→STATE REVERSE LOOKUP CONSULTS THE REGISTRY ONLY WHEN THE NODE QUERY FOUND A HIT.**
   `Maker::AddonOrigin.for` makes no `Registry` call at all and `AddonOrigins#addon_origins_for` returns
   early when it is empty, so a library with no addon output never touches the addon source — a
