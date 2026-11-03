@@ -58,8 +58,13 @@
       <%= f.submit "Claim handle", class: "btn small" %>
     <% end %>
   <% else %>
+    <%# `dirty-form`, the Details form's guard (projects/_form says how): leaving with a choice made
+        here and not saved asks first, and Save publishing does not. %>
     <%= form_with model: project, scope: :project, url: project_path(project), method: :patch,
-                  class: "publish-form" do |f| %>
+                  class: "publish-form",
+                  data: { controller: "dirty-form", dirty_form_dirty_value: project.errors.any?,
+                          action: "submit->dirty-form#disarm turbo:submit-start->dirty-form#disarm " \
+                                  "turbo:submit-end->dirty-form#submitted" } do |f| %>
       <%= hidden_field_tag :return_to, "publishing" %>
       <fieldset class="publish-options">
         <legend>Who can see this</legend>

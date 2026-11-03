@@ -349,6 +349,17 @@
   .lbrn-settings { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 14px 16px; }
   .lbrn-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: 10px; }
   .lbrn-head h2 { margin: 0; font-size: 16px; }
+  /* A recipe table keeps its width (nowrap headers, a layer name that may be one unbroken run), so it
+     scrolls inside its own container rather than the page (design-system.md rule 11; UX audit J). */
+  .lbrn-table-scroll { overflow-x: auto; }
+
+  /* A Markdown file's Rendered view (files/_markdown_view, UX audit D8): the page's own prose, not a
+     README preview in a card, so the card's 360px cap and scrollbar come off (the .block-panel
+     .markdown reason). Two classes so it beats the bare .markdown in pages/projects.css. */
+  .markdown-view > .view-toggle { margin-bottom: 12px; }
+  .markdown.markdown-rendered { max-height: none; overflow: visible; margin-top: 0; font-size: 14px; overflow-wrap: anywhere; }
+  .markdown.markdown-rendered table { display: block; max-width: 100%; overflow-x: auto; }
+  .markdown-note { margin: 0 0 8px; font-size: 12px; }
   .lbrn-layers { width: 100%; border-collapse: collapse; font-size: 13px; }
   .lbrn-layers th { text-align: left; color: var(--fg-muted); font-weight: 600; padding: 5px 5px; border-bottom: 1px solid var(--line); white-space: nowrap; }
   .lbrn-layers td { padding: 5px 5px; border-bottom: 1px solid var(--raised); }
@@ -465,7 +476,11 @@
      (dl.meta's bottom, .attach-to-project's, .notes-panel's and .connections-panel's tops) are
      zeroed here rather than added to it. */
   .workspace { display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 1fr); }
-  .workspace-side { display: grid; gap: var(--space-4); align-content: start; min-width: 0; }
+  /* ONE `minmax(0, 1fr)` TRACK, as `.workspace` has, and not the implicit `auto` one: an auto track
+     takes its floor from its widest block's min-content, so a recipe table meant to scroll inside
+     its panel (`.lbrn-table-scroll`) widened the whole column past a 375px phone instead (UX audit J,
+     measured; test/system/narrow_names_test.rb). */
+  .workspace-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); align-content: start; min-width: 0; }
   .workspace-side dl.meta { margin: 0; }
   .workspace-side .attach-to-project,
   .workspace-side .notes-panel,

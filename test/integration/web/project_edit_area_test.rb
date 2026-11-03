@@ -103,6 +103,26 @@ module Web
       prior ? ENV["DEMO_ACCOUNT_EMAIL"] = prior : ENV.delete("DEMO_ACCOUNT_EMAIL")
     end
 
+    # --- B1: the Details and Publishing forms ask before typed input is left -----------------------
+
+    # THE WIRING, AS RENDERED (§14d): a `data-controller` naming nothing is a silent no-op, and a
+    # Boolean value the server never writes leaves a refused save's typed input unguarded. What the
+    # browser does with it is test/system/project_edit_forms_test.rb.
+    test "both forms carry the leave guard, and a refused save re-renders it already dirty" do
+      @user.update!(handle: "lamp-maker")
+      guard = "form[data-controller=dirty-form][data-action*='submit->dirty-form#disarm']" \
+              "[data-action*='turbo:submit-start->dirty-form#disarm'][data-action*='turbo:submit-end->dirty-form#submitted']"
+
+      get edit_project_path(@project)
+      assert_select "#{guard}.project-form[data-dirty-form-dirty-value=false]", 1
+      get publishing_project_path(@project)
+      assert_select "#{guard}.publish-form[data-dirty-form-dirty-value=false]", 1
+
+      patch project_path(@project), params: { project: { name: "" } }
+      assert_response :unprocessable_entity
+      assert_select "#{guard}.project-form[data-dirty-form-dirty-value=true]", 1
+    end
+
     test "a refusal for want of a handle shows its reason above the claim form" do
       patch project_path(@project), params: { project: { visibility: "public" }, return_to: "publishing" }
 

@@ -54,7 +54,7 @@
         not offer it a second time (D5). %>
     <p class="muted">Choose <strong>View in 3D</strong> to load an interactive preview<%= ", or download the file" if download_url %>.</p>
     <% if download_url %>
-      <%= link_to "Download #{name}", download_url, class: "btn" %>
+      <%= link_to "Download #{name}", download_url, class: "btn btn-name" %>
     <% end %>
     <%# IT ASKS FIRST (UX audit B5): the chosen view is discarded and the automatic render takes the
         file's picture back on every surface that shows its thumbnail. %>

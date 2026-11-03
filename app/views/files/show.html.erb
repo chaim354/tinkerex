@@ -133,9 +133,14 @@
       "Download NAME" under the stage was the same control twice (UX audit D5). `in_repo` keeps the
       editor's "keeps no history" sentence off a file inside a working tree, where git is the
       history and the History panel below lists it (D6) — the same @repo_root that decides whether a
-      save records a pending git edit. %>
-  <%= render "files/viewer", viewer: @viewer, editable: @editable, save: true,
-             poster_download: false, in_repo: @repo_root.present? %>
+      save records a pending git edit.
+
+      A MARKDOWN FILE WRAPS IT (UX audit D8): files/_markdown_view puts a Rendered view beside it and
+      this viewer behind a Source toggle; for every other file it yields the viewer untouched. %>
+  <%= render layout: "files/markdown_view", locals: { markdown: @markdown } do %>
+    <%= render "files/viewer", viewer: @viewer, editable: @editable, save: true,
+               poster_download: false, in_repo: @repo_root.present? %>
+  <% end %>
   </div>
 </div>
 

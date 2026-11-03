@@ -1,0 +1,42 @@
+<%# locals: (markdown:) %>
+<%# A MARKDOWN FILE'S TWO VIEWS (2026-11-02, the UX audit's D8), rendered by files/show AS A LAYOUT
+    around the source viewer it yields. `markdown` is FilesController#show's Maker::MarkdownFile
+    answer: nil for anything that is not Markdown, an html for one that rendered, or a problem.
+
+    RENDERED BY DEFAULT, SOURCE ONE PRESS AWAY. The two buttons are the hub's view-toggle shape
+    (`.view-toggle .toggle`, `active` for the look and `aria-pressed` for what a screen reader hears),
+    and markdown_view_controller.js swaps which pane is hidden. Both panes are server-rendered: the
+    source pane is the SAME viewer chain every text file gets, so on an editable file Source is the
+    editor exactly as before, mounted while hidden (it fetches its own bytes either way).
+
+    `.markdown` IS THE README CARD'S CLASS, so this prose reads like the card's and the fileopen sweep
+    (template_hygiene_test.rb) treats its links as rendered Markdown, which they are.
+
+    NO HTML, NO TOGGLE: an over-cap file, an unreachable library or a file gone since the stat get the
+    source view alone, under one sentence saying why (the unreachable one is the app's one sentence,
+    FilesController::UNREACHABLE; the layout's banner names the outage itself).
+
+    `editor:saved` IS THE EDITOR TELLING THIS VIEW IT IS STALE: a Save in Source rewrites the file
+    without reloading the page, so pressing Rendered after one loads the page again rather than
+    showing what the file said before. %>
+<% if markdown&.html %>
+  <div class="markdown-view" data-controller="markdown-view" data-action="editor:saved->markdown-view#saved">
+    <div class="view-toggle markdown-view-toggle" role="group" aria-label="View">
+      <% [ [ "rendered", "Rendered" ], [ "source", "Source" ] ].each do |pane, label| %>
+        <button type="button" class="toggle<%= " active" if pane == "rendered" %>"
+                aria-pressed="<%= pane == "rendered" %>"
+                data-markdown-view-target="toggle" data-markdown-view-pane-param="<%= pane %>"
+                data-action="markdown-view#show"><%= label %></button>
+      <% end %>
+    </div>
+    <div class="markdown markdown-rendered" data-markdown-view-target="pane" data-pane="rendered"><%= markdown.html %></div>
+    <div class="markdown-source" data-markdown-view-target="pane" data-pane="source" hidden><%= yield %></div>
+  </div>
+<% else %>
+  <% if markdown&.problem == :too_large %>
+    <p class="muted markdown-note">Too large to render; showing the source.</p>
+  <% elsif markdown&.problem == :unreachable %>
+    <p class="muted markdown-note"><%= FilesController::UNREACHABLE %></p>
+  <% end %>
+  <%= yield %>
+<% end %>

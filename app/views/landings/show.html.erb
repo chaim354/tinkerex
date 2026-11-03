@@ -13,7 +13,7 @@
     No script on this page: plain HTML and CSS, nothing for the CSP to nonce. %>
 <% content_for :title, "Tinkerex: every file your workshop makes, previewed" %>
 <% content_for :head do %>
-  <meta name="description" content="Tinkerex indexes the folder your STL, STEP, LightBurn, DXF and Gerber files already live in, draws a preview of each, and opens them in the browser, measured in millimetres. Self-hosted and open source.">
+  <meta name="description" content="Tinkerex scans the folder your STL, STEP, LightBurn, DXF and Gerber files already live in, draws a preview of each, and opens them in the browser, measured in millimetres. Self-hosted and open source.">
 <% end %>
 <% content_for :container_class, "landing-main" %>
 <% install_url = Tinkerex::Landing::INSTALL_URL %>
@@ -32,7 +32,7 @@
   <section class="landing-hero" aria-labelledby="landing-title">
     <div class="landing-pitch">
       <h1 id="landing-title" class="landing-title">Every file your workshop makes, previewed.</h1>
-      <p class="landing-lede">Tinkerex indexes the folder your STL, STEP, LightBurn, DXF and Gerber files already live in, draws a preview of each (more than a hundred file types), and opens them in the browser, measured in millimetres. It runs on your own box, and your files stay plain files.</p>
+      <p class="landing-lede">Tinkerex scans the folder your STL, STEP, LightBurn, DXF and Gerber files already live in, draws a preview of each (more than a hundred file types), and opens them in the browser, measured in millimetres. It runs on your own box, and your files stay plain files.</p>
       <div class="landing-actions">
         <% if @demo_available %>
           <%= button_to "Try the demo", demo_session_path, class: "btn primary" %>

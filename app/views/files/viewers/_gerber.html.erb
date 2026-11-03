@@ -67,7 +67,7 @@
           Download already (files/_viewer's `poster_download`, D5). %>
       <p class="muted" data-gerber-target="status">Choose <strong><%= single ? "View layer" : "View board" %></strong> to render <%= single ? "this layer" : "the board" %> in the browser<%= ", or download the file" if download_url %>.</p>
       <% if download_url %>
-        <%= link_to "Download #{name}", download_url, class: "btn" %>
+        <%= link_to "Download #{name}", download_url, class: "btn btn-name" %>
       <% end %>
     </div>
   </div>

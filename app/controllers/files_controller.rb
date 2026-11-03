@@ -611,7 +611,18 @@ class FilesController < ApplicationController
     # way so the view reads it identically; a file no addon produced is simply an absent key.
     @addon_origins = addon_origins_for([ @node.node_id ])
     @move_conflict = move_conflict_prompt
-    @library_path = library_path_for(@node)
+    # ONE LibraryTree FOR THE PATH ROW AND THE RENDERED MARKDOWN'S LINKS: a single pluck of the
+    # user's dirs, which both read in memory.
+    tree = Maker::LibraryTree.new(current_user)
+    @library_path = library_path_for(@node, tree)
+    # A MARKDOWN FILE'S RENDERED VIEW (2026-11-02, the UX audit's D8): the source view fetches its
+    # bytes in the browser, so rendering them is ONE port read here — of the file this page is about,
+    # which §2/§14a allow on a GET: what they forbid is a pull of the CATALOG in a read path, and
+    # this reads no metadata from the store at all. Maker::MarkdownFile caps it on the stat's size
+    # and degrades to the source view on every failure. nil whenever the page shows no text viewer.
+    if @kind == :text && @info&.content_token && Maker::FileAttachment.markdown?(@node.name)
+      @markdown = Maker::MarkdownFile.for(user: current_user, node: @node, size: @info.size, tree:)
+    end
     # THE BREADCRUMB'S FOLDER CHAIN (structural redesign §5.3): the same `folder_crumbs` walk #index
     # makes — one find_by per ancestor, so it grows with DEPTH, never with the folder's size. Also
     # what lets ShellHelper#sidebar_current light a pinned ancestor on a file page. A file at the
@@ -1242,8 +1253,8 @@ class FilesController < ApplicationController
   # drops it. This app cannot know what the share is mounted as on the maker's machine, so an
   # smb:// or file:// here would be a guess printed as a fact; the maker pastes this into
   # whatever their own Finder/Explorer path is.
-  def library_path_for(node)
-    folder_path = Maker::LibraryTree.new(current_user).path_for(node.parent_node_id)
+  def library_path_for(node, tree = Maker::LibraryTree.new(current_user))
+    folder_path = tree.path_for(node.parent_node_id)
     folder_path && [ folder_path.presence, node.name ].compact.join("/")
   end
 

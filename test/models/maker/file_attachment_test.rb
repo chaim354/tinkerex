@@ -311,5 +311,19 @@ module Maker
       assert_empty Maker::FileAttachment::PHOTO_EXTS - Maker::FileAttachment::IMAGE_EXTS,
                    "PHOTO_EXTS is a display subset of the image role, never a second vocabulary"
     end
+
+    # A MARKDOWN FILE PAGE RENDERS (the UX audit's D8) — decided by extension, as a DISPLAY subset of
+    # the document role, the way PHOTO_EXTS is of the image role.
+    test "a Markdown file is an md or markdown document, and nothing else is" do
+      assert Maker::FileAttachment.markdown?("README.md")
+      assert Maker::FileAttachment.markdown?("Notes.MARKDOWN")
+      refute Maker::FileAttachment.markdown?("notes.txt"), "plain text has nothing to render"
+      refute Maker::FileAttachment.markdown?("README"), "an extensionless README is shown as text"
+      refute Maker::FileAttachment.markdown?(nil)
+      Maker::FileAttachment::MARKDOWN_EXTS.each do |ext|
+        assert_equal "document", Maker::FileAttachment::ROLE_BY_EXT[ext],
+                     "MARKDOWN_EXTS is a display subset of the document role, never a second vocabulary"
+      end
+    end
   end
 end

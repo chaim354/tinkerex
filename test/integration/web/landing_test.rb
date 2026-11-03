@@ -133,6 +133,13 @@ module Web
       get "/"
       assert_select "title", text: /Tinkerex/
       assert_select "head meta[name='description'][content*='Tinkerex']", 1
+      # THE PRODUCT'S WORD IS "scans" (UX audit H): Help and Settings -> Library say it, and a pitch
+      # that says "indexes" names a second process the app does not have.
+      assert_select "head meta[name='description'][content^='Tinkerex scans the folder']", 1
+      assert_select ".landing-lede", text: /\ATinkerex scans the folder /
+      # The bare stem, so "indexed", "reindex" and "indexer" are refused too; the visible text has no
+      # other use of it (the importmap's `index-….js` is outside `.landing`).
+      refute_match(/index/i, css_select(".landing").text + css_select("head meta[name='description']").first["content"])
     end
   end
 end

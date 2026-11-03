@@ -1112,6 +1112,36 @@ module Web
                               "files#show (connections)")
     end
 
+    # A MARKDOWN FILE'S RENDERED VIEW (the UX audit's D8) RESOLVES EVERY RELATIVE LINK IN MEMORY:
+    # Maker::MarkdownFile reads the folder's files in ONE query, beside the LibraryTree pluck the Path
+    # row already makes, and Maker::Markdown asks that index, never the database, per link. The
+    # obvious spelling — a `nodes.find_by` per href — is invisible on a README with two links.
+    #
+    # REAL BYTES ON A SHARE ROOT OF ITS OWN (use_fresh_share_library!): the view reads the file
+    # through the port, so a row with nothing behind it would budget the degraded path instead. The
+    # links and the files they name grow together, and the last assertion is the non-vacuity check:
+    # the page measured really rendered every link.
+    test "files#show on a Markdown file does not grow with its folder's files or its links" do
+      @root = use_fresh_share_library!
+      folder = create_node!(@user, node_id: "md-dir", name: "lamp", kind: "dir", mtime: 1, size: 0)
+      readme = create_node!(@user, node_id: "md-readme", name: "README.md", kind: "file",
+                                   parent_node_id: folder.node_id, mtime: 1, size: 1, content_hash: "h-md")
+      add = lambda do |prefix, count|
+        count.times do |i|
+          create_node!(@user, node_id: "#{prefix}#{i}", name: "#{prefix}#{i}.svg", kind: "file",
+                              parent_node_id: folder.node_id, mtime: 1, size: 1, content_hash: "h-#{prefix}#{i}")
+        end
+        names = @user.nodes.where(parent_node_id: folder.node_id).where.not(node_id: readme.node_id).pluck(:name)
+        body = "# Lamp\n\n#{names.map { |n| "[#{n}](#{n}) ![#{n}](#{n})\n" }.join}"
+        @root.join(readme.reload.storage_path).binwrite(body)
+        readme.update_columns(size: body.bytesize)
+      end
+      assert_constant_queries(file_path(readme.node_id), -> { add.call("ms", SMALL) },
+                              -> { add.call("ml", LARGE - SMALL) }, "files#show (Markdown)")
+      assert_select ".markdown-rendered a[href^='/files/']", LARGE
+      assert_select ".markdown-rendered img[src^='/files/']", LARGE
+    end
+
     # THE INSPECTOR IS ONE NODE'S PANEL, so it must not grow with the file's notes or its projects —
     # it is fetched on every selection (structural redesign slice 3). Notes are COUNTED, never
     # loaded; the attach chips come off one eager-loaded query (FilesController#attach_choices_for).

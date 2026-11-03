@@ -92,7 +92,13 @@ class FilesPagesTest < ApplicationSystemTestCase
 
     assert_equal "lid.svg", page.evaluate_script("window.__copied")
     assert_selector ".meta .file-path button", exact_text: "Copied"
+    # THE WORD IS SAID, NOT ONLY DRAWN (UX audit I): one polite live region beside the button,
+    # never role="status" on the button itself, which would stop a screen reader calling it a
+    # button. `visible: :all` because the region is clipped to nothing on purpose.
+    assert_selector ".meta .file-path [role=status]", count: 1, exact_text: "Copied", visible: :all
+    assert_no_selector ".meta .file-path button[role]"
     assert_selector ".meta .file-path button", exact_text: "Copy", wait: 5
+    assert_selector ".meta .file-path [role=status]", count: 1, exact_text: "", visible: :all
     assert_no_console_errors
   end
 

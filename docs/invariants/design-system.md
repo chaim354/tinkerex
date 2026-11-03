@@ -161,8 +161,15 @@ theme: black on white, at true scale (measure-view.md).
     and a missing full stop in every `notice:`/`alert:` literal under app/controllers and app/views.
 11. **No page scrolls sideways at 375px** (`test/system/shell_test.rb`). Tables drop columns
     through the `col-*` classes `files/_list.html.erb` carries; anything that must keep its width
-    (code, diffs, the Measure stage, the spreadsheet) scrolls inside its own `overflow-x: auto`
-    container; long names get `overflow-wrap: anywhere`.
+    (code, diffs, the Measure stage, the spreadsheet, a recipe table) scrolls inside its own
+    `overflow-x: auto` container; long names get `overflow-wrap: anywhere`. **`anywhere`, never
+    `break-word`**: only `anywhere` lowers the MIN-CONTENT width a flex line or a table column is
+    sized by, and a name is routinely one unbroken run (an underscore is no line-break opportunity).
+    `.page-head h1` and `.breadcrumb` carry it for every page; `.btn` stays nowrap, and a button
+    whose label interpolates a name takes `.btn-name`, which wraps. `test/system/narrow_names_test.rb`
+    measures an 80-character underscore name on the file page, the project page, a release row,
+    the Attach picker and a recipe table, against `clientWidth` (CI's Linux Chrome draws a 15px
+    scrollbar).
 
 **THE PAGE'S `<head>` IS ONE PARTIAL, `layouts/_head`, AND `layouts/turbo_rails/frame` IS THIS APP'S
 OWN, NOT AN ACCIDENTAL SHADOW OF THE GEM'S (2026-10-21).** turbo-rails applies `turbo_rails/frame` to

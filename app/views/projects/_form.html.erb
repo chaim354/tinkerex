@@ -1,9 +1,17 @@
 <%# scope: :project — WITHOUT it, form_with derives the param key from the model class, and a
     NAMESPACED model (Maker::Project) yields `maker_project[...]`, which ProjectsController's
-    params.require(:project) rejects → every create/edit through the form silently fails. %>
+    params.require(:project) rejects → every create/edit through the form silently fails.
+
+    `dirty-form` ASKS BEFORE TYPED INPUT IS LEFT BEHIND (2026-11-02, the UX audit's B1): Done, Cancel,
+    the other edit tabs and every other link meet one question while the form differs from the one
+    the page loaded, and this form's own submit stands it down, so Save never asks. A refused save
+    re-renders the form with what was typed (`dirty` true), which is unsaved from the first moment. %>
 <%= form_with model: project, scope: :project,
               url: (project.persisted? ? project_path(project) : projects_path),
-              method: (project.persisted? ? :patch : :post), class: "project-form" do |f| %>
+              method: (project.persisted? ? :patch : :post), class: "project-form",
+              data: { controller: "dirty-form", dirty_form_dirty_value: project.errors.any?,
+                      action: "submit->dirty-form#disarm turbo:submit-start->dirty-form#disarm " \
+                              "turbo:submit-end->dirty-form#submitted" } do |f| %>
   <% if project.errors.any? %>
     <div class="form-errors flash-alert" role="alert">
       <%= project.errors.full_messages.to_sentence %>

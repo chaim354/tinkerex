@@ -36,6 +36,15 @@
   .btn.icon { width: var(--control-height); padding: 0; }
   .btn.small.icon { width: var(--control-height-small); }
   .btn:disabled, input[type="submit"]:disabled { opacity: .5; cursor: default; filter: none; }
+  /* A BUTTON THAT CARRIES A NAME WRAPS (UX audit J, 2026-11-02). Every other button keeps its label on
+     one line, which is why `.btn` stays nowrap; but a name is routinely one unbroken export run
+     (`lid_v3_final`: an underscore is no line-break opportunity), and a nowrap button holding one is
+     as wide as the name. `.btn-name` goes on the button whose label interpolates one ("Attach and
+     move into NAME", "Download NAME"); it never grows past its line, and the caller's container
+     decides how much of the line that is. Guard: test/system/narrow_names_test.rb. */
+  .btn-name { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: center; line-height: 1.3; }
+  /* 3px, not 4: 1.3 × 13px plus 4+4 plus the border overshot --control-height-small by a pixel. */
+  .btn.btn-name { padding-top: 3px; padding-bottom: 3px; }
   .linkbtn {
     background: none; border: 0; padding: 0; color: var(--fg); font: inherit; cursor: pointer;
     text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px;
@@ -136,7 +145,9 @@
      bottom margin that rule carried is gone with the move. */
   .sort-form { display: flex; align-items: center; gap: 8px; margin: 0; }
   .toolbar-count { font: 400 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-muted); white-space: nowrap; }
-  .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; min-width: 0; }
+  /* A crumb is a folder, file or project name, so it wraps anywhere for the h1's reason below; the
+     property inherits, which is what lowers each crumb's own min-content as a flex item. */
+  .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
   .breadcrumb .sep { color: var(--line-strong); }
   .breadcrumb a { color: var(--fg-muted); }
   .breadcrumb a:hover { color: var(--fg); text-decoration: none; }
@@ -144,7 +155,11 @@
   .pager { display: flex; align-items: center; gap: var(--space-4); margin: 0 0 var(--space-3); font-size: 13px; }
   .pager-status { color: var(--fg-muted); font-family: var(--font-mono); }
   .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-5); }
-  .page-head h1 { font-size: 20px; line-height: 26px; }
+  /* A HEADING IS OFTEN A NAME THE MAKER CHOSE (a file, a project, an account), and an export's name is
+     routinely one unbroken run (`lid_v3_final_print`: an underscore is no line-break opportunity),
+     so the h1 wraps anywhere. `anywhere`, not `break-word`: only `anywhere` lowers the MIN-CONTENT
+     width a flex line sizes this item by (UX audit J; test/system/narrow_names_test.rb). */
+  .page-head h1 { font-size: 20px; line-height: 26px; overflow-wrap: anywhere; }
   .page-subtitle { margin: 2px 0 0; font-size: 14px; color: var(--fg-muted); flex-basis: 100%; }
   .page-actions, .row-actions, .head-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 

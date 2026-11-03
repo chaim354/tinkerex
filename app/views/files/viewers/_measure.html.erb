@@ -199,7 +199,7 @@
       <p class="muted">No inline preview for this file.</p>
       <%# Nil where the page head offers Download already (files/_viewer's `poster_download`; D5). %>
       <% if download_url %>
-        <%= link_to "Download #{name}", download_url, class: "btn" %>
+        <%= link_to "Download #{name}", download_url, class: "btn btn-name" %>
       <% end %>
     <% end %>
   </div>

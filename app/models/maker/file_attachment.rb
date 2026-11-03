@@ -230,6 +230,19 @@ module Maker
 
     def self.photo?(name) = PHOTO_EXTS.include?(File.extname(name.to_s).delete(".").downcase)
 
+    # MARKDOWN_EXTS — the `document`-role extensions whose file page offers a RENDERED view beside the
+    # source (2026-11-02, the UX audit's D8; FilesController#show, Maker::MarkdownFile). A DISPLAY
+    # subset of the document role in PHOTO_EXTS's shape, never a second vocabulary: the ROLE of both
+    # stays `document` in ROLE_BY_EXT, and file_attachment_test.rb asserts each is a document. A
+    # literal for PHOTO_EXTS's reason — an intersection would make that test unable to fail. `.txt`,
+    # `.rst` and `.tex` are prose too and are deliberately not here: nothing renders them.
+    MARKDOWN_EXTS = %w[md markdown].freeze
+
+    def self.markdown?(name)
+      ext = File.extname(name.to_s).delete(".").downcase
+      MARKDOWN_EXTS.include?(ext) && ROLE_BY_EXT[ext] == "document"
+    end
+
     # EVERY EXTENSION THE 3D VIEWER CAN OPEN — the ONE list, read by BOTH doors that offer it
     # (`FilesController#preview_kind`'s `:model3d` branch and `ModelsController#show`'s hero
     # switcher). Each controller carried its own copy of `%w[stl 3mf obj]` until 2026-09-06, which

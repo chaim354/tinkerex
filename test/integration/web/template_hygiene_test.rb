@@ -732,7 +732,7 @@ module Web
     # for the reason the .page-head test gives: a page added there is covered with no edit, so a new
     # surface that links a file page without FilesHelper#file_open_data goes red here instead of
     # opening on the first half of a double-click. Two exclusions and no list: rendered Markdown (a
-    # README, a text block) is prose, and a `.btn` is an action. A file page link is `/files/<a node
+    # README, a text block, a Markdown file's Rendered view) is prose, and a `.btn` is an action. A file page link is `/files/<a node
     # id of this fixture>` exactly — no query, no fragment, no second segment (a blob or notes URL).
     # An href URI cannot parse is not a file page link, so it is skipped rather than raised on.
     #
