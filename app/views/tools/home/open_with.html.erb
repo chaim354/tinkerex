@@ -1,0 +1,14 @@
+<%# A file page's "Open in <tool>" buttons (Tools::HomeController#open_with), for the lazy frame
+    files/show.html.erb points at this. The registry is read HERE, on demand, never by the file
+    page. One `.btn` per available tool whose `opens` names the file's extension; a miss of any kind
+    renders the frame EMPTY — it sits in the page's actions row, so there is nothing to say.
+
+    `target="_top"` because a link inside a frame otherwise navigates the FRAME, and the tool page
+    has no `open-with` frame to answer with (Turbo would log "response has no matching frame" and
+    leave the page where it was). The page's own frame carries the same target; both, so the answer
+    is right whichever element Turbo consults. %>
+<turbo-frame id="open-with" target="_top">
+  <% @addons.each do |addon| %>
+    <%= link_to "Open in #{addon.title}", tools_addon_path(addon.key, file: @file.node_id), class: "btn" %>
+  <% end %>
+</turbo-frame>

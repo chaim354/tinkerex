@@ -207,11 +207,11 @@ module Tools
     # THE LITERAL IS THE POINT, and it is why this test exists beside the one above rather than
     # inside it: that one derives its expectation from Maker::Addons::Host::LEVEL, so it stays green
     # through any bump and can only see the value failing to REACH the blob. A bundle declaring
-    # `min_host: 3` is asking about this number, so the number itself is what has to be asserted.
+    # `min_host: 4` is asking about this number, so the number itself is what has to be asserted.
     # Sibling of host_test.rb's own ledger assertion, one layer down: that one pins the level against
     # the capability set, this one pins that the shell actually serves it.
-    test "the host announces level 3" do
-      assert_equal 3, rendered_ctx["hostLevel"]
+    test "the host announces level 4" do
+      assert_equal 4, rendered_ctx["hostLevel"]
     end
 
     # ---- the ?state= deep link ------------------------------------------------------------------
@@ -299,6 +299,65 @@ module Tools
 
       assert_response :success
       assert_nil launch_from_page["stateId"]
+    end
+
+    # ---- the ?file= hint (host level 4) ---------------------------------------------------------
+
+    def library_file(id, name, parent: nil, deleted: false, user: @user)
+      user.nodes.create!(node_id: id, name:, kind: "file", parent_node_id: parent, deleted:,
+                         mtime: 1, size: 1, content_hash: "h-#{id}", current_version_id: "v-#{id}")
+    end
+
+    # BOTH THE ID AND THE NAME, because `host.files.read` answers bytes with no name and a bundle
+    # needs one — to tell `.stl` from `.obj`, and to name what it writes back.
+    test "a ?file= naming the user's own live file is resolved into ctx.launch with its name" do
+      library_file("n-part", "part.gcode")
+      get tools_addon_path(FIXTURE_KEY, file: "n-part")
+      assert_response :success
+      assert_equal "n-part", launch_from_page["fileId"]
+      assert_equal "part.gcode", launch_from_page["fileName"]
+      assert_nil launch_from_page["stateId"]
+    end
+
+    # ALWAYS PRESENT, `null` WHEN THERE IS NOTHING TO OPEN — `stateId`'s rule, for the same reason:
+    # the SDK getter fills a missing key with null, so only the server's own blob can show the key
+    # is still being sent. `key?` is what asserts that; `assert_nil` alone passes for an absent key.
+    test "no ?file= means null fileId and fileName, not missing keys" do
+      get tools_addon_path(FIXTURE_KEY)
+      assert_response :success
+      assert launch_from_page.key?("fileId"), "fileId must always be present"
+      assert launch_from_page.key?("fileName"), "fileName must always be present"
+      assert_nil launch_from_page["fileId"]
+      assert_nil launch_from_page["fileName"]
+    end
+
+    # A HINT, EXACTLY AS `?state=` AND `?in=` ARE: a folder, a tombstone, a stranger's file, an
+    # unknown id and a value that is not one id at all each answer null, and the page still renders.
+    # A link that outlived its file — a bookmark, a deleted file — must never take the tool down.
+    #
+    # THE ARRAY IS THE CASE WITH TEETH. `?file[]=` arrives as an Array and `find_by(node_id: [...])`
+    # is an IN lookup, so without the `is_a?(String)` check it RESOLVES — to whichever of the user's
+    # own files the planner meets first, a file nobody named. Both entries name live files of the
+    # user's, so refusing the shape is the only thing that can make this answer null.
+    test "a folder, a tombstone, a stranger's file, an unknown id or an array ?file= renders with null" do
+      @user.nodes.create!(node_id: "d-cad", name: "cad", kind: "dir", mtime: 1, size: 0)
+      library_file("n-gone", "gone.gcode", deleted: true)
+      library_file("n-first", "first.gcode")
+      library_file("n-second", "second.gcode")
+      other = User.create!(email: "other4@example.com", password: PASSWORD, confirmed_at: Time.current)
+      library_file("n-theirs", "theirs.gcode", user: other)
+
+      [ "d-cad", "n-gone", "n-theirs", "nope", "" ].each do |bad|
+        get tools_addon_path(FIXTURE_KEY, file: bad)
+        assert_response :success, "?file=#{bad.inspect} must still render the tool"
+        assert_nil launch_from_page["fileId"], "?file=#{bad.inspect} must not resolve"
+        assert_nil launch_from_page["fileName"], "?file=#{bad.inspect} must not resolve a name"
+      end
+
+      get "#{tools_addon_path(FIXTURE_KEY)}?file[]=n-first&file[]=n-second"
+      assert_response :success
+      assert_nil launch_from_page["fileId"], "an array of ids must not resolve to either file"
+      assert_nil launch_from_page["fileName"]
     end
 
     test "the ctx blob carries every URL a bundle needs, from the routes rather than literals" do

@@ -672,14 +672,20 @@ class Host {
     },
   }
 
-  // WHICH SAVED ITEM THIS PAGE WAS OPENED FOR — `{stateId}`, resolved server-side from `?state=`,
-  // with `stateId` null when there is nothing to open.
+  // WHAT THIS PAGE WAS OPENED FOR — `{stateId, fileId, fileName}`, resolved server-side from
+  // `?state=` and `?file=`, each null when there is nothing to open. `stateId` is the saved item
+  // (host level 3); `fileId` and `fileName` are the library file a file page's "Open in <tool>"
+  // button opened this tool on (host level 4) — the id to hand `files.read`, and the name because
+  // `read` answers bytes with none and a bundle needs it to tell `.stl` from `.obj` and to name what
+  // it writes back. A tool that can open a file should still offer its own picker: on a level-3
+  // host both read null and the tool is reached from the gallery alone.
   //
   // ALWAYS AN OBJECT, NEVER undefined, AND THAT IS THE WHOLE CONTRACT. A host that predates this
   // sends no `launch` key at all, which reads as `undefined` in JS and cannot be told apart from
   // "no deep link" — the same argument Host::CAPABILITIES makes for every capability value being a
-  // real boolean. Object spread ignores a nullish operand, so the one literal below covers both an
-  // old host (no key) and a new one (a key whose `stateId` may be null).
+  // real boolean. Object spread ignores a nullish operand, so the one literal below covers an old
+  // host (no key), a level-3 one (a key with `stateId` alone — `fileId`/`fileName` read null, never
+  // undefined) and a current one (all three, each of which may be null).
   //
   // A GETTER RETURNING A FRESH OBJECT, for capabilities()'s own stated reason a few methods up:
   // `_ctx` is private by design, and handing back a live reference into it would let a bundle mutate
@@ -690,7 +696,7 @@ class Host {
   // AND IT IS READ THROUGH `host` AT CALL TIME, like everything else here: a bundle that captures
   // `const { launch } = host` at module top level goes on serving the PREVIOUS mount's deep link
   // after a Turbo re-mount, because an ES module is evaluated once per URL per page (see the header).
-  get launch() { return { stateId: null, ...this._ctx.launch } }
+  get launch() { return { stateId: null, fileId: null, fileName: null, ...this._ctx.launch } }
 
   // ONE URL BUILDER FOR ALL THREE VERBS, WHICH IS WHAT MAKES THE GUARDS UNFORGEABLE. get, post and
   // url all land here, so `encodeServiceName` and `encodePathSegments` cannot be applied to two of

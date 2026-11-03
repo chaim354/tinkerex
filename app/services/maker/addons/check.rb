@@ -36,11 +36,23 @@ module Maker
 
         @real_root = @root.realpath
         index = Source::Local.new(@root).manifests
-        file_problems = index.filter_map { |m| Registry.build(m) }.flat_map { |addon| files_for(addon) }
-        Result.new(count: index.size, problems: Registry.problems(index) + file_problems)
+        built = index.filter_map { |m| (addon = Registry.build(m)) && [ addon, m ] }
+        opens_problems = built.flat_map { |addon, manifest| dropped_opens_for(addon, manifest) }
+        file_problems = built.flat_map { |addon, _manifest| files_for(addon) }
+        Result.new(count: index.size, problems: Registry.problems(index) + opens_problems + file_problems)
       end
 
       private
+
+      # AN `opens` ENTRY REGISTRY DROPS, NAMED WITH ITS SPELLING. Registry serves the rest and says
+      # nothing (one bad entry must not take a tool down); this is the one place the author learns
+      # `"g code"` is not an extension. The same `opens_partition` decides both, so this reports
+      # exactly what production drops and never a second reading of the rule.
+      def dropped_opens_for(addon, manifest)
+        Registry.opens_partition(manifest["opens"]).last.map do |entry|
+          { key: addon.key, reason: "opens: #{entry.inspect} is not an extension" }
+        end
+      end
 
       def files_for(addon)
         key = addon.key

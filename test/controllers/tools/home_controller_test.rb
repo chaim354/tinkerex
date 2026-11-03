@@ -94,6 +94,128 @@ module Tools
       assert_select ".addon-permissions", count: 0
     end
 
+    # ---- the gallery in sections ----------------------------------------------------------------
+
+    def manifest(key, title, **extra) = MANIFEST.merge("key" => key, "title" => title, **extra)
+
+    # The add-on sections the page draws, in order: each `.tools-section` AFTER the built-in one,
+    # read as [heading, [card titles]].
+    def addon_sections
+      css_select(".tools-home .tools-section").drop(1).map do |section|
+        [ section.css(".tools-section-head").text.strip, section.css(".addon-card .addon-title").map { |t| t.text.strip } ]
+      end
+    end
+
+    # FOUR SECTIONS IN A FIXED ORDER, EACH DRAWN ONLY WHEN POPULATED. The manifests are listed in
+    # the reverse of the order the page must draw, so source order and the spec's order disagree.
+    test "the gallery groups add-ons by category, in a fixed order, drawing only populated sections" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        manifest("bare", "Bare Tool"),
+        manifest("fasteners", "Fasteners", "category" => "reference"),
+        manifest("gcode", "G-code Inspector", "category" => "inspect"),
+        manifest("gears", "Gears", "category" => "generate"),
+        manifest("stats", "Model Stats", "category" => "inspect")
+      ])
+      get tools_path
+      assert_response :success
+      assert_equal [ [ "Make a file", [ "Gears" ] ],
+                     [ "Look inside a file", [ "G-code Inspector", "Model Stats" ] ],
+                     [ "Calculate and look up", [ "Fasteners" ] ],
+                     [ "Other", [ "Bare Tool" ] ] ], addon_sections
+      # EVERY CARD IS STILL `.addon-card`, so the count the test above pins keeps meaning what it says.
+      assert_select ".addon-card", count: 5
+    end
+
+    test "an empty section is not drawn, and a greyed-out tool stays in its section" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        manifest("gears", "Gears", "category" => "generate"),
+        manifest("stats", "Model Stats", "category" => "inspect", "min_host" => Maker::Addons::Host::LEVEL + 1)
+      ])
+      get tools_path
+      assert_response :success
+      assert_equal [ [ "Make a file", [ "Gears" ] ], [ "Look inside a file", [ "Model Stats" ] ] ], addon_sections
+      assert_select ".tools-section-head", text: "Other", count: 0
+      assert_select ".tools-section-head", text: "Calculate and look up", count: 0
+    end
+
+    # ---- the New menu ---------------------------------------------------------------------------
+
+    # THE SOURCE MUST READ AS CONFIGURED, or #new_menu and #open_with list nothing: both ask
+    # Source.configured?, which reads ENV alone — the stub decides what Source.current answers, not
+    # whether a source exists (addon_destination_test.rb makes the same note).
+    def with_configured_source
+      prior = ENV["ADDON_SOURCE_PATH"]
+      ENV["ADDON_SOURCE_PATH"] = Rails.root.join("test/fixtures/addons").to_s
+      yield
+    ensure
+      prior ? ENV["ADDON_SOURCE_PATH"] = prior : ENV.delete("ADDON_SOURCE_PATH")
+    end
+
+    # NEW ▾ MAKES SOMETHING IN THE FOLDER IT WAS OPENED FROM. An inspector or a reference opened from
+    # New makes nothing there, so only `generate` and an uncategorised tool are listed.
+    test "the New menu lists generate and uncategorised tools, never an inspector or a reference" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        manifest("bare", "Bare Tool"),
+        manifest("fasteners", "Fasteners", "category" => "reference"),
+        manifest("gcode", "G-code Inspector", "category" => "inspect"),
+        manifest("gears", "Gears", "category" => "generate")
+      ])
+      with_configured_source { get tools_new_menu_path }
+      assert_response :success
+      assert_equal [ "Bare Tool", "Gears" ], css_select("turbo-frame#new-menu-tools a.menu-item").map { |a| a.text.strip }
+    end
+
+    # ---- the file page's "Open in <tool>" frame (host level 4) ----------------------------------
+
+    def library_file(id, name, user: @user, kind: "file")
+      user.nodes.create!(node_id: id, name:, kind:, mtime: 1, size: 1)
+    end
+
+    def open_with_links = css_select("turbo-frame#open-with a.btn").map { |a| [ a.text.strip, a["href"] ] }
+
+    # ONE LINK PER AVAILABLE TOOL WHOSE `opens` NAMES THE FILE'S EXTENSION, case-folded, carrying the
+    # file as the tool's `?file=` hint. The frame is the page's, so it is the whole body.
+    test "open_with lists every available tool that opens the file's kind, and nothing else" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        manifest("gcode", "G-code Inspector", "opens" => [ ".gcode", ".nc" ]),
+        manifest("stats", "Model Stats", "opens" => [ ".stl" ]),
+        manifest("bare", "Bare Tool"),
+        manifest("inspector2", "Second Inspector", "opens" => [ "GCODE" ]),
+        manifest("greyed", "Greyed Inspector", "opens" => [ ".gcode" ], "min_host" => Maker::Addons::Host::LEVEL + 1)
+      ])
+      library_file("n-part", "Part.GCODE")
+      with_configured_source { get tools_open_with_path(file: "n-part") }
+      assert_response :success
+      assert_select "turbo-frame#open-with"
+      assert_equal [ [ "Open in G-code Inspector", tools_addon_path("gcode", file: "n-part") ],
+                     [ "Open in Second Inspector", tools_addon_path("inspector2", file: "n-part") ] ],
+                   open_with_links
+    end
+
+    # EMPTY, NEVER AN ERROR, for every miss: no tool opens the kind, the file has no extension, the
+    # id is a folder's, a stranger's, unknown, or not one id at all. The frame is drawn on every
+    # file page, so a miss must cost nothing the page can see.
+    test "open_with renders the frame empty for no match, no extension, a folder, a foreign file or no file" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        manifest("gcode", "G-code Inspector", "opens" => [ ".gcode" ])
+      ])
+      library_file("n-svg", "plan.svg")
+      library_file("n-bare", "LICENSE")
+      library_file("d-cad", "cad", kind: "dir")
+      other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com", password: PASSWORD, confirmed_at: Time.current)
+      library_file("n-theirs", "theirs.gcode", user: other)
+
+      [ "n-svg", "n-bare", "d-cad", "n-theirs", "nope", "" ].each do |id|
+        with_configured_source { get tools_open_with_path(file: id) }
+        assert_response :success, "?file=#{id.inspect} must still answer the frame"
+        assert_select "turbo-frame#open-with"
+        assert_equal [], open_with_links, "?file=#{id.inspect} must offer nothing"
+      end
+      with_configured_source { get "#{tools_open_with_path}?file[]=n-svg&file[]=nope" }
+      assert_response :success
+      assert_equal [], open_with_links
+    end
+
     # The house stub helper (help_page_test.rb carries the same body). Replaces a SINGLETON method
     # for the block, removing an inherited one after.
     def replacing(owner, name, replacement)

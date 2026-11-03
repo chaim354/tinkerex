@@ -11,7 +11,7 @@ module Maker
     # Either way, one bad addon must never take /tools down.
     Addon = Data.define(:key, :title, :icon, :description, :entry, :pins, :services, :layout,
                         :states_key, :version, :author, :license, :homepage, :permissions,
-                        :min_host, :shares_states_with, :service_timeouts) do
+                        :min_host, :shares_states_with, :service_timeouts, :opens, :category) do
       # NO LONGER HARDCODED TRUE. It was, for as long as a registered addon was by definition
       # fetchable; `min_host` gives it a second, real answer — an addon can be perfectly fetchable
       # and still ask for a host this deployment does not have. The gallery already had the
@@ -256,8 +256,37 @@ module Maker
           # to expire before it takes effect.
           service_timeouts: (manifest["service_timeouts"].is_a?(Hash) ? manifest["service_timeouts"] : {})
             .select { |_name, seconds| seconds.is_a?(Integer) && seconds.positive? }
-            .transform_keys(&:to_s)
+            .transform_keys(&:to_s),
+          # THE EXTENSIONS THIS TOOL CAN OPEN (host level 4) — what the file page's "Open in <tool>"
+          # frame matches against `File.extname(name).downcase`. Normalised by `opens_partition`
+          # below, ONE reading shared with Maker::Addons::Check; an entry that is not an extension is
+          # DROPPED here, silently, and reported there, so a typo costs the author one entry and never
+          # the tool, and what the author is told about is exactly what production serves.
+          opens: opens_partition(manifest["opens"]).first,
+          # THE GALLERY'S SECTION (host level 4): one of CATEGORIES, exactly spelled, or nil for
+          # anything else including absent — `layout`'s rule, for `layout`'s reason. COSMETIC:
+          # `Tools::HomeController` groups the gallery by it and keeps inspectors and references out of
+          # the New menu, and nothing gates on it.
+          category: CATEGORIES.include?(manifest["category"]) ? manifest["category"] : nil
         )
+      end
+
+      CATEGORIES = %w[generate inspect reference].freeze
+
+      # ONE EXTENSION: an optional leading dot and then letters and digits — nothing a filename's
+      # `File.extname` could never answer. Case-folded afterwards, so `/i` is about what is accepted.
+      EXTENSION = /\A\.?[a-z0-9]+\z/i
+
+      # THE ONE READING OF `opens`: `[kept, dropped]`. Anything but an Array keeps nothing and drops
+      # nothing (there is no entry to report); each String is stripped, the leading dot made present,
+      # the case folded; every other entry — a non-String, a blank, `"g code"`, `".."` — is dropped.
+      # `build` takes the first half; Maker::Addons::Check reports the second, entry by entry with its
+      # spelling, so the author's report cannot drift from the rule the host serves by.
+      def opens_partition(raw)
+        return [ [], [] ] unless raw.is_a?(Array)
+
+        kept, dropped = raw.partition { |entry| entry.is_a?(String) && entry.strip.match?(EXTENSION) }
+        [ kept.map { |entry| ".#{entry.strip.delete_prefix('.').downcase}" }, dropped ]
       end
 
       # MUTUAL DECLARATION, OR NO SHARING. The claimant names the target in `states_key`; the target

@@ -57,6 +57,23 @@
     <% if addon_origin %>
       <%= link_to addon_origin[:label], addon_origin[:url], class: "btn" %>
     <% end %>
+    <%# "OPEN IN <TOOL>" — one button per tool whose manifest `opens` this file's kind (host level 4),
+        for a tool that READS a file rather than the one that made it. A LAZY FRAME, NOT PART OF
+        THIS RENDER, and that is the whole design: listing tools means reading the addon registry,
+        a manifest fetch over HTTP behind a 5-minute cache, and this page must never depend on it —
+        on an addon-source outage that is a slow file page for a maker who has never opened /tools,
+        the cost Maker::AddonOrigin is built to avoid. So the page only POINTS at
+        Tools::HomeController#open_with and the buttons arrive by a second request, once the row is
+        in view. Empty for a file no tool opens; the public file page has no such frame.
+
+        `class="page-actions"` so two buttons inside the frame keep this row's 8px gap between them
+        (a frame is an inline element, so its children would otherwise sit a space apart), and
+        `target="_top"` because a link inside a frame otherwise navigates the frame, and the tool
+        page has no frame to answer with. The right-click file menu deliberately has NO entry for
+        this: it is built per row on the Files index, where this would be a registry read on every
+        Files render. %>
+    <%= turbo_frame_tag "open-with", src: tools_open_with_path(file: @node.node_id),
+                        loading: "lazy", target: "_top", class: "page-actions" %>
     <%# DOWNLOAD · BACK · DELETE (UX audit D5, 2026-11-02): the destructive control last, as the
         file menu and the inspector already put it, rather than between two safe ones. %>
     <%= link_to "Download", blob_file_path(@node.node_id, download: 1), class: "btn" %>

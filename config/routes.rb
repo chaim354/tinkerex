@@ -509,6 +509,12 @@ root to: "home#index"
   # The New ▾ menu's tool entries, for its lazy frame. ABOVE `tools/:key`, or "new_menu" would be
   # read as an addon key.
   get "tools/new_menu", to: "tools/home#new_menu", as: :tools_new_menu
+  # A file page's "Open in <tool>" buttons, for its lazy frame (host level 4). TWO SEGMENTS, so it
+  # is exactly the route the `tools/:key` block's comment below exists for: declared ABOVE that
+  # wildcard, or "open_with" is read as an addon key and the frame fills with a 404 — a 404 for a
+  # route that is right there in this file. home_controller_test.rb's open_with tests are the
+  # mutation check: move this line below `tools/:key` and they go red.
+  get "tools/open_with", to: "tools/home#open_with", as: :tools_open_with
 
   # A TOOL'S SIDEBAR PIN (2026-10-22; Tools::PinsController). Any tool: an addon by its key, or
   # `calculator`, the built-in modal, which has no `tools/:key` page of its own — this path was its

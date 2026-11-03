@@ -354,7 +354,12 @@ export default {
       Object.getOwnPropertyDescriptor(Object.getPrototypeOf(host), "launch").get
     const oldHostLaunch = launchGetter.call({ _ctx: {} })   // a level-2 ctx: no `launch` key at all
 
+    // `file:<id>:<name>` RENDERS BOTH LEVEL-4 KEYS, for the Open-with journey in addon_sdk_test.rb:
+    // the id is what a bundle would hand `files.read`, the name is what `read` cannot answer. Read
+    // the same way as `stateId`, with no `?.` — the contract is that both keys are always present.
     el.querySelector("[data-role=sdk-launch]").textContent =
-      `launch:${host.launch.stateId ?? "none"} old:${JSON.stringify(oldHostLaunch)}`
+      `launch:${host.launch.stateId ?? "none"} ` +
+      `file:${host.launch.fileId ?? "none"}:${host.launch.fileName ?? "none"} ` +
+      `old:${JSON.stringify(oldHostLaunch)}`
   },
 }
