@@ -281,7 +281,8 @@ class BoxSectionsTest < ApplicationSystemTestCase
   # the param to fix; "Preview failed (422)" names nothing. §14c is the rule behind it: a sidecar's
   # error never runs through the host's error table, so the SDK hands back a `ServiceError` carrying
   # the response's RAW TEXT and the BUNDLE does the parsing, in the one place the sidecar's shape is
-  # known (preview.js's `sidecarMessage`).
+  # known (preview.js's `serviceFailure`, which also words a 503 or a body-less 404 as "the service is
+  # not running on this server right now" and the rest as "could not answer" — tinkerex-addons#21).
   #
   # WRITTEN WHEN generateSvg CAME OFF ITS RAW `fetch`, because that rewrite is invisible to every
   # other assertion here. The old code branched on the response's Content-Type header; the new one
@@ -291,11 +292,11 @@ class BoxSectionsTest < ApplicationSystemTestCase
   #
   # `exact_text:` IS LOAD-BEARING AND `text:` IS A FALSE GREEN HERE — found by mutation-checking this
   # very test, not by reading it. Capybara's `text:` is a SUBSTRING match, and the unparsed body
-  # `{"error":"traylayout requires …"}` CONTAINS the sentence, so a `sidecarMessage` that skipped the
+  # `{"error":"traylayout requires …"}` CONTAINS the sentence, so a `serviceFailure` that skipped the
   # JSON rung entirely and dumped the raw JSON into the panel passed the substring form. Do not
   # relax this back.
   #
-  # MUTATION-CHECKED (2026-08-11): dropped the JSON rung from `sidecarMessage` (return
+  # MUTATION-CHECKED (2026-08-11): dropped the JSON rung from the mapper (then `sidecarMessage`; return
   # `error.message` straight away) — RED, the panel read the whole `{"error":"…"}` blob; restored,
   # green again.
   test "a sidecar's refusal reaches the user in the sidecar's own words" do
