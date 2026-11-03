@@ -1,6 +1,7 @@
 import { mountGallery } from "./gallery.js"
 import { mountEditor } from "./editor.js"
 import { mountShow } from "./show.js"
+import { serviceFailure } from "./preview.js"
 // THE HOST SDK, NOT A HAND-ROLLED fetch. "@maker/addon-sdk" is pinned by the host into every addon
 // page's merged importmap — never vendor a copy, never pin it in manifests.json, never import it by
 // path (docs/addon-api-v1.md §3). It is what absorbed this bundle's old save.js.
@@ -17,7 +18,7 @@ import { mountShow } from "./show.js"
 // module, and then fails to resolve "@maker/addon-sdk" — the page reads "This tool failed to load"
 // and no code here ever runs. The recovery is on the publishing side: `bin/rollback <earlier-sha>`
 // in this repo puts the pre-SDK bundle image back.
-import { host, AddonError } from "@maker/addon-sdk"
+import { host } from "@maker/addon-sdk"
 
 // The Box Generator addon. Its only contract with the host is `mount(element, context)` — no
 // Stimulus, no host framework — exactly like addons/generators/generators.js. Everything the
@@ -89,16 +90,21 @@ export default {
     } catch (e) {
       // Mirrors BoxesController#require_boxes!'s graceful degrade (unconfigured sidecar -> a
       // message, not a crash) — this bundle has no host redirect to reach for, so it renders the
-      // message in place instead.
-      page.innerHTML = `<p class="muted">Box Generator is unavailable: ${escapeHtml(e.message)}</p>`
-      // Anything that is not an AddonError is a bug in THIS bundle rather than a refusal from the
-      // host or the sidecar, and it must still reach the console. NOT rethrown, which is the
-      // difference from generators.js's save handler: that one throws from inside a click listener,
-      // where nothing consumes the rejection. This is inside mount(), which addon_controller.js
-      // awaits inside its own try — a rejection there OVERWRITES mountTarget.textContent with
-      // "This tool failed to load", discarding the tailored degrade message rendered one line above
-      // and reporting a reachable sidecar outage as a broken bundle.
-      if (!(e instanceof AddonError)) console.error(e)
+      // message in place instead. A SENTENCE, NOT THE ERROR'S OWN TEXT: an unconfigured or stopped
+      // sidecar is a body-less 404 whose `message` is "Service request failed (404)", a wire code
+      // no maker can act on. serviceFailure (preview.js) words it, and puts the raw error on the
+      // console whenever the page does not show it — a bug in THIS bundle included, which is what
+      // the `instanceof AddonError` check that used to sit here existed to surface.
+      //
+      // The states half of the Promise.all lands here too, and reads as the generator not
+      // answering — accepted, because the missing sidecar is the case an operator can fix and the
+      // one that will actually happen.
+      page.innerHTML = `<p class="muted">${escapeHtml(serviceFailure(e))}</p>`
+      // NOT rethrown, which is the difference from generators.js's save handler: that one throws
+      // from inside a click listener, where nothing consumes the rejection. This is inside mount(),
+      // which addon_controller.js awaits inside its own try — a rejection there OVERWRITES
+      // mountTarget.textContent with "This tool failed to load", discarding the tailored degrade
+      // message rendered one line above and reporting a reachable sidecar outage as a broken bundle.
       return
     }
 
@@ -136,9 +142,9 @@ export default {
 // refused (see encodeServiceName in the SDK).
 //
 // `service.get` THROWS on a non-ok response rather than returning it, and the thrown ServiceError
-// carries the sidecar's own raw text — so the degrade message below shows what the sidecar actually
-// said (an unreachable/unconfigured one is a body-less 404, which reads as "Service request failed
-// (404)") instead of a status code this bundle re-worded.
+// carries the response's status and the sidecar's own raw text — which is what lets mount()'s
+// degrade message say "not running" for the body-less 404 an unreachable or unconfigured sidecar
+// produces, and the sidecar's own words when it wrote some (serviceFailure, preview.js).
 async function fetchGenerators() {
   const res = await host.service.get("boxes", "generators")
   return res.json()

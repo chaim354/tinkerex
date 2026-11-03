@@ -1,7 +1,7 @@
 import { mountSections } from "./sections.js"
 import { mountTraySync } from "./tray_sync.js"
 import { mountTopView } from "./top_view.js"
-import { mountPreview, generateSvg } from "./preview.js"
+import { mountPreview, generateSvg, serviceFailure } from "./preview.js"
 import { buildParamGroups, paramValues } from "./fields.js"
 import { printPlan, downloadPdf, downloadSvg, planSvgFor } from "./export.js"
 import { mountFolderField } from "./folder_field.js"
@@ -282,8 +282,10 @@ export function mountEditor(root, {
     } catch (e) {
       // generateSvg returns {ok: false} for a sidecar's own refusal and only THROWS for a genuine
       // transport failure, so this arm must not say anything about parameters. Previously an
-      // unhandled rejection: the save silently stopped at "Saving…" forever.
-      setSaveStatus(`Couldn't reach the box generator — nothing was saved. ${e.message}`, true)
+      // unhandled rejection: the save silently stopped at "Saving…" forever. Worded by
+      // serviceFailure rather than appending `e.message`, which here is the browser's own
+      // "Network request failed: Failed to fetch" — that goes to the console instead.
+      setSaveStatus(`Nothing was saved. ${serviceFailure(e)}`, true)
       return
     }
     if (!result.ok) { setSaveStatus(result.message, true); return }

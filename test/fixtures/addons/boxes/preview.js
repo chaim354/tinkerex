@@ -36,29 +36,63 @@ export async function generateSvg({ generator, params, signal }) {
   try {
     res = await host.service.post("boxes", "generate", { generator, params }, { signal })
   } catch (e) {
-    if (e instanceof ServiceError) return { ok: false, message: sidecarMessage(e) }
+    if (e instanceof ServiceError) return { ok: false, message: serviceFailure(e) }
     throw e
   }
 
   return { ok: true, svg: await res.text() }
 }
 
-// THE SIDECAR'S OWN PROSE, WHICH IS THE WHOLE REASON THIS FUNCTION EXISTS. "traylayout requires
-// --layout, …" names the param to fix; a status code does not. boxes.py sends it as JSON
-// ({"error": "…"}), but ServiceError deliberately carries the response's RAW TEXT rather than a
-// parsed body — a failure through this proxy may not be JSON at all (the proxy's own body-less 404
-// for an unconfigured sidecar, Werkzeug's HTML 405 page for a GET at a POST-only route), and
-// errorFrom's own res.json() would discard exactly the message worth keeping. So the parse belongs
-// HERE, in the one place the sidecar's shape is known. Three rungs, so a failure never renders as a
-// blank message: the JSON `error` key; else the raw text, which ServiceError has already put in
-// `message` (substituting its own "Service request failed (404)" when the body was empty); else, for
-// a whitespace-only body that leaves both blank, a sentence of our own.
-function sidecarMessage(error) {
+// WHAT A FAILED SIDECAR CALL SAYS TO A MAKER: A SENTENCE, NEVER THE WIRE. The SDK's ServiceError
+// carries the response's status and its RAW TEXT, and its `message` falls back to "Service request
+// failed (404)" for an empty body: accurate for a developer, and exactly the raw wire code the host
+// stopped showing anyone (its UX audit, 2026-11-01). Every catch in this bundle that would show a
+// failed sidecar call's text goes through here — the editor's live preview and save (via generateSvg
+// above, and editor.js's transport arm) and boxes.js's load — so the decision is made once.
+// (mountPreview's own transport arm below shows a fixed sentence and no error text, so it needs
+// none of this.) Three answers, by status:
+//
+//   - 503, or a 404 carrying no words of the sidecar's own: the service is not there. The host's
+//     proxy answers a BODY-LESS 404 for a sidecar it has no URL for, one it cannot reach and one
+//     that timed out (Tools::AddonsController#service), so a bare 404 means "not configured or not
+//     running", never "no such thing".
+//   - any other 4xx, or a 404 the sidecar wrote words into: it answered and named the problem.
+//     boxes.py's {"error": "traylayout requires --layout, …"} names the param to fix, which a status
+//     code never could; its 404 {"error": "unknown generator"} proves the service IS running. Its
+//     words, verbatim.
+//   - anything else — a 5xx, an HTML error page, the SDK's network_error raised before any response
+//     existed, a bug in this bundle: no answer came back, and "try again" is the only advice that is
+//     true of all of them.
+//
+// THE RAW TEXT GOES TO THE CONSOLE EXACTLY WHEN THE SCREEN REPLACES IT, so it is never lost — and is
+// not logged when the sidecar's own words are what the screen shows, or the debounced preview would
+// log a console error every time someone paused mid-way through typing a value.
+const TITLE = "Box Generator"
+
+export function serviceFailure(error) {
+  const status = error instanceof ServiceError ? error.status : null
+  const words = status === null ? "" : sidecarWords(error.body)
+  if (words && status >= 400 && status < 500) return words
+  console.error(`${TITLE}: a service call failed.`, error)
+  if (status === 404 || status === 503) {
+    return `The ${TITLE} service is not running on this server right now.`
+  }
+  return `${TITLE} could not answer; try again in a moment.`
+}
+
+// The sidecar's own sentence, or "" when the body holds none. The parse belongs HERE, in the one
+// place the sidecar's shape is known: ServiceError deliberately keeps the raw text rather than a
+// parsed body, because a failure through this proxy may not be JSON at all. boxes.py writes JSON
+// ({"error": "…"}) — JSON WITHOUT a string `error` is a shape we do not know, and showing it raw
+// would put braces in front of a maker. Plain text is the sidecar's own words; markup is not (a
+// Werkzeug HTML 405 page for a GET at a POST-only route is a page, not a sentence).
+function sidecarWords(text) {
+  const raw = String(text ?? "").trim()
   try {
-    const body = JSON.parse(error.body)
-    if (typeof body?.error === "string" && body.error.trim()) return body.error
-  } catch (_e) { /* not JSON — the raw text is still the sidecar's own words */ }
-  return error.message.trim() || `Preview failed (${error.status})`
+    const body = JSON.parse(raw)
+    return typeof body?.error === "string" ? body.error.trim() : ""
+  } catch (_e) { /* not JSON — plain text may still be the sidecar's own words */ }
+  return raw.startsWith("<") ? "" : raw
 }
 
 // It renders the generator's defaults on mount — landing on an empty grey panel and having to press

@@ -186,7 +186,7 @@ stylesheet or script tag goes in `_head`, never in either layout, or the two hea
 
 12. **Class names are a contract: restyle, never rename.** The selectors the tests pin (spec §10),
     `main.container` / `.container-wide` (the addon host page opts in), `.flash-notice` /
-    `.flash-alert`, and the 52 classes the addon bundles in `chaim354/tinkerex-addons` build their
+    `.flash-alert`, and the 53 classes the addon bundles in `chaim354/tinkerex-addons` build their
     own markup with (`addons.md`'s host contract; the list is in spec §10). Fonts are self-hosted under `app/assets/fonts` with the OFL text beside
     them because `font_src` is `:self`; `@font-face` `url()`s are relative to `application.css`'s
     logical path and Propshaft fingerprints them (`shell_layout_test.rb` fetches each).

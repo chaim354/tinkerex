@@ -30,6 +30,15 @@
 // application.css), and that is not a layering mistake: a bundle runs same-origin inside the host's
 // own page and has no stylesheet of its own — every other class in this bundle is the host's too.
 //
+// THE GLYPH IS AN INLINE SVG, NEVER AN EMOJI. The host draws no emoji anywhere (its design-system
+// rule 13, from the UX audit of 2026-11-01): a pictograph renders differently on every OS and reads
+// as decoration the interface does not otherwise use. This is the host's own `folder_glyph`
+// (ShellHelper: the rail's `files` path, class `folder-glyph`) spelled out by hand, so the bundle's
+// folder field looks exactly like the host's. The `width`/`height` ATTRIBUTES are not redundant
+// with that class: an SVG nothing sizes renders at 300x150, so a host that ever renamed the class
+// would get a giant icon instead of a 16px one. The button's accessible name is the path text
+// beside it; the glyph is aria-hidden. test/no_emoji_test.sh refuses one coming back.
+//
 // -> { value() } — the chosen node_id, "" meaning the library root. A getter rather than a stored
 // value so the caller never has to know where the current choice is held.
 import { host } from "@maker/addon-sdk"
@@ -38,7 +47,9 @@ export function mountFolderField(slot, ctx, report = (msg) => console.error(msg)
   let nodeId = ctx.defaultFolder || ""
   slot.innerHTML = `<span class="folder-field">
       <button type="button" class="folder-field-btn" data-role="folder-btn">
-        <span aria-hidden="true">📁</span>
+        <svg class="folder-glyph" viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"
+             focusable="false"><path d="M2 4h5l2 2h5v7H2z" fill="none" stroke="currentColor"
+             stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/></svg>
         <span class="ff-path"></span>
         <span aria-hidden="true">▾</span>
       </button>

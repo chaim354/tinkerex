@@ -358,7 +358,10 @@ does one count and one select; `q` adds no query.
   generator-params generator-picker-label generator-preview generator-save generator-side
   model-viewer model-viewer-bar model-viewer-dims model-viewer-stage muted page-actions page-head
   page-subtitle param-groups-head param-groups-title preview preview-image thumb-icon tools-grid
-  tv-label`. All keep their names and keep answering; they are restyled in `pages/tools.css` and
+  tv-label`, and since 2026-11-02 `folder-glyph` as well (tinkerex-addons#21: the bundles' folder
+  field draws the host's SVG folder glyph instead of an emoji, sized by `.folder-glyph` in
+  `components.css`, with `width`/`height` attributes as the fallback if that rule ever went). All
+  keep their names and keep answering; they are restyled in `pages/tools.css` and
   `components.css`. That is a cross-repo contract (`docs/invariants/addons.md`).
 - **Stimulus.** Existing controller names are untouched. The three new ones exist as files, so
   `stimulus_hygiene_test` passes; `data-controller` is always a literal attribute value (never
