@@ -46,14 +46,16 @@ class McpRequestGuard
     @app = app
   end
 
-  def call(env)
-    return @app.call(env) unless env["PATH_INFO"].to_s.chomp("/") == PATH
-    return TOO_LARGE if env["CONTENT_LENGTH"].to_i > MAX_BODY
+  # `rack_env`, not Rack's customary `env`: CONTENT_LENGTH and PATH_INFO are request fields, and
+  # test/install_docs_test.rb reads every `env["X"]` as a setting an installer must be told about.
+  def call(rack_env)
+    return @app.call(rack_env) unless rack_env["PATH_INFO"].to_s.chomp("/") == PATH
+    return TOO_LARGE if rack_env["CONTENT_LENGTH"].to_i > MAX_BODY
 
     # The same type Rails' own parse stores (an indifferent-access hash), so the route's symbol
     # keys merge in as strings exactly as they do on every other request.
-    env["action_dispatch.request.request_parameters"] = ActiveSupport::HashWithIndifferentAccess.new
-    @app.call(env)
+    rack_env["action_dispatch.request.request_parameters"] = ActiveSupport::HashWithIndifferentAccess.new
+    @app.call(rack_env)
   end
 end
 
