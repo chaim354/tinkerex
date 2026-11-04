@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+# Install (or refresh) the share-library mount check on the Unraid VM: ops/library-check.sh every
+# 5 minutes from cron, reporting to an Uptime Kuma push monitor. Idempotent — run it again after any
+# change to ops/library-check.sh and it re-pushes the script and rewrites the crontab entry.
+#
+#   PING_LIBRARY_SHARE=http://192.168.1.146:3001/api/push/<token> bin/library-check-install   # first time
+#   bin/library-check-install                   # refresh; the push URL already on the box is kept
+#   bin/library-check-install --uninstall       # remove the crontab entry (script and URL stay)
+#
+# Create the monitor first (docs/DEPLOY.md §6b): Uptime Kuma, Push, Heartbeat Interval 900, Retries 0.
+#
+# IT REFUSES TO INSTALL WITHOUT A PUSH URL, where bin/backup-cron-install only warns. The backup has
+# other ways to be noticed — archives that stop appearing, bin/backup-status going stale. This check
+# has none: a library check that tells nobody is the silence it exists to end, so it is not
+# installed until something will hear it.
+#
+# THIS IS THE ONLY WRITER of ~/tinkerex-ops/library-check.sh and ~/tinkerex-ops/library-ping.env.
+# The deploy skill's pre-check runs the CHECKOUT's copy over `ssh … bash -s` and never touches either.
+
+set -euo pipefail
+
+HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
+SCRIPT="$(dirname "$0")/../ops/library-check.sh"
+OPS_DIR="tinkerex-ops"
+MARKER="# tinkerex-library-check"
+# The command cron runs, and the one the proving run below repeats, minus --quiet. ONE spelling, so the
+# run that says "it works" is the run cron will make.
+CHECK="\$HOME/$OPS_DIR/library-check.sh --ping"
+LINE="*/5 * * * * $CHECK --quiet >> \$HOME/$OPS_DIR/library-check.log 2>&1 $MARKER"
+# The names the push URLs are keyed by, read off the script's own table and never restated.
+NAMES=$(bash "$SCRIPT" --table | awk '{ print $1 }' | paste -s -d ' ' -)
+
+if [ "${1:-}" = --uninstall ]; then
+  echo "==> removing the crontab entry (the script, its log and library-ping.env are left alone)"
+  ssh "$HOST" "crontab -l 2>/dev/null | grep -v '$MARKER' | crontab - || true; crontab -l"
+  exit 0
+fi
+[ $# -eq 0 ] || { echo "usage: bin/library-check-install [--uninstall]" >&2; exit 64; }
+
+# ---- the push URLs, merged FIRST, so a refusal leaves nothing half-installed -------------------
+# Values arrive on STDIN, never argv (a remote argv is readable in `ps` by every user on the box),
+# and values not supplied are PRESERVED: this is what you re-run to push a script change, and a merge
+# that dropped unmentioned keys would quietly unwire the monitor. Same shape as bin/backup-cron-install.
+echo "==> Uptime Kuma push URLs"
+UPDATES=""
+for n in $NAMES; do
+  k="PING_LIBRARY_$(printf '%s' "$n" | tr '[:lower:]' '[:upper:]')"
+  v="${!k:-}"
+  if [ -n "$v" ]; then UPDATES="${UPDATES}${k}=${v}"$'\n'; fi
+done
+ssh "$HOST" "mkdir -p $OPS_DIR"
+printf '%s' "$UPDATES" | ssh "$HOST" "cat > $OPS_DIR/library-ping.updates"
+# `$*`, not `$1`: ssh flattens its arguments into one command string, so the names arrive as separate
+# words (bin/backup-cron-install's remote half was bitten by exactly this).
+ssh "$HOST" bash -s -- "$NAMES" <<'REMOTE'
+set -euo pipefail
+cd "$HOME/tinkerex-ops"
+touch library-ping.env
+chmod 600 library-ping.env
+while IFS='=' read -r k v; do
+  [ -n "${k:-}" ] || continue
+  { grep -v "^$k=" library-ping.env || true; echo "$k=$v"; } > library-ping.env.tmp
+  mv library-ping.env.tmp library-ping.env
+done < library-ping.updates
+rm -f library-ping.updates
+chmod 600 library-ping.env
+missing=""
+for n in $*; do
+  k="PING_LIBRARY_$(printf '%s' "$n" | tr '[:lower:]' '[:upper:]')"
+  grep -q "^$k=." library-ping.env || missing="${missing:+$missing }$k"
+done
+sed -E 's#(/api/push/).*#\1********#' library-ping.env | sed 's/^/    /'
+if [ -n "$missing" ]; then
+  echo "!! no push URL for: $missing — NOT installing." >&2
+  echo "   A check that tells nobody is the silence it exists to end. Create a Push monitor in Uptime" >&2
+  echo "   Kuma (docs/DEPLOY.md §6b), then re-run with e.g. ${missing%% *}=<push-url> bin/library-check-install" >&2
+  exit 1
+fi
+REMOTE
+
+# ---- the script, replaced atomically ----------------------------------------------------------
+# Copied beside the live one and renamed over it: a cron run that starts mid-copy must execute the
+# old script or the new one, never half of one.
+echo "==> pushing ops/library-check.sh"
+scp -q "$SCRIPT" "$HOST:$OPS_DIR/library-check.sh.new"
+ssh "$HOST" "chmod 755 $OPS_DIR/library-check.sh.new && mv $OPS_DIR/library-check.sh.new $OPS_DIR/library-check.sh"
+
+echo "==> installing the crontab entry"
+# Replace rather than append, so a second run cannot leave two entries pinging one monitor.
+ssh "$HOST" "{ crontab -l 2>/dev/null | grep -v '$MARKER' || true; echo '$LINE'; } | crontab -"
+ssh "$HOST" "crontab -l | grep '$MARKER' | sed 's/^/    /'"
+
+echo
+echo "==> proving it works: running the check once, now — Uptime Kuma should show this heartbeat"
+if ssh "$HOST" "$CHECK"; then
+  echo
+  echo "Installed. A stale mount now pages within 5 minutes; cron or the VM stopping pages within 15."
+else
+  echo
+  echo "!! Installed, and the library is NOT readable right now — see the line above and docs/DEPLOY.md §6b." >&2
+  exit 1
+fi

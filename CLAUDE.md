@@ -261,8 +261,8 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
                  they live here: stl-thumbnailer (Rust STL→PNG, Maker::Previews::Stl) and
                  gerber-svg (the pinned tracespace bundle under node, Maker::Previews::Gerber).
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
-/ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
-                 bin/backup-cron-install. Only its destination table is gated; invariants in §14i.
+/ops             Scripts that run ON the box, not in the app — backup-db.sh (only its destination
+                 table is gated; §14i) and library-check.sh (the share mount's watch, DEPLOY.md §6b).
 /docs            sync-protocol.md, SYNC_SERVER.md, DEPLOY.md, roads-not-taken.md,
                  architecture-sync-engine.md, adr/
 /docs/invariants §14's AREA rules, one file per area — addons.md, measure-view.md,
