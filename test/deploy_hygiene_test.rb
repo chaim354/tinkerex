@@ -48,6 +48,48 @@ class DeployHygieneTest < ActiveSupport::TestCase
                  "the COPY before `bundle install` must bring only the Gemfile and its lock"
   end
 
+  # THE TEST GROUP STAYS OUT OF THE IMAGE. The Rails scaffold's `BUNDLE_WITHOUT="development"` ships
+  # capybara and selenium-webdriver into production, and with them selenium-manager, a browser-driver
+  # downloader whose zip crate carried CVE-2026-115905 (CRITICAL) through the 2026-11-04 Trivy scan of
+  # the deployed image. Nothing in the image runs a test-group gem (the Dockerfile says where each
+  # candidate actually runs), and `rails app:update` offers the scaffold line back. Bundler reads the
+  # value colon- or space-separated, so both spellings are accepted and the groups are what is pinned.
+  test "the image excludes the test group as well as development" do
+    lines = Rails.root.join("Dockerfile").readlines(chomp: true)
+    without = lines.grep(/^\s*BUNDLE_WITHOUT=/)
+    assert_equal 1, without.size, "expected exactly one BUNDLE_WITHOUT in the Dockerfile, found #{without.inspect}"
+    groups = without.first[/BUNDLE_WITHOUT="([^"]*)"/, 1].to_s.split(/[\s:]+/)
+    assert_includes groups, "development", "BUNDLE_WITHOUT must exclude the development group"
+    assert_includes groups, "test", "BUNDLE_WITHOUT must exclude the test group — selenium-manager shipped a CRITICAL CVE into production without it"
+  end
+
+  # DEBIAN'S FIXES REACH EVERY BUILD ONLY IF THE UPGRADE RUNS IN A LAYER EVERY BUILD REBUILDS. The
+  # final stage's `apt-get install` layer is keyed on the Dockerfile text and a base-image digest that
+  # no longer moves (`ruby:3.4.7-slim` is a superseded tag), so an upgrade folded into it would run
+  # once and then replay from cache for the life of the file -- the image deployed on 2026-10-26 was
+  # 15 CRITICAL and 211 HIGH behind trixie-security for exactly that reason. The upgrade therefore
+  # sits AFTER the app COPY, whose layer changes on every commit, and opens with its own `apt-get
+  # update` so it upgrades against a fresh index rather than the one the install layer removed.
+  test "the final stage upgrades Debian after the app COPY, so every build picks up security fixes" do
+    lines = Rails.root.join("Dockerfile").readlines(chomp: true)
+    final = lines.rindex { |l| l.start_with?("FROM ") }
+    assert_equal "FROM base", lines[final], "the last stage is expected to be the unnamed `FROM base` runtime stage"
+    stage = lines[final..]
+
+    app_copy = stage.index { |l| l.start_with?("COPY ") && l.include?("--from=build /rails /rails") }
+    assert app_copy, "the final stage has no `COPY --from=build /rails /rails`"
+
+    upgrades = stage.each_index.select { |i| stage[i].match?(/\bapt-get upgrade\b/) }
+    assert_equal 1, upgrades.size, "expected exactly one `apt-get upgrade` in the final stage, found #{upgrades.size}"
+    upgrade = upgrades.first
+    assert_operator upgrade, :>, app_copy,
+                    "`apt-get upgrade` must come AFTER the app COPY: before it, the layer caches for the life of the Dockerfile and a rebuild stops carrying Debian's fixes"
+
+    run = stage[0..upgrade].rindex { |l| l.start_with?("RUN ") }
+    assert_match(/\ARUN apt-get update\b/, stage[run],
+                 "the upgrade's own RUN must begin with `apt-get update`; the install layer removed the index it would otherwise use")
+  end
+
   test "every demo seed file survives .dockerignore" do
     files = Dir.glob("db/seeds/demo/**/*", File::FNM_DOTMATCH, base: ROOT)
                .select { |rel| ROOT.join(rel).file? }
