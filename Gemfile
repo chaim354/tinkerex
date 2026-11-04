@@ -69,6 +69,12 @@ gem "nokogiri", "~> 1.19"
 # Presign chunk PUT/GET against S3-compatible storage (R2, SeaweedFS). Pure Ruby.
 gem "aws-sdk-s3", require: false
 
+# The MCP server at POST /mcp (McpController; docs/superpowers/specs/2026-11-04-mcp-server-design.md).
+# The official SDK, Apache-2.0 (§9); its one runtime dependency, json_schemer, is MIT. Only the
+# JSON-RPC server half is used: the HTTP door is this app's own controller, so the gem's Rack
+# transport (and its sessions, SSE streams and allowed-hosts check) is never loaded.
+gem "mcp", "~> 1.9"
+
 # libgit2 bindings, for editing and committing in a repository the maker brought
 # (Maker::Git::LocalRepo).
 #
