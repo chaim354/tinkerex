@@ -23,6 +23,12 @@
   .settings-add .field > span { margin-bottom: 0; }
   /* A refusal inside a row form takes the whole row, above its fields (UX audit B3). */
   .settings-add > .form-errors { flex-basis: 100%; margin-bottom: 0; }
+  /* CONNECT AN ASSISTANT (2026-11-04): a token and two snippets, each beside its Copy. A token is
+     one unbroken run and a command line is long, so both wrap ANYWHERE (design-system.md rule 11:
+     nothing scrolls sideways at 375px) and keep their mono. `dl.meta` is the component; only its
+     children are styled here. */
+  .connect-steps dd { display: flex; flex-wrap: wrap; align-items: start; gap: 8px; }
+  .connect-secret, .connect-cmd { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; margin: 0; flex: 1 1 240px; min-width: 0; }
   /* The hub has no Remove button to anchor to the right, so its own fact takes that job. */
   .settings-hub .settings-fact { margin-left: auto; }
   .theme-choice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }

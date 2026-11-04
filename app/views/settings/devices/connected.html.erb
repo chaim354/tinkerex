@@ -1,0 +1,46 @@
+<% content_for :title, "Assistant connected — Tinkerex" %>
+<%= render "settings/crumbs", current: "Assistant connected", trail: [ [ "Devices", settings_devices_path ] ] %>
+
+<%# THE TOKEN, ONCE (Settings::DevicesController#create). Every secret and snippet carries its own
+    copy button (copy_controller.js, which works on a plain-http LAN too). The command line is for
+    Claude Code; the JSON is the shape other clients read; claude.ai's hosted connectors need OAuth,
+    which this server does not offer, and the page says so rather than let someone try. %>
+<div class="page-head">
+  <h1>Connected <%= @device.name %></h1>
+</div>
+
+<p class="muted">
+  This token is shown once. Paste it into your client now. If it is lost, sign this assistant out
+  on the Devices page and connect it again.
+</p>
+
+<dl class="meta connect-steps">
+  <dt>Token</dt>
+  <dd data-controller="copy" data-copy-text-value="<%= @token %>">
+    <code class="connect-secret" data-copy-target="source"><%= @token %></code>
+    <button type="button" class="btn small" data-action="copy#copy">Copy</button>
+  </dd>
+
+  <dt>Claude Code</dt>
+  <% command = "claude mcp add --transport http tinkerex #{@mcp_url} --header \"Authorization: Bearer #{@token}\"" %>
+  <dd data-controller="copy" data-copy-text-value="<%= command %>">
+    <pre class="connect-cmd" data-copy-target="source"><%= command %></pre>
+    <button type="button" class="btn small" data-action="copy#copy">Copy</button>
+  </dd>
+
+  <dt>Other MCP clients</dt>
+  <% json = JSON.pretty_generate("mcpServers" => { "tinkerex" => { "type" => "http", "url" => @mcp_url,
+                                                                    "headers" => { "Authorization" => "Bearer #{@token}" } } }) %>
+  <dd data-controller="copy" data-copy-text-value="<%= json %>">
+    <pre class="connect-cmd" data-copy-target="source"><%= json %></pre>
+    <button type="button" class="btn small" data-action="copy#copy">Copy</button>
+  </dd>
+</dl>
+
+<p class="muted">
+  Works with Claude Code, Claude Desktop (through a local MCP config) and any client that can send
+  a header. claude.ai's hosted connectors need OAuth, which this server does not offer. The
+  assistant is signed out like any device, and changing your password signs out every one.
+</p>
+
+<p><%= link_to "Back to Devices", settings_devices_path, class: "btn" %></p>
