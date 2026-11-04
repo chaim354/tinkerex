@@ -71,6 +71,28 @@ Confirm the commits you intend to ship are in that log. Then:
   ssh -o BatchMode=yes kamal1@192.168.1.95 "docker ps --format '{{.Names}}' | grep '^tinkerex-web'"
   ```
   The container names carry the deployed git SHA. Note it.
+- **The share library mount, before anything is built.** When Tower (the SMB server,
+  192.168.1.146) reboots, the running share container keeps a STALE CIFS handle on `/library`
+  while `/up` goes on answering 200 — nothing alerts — and the share deploy then fails at container
+  create (docker exit 125, `stale file handle`) because docker reuses the dead mount. Five deploys
+  found it that way between 2026-10-22 and 2026-11-04, each after base had already rolled. One ssh:
+  ```bash
+  ssh -o BatchMode=yes kamal1@192.168.1.95 'docker exec $(docker ps -qf name=^tinkerex-web-share-) ls /library >/dev/null && echo "library ok"'
+  ```
+  It must print `library ok`. If it says `Stale file handle`, run the recorded recovery — guards
+  first (port 445 reachable, the `ls` really stale, one container running), then `docker stop` the
+  old share container, `docker rm` any `Created` one, and confirm the cifs mount count is 0 — which
+  is all `ops/share-mount-recover.sh`:
+  ```bash
+  ssh kamal1@192.168.1.95 bash -s < ops/share-mount-recover.sh
+  ```
+  A healthy mount is a no-op (exit 0, nothing stopped); a failed guard exits non-zero and touches
+  nothing, so read what it refused before going on (its header lists the codes). **Only then
+  continue** — the share deploy below is what remounts it, and that container's first boot may
+  restart once (the boot guard can run before the fresh mount is visible; docker's restart policy
+  absorbs it). Anything other than `library ok` or `Stale file handle` — no container, a hang — is
+  also a stop. `docs/DEPLOY.md` §2 has the full story and the 5-minute monitor
+  (`bin/share-mount-monitor-install`) that sees this without a deploy.
 
 ## 2. Build once, deploy three times
 
@@ -170,4 +192,6 @@ named exception is gone with it.
 - **`export` a secret as a matter of routine** — `.kamal/secrets*` resolve their own; an export is
   a deliberate per-run override (a non-empty one wins), not a setup step
 - Deploy without `bin/secrets-preflight` — it is the only thing that catches a silent empty
+- Build before the share mount check has printed `library ok` — a stale mount fails the share
+  deploy at create, after base has rolled
 - Report success from an exit code alone

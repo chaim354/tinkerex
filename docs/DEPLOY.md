@@ -80,6 +80,74 @@ Kamal builds the amd64 image on the Mac **once per deploy**, pushes it to ghcr, 
 pulls and boots it. (To push once and deploy to both without rebuilding: `kamal build push`
 then `kamal deploy --skip-push` / `kamal deploy -d ovh --skip-push --hosts 15.204.216.249`.)
 
+### The share library mount goes stale when Tower reboots
+
+**Symptom.** The share deployment's `/up` answers 200 and `ls /library` inside its container does not:
+
+```sh
+ssh kamal1@192.168.1.95 'docker exec $(docker ps -qf name=^tinkerex-web-share-) ls /library'
+# ls: cannot access '/library': Stale file handle
+```
+
+The library is a Docker `local`-driver CIFS volume (`tinkerex_library_3dprinting`,
+`//192.168.1.146/3D Printing` — `deploy.share.yml`). Docker mounts it when the first container using
+it starts and unmounts it when the last one stops. When Tower — the Unraid host, which is the SMB
+server — reboots, the running share container keeps a mount that is now a **stale file handle**.
+`/up` never touches the library, so nothing alerts, and the next `kamal deploy -d share` fails at
+container create with docker exit 125 — `error evaluating symlinks from mount source
+…/volumes/tinkerex_library_3dprinting/_data: … stale file handle` — because docker hands the new
+container the dead mount the old one is still holding. **Five deploys between 2026-10-22 and
+2026-11-04 found it that way**, each after base had already rolled, one of them over a library that
+had been dead for 14 hours. base and s3 are unaffected.
+
+**The check** is the line above; the deploy skill (`.claude/commands/deploy.md`) runs it in its
+pre-flight, before `kamal build push`. **The recovery** is `ops/share-mount-recover.sh`, the checkout's
+copy run on the VM over stdin, then the share deploy, which mounts the share anew:
+
+```sh
+ssh kamal1@192.168.1.95 bash -s < ops/share-mount-recover.sh
+kamal deploy -d share --skip-push
+```
+
+It is a no-op on a healthy mount (exit 0, nothing stopped) and **stops nothing until three guards
+pass**: exactly one share container is running (two means a deploy is mid-flight — exit 22); its
+`ls /library` really says `Stale file handle` (a hang or any other error is a different problem —
+exit 21); and Tower answers on port 445 (exit 20 otherwise — a hard power-cycle takes minutes, and
+stopping the container before the SMB server is back trades a dead library for a dead `/up` as
+well). Then it `docker stop`s the old container (the cifs mount count drops 1 → 0), `docker rm`s any
+`Created` container a failed deploy left behind (never an `Exited` one: those are kamal's rollback
+history), and confirms the mount is gone (exit 23 if something else still holds it, with where to
+look). Re-running after a recovery is a no-op. `--check` is the read-only one-liner. The exit codes
+are listed in the script's header, and `test/ops_share_mount_test.rb` drives every guard against a
+fake `docker` so each refusal is proven before the script ever stops a container on the box.
+
+**The one-restart race.** The share container's first start on a fresh mount can run its boot guard
+before the mount is visible to it, and die with `LibraryBackendCheck.check_share!: LIBRARY_PATH
+"/library" does not exist`. Docker's `unless-stopped` restart policy brings it back one restart later
+— the container deployed on 2026-11-04 shows `RestartCount 1` with exactly that line first in its log
+— and kamal's health wait covers the gap, so a deploy that reports healthy with one restart behind it
+is fine. A container restarting more than once is a different problem.
+
+**The monitor.** `bin/share-mount-monitor-install` puts `ops/share-mount-recover.sh --monitor` on a
+5-minute cron on the VM — the same way `bin/backup-cron-install` installs the nightly, and the only
+writer of the installed copy — so a stale mount is seen in five minutes instead of at the next
+deploy. It `docker exec`s the same `ls /library`, writes a loud line to `~/tinkerex-ops/share-mount.log`
+and to syslog (tag `tinkerex-share-mount`) while it is stale, and pushes to an Uptime Kuma Push
+monitor: `down` with the diagnosis at once, `up` when healthy — a dead-man's switch like §6's, so a
+VM that is off or a cron that stopped is noticed too. Create the monitor (`tinkerex share mount`,
+Heartbeat Interval **900**, Retries **0**) and hand the installer its URL once:
+
+```sh
+PING_SHARE_MOUNT=http://192.168.1.146:3001/api/push/xY9 bin/share-mount-monitor-install
+bin/share-mount-monitor-install --uninstall      # removes just the cron line
+```
+
+The key lands in the same `~/tinkerex-ops/ping.env` as the backup's, merged beside those lines; both
+installers merge rather than overwrite, so neither can unwire the other's monitors, and the backup's
+table-driven lookup never reads it. **The monitor never restarts the container.** That container
+serves real data and stopping it is an operator's decision, so the monitor says what it found and
+names the recovery; it does not run it.
+
 ## 2b. How secrets resolve
 
 Every credential goes through **`bin/secret VAR op://Vault/Item/field`**: an exported shell value
@@ -682,6 +750,10 @@ PING_S3=http://192.168.1.146:3001/api/push/eF3 \
 PING_SYNC=http://192.168.1.146:3001/api/push/gH4 \
   bin/backup-cron-install
 ```
+
+A fifth Push monitor, **`tinkerex share mount`**, is not a backup's: it belongs to the share library
+mount check in §2 and is wired by `bin/share-mount-monitor-install` into the same `ping.env`
+(Heartbeat Interval **900**, Retries **0**).
 
 **`(sync)` IS FOURTH AND WAS UNPINGABLE UNTIL 2026-08-26.** `ops/backup-db.sh` read `ping.env`
 through an enumerated whitelist then, with arms for only the first three, so a `PING_SYNC` written
