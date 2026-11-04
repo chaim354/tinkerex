@@ -58,6 +58,29 @@ module Mcp
       assert_response 413
     end
 
+    # THE TWO THINGS McpRequestGuard EXISTS FOR (config/initializers/mcp.rb). Rails parses a JSON body
+    # into params before any callback; measured on the first version of this door, a 2 MiB body with
+    # no token was parsed in full before the 401 and every tool argument reached the log line.
+    test "an oversized body is refused before authentication, not parsed and then 401'd" do
+      post "/mcp", params: "{\"pad\":\"#{"x" * (McpController::MAX_BODY + 1)}\"}",
+                   headers: { "CONTENT_TYPE" => "application/json" }
+      assert_response 413
+      assert_equal "content_too_large", JSON.parse(response.body)["error"]
+    end
+
+    test "the body is never parsed as params, so a tool argument never reaches the request log" do
+      seen = nil
+      sub = ActiveSupport::Notifications.subscribe("process_action.action_controller") do |*, payload|
+        seen = payload[:params] if payload[:controller] == "McpController"
+      end
+      body = mcp_rpc(@token, "tools/call", { name: "no_such_tool", arguments: { note: "secret-note-text" } })
+      assert_equal(-32602, body.dig("error", "code"), "the body still reached the SDK")
+      assert_equal %w[action controller], seen.keys.sort,
+                   "the controller saw the body as params: #{seen.inspect.first(200)}"
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
     test "a malformed body is a JSON-RPC parse error, not a 500" do
       mcp_post(@token, "{not json")
       assert_response :success

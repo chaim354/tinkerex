@@ -65,7 +65,7 @@ writes are real.
 locations by their numeric **id**, which every listing returns. Files and folders by
 **library-relative path** (`Projects/lamp/README.md`), returned beside the node id.
 
-## 4. The tool catalog — 21 tools, no deletes
+## 4. The tool catalog — 24 tools, no deletes
 
 **Projects**
 - `list_projects(status?, q?)` — slug, name, status, kind, folder path, open task count,
@@ -206,7 +206,7 @@ input: the SDK validates arguments against each tool's `input_schema` first.
 
 `test/integration/mcp/`:
 - `protocol_test.rb` — `initialize` answers the server name and tool capability;
-  `notifications/initialized` answers 202 empty; `tools/list` returns exactly the 21 names and
+  `notifications/initialized` answers 202 empty; `tools/list` returns exactly the 24 names and
   every write tool carries its annotations; 401 without a token and with an expired one; 405 on
   GET with `Allow: POST`; 413 over the cap; a malformed body is a JSON-RPC error, not a 500.
 - `isolation_test.rb` — **the headline test**: user A's token cannot list, get, update or adjust

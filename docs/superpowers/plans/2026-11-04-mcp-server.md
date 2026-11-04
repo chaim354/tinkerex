@@ -24,7 +24,7 @@
 | `app/services/mcp_server/tool.rb` | 1 | the tool base: context, annotations, finders, the error map |
 | `app/services/mcp_server/render.rb` | 1 | the one place rows are shaped |
 | `app/services/mcp_server/library_path.rb` | 1 | path ⇄ node |
-| `app/services/mcp_server/tools/{projects,tasks,build_log,inventory,bom,reference,library}.rb` | 1 (stubs), 2–7 (bodies) | the 21 tools |
+| `app/services/mcp_server/tools/{projects,tasks,build_log,inventory,bom,reference,library}.rb` | 1 (stubs), 2–7 (bodies) | the 24 tools |
 | `test/support/mcp_client.rb` | 1 | drives `/mcp` in tests; the `replacing` stub |
 | `test/integration/mcp/protocol_test.rb` | 1 | handshake, 401/405/413, parse error |
 | `test/integration/mcp/{projects,tasks,inventory,bom,reference,library}_tools_test.rb` | 2–7 | one file per tools module |
@@ -2410,7 +2410,7 @@ require "test_helper"
 require "support/mcp_client"
 
 module Mcp
-  # THE CATALOG AS THE CLIENT SEES IT (spec §3, §4): the 21 names in order, every tool annotated in
+  # THE CATALOG AS THE CLIENT SEES IT (spec §3, §4): the 24 names in order, every tool annotated in
   # full, every schema closed. A tool that forgot `reads!` would be presented as destructive, and a
   # schema without additionalProperties: false lets a misspelt argument through to a keyword error.
   class CatalogTest < ActionDispatch::IntegrationTest
@@ -2430,7 +2430,7 @@ module Mcp
 
     setup { @token = bootstrap_token(email: "mcp-catalog@example.com", device_name: "assistant") }
 
-    test "tools/list is exactly the 21 tools, in order" do
+    test "tools/list is exactly the 24 tools, in order" do
       tools = mcp_rpc(@token, "tools/list").dig("result", "tools")
       assert_equal NAMES, tools.map { |t| t["name"] }
     end

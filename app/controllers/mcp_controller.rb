@@ -10,9 +10,13 @@
 # end-of-session, is 204 because there is nothing to end.
 #
 # THE CREDENTIAL IS THE DEVICE TOKEN, through V1::Authentication, exactly as /v1/maker/* (§8): a
-# missing, unknown or idle-expired token is a 401 before a byte of body is read. The body is capped
-# before parsing. A notification (the SDK answers nil) is 202 with no body, per the MCP transport
-# spec.
+# missing, unknown or idle-expired token is a 401 before anything of ours reads the body. NOTHING
+# PARSES THE BODY BUT THE SDK: McpRequestGuard (config/initializers/mcp.rb) presets the request's
+# params to empty in front of the router, because Rails otherwise parses a JSON body into params
+# before any callback and logs every tool argument -- measured, and the reason the cap is enforced
+# there first, on Content-Length, before authentication; the bounded read below is the backstop for
+# a chunked body that carries no length. A notification (the SDK answers nil) is 202 with no body,
+# per the MCP transport spec.
 #
 # NO rescue_from HERE, DELIBERATELY. What a tool can raise is mapped once, in McpServer::Tool.call;
 # anything else is a real 500 or the SDK's own -32603 (config/initializers/mcp.rb). In particular no
@@ -20,7 +24,11 @@
 class McpController < ActionController::API
   include V1::Authentication
 
-  MAX_BODY = 1.megabyte
+  # ParamsWrapper adds an `mcp` key for every JSON request, empty or not (tools/addons_controller
+  # makes the same opt-out); with the guard above there is nothing to wrap and nothing to log.
+  wrap_parameters false
+
+  MAX_BODY = McpRequestGuard::MAX_BODY
 
   def create
     body = request.body.read(MAX_BODY + 1).to_s
