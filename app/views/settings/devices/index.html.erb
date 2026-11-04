@@ -13,8 +13,8 @@
 </div>
 
 <p class="muted">
-  The desktop apps signed in to your account, most recently used first. Sign one out when you stop
-  using it, or as soon as it is lost.
+  The desktop apps and assistants connected to your account, most recently used first. Sign one
+  out when you stop using it, or as soon as it is lost.
 </p>
 <p class="muted">
   Signing a device out ends its access to this server, and it needs your password to sign in again.
@@ -34,6 +34,28 @@
                                           url: settings_device_path(device), owner: nil %>
   <% end %>
   <% if @devices.empty? %>
-    <li class="empty inline">No desktop app is signed in to this account.</li>
+    <li class="empty inline">Nothing is connected to this account.</li>
   <% end %>
 </ul>
+
+<h2>Connect an AI assistant</h2>
+<p class="muted">
+  Claude Code, Claude Desktop or any MCP client can work in this library through a token of its
+  own, made here and shown once. It appears in the list above and is signed out the same way.
+</p>
+<%# scope: :device -- form_with url: has no model, so scope: is what names the field device[name],
+    which Settings::DevicesController#create reads (CLAUDE.md §14d). The value is stated, because a
+    scoped field with no model falls back to an @device this page never sets. Turbo is off on this
+    form: the answer is a page carrying a secret shown once, rendered rather than redirected to, and
+    a full page load is the one shape every Turbo version renders. The submit is a quiet button:
+    this page has no accent (design-system.md rule 13). size: nil is load-bearing: given maxlength
+    and no size, text_field copies 80 into size, an 80-character field that pushed this page to
+    scrollWidth 609 at 375px (rule 11, measured). %>
+<%= form_with url: settings_devices_path, scope: :device, class: "settings-add", data: { turbo: false } do |f| %>
+  <label>
+    <span>Name</span>
+    <%= f.text_field :name, value: Settings::DevicesController::DEFAULT_ASSISTANT_NAME, required: true,
+                     maxlength: 80, size: nil, autocomplete: "off" %>
+  </label>
+  <%= f.submit "Connect", class: "btn" %>
+<% end %>

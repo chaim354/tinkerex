@@ -112,7 +112,7 @@ module Web
       @user.devices.delete_all
       sign_in_web!(@user, password: PASSWORD)
       get settings_devices_path
-      assert_select "li.empty", text: "No desktop app is signed in to this account."
+      assert_select "li.empty", text: "Nothing is connected to this account."
     end
 
     test "a visitor who is not signed in is sent to sign in" do
@@ -183,7 +183,7 @@ module Web
       sign_in_web!(@user, password: PASSWORD)
       get settings_devices_path
       notes = css_select("main p.muted").map { |p| p.text.squish }
-      assert_match(/\AThe desktop apps signed in to your account/, notes.first)
+      assert_match(/\AThe desktop apps and assistants connected to your account/, notes.first)
       assert_match(/\ASigning a device out ends its access to this server/, notes.second)
       assert_select ".topbar nav.breadcrumb [aria-current=page]", "Devices"
     end

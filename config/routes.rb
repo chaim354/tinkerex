@@ -490,8 +490,8 @@ root to: "home#index"
         delete "devices/:device_id", action: :revoke_device, as: :revoke_device
       end
     end
-    # YOUR OWN DESKTOP DEVICES (pentest H1b, 2026-10-22): the list, and Sign out per row.
-    resources :devices, only: %i[index destroy]
+    # YOUR OWN DEVICES (pentest H1b, 2026-10-22; assistants 2026-11-04): the list, Connect an assistant, and Sign out per row.
+    resources :devices, only: %i[index create destroy]
     # K (2026-10-20): which folder under the mount is the share library. Singular, like /settings
     # itself; `controller:` because Rails would otherwise pluralise it to `libraries`. `children` is
     # the chooser's path-based data source (LibraryBrowseController#children is the node-based one).
@@ -633,6 +633,12 @@ root to: "home#index"
   # sync server (chaim354/tinkerex-sync). What remains under /v1 is this app's own: the maker
   # layer, plus the device endpoints, which stay host-owned because a device token is the only
   # credential the whole API accepts (§14j).
+  # THE MCP DOOR (2026-11-04, spec 2026-11-04-mcp-server-design). POST carries one JSON-RPC
+  # message; GET and DELETE answer the transport spec's shapes for a server with no session
+  # (McpController). Device-token authed like /v1, never the web session.
+  post   "mcp", to: "mcp#create"
+  get    "mcp", to: "mcp#show"
+  delete "mcp", to: "mcp#destroy"
   namespace :v1 do
     # Device enrollment by login (the Dropbox model): email+password -> a device token.
     # Replaces the pairing-code flow. No Bearer auth — the credentials ARE the auth.

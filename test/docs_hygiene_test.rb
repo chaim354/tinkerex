@@ -87,7 +87,8 @@ class DocsHygieneTest < ActiveSupport::TestCase
   # lines here rather than living only in app/models/setting.rb.
   # LOWERED 1,355 -> 1,354 ON 2026-10-20 (shelves): the model catalog lost its Settings page, and
   # §14k's stub its two paths with it.
-  MAX_LINES = 1_354
+  # 2026-11-04: +5 for the MCP-door invariant (§14d).
+  MAX_LINES = 1_359
 
   test "CLAUDE.md stays under its line ceiling" do
     lines = CLAUDE_MD.readlines.size

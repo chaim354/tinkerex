@@ -102,10 +102,14 @@ module Web
       repo_commits/show.html.erb repo_histories/show.html.erb files/inspector_gone.html.erb
       landings/show.html.erb
       projects/composer_page.html.erb
+      settings/devices/connected.html.erb
     ].freeze
     # projects/composer_page is rendered only by a REFUSED POST (Projects::ComposerRefusal, the no-JS
     # arm of a 422 composer re-render), never by a GET this sweep can issue; its body is swept for
     # `<%`, `%>` and § by ProjectHubAuditTest "a refused composer page leaks no template comment".
+    # settings/devices/connected is rendered only by POST /settings/devices (the assistant token is
+    # shown once, never redirected to, 2026-11-04); its body is swept for the same three and its
+    # comment's prose by SettingsDevicesConnectTest "the connected page leaks no template comment".
 
     setup do
       # HERMETIC BY FIXTURE (§14c): the addon pages below read `test/fixtures/addons`, never the
