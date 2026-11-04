@@ -15,6 +15,7 @@ and its measurements, never for what the repository contains today.
 | `user-stories.md` | The bench maker's stories with an honesty tag per row (works / rough / missing). Living. |
 | `sync-protocol.md` | The normative wire spec between this app and the sync server. |
 | `addon-api-v1.md` | How to write an addon for the Tools gallery. |
+| `mcp.md` | Connecting an AI assistant over MCP, and the tools it gets. |
 | `adding-a-preview-format.md` | How to add a preview renderer. |
 | `roads-not-taken.md` | Approaches considered and rejected, with the why. Read before reviving any of them. |
 | `schema-map.html` | Generated map of every table and relationship (`bin/rails schema:map`). |
