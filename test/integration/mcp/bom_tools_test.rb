@@ -56,7 +56,7 @@ module Mcp
     test "add_bom_line refuses a line with no target or two targets in the model's words" do
       assert_match(/exactly one of/, mcp_refusal(@token, "add_bom_line", { project: "lamp" }))
       assert_match(/exactly one of/, mcp_refusal(@token, "add_bom_line", { project: "lamp", inventory_item_id: @bolts.id, part_name: "Lens" }))
-      assert_empty @lamp.boms.sole.lines
+      assert_empty @lamp.boms, "a refused first line leaves no empty BOM behind"
     end
 
     test "update_bom_line changes the given fields" do

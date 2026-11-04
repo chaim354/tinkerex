@@ -42,6 +42,8 @@ module Mcp
 
       out = mcp_structured(@token, "list_folder", { path: "/Projects/lamp/" })
       assert_equal "Projects/lamp", out["path"]
+      # Folders first, then files in the database's name order -- SQLite's binary collation, where
+      # "R" sorts before "l". Every test leg is SQLite; a Postgres collation would swap the two files.
       assert_equal %w[models README.md lid.stl], out["entries"].map { |e| e["name"] }
       readme = out["entries"].find { |e| e["name"] == "README.md" }
       assert_equal "Projects/lamp/README.md", readme["path"]

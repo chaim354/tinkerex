@@ -64,16 +64,20 @@ module McpServer
         )
         writes!
 
+        # ONE TRANSACTION: a project with no BOM gets one here, and a line the model then refuses must
+        # not leave that empty BOM behind -- a refused call changes nothing (spec §7).
         def self.perform(user, project:, bom_id: nil, **fields)
           p = project!(user, project)
-          bom =
-            if bom_id
-              p.boms.find_by(id: bom_id) || raise(NotFound, "No BOM with id #{bom_id} on project #{p.slug.inspect}.")
-            else
-              p.boms.order(:id).first || p.boms.create!(user: user)
-            end
-          line = bom.lines.create!(fields.merge(user: user))
-          { bom_id: bom.id, line: Render.line(line) }
+          Maker::Bom.transaction do
+            bom =
+              if bom_id
+                p.boms.find_by(id: bom_id) || raise(NotFound, "No BOM with id #{bom_id} on project #{p.slug.inspect}.")
+              else
+                p.boms.order(:id).first || p.boms.create!(user: user)
+              end
+            line = bom.lines.create!(fields.merge(user: user))
+            { bom_id: bom.id, line: Render.line(line) }
+          end
         end
       end
 
