@@ -25,10 +25,19 @@ RUN apt-get update -qq && \
     rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
 # Set production environment variables and enable jemalloc for reduced memory usage and latency.
+#
+# BUNDLE_WITHOUT EXCLUDES THE TEST GROUP TOO. The Rails scaffold's `"development"` alone leaves
+# `test` in so an image can run its own suite; nothing in this image ever does -- `bin/ci system`
+# runs on the CI runner against a checkout, bin/docker-entrypoint runs `db:prepare` and the server,
+# and no file under app/, lib/, config/ or db/ names capybara, selenium or web-console. What the
+# test group DID ship was selenium-webdriver's bundled `selenium-manager` binary, a browser-driver
+# downloader in a container with no browser, whose zip crate carried CVE-2026-115905 (CRITICAL)
+# through the 2026-11-04 Trivy scan of the deployed image. `rails app:update` offers the scaffold
+# line back; test/deploy_hygiene_test.rb refuses it.
 ENV RAILS_ENV="production" \
     BUNDLE_DEPLOYMENT="1" \
     BUNDLE_PATH="/usr/local/bundle" \
-    BUNDLE_WITHOUT="development" \
+    BUNDLE_WITHOUT="development:test" \
     LD_PRELOAD="/usr/local/lib/libjemalloc.so"
 
 # Throw-away build stage to reduce size of final image
@@ -122,11 +131,11 @@ RUN cargo install resvg --version 0.47.0 --root /out && strip /out/bin/resvg
 # permissive per CLAUDE.md §9). The self-contained WebAssembly build embeds pdfium, so there is NO
 # libpdfium.so to ship alongside and NO GPL/AGPL PDF stack (poppler/mupdf/ghostscript). `base` already
 # has curl. Independent of the app build, so it fetches in parallel.
-# TARGETARCH picks the asset: v0.11.0 ships pdfium-webassembly-linux-amd64 AND -arm64, and BuildKit
+# TARGETARCH picks the asset: v0.12.1 ships pdfium-webassembly-linux-amd64 AND -arm64, and BuildKit
 # spells TARGETARCH exactly the way klippa names the suffix, so the ARG goes into the URL verbatim.
 FROM base AS pdfium
 ARG TARGETARCH
-ARG PDFIUM_VERSION=v0.11.0
+ARG PDFIUM_VERSION=v0.12.1
 RUN curl -fsSL "https://github.com/klippa-app/pdfium-cli/releases/download/${PDFIUM_VERSION}/pdfium-webassembly-linux-${TARGETARCH}" \
       -o /tmp/pdfium && chmod +x /tmp/pdfium
 
@@ -227,6 +236,26 @@ RUN groupadd --system --gid 1000 rails && \
 # Copy built artifacts: gems, application
 COPY --chown=rails:rails --from=build "${BUNDLE_PATH}" "${BUNDLE_PATH}"
 COPY --chown=rails:rails --from=build /rails /rails
+
+# DEBIAN'S SECURITY FIXES ARRIVE ON EVERY BUILD, AND WHERE THIS RUN SITS IS WHAT MAKES THAT TRUE.
+# `apt-get install` above takes each package's current version only when its layer is REBUILT, and
+# that layer is keyed on this file's text and the base image's digest. `ruby:3.4.7-slim` is a
+# superseded tag that Docker's official images no longer rebuild, so left alone the layer caches
+# for the life of this file: the image deployed on 2026-10-26 carried ImageMagick, libraw, libheif,
+# libvips, OpenSSL, perl and nodejs fixes Debian had already published -- 15 CRITICAL and 211 HIGH
+# in the 2026-11-04 Trivy scan, every one with a fix in trixie-security. This RUN comes AFTER the
+# app COPY, whose layer changes on every commit, so a deploy always re-runs it, and `upgrade` lifts
+# everything in the final image -- the packages installed above and the ones the base came with --
+# to what Debian ships today. Folded into the install RUN above, it would run once and cache
+# forever (test/deploy_hygiene_test.rb pins the order). `upgrade`, not `full-upgrade`: a stable
+# security update never needs a package removed, and this must never remove one.
+#
+# THE COST IS A LAYER HOLDING EVERY PACKAGE THE UPGRADE TOUCHED -- 145 MB on 2026-11-04, with the
+# cached install layer five point releases behind (13.2 -> 13.7) -- that shrinks to the day's delta
+# whenever a layer above it is rebuilt, and a base-image bump (the Ruby patch) resets it entirely.
+RUN apt-get update -qq && \
+    apt-get upgrade -y --no-install-recommends && \
+    rm -rf /var/lib/apt/lists /var/cache/apt/archives
 
 # The STL thumbnailer binary on PATH → Maker::Previews::Stl#available? is true on the server,
 # so STL uploads get a real thumbnail (no F3D/Mesa). root:root 0755 → runnable by the rails user.

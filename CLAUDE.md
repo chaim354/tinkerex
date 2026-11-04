@@ -1043,12 +1043,12 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   `pin_all_from` stores a DIRECTORY, expanded only at render, so `importmap.packages` lists **0**
   `controllers/*` pins where the page renders 40 (importmap-rails 2.2.3): assert on the render.
 - **`assert_select`'S ARGUMENTS AFTER THE SELECTOR ARE NOT WHAT THEY LOOK LIKE** (rails-dom-testing
-  2.3.0, both probed). **A Regexp in `[attr=?]` never regex-matches:** `matcher_for` quotes it as a
-  literal, so it finds 0 where `:match('attr', ?)` (or `[attr*=?]` with a String) finds 1 — a test
-  that can never go green (`text: /…/` does match). **A trailing String is the TEXT comparator, not
-  a message:** one value goes to each `?` and the NEXT is the equality test, so
-  `assert_select "a[href=?]", path, "links the file"` demands that text and fails on correct markup.
-  Put `nil` or a hash before a message, as `content_security_policy_test.rb`'s `{ count: 1 }` does.
+  2.3.0, probed). **A Regexp in `[attr=?]` never regex-matches** (`matcher_for` quotes it as a literal;
+  `text: /…/` does match), **and from nokogiri 1.19.5 neither does one with a BACKSLASH in it through
+  `:match('attr', ?)`:** the CSS parser decodes string escapes per spec, so `\A` arrives as a newline
+  and `\(` as `(`. Read the attribute off `css_select` instead, or hand `[attr=?]` a String. **A trailing
+  String is the TEXT comparator, not a message:** one value goes to each `?` and the NEXT is the equality
+  test, so `"a[href=?]", path, "links the file"` fails on correct markup; put `nil` or a hash before it.
 - **Query cost is a property nothing asserts unless you assert it.** `projects#show` went from
   flat to +1 query per build-log entry when rich text arrived and the eager load was not extended
   — invisible to a green suite, while `models#show` carried the correct pattern the whole time.

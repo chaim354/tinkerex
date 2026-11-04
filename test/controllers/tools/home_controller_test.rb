@@ -63,16 +63,21 @@ module Tools
       ])
       get tools_path
       assert_response :success
-      assert_select ".addon-card.disabled" do
-        # NOT `[title=?]` — rails-dom-testing only performs a REGEXP match on an attribute through
-        # its `:match('attr', ?)` pseudo-class; a plain `[attr=?]` substitutes a Regexp via #to_s
-        # into an exact CSS equality selector (`[title="(?-mix:...)"]`) and can never match real
-        # text. Verified by reproducing both against rails-dom-testing 2.3.0 directly: `[title=?]`
-        # finds 0 elements against this exact title, `:match('title', ?)` finds 1.
-        # In the maker's words, the levels after (UX audit H): "host" and "level" are the API's.
-        assert_select ":match('title', ?)",
-                      /\ANeeds a newer Tinkerex than this server runs \(level #{Maker::Addons::Host::LEVEL + 1}; this server is level #{Maker::Addons::Host::LEVEL}\)\z/
-      end
+      # THE TITLE IS READ OFF THE NODE AND COMPARED FOR EQUALITY, because both selector spellings of
+      # this assertion looked right and could never go green. `[title=?]` with a Regexp:
+      # rails-dom-testing substitutes it via #to_s into an exact CSS equality selector
+      # (`[title="(?-mix:...)"]`). `:match('title', ?)` with a Regexp: green on nokogiri 1.19.4 and
+      # 0 matches from 1.19.5 on, whose CSS parser decodes string escapes per CSS Syntax Level 3, so
+      # the regex's `\A`, `\(` and `\z` reached rails-dom-testing's handler as a newline, `(` and
+      # `z` -- one red test on every leg the day the gem was bumped (2026-11-04), over correct
+      # markup. Equality is what the anchored regex was emulating, and it goes through neither
+      # gem's quoting. In the maker's words, the levels after (UX audit H): "host" and "level" are
+      # the API's.
+      cards = css_select(".addon-card.disabled")
+      assert_equal 1, cards.size, "expected exactly one disabled card"
+      assert_equal "Needs a newer Tinkerex than this server runs (level #{Maker::Addons::Host::LEVEL + 1}; " \
+                   "this server is level #{Maker::Addons::Host::LEVEL})",
+                   cards.first["title"]
     end
 
     # WHAT THE OPERATOR SEES AT PUBLISH TIME. The point of rendering these is scope drift: a
