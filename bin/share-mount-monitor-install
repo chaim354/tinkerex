@@ -1,0 +1,109 @@
+#!/usr/bin/env bash
+# Install (or refresh) the share-library mount monitor on the Unraid VM. Idempotent — run it again
+# after any change to ops/share-mount-recover.sh and it re-pushes the script and rewrites the
+# crontab entry.
+#
+#   bin/share-mount-monitor-install                                   # every 5 minutes
+#   PING_SHARE_MOUNT=http://192.168.1.146:3001/api/push/xY9 bin/share-mount-monitor-install
+#   MONITOR_EVERY=2 bin/share-mount-monitor-install                   # every 2 minutes
+#   bin/share-mount-monitor-install --uninstall
+#
+# WHAT IT WATCHES. When Tower (the SMB server) reboots, the running share container keeps a stale
+# CIFS handle on /library while /up goes on answering 200 — nothing alerts, and the next
+# `kamal deploy -d share` fails at container create. Five deploys found it that way between
+# 2026-10-22 and 2026-11-04. The cron line runs `ops/share-mount-recover.sh --monitor`: one
+# `docker exec … ls /library` in the live share container, a loud line in ~/tinkerex-ops/
+# share-mount.log and syslog when it is stale, and an Uptime Kuma push (`down` with the diagnosis,
+# `up` when healthy). IT NEVER RESTARTS THE CONTAINER: that container serves real data, and
+# stopping it is an operator's call — `ssh kamal1@192.168.1.95 bash -s < ops/share-mount-recover.sh`,
+# which the deploy skill's pre-flight runs for you.
+#
+# THE SAME PATTERN AS bin/backup-cron-install, AND THE SAME ping.env. The push URL goes into
+# ~/tinkerex-ops/ping.env under PING_SHARE_MOUNT, merged beside the backup keys (never overwriting
+# them — the backup installer merges the same way, so neither installer can unwire the other's
+# monitors), chmod 600, never in git. ops/backup-db.sh's own key lookup is table-driven and reads
+# only PING_<destination> lines, so this extra key is invisible to it. The monitor's push is a
+# dead-man's switch like the backup's: Uptime Kuma alerts on the ABSENCE of a ping, which is what
+# catches a VM that is off or a cron that stopped — the failures a job cannot report on itself.
+# Heartbeat Interval 900 (15 min: three missed 5-minute runs), Retries 0.
+#
+# ONE WRITER TO THE INSTALLED COPY. This installer is the only thing that writes
+# ~/tinkerex-ops/share-mount-recover.sh. The ad-hoc recovery runs the checkout's copy over stdin
+# (`bash -s <`) and writes nothing on the box — docs/invariants/backup-restore.md says why two
+# unsynchronised writers to one installed script is a bug waiting to be discovered at 03:30.
+
+set -euo pipefail
+
+HOST="${DEPLOY_HOST:-kamal1@192.168.1.95}"
+EVERY="${MONITOR_EVERY:-5}"
+OPS_DIR="tinkerex-ops"
+SCRIPT="share-mount-recover.sh"
+MARKER="# tinkerex-share-mount-monitor"
+KEY="PING_SHARE_MOUNT"
+HERE="$(cd "$(dirname "$0")/.." && pwd)"
+
+case "$EVERY" in
+  ''|*[!0-9]*) echo "!! MONITOR_EVERY must be a whole number of minutes, got '$EVERY'" >&2; exit 64 ;;
+esac
+if [ "$EVERY" -lt 1 ] || [ "$EVERY" -gt 30 ]; then
+  echo "!! MONITOR_EVERY must be between 1 and 30 minutes (a */N cron field), got $EVERY" >&2; exit 64
+fi
+
+if [ "${1:-}" = --uninstall ]; then
+  echo "==> removing the crontab entry (the installed script, its log and ping.env are left alone)"
+  ssh "$HOST" "crontab -l 2>/dev/null | grep -v '$MARKER' | crontab - || true; crontab -l"
+  exit 0
+fi
+if [ -n "${1:-}" ]; then
+  echo "usage: bin/share-mount-monitor-install [--uninstall]" >&2; exit 64
+fi
+
+echo "==> installing ops/$SCRIPT"
+ssh "$HOST" "mkdir -p $OPS_DIR"
+scp -q "$HERE/ops/$SCRIPT" "$HOST:$OPS_DIR/$SCRIPT"
+ssh "$HOST" "chmod +x $OPS_DIR/$SCRIPT"
+
+# ---- the Uptime Kuma push URL ---------------------------------------------------------------------
+# The value crosses to the box over STDIN, never on a command line (a token on an ssh command line is
+# in `ps` and the shell history at both ends), and lands by replace-or-append on its own key so every
+# other line of ping.env survives. Not supplied means not touched.
+echo "==> Uptime Kuma push URL ($KEY)"
+if [ -n "${!KEY:-}" ]; then
+  printf '%s=%s\n' "$KEY" "${!KEY}" | ssh "$HOST" "cat > $OPS_DIR/ping.update"
+  ssh "$HOST" bash -s -- "$KEY" <<'REMOTE'
+set -euo pipefail
+key=$1
+cd "$HOME/tinkerex-ops"
+touch ping.env
+{ grep -v "^$key=" ping.env || true; cat ping.update; } > ping.env.tmp
+mv ping.env.tmp ping.env
+rm -f ping.update
+chmod 600 ping.env
+echo "    $key set"
+REMOTE
+else
+  ssh "$HOST" bash -s -- "$KEY" <<'REMOTE'
+set -euo pipefail
+key=$1
+if grep -q "^$key=" "$HOME/tinkerex-ops/ping.env" 2>/dev/null; then
+  echo "    $key already present — kept"
+else
+  echo "    !! NO HEARTBEAT: $key is not set. The monitor will log to ~/tinkerex-ops/share-mount.log and"
+  echo "       syslog, and nothing remote will notice it stop. Create a Push monitor in Uptime Kuma"
+  echo "       (Heartbeat Interval 900, Retries 0), then: $key=<push-url> bin/share-mount-monitor-install"
+fi
+REMOTE
+fi
+
+echo "==> installing the crontab entry"
+LINE="*/$EVERY * * * * \$HOME/$OPS_DIR/$SCRIPT --monitor >> \$HOME/$OPS_DIR/share-mount.log 2>&1 $MARKER"
+# Replace rather than append: a second run must not leave two entries. grep -v then re-add is the
+# whole update, and the backup's own entry (a different marker) is untouched.
+ssh "$HOST" "{ crontab -l 2>/dev/null | grep -v '$MARKER' || true; echo '$LINE'; } | crontab -"
+ssh "$HOST" "crontab -l | sed 's/^/    /'"
+
+echo
+echo "==> proving it works: running the monitor once, now (read-only; it never stops anything)"
+ssh "$HOST" "\$HOME/$OPS_DIR/$SCRIPT --check" || echo "    (exit $? — see ops/$SCRIPT's exit codes; the monitor is installed either way)"
+echo
+echo "Log: ssh $HOST tail ~/$OPS_DIR/share-mount.log    Recover: ssh $HOST bash -s < ops/$SCRIPT"
