@@ -19,7 +19,8 @@ module McpServer
 
       class CreateSupplier < McpServer::Tool
         tool_name "create_supplier"
-        description "Add a supplier."
+        description "Add a supplier by name, optionally with its website url and notes (lead times, " \
+                    "an account number). Inventory items and BOM lines can then name it by id."
         input_schema(
           properties: { name: { type: "string", minLength: 1, maxLength: 200 }, url: { type: "string", maxLength: 500 }, notes: { type: "string" } },
           required: %w[name], additionalProperties: false

@@ -935,6 +935,11 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
 - **`Current.library_unreachable` IS SET ONLY WHERE A `FetchError` WAS RESCUED INTO DEGRADED OUTPUT** —
   the `Readme`/`MarkdownFile`/`RepoCard`/`GerberSets`/`GerberArchive`/`ThreeMfManifest` readers (`ThumbnailMap`'s setter cannot
   fire: `stat_all` is catalog-only on every adapter) — **AND THE BANNER NEVER PROBES THE PORT**: a page that did not touch the port says nothing (§2).
+- **THE MCP DOOR IS TOKEN-AUTHED, STATELESS, AND ITS TOOLS CALL THE MODELS, NEVER v1 OVER HTTP**
+  (`McpController`, `app/services/mcp_server/`; spec 2026-11-04). One JSON-RPC message per POST,
+  no session, no SSE; a tool is scoped by the user in the server context and every finder starts
+  from it (`isolation_test.rb`). The Settings door mints an assistant's device with **no sync
+  grant** and shows the token **once, rendered, never through the flash**.
 
 ### 14e. Architecture and process
 
