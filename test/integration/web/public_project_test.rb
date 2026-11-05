@@ -147,6 +147,66 @@ module Web
                     "an absolute image would be a request to another origin from this page"
     end
 
+    # THE README IS A PANEL OF THE LAYOUT (2026-11-05, live regions; spec §2): it used to be pinned
+    # above the hero outside the panel loop, whatever the maker's order said, and a hidden README was
+    # not hidden from a visitor at all. Now it is in the `public_panels` map like every other panel
+    # with a public face — ordered, headed, and gone when hidden.
+    test "the README is a panel in the layout's order, headed, and leaves the page when hidden" do
+      get path
+      assert_select ".panel-slot .readme-panel .panel-head h2", text: "README"
+      # Photos ahead of the README: the visitor sees the owner's order.
+      @project.update!(panels: { "order" => %w[photos readme attachments] })
+      get path
+      slots = css_select(".project-panels .panel-slot .panel").map { |p| p["class"] }
+      assert_operator slots.index { |c| c.include?("photos-panel") }, :<, slots.index { |c| c.include?("readme-panel") }
+
+      @project.update!(panels: { "hidden" => [ "readme" ] })
+      get path
+      assert_select ".readme-panel", 0
+    end
+
+    # LIVE REGIONS RENDER THROUGH THE PUBLIC SEAM (spec §5): the `files` table's links are public byte
+    # URLs; an `image` region naming a MODEL is a link while no thumbnail is ready (Live::ImageLine
+    # writes the link form, so the image arm is never asked); one naming a PICTURE is its bytes. The
+    # markers never reach the page.
+    #
+    # THE HAND-WRITTEN `![plate](models/base.stl)` IS WHAT REACHES THE IMAGE ARM (spec §5's own
+    # example): the emitter never writes an image of a model without a thumbnail, so without a picture
+    # the maker typed, `Maker::PublicProject#image_url_for` answering STL bytes for every file left this
+    # test green (measured while writing it). The arm answers nil and the picture is DROPPED; once a
+    # thumbnail is READY both pictures of the model — the region's and the typed one — are that
+    # thumbnail through the public preview route, never the bytes.
+    test "a live files region renders through the public seam, and a live picture of a model is a link until its thumbnail is ready" do
+      folder = @user.nodes.present.find_by!(node_id: @project.folder_node_id)
+      readme = @user.nodes.present.find_by!(name: "README.md", parent_node_id: folder.node_id)
+      body = "# Desk Lamp\n\n<!-- tinkerex:files models -->\n\n<!-- tinkerex:image #{@f[:base].node_id} The base -->\n\n" \
+             "<!-- tinkerex:image #{@f[:pic].node_id} -->\n\n![plate](models/base.stl)\n"
+      @root.join(readme.storage_path).write(body)
+      readme.update!(size: body.bytesize)
+      base_url = public_file_path("ada", @project.slug, @f[:base].node_id)
+
+      get path
+
+      assert_select ".readme-panel .markdown table td a[href=?]", base_url, text: "base.stl"
+      assert_select ".readme-panel .markdown a[href=?]", base_url, text: "The base"
+      assert_select ".readme-panel .markdown img[src=?]", public_file_path("ada", @project.slug, @f[:pic].node_id)
+      assert_select ".readme-panel .markdown img[src=?]", base_url, { count: 0 },
+                    "a model's bytes are not a picture; with no thumbnail ready the <img> is dropped"
+      assert_select ".readme-panel .markdown img", count: 1
+      assert_select ".readme-panel .markdown", text: /tinkerex/, count: 0
+      # NEVER the maker's own routes on a visitor's page (the seam guard's third arm).
+      assert_select ".readme-panel [src^='/files/'], .readme-panel [href^='/files/']", 0
+
+      ready_cover!(@f[:base])
+      get path
+
+      assert_select ".readme-panel .markdown img[src=?]",
+                    public_file_preview_path("ada", @project.slug, @f[:base].node_id, "thumbnail"), count: 2
+      assert_select ".readme-panel .markdown img[src=?]", base_url, { count: 0 }, "never the STL bytes"
+      assert_select ".readme-panel .markdown a", { text: "The base", count: 0 }, "the region is a picture now"
+      assert_select ".readme-panel [src^='/files/'], .readme-panel [href^='/files/']", 0
+    end
+
     # --- 5. files: the folder root, plus one panel per subfolder --------------------
     #
     # 2026-09-08, FOLDER PANELS (spec §5): the Files panel was the whole folder, section by
