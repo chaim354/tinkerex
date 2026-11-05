@@ -218,6 +218,11 @@
   .markdown { font-size: 13px; line-height: 1.55; max-height: 360px; overflow: auto; margin-top: 6px; }
   .markdown > :first-child { margin-top: 0; }
   .markdown > :last-child { margin-bottom: 0; }
+  /* A task-list item (2026-11-05): kramdown's `- [x]` checkbox stands where the bullet was, as
+     GitHub draws it; the item carries no class (the sanitiser strips them), so it is found by its
+     child. */
+  .markdown li:has(> input[type="checkbox"]) { list-style: none; }
+  .markdown li > input[type="checkbox"] { margin: 0 6px 0 -1.4em; vertical-align: middle; }
   .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { font-size: 1em; margin: 0.8em 0 0.3em; }
   .markdown h1 { font-size: 1.3em; }
   .markdown h2 { font-size: 1.15em; }

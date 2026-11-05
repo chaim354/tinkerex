@@ -119,14 +119,36 @@ module Maker
       # --- what the emitters write with -----------------------------------------------------------
 
       # Text that is safe inside a table cell, a list item and a link's text: a pipe would end the
-      # cell, a bracket the link, and `*`/`_`/backtick would start emphasis or code mid-name. A row
-      # is one line, so whitespace is squished. (Probed against kramdown: `\|` and `\]` render as the
-      # bare character.) The link DESTINATION is left as the catalog spells it except for a pipe,
-      # escaped `\|` so it cannot end the cell — kramdown accepts spaces and parentheses there and
-      # hands the pipe back bare (probed), and the folder resolver indexes RAW paths, so a
-      # percent-encoded destination would resolve to nothing.
-      def self.cell(text) = text.to_s.gsub(/\s+/, " ").strip.gsub(/[\\`*_\[\]|]/) { |c| "\\#{c}" }
-      def self.link(text, path) = "[#{cell(text)}](#{path.to_s.gsub('|', '\\|')})"
+      # cell, a bracket the link, `*`/`_`/backtick would start emphasis or code mid-name, and an
+      # angle bracket would start raw HTML — a file named `<em>x</em>.svg` would render as an
+      # element. A row is one line, so whitespace is squished. (Probed against kramdown: `\|`, `\]`
+      # and `\<` render as the bare character.)
+      def self.cell(text) = text.to_s.gsub(/\s+/, " ").strip.gsub(/[\\`*_\[\]|<>]/) { |c| "\\#{c}" }
+
+      # A LINK OR IMAGE DESTINATION: the path as the catalog spells it — kramdown accepts spaces
+      # there and the folder resolver indexes RAW paths, so a percent-encoded destination would
+      # resolve to nothing — with two exceptions, both probed. A pipe is escaped `\|`: a TABLE cell
+      # hands it back bare, while a bare pipe on a line of its own would make kramdown read that
+      # line as a table row. An UNBALANCED parenthesis ends a bare destination, so a path holding
+      # one is wrapped in angle brackets, which kramdown accepts in and out of a table. The one
+      # exposure left: on a bare line (an `image` region) the `\|` reaches the href as written, the
+      # resolver misses, and the file is unlinked text there — a pipe is illegal in a Windows name
+      # and rare elsewhere.
+      def self.destination(path)
+        escaped = path.to_s.gsub("|") { "\\|" }
+        escaped.match?(/[()]/) ? "<#{escaped}>" : escaped
+      end
+
+      def self.link(text, path) = "[#{cell(text)}](#{destination(path)})"
+      def self.image(text, path) = "![#{cell(text)}](#{destination(path)})"
+
+      # WHAT DRAWS AS A PICTURE FROM ITS OWN BYTES: the inline-image list plus SVG, which every
+      # browser this app targets draws as an <img> and which sits outside INLINE_IMAGE_EXTS only
+      # because the FILE PAGE's Measure branch claims it first (FilePreview#preview_kind). ONE
+      # definition for the `image` emitter, the maker's image arm (ProjectsHelper#maker_image_link)
+      # and the visitor's (Maker::PublicProject#image_url_for), so the file and both pages agree
+      # about which files are pictures.
+      def self.picture?(name) = Maker::FileAttachment.inline_image?(name) || File.extname(name.to_s).casecmp?(".svg")
       def self.note(text) = "*#{text}*"
       def self.size(bytes) = bytes ? ActiveSupport::NumberHelper.number_to_human_size(bytes) : "—"
       # The catalog's mtime is nanoseconds; the date is in the app's zone like every other timestamp.

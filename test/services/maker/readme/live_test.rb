@@ -351,6 +351,59 @@ module Maker
         stripped = stripped.sub(/^\[box\.lbrn2\]\(laser\/box\.lbrn2\)$/, "![box.lbrn2](laser/box.lbrn2)")
         assert_equal page.gsub(/\n{2,}/, "\n"), stripped.gsub(/\n{2,}/, "\n")
       end
+
+      # --- the review's findings (2026-11-05) -----------------------------------------------------
+
+      test "an unbalanced parenthesis in a name still links, in a table and on an image line" do
+        models = dir!("models", @folder)
+        box = file!("box (final.stl", models)
+        list = listing
+        resolve = Maker::Markdown.folder_resolver(list.path, list.path_index) { |id| "/f/#{id}" }
+
+        assert_equal "<models/box (final.stl>", Maker::Readme::Live.destination("models/box (final.stl")
+        table = Maker::Markdown.render(expand("<!-- tinkerex:files models -->\n", mode: :page), &resolve)
+        assert_includes table, %(href="/f/#{box.node_id}")
+        picture = Maker::Markdown.render(expand("<!-- tinkerex:image #{box.node_id} -->\n", mode: :page,
+                                                thumbs: FakeThumbs.new([ box.node_id ])), &resolve)
+        assert_includes picture, %(<img src="/f/#{box.node_id}")
+      end
+
+      test "a BOM design-file line pointing outside the folder names the file; a tombstoned one says it is gone" do
+        outside = create_node!(@user, node_id: SecureRandom.uuid, name: "stock.stl", kind: "file",
+                               parent_node_id: @folder.parent_node_id, mtime: 1, size: 3)
+        gone = create_node!(@user, node_id: SecureRandom.uuid, name: "gone.stl", kind: "file",
+                            parent_node_id: @folder.parent_node_id, mtime: 1, size: 3)
+        bom = @project.boms.create!(user: @user)
+        bom.lines.create!(user: @user, reference: "S1", node_id: outside.node_id, quantity: 1, unit: "each", position: 0)
+        bom.lines.create!(user: @user, reference: "G1", node_id: gone.node_id, quantity: 1, unit: "each", position: 1)
+        gone.update!(deleted: true)
+
+        out = expand("<!-- tinkerex:bom -->\n", mode: :page)
+
+        assert_includes out, "| S1 | stock.stl | 1 each |"
+        assert_includes out, "| G1 | a file no longer in the library | 1 each |"
+        refute_includes out, "](stock.stl)"
+      end
+
+      test "an angle bracket in a name renders as text, never as an element" do
+        laser = dir!("laser", @folder)
+        file!("<em>loud</em>.svg", laser)
+
+        html = Maker::Markdown.render(expand("<!-- tinkerex:files laser -->\n", mode: :page)) { |href| "/x/#{href}" }
+
+        assert_includes html, "&lt;em&gt;loud&lt;/em&gt;.svg</a>"
+        assert_no_match(/<em>/, html)
+      end
+
+      test "an SVG is a picture in the file as on the page, like a photo" do
+        design = dir!("design", @folder)
+        plate = file!("plate.svg", design)
+
+        assert Maker::Readme::Live.picture?("plate.svg")
+        assert Maker::Readme::Live.picture?("pic.PNG")
+        refute Maker::Readme::Live.picture?("robber.stl")
+        assert_equal "![plate.svg](design/plate.svg)", expand("<!-- tinkerex:image #{plate.node_id} -->\n", mode: :file).lines[2].strip
+      end
     end
   end
 end

@@ -22,6 +22,21 @@ class Maker::MarkdownTest < ActiveSupport::TestCase
     assert_match %r{<pre><code>puts 1}, html
   end
 
+  # TASK-LIST CHECKBOXES SURVIVE, DISABLED (2026-11-05, live regions): kramdown renders `- [x]` as an
+  # <input>, and the allowlist used to UNWRAP it, so a checklist lost its marks on the page while the
+  # same file showed them everywhere else. Only a checkbox survives, with nothing but its three
+  # attributes; any other input is removed outright.
+  test "a task list keeps its checkboxes, disabled and bare; any other input is removed" do
+    html = Maker::Markdown.render("- [x] done\n- [ ] open\n\n<input type=\"text\" name=\"q\">\n\n" \
+                                  "<input type=\"checkbox\" checked onclick=\"evil()\" class=\"x\" id=\"attributes\">\n")
+
+    assert_equal 3, html.scan("<input").size
+    assert_equal 2, html.scan(/<input[^>]*checked/).size
+    assert_equal 3, html.scan(/<input[^>]*disabled/).size
+    assert_no_match(/type="text"|name=|onclick|class=|id="attributes"/, html)
+    assert_match %r{<li>\s*<input[^>]*type="checkbox"[^>]*>\s*done\s*</li>}, html
+  end
+
   # RAW HTML IS NOT KRAMDOWN'S TO STRIP — it passes `<script>` through verbatim (probed at the
   # console). The renderer removes executable elements WITH their content before the allowlist
   # sanitizer runs, because that sanitizer UNWRAPS a disallowed tag (Loofah's PermitScrubber, not

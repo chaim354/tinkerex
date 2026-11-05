@@ -64,6 +64,18 @@ module Maker
         end
 
         def thumb_ready?(node_id) = !!@thumbs&.thumb(node_id)&.showable?
+
+        # THE NAME OF A NODE A BOM LINE POINTS AT OUTSIDE THIS PROJECT'S FOLDER, or nil when it is not
+        # live anywhere. ONE batched query over every design-file line the listing does not hold,
+        # memoised — a 200-line BOM costs one lookup, never a find per line (the rule
+        # page_query_budget_test.rb enforces on the page that renders this).
+        def node_name(node_id)
+          @node_names ||= begin
+            ids = bom_lines.filter_map(&:node_id).uniq.reject { |id| row(id) }
+            ids.empty? ? {} : user.nodes.present.where(node_id: ids).pluck(:node_id, :name).to_h
+          end
+          @node_names[node_id]
+        end
       end
     end
   end

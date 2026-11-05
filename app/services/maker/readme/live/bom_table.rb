@@ -22,7 +22,9 @@ module Maker
           when :inventory_item then Live.cell(line.inventory_item&.name || line.part_name)
           when :design_file
             row = context.row(line.node_id)
-            row ? Live.link(row.node.name, context.relative_path(row)) : Live.cell("a file outside the project folder")
+            # In the folder: a link. Elsewhere in the library: its name, from the context's ONE batched
+            # lookup (spec §4). Gone: said so, the way the public BOM table says it.
+            row ? Live.link(row.node.name, context.relative_path(row)) : Live.cell(context.node_name(line.node_id) || "a file no longer in the library")
           else Live.cell(line.part_name)
           end
         end

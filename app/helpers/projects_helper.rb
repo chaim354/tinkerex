@@ -118,17 +118,14 @@ module ProjectsHelper
   # non-image picture is dropped rather than broken). A node the listing does not hold cannot have
   # been resolved by the folder resolver at all, so that arm is defensive, not reachable.
   #
-  # AN SVG IS IMAGE BYTES HERE THOUGH IT SITS OUTSIDE `INLINE_IMAGE_EXTS`: every browser this app
-  # targets draws one as an <img>, which is what `![plate](docs/plate.svg)` has done since the UX
-  # audit's C2 (project_hub_audit_test.rb pins it on the blob route, for a README and a text block
-  # alike). That list answers the FILE PAGE's question, where Measure claims an SVG before the :image
-  # branch ever asks (FilePreview#preview_kind); keyed on it alone, an SVG with no thumbnail yet
-  # would vanish from the page instead of drawing.
+  # WHICH FILES ARE PICTURES IS `Maker::Readme::Live.picture?`'s ONE ANSWER — the inline-image list
+  # plus SVG, which `![plate](docs/plate.svg)` has drawn from the blob route since the UX audit's C2
+  # (project_hub_audit_test.rb pins it, for a README and a text block alike); keyed on
+  # `inline_image?` alone, an SVG with no thumbnail yet would vanish from the page instead of drawing.
   def maker_image_link(listing, thumbs)
     lambda do |id|
       row = listing.row_for(id)
-      next blob_file_path(id) if row.nil? || Maker::FileAttachment.inline_image?(row.node.name) ||
-                                 File.extname(row.node.name).casecmp?(".svg")
+      next blob_file_path(id) if row.nil? || Maker::Readme::Live.picture?(row.node.name)
 
       thumb = thumbs&.thumb(id)
       thumb&.showable? ? preview_src(thumb) : nil

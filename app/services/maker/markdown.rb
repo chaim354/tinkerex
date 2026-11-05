@@ -27,7 +27,14 @@ module Maker
   # ALLOWED_TAGS was written for anyway: `class="language-xxx"` is not in ALLOWED_ATTRS and would be
   # stripped even if a highlighter did emit it.
   class Markdown
-    ALLOWED_TAGS = %w[p br h1 h2 h3 h4 h5 h6 ul ol li strong em code pre blockquote a img table thead tbody tr th td hr del].freeze
+    # `input` IS FOR THE TASK-LIST CHECKBOX AND NOTHING ELSE (2026-11-05, live regions): kramdown's GFM
+    # parser renders `- [x] done` as `<li><input type="checkbox" checked disabled>done</li>`, and the
+    # allowlist used to UNWRAP the input, so a README's checklist — and the `tasks` region's done marks
+    # — rendered as a plain list with the `[x]` gone. `#keep_task_checkboxes` below is the half that
+    # makes the entry narrow: every `input` that is not a checkbox is removed before the sanitiser
+    # runs, and the ones kept carry `type`, `checked` and `disabled` and no other attribute. `type`,
+    # `checked` and `disabled` on any other allowed element are inert.
+    ALLOWED_TAGS = %w[p br h1 h2 h3 h4 h5 h6 ul ol li strong em code pre blockquote a img table thead tbody tr th td hr del input].freeze
     # `id` IS ALLOWED FOR HEADINGS AND FOR NOTHING ELSE, AND THE ALLOWLIST CANNOT SAY SO — Rails'
     # `sanitize` takes one flat attribute list with no per-tag arm, so `id` here would also permit
     # one on `<a>`, `<img>`, `<p>` and every other allowed element. `#keep_heading_anchors` below
@@ -37,7 +44,7 @@ module Maker
     # `id="project-tasks"`, the Turbo Stream target Projects::TasksController replaces. Adding the
     # attribute here without that pass is the hole; keeping the pass without the prefix is the
     # collision.
-    ALLOWED_ATTRS = %w[href src alt title id].freeze
+    ALLOWED_ATTRS = %w[href src alt title id type checked disabled].freeze
 
     # WHAT AN ANCHOR MAY CONTAIN. Not decoration: kramdown's own auto_id generator answers
     # `unicode-ü--symbols` for `## Unicode ü & Symbols!` (probed), a block IAL can hand any block
@@ -140,6 +147,24 @@ module Maker
         end
       end
 
+      # A TASK-LIST CHECKBOX IS THE ONE `input` THAT SURVIVES, DISABLED, WITH NOTHING ELSE ON IT
+      # (2026-11-05, live regions; ALLOWED_TAGS says why `input` is allowed at all). A README is
+      # read-only prose, so every box is disabled whatever the author wrote; `checked` is the one bit
+      # of state kept. Any other input — a text field, a button, a raw-HTML `<input type="checkbox"
+      # onclick>` keeps nothing but its two attributes either — is removed outright here rather than
+      # unwrapped by the sanitiser into nothing visible.
+      def keep_task_checkboxes(fragment)
+        fragment.css("input").each do |input|
+          next input.remove unless input["type"].to_s.casecmp?("checkbox")
+
+          checked = input.has_attribute?("checked")
+          input.attribute_nodes.each(&:remove)
+          input["type"] = "checkbox"
+          input["disabled"] = "disabled"
+          input["checked"] = "checked" if checked
+        end
+      end
+
       # THE ONE SLUG FUNCTION for a heading's id and a link's fragment — two copies that normalize
       # differently is a link that never resolves. Lowercase; strip the prefix a GitHub README
       # already carries (once, so it is never doubled); collapse everything outside ANCHOR_ALPHABET
@@ -158,6 +183,7 @@ module Maker
         # own it turned `<script>alert(1)</script>` into the prose "alert(1)" in the middle of a
         # README (seen live, 2026-09-05). Safe, and still wrong to show.
         fragment.css("script, style, iframe, object, embed, noscript, template").each(&:remove)
+        keep_task_checkboxes(fragment)
         keep_heading_anchors(fragment)
 
         fragment.css("a[href]").each do |a|
