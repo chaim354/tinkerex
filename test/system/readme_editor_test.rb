@@ -34,7 +34,7 @@ class ReadmeEditorTest < ApplicationSystemTestCase
 
   test "the README editor mounts on the project page, saves what was typed, and the card shows it" do
     visit project_path(@project)
-    assert_selector ".readme-card .markdown h1", text: "Lamp"
+    assert_selector ".readme-panel .markdown h1", text: "Lamp"
 
     # THE EDITOR IS LAZY: nothing is fetched and nothing mounts until the details opens.
     assert_no_selector ".readme-editor .cm-editor"
@@ -55,7 +55,7 @@ class ReadmeEditorTest < ApplicationSystemTestCase
 
     # THE REDIRECTED PAGE, NOT THE BUFFER: the card is rebuilt from the bytes the port reads back.
     assert_selector ".flash-notice", text: "Saved the README."
-    assert_selector ".readme-card .markdown", text: MARKER
+    assert_selector ".readme-panel .markdown", text: MARKER
     # THE BYTES ON DISK, not the page's own idea of them.
     assert_includes File.read(@path), MARKER
 

@@ -62,11 +62,12 @@ module Maker
       "electronics" => "Electronics & firmware", "mixed" => "Mixed", "other" => "Other"
     }.freeze
 
-    # The panels that open EVERY project page whatever its kind: the folder first, its pictures
-    # next — with the project's folder panels spliced BETWEEN the two since folder panels exist, so
-    # these two are no longer adjacent on a project that has subfolders. A preset may lift panels to
-    # sit AFTER these, never before them.
-    LEAD = %w[attachments photos].freeze
+    # The panels that open EVERY project page whatever its kind: the README first (2026-11-05 — the
+    # project's own description), then the folder, then its pictures — with the project's folder
+    # panels spliced BETWEEN the last two since folder panels exist, so those two are no longer
+    # adjacent on a project that has subfolders. A preset may lift panels to sit AFTER these, never
+    # before them.
+    LEAD = %w[readme attachments photos].freeze
 
     # The panels no preset and no override may hide — A DIFFERENT QUESTION FROM `LEAD`, which the
     # two members they share make easy to miss (the same coincidence §14a records for `scannable`
@@ -75,6 +76,8 @@ module Maker
     # be invisible or wrong. (`publish` was the third until it left the page for the Publishing tab,
     # 2026-10-26.)
     ALWAYS = %w[attachments photos].freeze
+    # `readme` is deliberately NOT here (2026-11-05): a maker with no README may not want the
+    # Write-a-README door on every visit, and the layout editor brings the panel back.
 
     # ORDER IS DERIVED, NOT SPELLED OUT: `(LEAD + first + PANELS) & PANELS`. Only `electronics`
     # supplies a `first`, so five of the six kinds cannot drift from PANELS at all, and the sixth
@@ -368,8 +371,9 @@ module Maker
     INTRO_MAX = 200
     # Today's page, written down: Files and Photos spanned both columns by a stylesheet rule that
     # also named `.folder-panel`; a folder panel holds a tile grid, nested sections or the browser,
-    # and half a column is where the browser stops being usable.
-    FULL_BY_DEFAULT = %w[attachments photos].freeze
+    # and half a column is where the browser stops being usable. A README is a document, and half a
+    # column is where a table in it stops being readable.
+    FULL_BY_DEFAULT = %w[readme attachments photos].freeze
 
     def self.default_width(key, block_kind: nil)
       k = key.to_s

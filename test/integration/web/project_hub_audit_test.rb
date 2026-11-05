@@ -110,9 +110,9 @@ module Web
 
     # --- C2: README pictures load their bytes ---------------------------------------------------
 
-    # MUTATION-CHECKED: making Maker::Readme.default_image_link return nil reddens this with
-    # `Expected at least 1 element matching ".readme-card .markdown img[src=\"/files/<id>/blob\"]",
-    # found 0.` — the src back on the file's HTML page.
+    # MUTATION-CHECKED: making ProjectsHelper#maker_image_link return nil for every id reddens this
+    # with `Expected at least 1 element matching ".readme-panel .markdown img[src=\"/files/<id>/blob\"]`,
+    # found 0.`
     test "a README picture loads from the blob route, and its link still opens the file page" do
       project = @user.maker_projects.create!(name: "Desk Lamp")
       project.ensure_library_folder!(@user)
@@ -129,9 +129,9 @@ module Web
       get project_path(project)
       assert_response :success
 
-      assert_select ".readme-card .markdown img[src=?]", blob_file_path(plate.node_id)
-      assert_select ".readme-card .markdown img[src=?]", file_path(plate.node_id), 0
-      assert_select ".readme-card .markdown a[href=?]", file_path(base.node_id), text: "base"
+      assert_select ".readme-panel .markdown img[src=?]", blob_file_path(plate.node_id)
+      assert_select ".readme-panel .markdown img[src=?]", file_path(plate.node_id), 0
+      assert_select ".readme-panel .markdown a[href=?]", file_path(base.node_id), text: "base"
     end
 
     # A text block resolves through the same two arms (ProjectsHelper#project_markdown).

@@ -319,22 +319,26 @@ class ProjectsController < ApplicationController
     # and no Commits/History anywhere on its page — every real repository on the share deployment
     # is one (measured 2026-09-07). The root is a synthetic Dir: its files are the loose rows, its
     # children the tree, its path the folder's — exactly what Maker::RepoCard reads to find a README
-    # and resolve its relative links. A plain folder's README renders through the same reader with
-    # no git facts. Neither costs a query: the node came out of the batch above, and the README is a
-    # bounded PORT read (Maker::Readme's own caps), never SQL.
+    # and resolve its relative links. A plain folder's README used to render through the same reader
+    # with no git facts; since 2026-11-05 the README is its own panel (projects/_readme) on every
+    # project, repository or not, and the root card carries git facts alone.
     @root_card = nil
-    @readme = nil
+    @readme_source = nil
+    # THE README IS READ ONLY WHEN ITS PANEL SHOWS (2026-11-05, live regions; spec §2) — a port read,
+    # and a WAN one on chunk_remote, which the page used to pay whether or not anyone looked. READ
+    # HERE, RENDERED BELOW: `Maker::Readme.source` reads and parses, so the `image` regions' node ids
+    # can ride the page's ONE thumbnail query, and `Maker::Readme.render` runs after that query.
+    readme_shown = @panel_layout.visible?("readme")
     if @listing.available?
       if @listing.root_repo?
         root_dir = Maker::ProjectFolderListing::Dir.new(node_id: @listing.folder_id, name: @project.name,
                                                         path: @listing.path, repo?: true,
                                                         children: @listing.tree, files: @listing.loose)
+        # `readme: false`: the root card keeps its git facts; the README is the panel's.
         @root_card = Maker::RepoCard.for(user: current_user, dir: root_dir, root_node: repo_roots[@listing.folder_id],
-                                         listing: @listing, capabilities:)
-      else
-        @readme = Maker::Readme.for(user: current_user, rows: @listing.loose, base_path: @listing.path,
-                                    listing: @listing, link: Maker::RepoCard::DEFAULT_LINK)
+                                         listing: @listing, capabilities:, readme: false)
       end
+      @readme_source = Maker::Readme.source(user: current_user, rows: @listing.loose) if readme_shown
     end
     # THE README THE EDITOR EDITS (stage 4, S4-4), resolved ONCE from the same rows both cards
     # render — Maker::Readme.row_in is the one definition of the preference order, so the card that
@@ -449,9 +453,10 @@ class ProjectsController < ApplicationController
     recent_ids = @recent_files.map(&:node_id)
     # The model cards' covers SECOND, after the recent row: BACKFILL_LIMIT is first-come, as above.
     model_cover_ids = @project_models ? @project_models.models.filter_map(&:cover_node_id) : []
+    # THE README'S LIVE PICTURES (2026-11-05): an `image` region's node joins the union so its thumbnail is one query and one backfill with everything else this page paints.
     @page_thumbs = Maker::Previews::ThumbnailMap.for(
       current_user, recent_ids + model_cover_ids + tile_ids + @photo_rows.map(&:node_id) + block_thumb_ids +
-                    (@cover_node ? [ cover_id ] : [])
+                    Array(@readme_source&.image_node_ids) + (@cover_node ? [ cover_id ] : [])
     )
     # TILE_IDS ONLY, NOT THE PHOTO ROWS. Every tile this page can render — a folder section,
     # Backups, Generated, Linked — carries `contextmenu->filemenu#open`; `_log_entry`'s photos and
@@ -461,6 +466,17 @@ class ProjectsController < ApplicationController
     @addon_origins = addon_origins_for((recent_ids + tile_ids).uniq)
     @tasks = @project.tasks.order(:position, :created_at).to_a
     @sheets = @project.sheets.to_a
+    # THE README, RENDERED (2026-11-05, live regions; spec §5) — after @page_thumbs, which its pictures
+    # read, and after @tasks, which its `tasks` region reads. The context carries what this page loaded;
+    # `bom_lines` is nil when the BOM panel is hidden, so a `bom` region loads the lines itself, once.
+    @readme = if @readme_source
+      context = Maker::Readme::Live::Context.new(user: current_user, project: @project, listing: @listing,
+                                                 bom_lines: (bom_shown ? @bom_lines : nil), tasks: @tasks,
+                                                 entries: @entries, thumbs: @page_thumbs)
+      Maker::Readme.render(@readme_source, base_path: @listing.path, index: @listing.path_index,
+                           link: Maker::RepoCard::DEFAULT_LINK,
+                           image_link: helpers.maker_image_link(@listing, @page_thumbs), context:)
+    end
     # THE WIRING TABLE (stage 3, S3-3). ONE query -- Maker::Project#connections already orders by
     # position, like #sheets above, so no further .order() is needed here.
     #

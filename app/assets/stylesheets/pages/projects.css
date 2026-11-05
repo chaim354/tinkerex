@@ -420,6 +420,11 @@
   /* --- The sweep's own line (stage 4, S4-2): under the Files head, above the groups. --- */
   .sweep-note { margin: 0 0 10px; font-size: 11px; }
 
+  /* --- The README panel (2026-11-05): a document, not a card, so its markdown gets the room a
+     table needs; the generic .markdown cap (360px, above) is the card's. --- */
+  .readme-panel .markdown { max-height: 70vh; margin-top: 0; }
+  .readme-panel .readme-editor { margin-top: 12px; }
+
   /* --- The README editor (stage 4, S4-4): the composer inside a README card. `.composer` itself
      is a component (components.css) and is only QUALIFIED here, never redeclared — design-system
      rule 3. The mount and the textarea are two states of one control: CodeMirror renders into the

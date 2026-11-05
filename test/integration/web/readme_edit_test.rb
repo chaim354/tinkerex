@@ -60,7 +60,7 @@ module Web
       get project_path(project)
 
       assert_response :success
-      assert_select ".readme-card .readme-editor[data-controller=readme]"
+      assert_select ".readme-panel .readme-editor[data-controller=readme]"
       assert_select ".readme-editor[data-readme-url-value=?]", blob_file_path(node.node_id)
       assert_select ".readme-editor summary", text: "Edit README"
       assert_select ".readme-editor input[name=base_token][value=?]", token_for(user, node)
@@ -127,7 +127,7 @@ module Web
       assert_equal "# Lamp\n\n## Build steps\n", FileLayer.current.read(user, node_id: node.node_id)
 
       follow_redirect!
-      assert_select ".readme-card .markdown h2[id=user-content-build-steps]", text: "Build steps"
+      assert_select ".readme-panel .markdown h2[id=user-content-build-steps]", text: "Build steps"
     end
 
     test "saving with no README creates README.md at the folder root" do
@@ -281,7 +281,7 @@ module Web
 
     # --- a root repository gets the same editor, plus a pending edit ----------------------------
 
-    test "a root working tree gets the editor inside its repo card and the save records a pending edit" do
+    test "a root working tree gets the editor in the README panel, and the save records a pending edit" do
       user = sign_in
       project = user.maker_projects.create!(name: "Firmware")
       project.ensure_library_folder!(user)
@@ -298,7 +298,8 @@ module Web
       node = readme_node(user, project)
 
       get project_path(project)
-      assert_select ".repo-card .readme-editor[data-controller=readme]"
+      assert_select ".readme-panel .readme-editor[data-controller=readme]"
+      assert_select ".repo-card .readme-editor", 0
 
       patch project_readme_path(project),
             params: { content: "# Firmware v2\n", base_token: token_for(user, node) }

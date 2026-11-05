@@ -177,9 +177,9 @@ module Web
       # git repository behind it either.
       @user.nodes.create!(node_id: "n-firmware-readme", name: "README.md", kind: "file",
                           parent_node_id: firmware.node_id)
-      # STAGE 4, S4-1: A README AT THE FOLDER'S OWN ROOT, or `projects/_readme_card` never renders.
+      # STAGE 4, S4-1: A README AT THE FOLDER'S OWN ROOT, or `projects/_readme`'s note branch never renders.
       # The folder is a PLAIN folder (only `firmware` carries a `.git` marker), so the private page
-      # takes the `@readme` branch rather than the root-repository card. Like every other node this
+      # renders the README panel over a plain folder. Like every other node this
       # fixture seeds it has no bytes behind it, so Maker::Readme fails closed to its note and the
       # partial's NOTE branch is what gets swept — the same argument the firmware README two lines
       # up makes for the repo card's.

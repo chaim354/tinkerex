@@ -49,15 +49,15 @@ module Web
       get project_path(@project)
       assert_response :success
       # THE README REALLY IS READ ON THIS PAGE, or the stubbed reads below would prove nothing.
-      assert_select ".readme-card .markdown h1", text: "Tray"
+      assert_select ".readme-panel .markdown h1", text: "Tray"
       assert_select ".library-unreachable", 0
     end
 
     test "a README the store cannot deliver leaves the page up, says so, and carries the banner" do
       reads_raise(FileLayer::FetchError) { get project_path(@project) }
       assert_response :success
-      assert_select ".readme-card .markdown", 0
-      assert_select ".readme-card .readme-note", text: "README unavailable."
+      assert_select ".readme-panel .markdown", 0
+      assert_select ".readme-panel .readme-note", text: "README unavailable."
       assert_select ".library-unreachable", 1
       assert_select ".library-unreachable", text: /can't be reached/i
       # THE POPULATED ARM IS THE ONE template_hygiene_test.rb's sweep cannot render (no page there
@@ -69,7 +69,7 @@ module Web
     test "a README that is gone gets the same note and no banner, because nothing is down" do
       reads_raise(FileLayer::NotFound) { get project_path(@project) }
       assert_response :success
-      assert_select ".readme-card .readme-note", text: "README unavailable."
+      assert_select ".readme-panel .readme-note", text: "README unavailable."
       assert_select ".library-unreachable", 0
     end
 
