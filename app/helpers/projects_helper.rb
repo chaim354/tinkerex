@@ -103,7 +103,7 @@ module ProjectsHelper
   # A TEXT BLOCK'S MARKDOWN ON THE MAKER'S PAGE: relative links resolve against the project folder
   # the way the README does, a link opens the file's page and a picture loads its bytes (C2 —
   # `![x](docs/plate.svg)` pointed at the HTML page drew a broken image). The same two arms as the
-  # README card, through Maker::Readme.render_markdown, so the block and the card cannot disagree.
+  # README panel, through Maker::Readme.render_markdown, so the block and the panel cannot disagree.
   def project_markdown(text, listing)
     Maker::Readme.render_markdown(text.to_s, base_path: listing.path, index: listing.path_index,
                                   link: Maker::RepoCard::DEFAULT_LINK, image_link: maker_image_link(listing, @page_thumbs))

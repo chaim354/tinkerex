@@ -7,7 +7,7 @@
 # DURING A RENDER, and read in one place, the layout's banner (layouts/_library_unreachable). The
 # setters that CAN fire, because each one really reads the store:
 #
-#   Maker::Readme.for                   the project page's README card, and a repository's README
+#   Maker::Readme.for                   the project page's README panel, and a repository's README
 #   Maker::MarkdownFile.for             a Markdown file's own page (its Rendered view)
 #   Maker::RepoCard.git_facts           a repository card's history facts
 #   Maker::GerberSets.job_layer_names   a .gbrjob's file page

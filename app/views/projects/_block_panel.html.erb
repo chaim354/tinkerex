@@ -26,7 +26,7 @@
           root as the base: `[base](models/base.stl)` becomes the file's page, `![x](docs/a.svg)`
           the file's bytes, an unresolvable one plain text — never a dangling href (found in
           review: with no resolver every relative link silently became text, which was neither
-          resolved nor "as written"). ProjectsHelper#project_markdown is the README card's renderer. %>
+          resolved nor "as written"). ProjectsHelper#project_markdown is the README panel's renderer. %>
       <div class="markdown"><%= project_markdown(block.body, @listing) %></div>
     <% when "link" %>
       <%# `target: "_blank"` WITH `rel: "noopener"`: a link block points off this site, and an

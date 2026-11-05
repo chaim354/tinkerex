@@ -186,7 +186,7 @@ class Maker::MarkdownTest < ActiveSupport::TestCase
   # THE `user-content-` PREFIX IS THE FIX FOR A MEASURED COLLISION (a5b6e66's review). A README's
   # ids land in the SAME document as the app's own: `## Project Tasks` rendered `id="project-tasks"`,
   # which is the Turbo Stream target `Projects::TasksController` replaces — resolved by
-  # `getElementById`, first match in tree order, and the README card renders BEFORE the tasks
+  # `getElementById`, first match in tree order, and the README panel renders BEFORE the tasks
   # panel. GitHub's convention, so a maker who knows it is not surprised by it.
   test "a heading keeps its id, normalized to a-z 0-9 and hyphens, inside the user-content namespace" do
     html = Maker::Markdown.render(<<~MD)

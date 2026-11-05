@@ -2,7 +2,7 @@ require "test_helper"
 
 module Web
   # A MARKDOWN FILE PAGE OFFERS A RENDERED VIEW (2026-11-02, the UX audit's D8). FilesController#show
-  # reads the file once through the port and renders it with Maker::MarkdownFile — the README card's
+  # reads the file once through the port and renders it with Maker::MarkdownFile — the README panel's
   # renderer and its two link arms — behind a Rendered / Source toggle, Rendered pressed. Every other
   # text file, and a Markdown file that cannot be rendered, gets the source view alone.
   #
@@ -84,7 +84,7 @@ module Web
       get file_path(@readme.node_id)
 
       assert_select ".markdown-rendered a[href=?]", file_path(@other.node_id), text: "x"
-      # A SUBFOLDER, as on the project's README card, whose index is the whole project folder.
+      # A SUBFOLDER, as on the project's README panel, whose index is the whole project folder.
       assert_select ".markdown-rendered a[href=?]", file_path(@base.node_id), text: "base"
       assert_select ".markdown-rendered img[src=?][alt=y]", blob_file_path(@plate.node_id)
       assert_select ".markdown-rendered a", text: "dead link", count: 0
@@ -103,9 +103,9 @@ module Web
       assert_select ".markdown-rendered a[href=?]", file_path(@base.node_id), text: "deep"
     end
 
-    # THE README CARD'S RULE (Maker::Markdown): a README is the maker's prose, never trusted markup.
+    # THE README PANEL'S RULE (Maker::Markdown): a README is the maker's prose, never trusted markup.
     # A script goes WITH its text, an event handler goes, and the words around them stay.
-    test "raw HTML is stripped the way the README card strips it" do
+    test "raw HTML is stripped the way the README panel strips it" do
       get file_path(@readme.node_id)
 
       assert_select ".markdown-rendered script", count: 0
@@ -125,7 +125,7 @@ module Web
       assert_select ".preview .preview-code[data-controller=editor]", 1
     end
 
-    # THE CATALOG'S SIZE GATES THE READ, the README card's rule: past the limit the port is never
+    # THE CATALOG'S SIZE GATES THE READ, the README panel's rule: past the limit the port is never
     # asked, and the source view stands alone under a sentence saying why.
     test "a Markdown file over the limit is never read; the source view says why" do
       @readme.update_column(:size, Maker::MarkdownFile::LIMIT + 1)
