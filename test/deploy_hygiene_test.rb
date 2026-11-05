@@ -210,6 +210,38 @@ class DeployHygieneTest < ActiveSupport::TestCase
     assert_empty ovh.hosts & lan, "an internet-facing destination must not route a LAN-only name"
   end
 
+  # kamal-proxy LATCHES AN INTERIM 100 CONTINUE AS THE FINAL STATUS WHEN IT BUFFERS RESPONSES
+  # (basecamp/kamal-proxy#265, open as of 2026-11-04; v0.9.2, which the box runs, and v0.10.2, the
+  # newest tag, behave alike). A client sending `Expect: 100-continue` -- curl's default for any body
+  # over 1 MiB -- that the app refuses before reading the body (POST /mcp over McpRequestGuard's
+  # limit) reads the 413 as 200 OK, and the proxy logs and counts a 100. Measured through the proxy
+  # on the box and in a bare Docker proxy against a stand-in upstream: with response buffering off
+  # the same request comes back 413 (tinkerex#515). Read off deploy_options, like forward-headers
+  # above, so what kamal tells kamal-proxy is what is asserted; kamal's default for an absent
+  # `buffering:` is true for both, which is why the key's ABSENCE is the bug and nil cannot pass.
+  # REQUEST buffering is pinned ON beside it: unrelated to the bug, it is what shields the Puma pool
+  # from a slow upload, and a reader "simplifying" `buffering:` to one line would drop it. Every
+  # destination, because the key lives in deploy.yml and kamal deep-merges the hash into each
+  # overlay's `proxy:` block (an overlay's `hosts` REPLACES; its `buffering` inherits).
+  # THIS GUARD EXPIRES WITH THE UPSTREAM FIX: pin the fixed release with `proxy: run: version:`, then
+  # delete deploy.yml's `buffering:` block and this test in the same commit.
+  test "every destination turns kamal-proxy's response buffering off and leaves request buffering on" do
+    require "kamal"
+    LIBRARY_DESTINATIONS.each do |destination|
+      options = Kamal::Configuration.create_from(
+        config_file: ROOT.join("config/deploy.yml"), destination: destination
+      ).proxy.deploy_options
+      label = destination || "base"
+      assert_equal false, options[:"buffer-responses"],
+                   "#{label}: `proxy: buffering: responses: false` is missing from the merged config -- " \
+                   "with response buffering on, kamal-proxy answers 200 OK for a 413 the app sent " \
+                   "after an interim 100 Continue (basecamp/kamal-proxy#265, tinkerex#515)"
+      assert_equal true, options[:"buffer-requests"],
+                   "#{label}: request buffering is unrelated to kamal-proxy#265 and shields the Puma " \
+                   "pool from slow uploads -- keep `buffering: requests` on (absent reads as on)"
+    end
+  end
+
   # A TIME_ZONE THAT NAMES NO ZONE REFUSES THE BOOT (lib/tinkerex/time_zone.rb, UX audit D1), so a
   # typo here is a deploy that never comes up. Read off the MERGED config, because deploy.yml sets
   # it once and every overlay inherits it through env.clear's deep merge, ovh included; an overlay
