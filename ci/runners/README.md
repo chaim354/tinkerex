@@ -39,9 +39,11 @@ intended runner home until 2026-08-31; that was wrong.**
 
 - **Image:** `ci/runner/Dockerfile` — Ruby 3.4.7 via mise, Chrome + chromedriver, and all four
   preview binaries (`vipsthumbnail`, `resvg`, `pdfium`, `stl-thumbnailer`). Built **natively on the
-  box**, never cross-built on the ARM64 Mac. The base is `myoung34/github-runner:2.336.0-ubuntu-noble`
-  and the suffix is load-bearing: the bare `2.336.0` tag is Ubuntu 20.04 Focal with glibc 2.31, on
-  which **two of the four binaries will not run**. Any replacement base needs **glibc >= 2.34**.
+  box**, never cross-built on the ARM64 Mac. The base is `myoung34/github-runner:2.338.2-ubuntu-noble`
+  (2.336.0 until 2026-11-05, when GitHub deprecated that runner version — cause 4 below) and the
+  suffix is load-bearing: the bare tag is Ubuntu 20.04 Focal with glibc 2.31 (measured on 2.336.0
+  and again on 2.338.2), on which **two of the four binaries will not run**. Any replacement base
+  needs **glibc >= 2.34**.
 - **Stack:** `ops/ci-runner-stack.yml`, deployed through Portainer as stack `ci-runners`. Portainer
   holds the running copy; the file is the reviewable one, and the two change in the same breath.
 - **Credential:** a fine-grained PAT scoped to `chaim354/tinkerex` with **Administration: read &
@@ -103,7 +105,7 @@ be CI that caused it. Measured 2026-08-31: five builds took the loop from 20 GB 
 
 ### When every job suddenly queues
 
-Two causes look identical in the run list — every job sitting at 0 elapsed — and are fixed
+Four causes look identical in the run list — every job sitting at 0 elapsed — and are fixed
 completely differently:
 
 1. **The PAT expired.** The containers are `running` and registered NOWHERE:
@@ -120,10 +122,20 @@ completely differently:
    refuses to register again (2026-10-22, after the box froze). Restarting does not help; recreate
    the containers by redeploying the stack (step 3 above), then delete the offline registrations
    left on GitHub with the `gh api -X DELETE` under "Removing a runner".
+4. **GitHub deprecated the pinned runner version.** The containers restart forever, and
+   `docker logs` shows a registration that SUCCEEDED and then, right after `Listening for Jobs`:
+   `An error occurred: Runner version v2.336.0 is deprecated and cannot receive messages.` /
+   `Caught EXIT - Deregistering runner` (2026-11-05). The image pins the base and the stack sets
+   `DISABLE_AUTO_UPDATE`, so nothing moves the version but a rebuild: bump the base tag in
+   `ci/runner/Dockerfile` to a release GitHub still accepts
+   (`gh api repos/actions/runner/releases/latest --jq .tag_name`; keep the `-ubuntu-noble` suffix),
+   then run "Rebuilding the image" above, all four steps. Each container deregisters itself as it
+   dies, so GitHub usually lists nothing by the time you look; a stale offline registration goes
+   as in cause 3.
 
 **`docker logs tinkerex-runner-1` distinguishes them in one command** — a rejected credential says so
-explicitly, and a healthy runner's last line is `Listening for Jobs` (observed on runner-1,
-2026-08-31).
+explicitly, and a healthy runner's last line is `Listening for Jobs` with nothing after it (observed
+on runner-1, 2026-08-31; cause 4 prints that line too, and then the deprecation error).
 
 ## The sibling repos need their own registrations (since the client/ extraction, 2026-08-20)
 

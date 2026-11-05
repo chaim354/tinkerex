@@ -27,9 +27,22 @@
 # from upstream. A floating base tag upgrades CI without anyone deciding to, and the first anyone
 # would know is a green run that means something different.
 #
-# THE `-ubuntu-noble` SUFFIX IS LOAD-BEARING: THE BARE `2.336.0` TAG IS UBUNTU 20.04 FOCAL, GLIBC
-# 2.31, AND TWO OF THE FOUR PREVIEW BINARIES WILL NOT RUN ON IT. Measured on the box, 2026-08-31,
-# on the first two real builds — both failed, each naming the same cause:
+# AND A PIN GOES DARK WHEN GITHUB RETIRES ITS RUNNER VERSION — WHICH IT DOES, AND DID (2026-11-05).
+# The stack sets DISABLE_AUTO_UPDATE, so the runner in this image never moves on its own, and
+# GitHub stops talking to a version it has deprecated. Every container then registered, logged
+#
+#     Listening for Jobs
+#     An error occurred: Runner version v2.336.0 is deprecated and cannot receive messages.
+#     Caught EXIT - Deregistering runner
+#
+# and exited; Docker restarted it, and every PR's checks queued at 0 elapsed with nothing red
+# anywhere (ci/runners/README.md, "When every job suddenly queues", cause 4). The fix is this
+# tag: 2.336.0 → 2.338.2, actions/runner's current release, rebuilt and redeployed through the
+# README's recipe. Expect to do it again — moving the pin by hand is the price of having one.
+#
+# THE `-ubuntu-noble` SUFFIX IS LOAD-BEARING: THE BARE TAG IS UBUNTU 20.04 FOCAL, GLIBC 2.31, AND
+# TWO OF THE FOUR PREVIEW BINARIES WILL NOT RUN ON IT. Measured on the box, 2026-08-31, on the
+# first two real builds (then on 2.336.0) — both failed, each naming the same cause:
 #
 #     resvg:  /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found  (also 2.33, 2.34)
 #     pdfium: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.34' not found  (also 2.32)
@@ -40,17 +53,20 @@
 # close-the-class-instead-of-enumerating-instances reasoning ci.yml's paths filter and
 # ci_hygiene_test's self-hosted-label check both record.
 #
-#   base                             ubuntu   glibc   runner uid:gid
-#   2.336.0        (was)             20.04    2.31    1001:121
-#   2.336.0-ubuntu-jammy             22.04    2.35    1001:121
-#   2.336.0-ubuntu-noble  (this)     24.04    2.39    1001:121
+#   base                             ubuntu   glibc   runner uid:gid   measured
+#   2.336.0        (bare, was)       20.04    2.31    1001:121         2026-08-31
+#   2.336.0-ubuntu-jammy             22.04    2.35    1001:121         2026-08-31
+#   2.336.0-ubuntu-noble  (was)      24.04    2.39    1001:121         2026-08-31
+#   2.338.2        (bare)            20.04    2.31    1001:121         2026-11-05
+#   2.338.2-ubuntu-noble  (this)     24.04    2.39    1001:121         2026-11-05
 #
 # ANY REPLACEMENT BASE MUST CARRY GLIBC >= 2.34 for the pdfium prebuilt below. The runner uid:gid is
-# 1001:121 on all three — NOT the 1000:1000 the usual first-user convention suggests — and
+# 1001:121 on every row — NOT the 1000:1000 the usual first-user convention suggests — and
 # ops/ci-runner-stack.yml chowns the bind-mounted work dirs to it, so **re-measure it if this tag
-# ever moves** (`docker run --rm --entrypoint sh <image> -c 'id runner'`). A mismatch there leaves
-# the non-root runner unable to write its own work dir, which reads as a broken image.
-FROM myoung34/github-runner:2.336.0-ubuntu-noble
+# ever moves** (`docker run --rm --entrypoint sh <image> -c 'id runner'`), as the 2026-11-05 rows
+# were. A mismatch there leaves the non-root runner unable to write its own work dir, which reads
+# as a broken image.
+FROM myoung34/github-runner:2.338.2-ubuntu-noble
 
 # The runner image is Ubuntu-based and runs jobs as the `runner` user. Everything below installs to
 # a system path so that user can reach it without a login shell.
@@ -158,10 +174,12 @@ RUN CHROME_VER="$(google-chrome-stable --version | grep -oE '[0-9]+(\.[0-9]+){3}
 #     resvg: /lib/x86_64-linux-gnu/libc.so.6: version `GLIBC_2.32' not found (required by resvg)
 #     ...also GLIBC_2.33 and GLIBC_2.34
 #
-# because myoung34/github-runner:2.336.0 is **Ubuntu 20.04 Focal, glibc 2.31**
-# (`ldd (Ubuntu GLIBC 2.31-0ubuntu9.18) 2.31`). Building from source removes the coupling to the
-# base image's glibc entirely, and it is exactly what `ci/ensure-resvg.sh` already falls back to at
-# this same pinned version — so this is the repo's own documented path, not an improvisation.
+# because the base was then the bare `myoung34/github-runner:2.336.0` tag, **Ubuntu 20.04 Focal,
+# glibc 2.31** (`ldd (Ubuntu GLIBC 2.31-0ubuntu9.18) 2.31` — and the bare 2.338.2 tag reads the
+# same, 2026-11-05). The base has since moved to `-ubuntu-noble`, glibc 2.39, where the prebuilt
+# would load; the source build stays because it removes the coupling to the base image's glibc
+# entirely, and it is exactly what `ci/ensure-resvg.sh` already falls back to at this same pinned
+# version — so this is the repo's own documented path, not an improvisation.
 # The download form is left here in the comment so nobody "optimises" the build back into it:
 # it FAILS LOUDLY at build time rather than silently, which is the good direction, but it fails.
 # ---------------------------------------------------------------------------------------------
@@ -292,8 +310,9 @@ ENV RUN_AS_ROOT=false
 # THE TOKEN COMES FROM A FILE, AND THIS WRAPPER IS WHAT READS IT.
 #
 # myoung34's /entrypoint.sh takes ACCESS_TOKEN from the ENVIRONMENT only — there is no *_FILE
-# variant (grepped in 2.336.0, 2026-09-07). A Portainer stack variable was its home until then, and
-# that home was wrong for an automated stack: Portainer's stack-update API assigns
+# variant (grepped in 2.336.0 on 2026-09-07 and again in 2.338.2 on 2026-11-05: the only `_FILE`
+# in it is CONFIGURED_ACTIONS_RUNNER_FILES_DIR). A Portainer stack variable was its home until
+# 2026-09-07, and that home was wrong for an automated stack: Portainer's stack-update API assigns
 # `stack.Env = payload.Env` UNCONDITIONALLY (2.39.6, api/http/handler/stacks/stack_update.go —
 # read, then probed with a throwaway stack whose variable came back null), so every update of
 # ops/ci-runner-stack.yml had to re-send the secret, and a client that redacts it on read could not
@@ -304,9 +323,9 @@ ENV RUN_AS_ROOT=false
 # IT RUNS AS ROOT, BEFORE RUN_AS_ROOT=false's gosu HAND-OFF (the block above says why the entrypoint
 # must start as root), which is what lets the file be unreadable by jobs. The value reaches
 # myoung34's entrypoint through the environment exactly as the stack variable did, and that
-# entrypoint un-exports it before the hand-off (`export -n ACCESS_TOKEN`, its line 9 in 2.336.0),
-# so the runner process and its jobs inherit neither the variable nor the file. `docker inspect`
-# now shows ACCESS_TOKEN_FILE where it used to show the token itself.
+# entrypoint un-exports it before the hand-off (`export -n ACCESS_TOKEN`, its line 9 in 2.336.0
+# and still in 2.338.2), so the runner process and its jobs inherit neither the variable nor the
+# file. `docker inspect` now shows ACCESS_TOKEN_FILE where it used to show the token itself.
 #
 # `Runner.Listener` — CAPITAL L. The first draft of this block wrote `Runner.listener`, which would
 # have failed every container at start with a file-not-found; `docker inspect` on the base is the
@@ -318,7 +337,8 @@ ENV RUN_AS_ROOT=false
 #
 # CMD IS RESTATED BECAUSE A NEW ENTRYPOINT CLEARS THE INHERITED ONE (Dockerfile reference: setting
 # ENTRYPOINT resets CMD to an empty value). It is the base image's own, read with `docker inspect`
-# on the pulled base (2026-09-07) — if the base tag ever moves, re-check it the same way.
+# on the pulled base (2026-09-07, and again on 2.338.2 on 2026-11-05: unchanged) — if the base tag
+# ever moves, re-check it the same way.
 # ---------------------------------------------------------------------------------------------
 RUN printf '%s\n' \
       '#!/bin/bash' \
