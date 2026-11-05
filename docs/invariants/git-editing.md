@@ -137,6 +137,11 @@ after one reloads the page, so the rendered view is never of bytes the save repl
 It takes **no node id from the client**: it resolves the file through
 `Maker::Readme.row_in(listing.loose)` — the same call both project-page cards render from — so the
 only file it can ever write is one of the six `Maker::Readme::NAMES` at the project folder's root.
+**Since 2026-11-05 that door also EXPANDS the README's live regions before writing**
+(`Maker::Readme::Live`, `:file` mode; `docs/superpowers/specs/2026-11-05-readme-panel-live-regions-design.md`
+§6): the snapshot between a region's markers is regenerated on every Save from the project page, and
+nowhere else — a save from the Files page or an edit in Finder keeps the old snapshot until the next
+Save there.
 There is no parameter to point somewhere else and no predicate to loosen. That confinement is now
 about keeping ONE door's blast radius small rather than about protecting files the other door
 cannot reach, and it is worth keeping for the first reason alone.

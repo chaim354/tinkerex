@@ -21,6 +21,9 @@ module Projects
   # than quietly writing the draft over the version that moved it: the maker has not seen that
   # version, and the editor says how to (open it, keep the draft, reload) instead of offering to
   # discard it.
+  #
+  # SINCE 2026-11-05 THE SAVE EXPANDS THE README'S LIVE REGIONS (Maker::Readme::Live, `:file` mode)
+  # BEFORE WRITING — the snapshot in the file is as fresh as the Save, and the only writer of it.
   class ReadmesController < ApplicationController
     include Projects::ComposerRefusal
 
@@ -32,18 +35,26 @@ module Projects
     def update
       project = current_user.maker_projects.find_by!(slug: params[:project_id])
       listing = Maker::ProjectFolderListing.new(current_user, project)
-      body = params[:content].to_s
+      draft = params[:content].to_s
       row = listing.available? ? Maker::Readme.row_in(listing.loose) : nil
-      return refuse(project, row, body, "This project has no folder in the library yet, so the README has nowhere to go.") unless listing.available?
+      return refuse(project, row, draft, "This project has no folder in the library yet, so the README has nowhere to go.", listing:) unless listing.available?
       # A BLANK BODY IS REFUSED RATHER THAN WRITTEN, and it is the SERVER half of the editor's
       # `disabled` textarea: without JavaScript, or with the bundle failing to load, the buffer is
       # empty and a Save would otherwise blank a README that took an hour to write. Emptying a file
       # to zero bytes is not a thing anyone asks for; deleting it is, in the Library.
-      return refuse(project, row, body, "A README needs some text. To remove it, delete the file in the Library.") if body.strip.empty?
-      return refuse(project, row, body, "This README is too large to edit here.") if
-        body.bytesize > FilesController::EDITABLE_MAX_BYTES
-      return refuse(project, row, body, "This README is too large to edit here.") if
+      return refuse(project, row, draft, "A README needs some text. To remove it, delete the file in the Library.", listing:) if draft.strip.empty?
+      return refuse(project, row, draft, "This README is too large to edit here.", listing:) if
         row && row.node.size.to_i > FilesController::EDITABLE_MAX_BYTES
+
+      # THE SNAPSHOT IS WRITTEN HERE (2026-11-05, live regions; spec §6): every region's body is
+      # regenerated from the project's current data before the bytes go down, so the file reads as the
+      # table or picture the page shows at the moment of this Save, and a hand-typed directive is
+      # filled and closed. The cap is checked on the EXPANDED text, because that is what lands in the
+      # file; the draft handed back on a refusal is what the maker TYPED, never the expansion.
+      context = Maker::Readme::Live::Context.new(user: current_user, project:, listing:)
+      body = Maker::Readme::Live.expand(draft, context:, mode: :file)
+      return refuse(project, row, draft, "This README is too large to edit here once its live tables are filled in.", listing:) if
+        body.bytesize > FilesController::EDITABLE_MAX_BYTES
 
       result = Maker::TextSave.call(
         user: current_user, node: row&.node, parent_node_id: listing.folder_id,
@@ -54,28 +65,28 @@ module Projects
       )
       # TextSave answers :conflict for both of its refusals (stale and removed); the maker's
       # sentence says what to do with the draft they are still holding.
-      return refuse(project, row, body, result.error == Maker::TextSave::REMOVED ? REMOVED : STALE) unless result.ok
+      return refuse(project, row, draft, result.error == Maker::TextSave::REMOVED ? REMOVED : STALE, listing:) unless result.ok
 
       redirect_to project_path(project), notice: "Saved the README."
     rescue FileLayer::UnsupportedOperation
       # THE CLOBBER REFUSAL (§14a): a README appeared between the render and the Save, so the
       # create found the name taken. Refused, never replaced — the maker has not seen what is there.
-      refuse(project, row, body, "A README appeared while you were writing, so nothing was saved. " \
-                                 "Your draft is below; copy what you need, then reload the page to see it.")
+      refuse(project, row, draft, "A README appeared while you were writing, so nothing was saved. " \
+                                  "Your draft is below; copy what you need, then reload the page to see it.", listing:)
     rescue FileLayer::FetchError
       # The adapter's message is for an operator (§14a maps FetchError to "try again"); the maker
       # is told that, in words, with the draft still in hand.
-      refuse(project, row, body, "The library could not be reached, so nothing was saved. Try again in a moment.")
+      refuse(project, row, draft, "The library could not be reached, so nothing was saved. Try again in a moment.", listing:)
     end
 
     private
 
     # The editor again, open, holding the draft and the token it was posted with. `row` is the
     # README this door resolved (nil when there is none, or no folder), so the editor names the same
-    # file the card does.
-    def refuse(project, row, body, error)
+    # file the panel does; `listing` feeds its Insert menu (an unavailable one renders an empty menu).
+    def refuse(project, row, body, error, listing:)
       refuse_in_composer(project, id: "readme-editor", partial: "projects/readme_editor",
-                         locals: { project:, row:, draft: body, base_token: params[:base_token].to_s, error: },
+                         locals: { project:, row:, draft: body, base_token: params[:base_token].to_s, error:, listing: },
                          title: row ? "Edit the README" : "Write a README")
     end
   end
