@@ -74,6 +74,11 @@
     <% elsif row %>
       <%= hidden_field_tag :base_token, FileLayer.current.stat(current_user, node_id: row.node_id)&.content_token %>
     <% end %>
+    <%# ONLY WITH A FOLDER (found in review): the no-folder REFUSAL re-renders this editor open, and
+        an Image chooser with no root to be rooted at would browse the whole library — nothing a pick
+        there could do (the save is refused again; a foreign id is "no longer in the project"), but
+        "a pick cannot leave the project" should be true by construction, not by consequence. %>
+    <% if listing&.available? %>
     <div class="readme-insert" data-readme-target="insert" hidden>
       <span class="muted readme-insert-label">Insert</span>
       <details class="menu" data-controller="menu">
@@ -90,6 +95,7 @@
       <button type="button" class="btn small" data-action="readme#insertDirective" data-directive="log">Build log</button>
       <button type="button" class="btn small" data-action="readme#insertImage">Image</button>
     </div>
+    <% end %>
     <div class="readme-mount" data-readme-target="mount"></div>
     <% locked = row.present? && !drafting %>
     <label class="label-hidden" for="readme-source">README text</label>

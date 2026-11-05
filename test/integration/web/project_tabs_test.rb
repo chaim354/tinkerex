@@ -72,7 +72,9 @@ module Web
       # Add model), and a stored order that does not name a panel puts it in the preset tail — the
       # LAST tab, Parts here, which would then never be empty. Named, Parts holds only on-demand
       # panels again, which is this test's premise.
-      @project.update!(panels: @project.panels.merge("order" => [ "attachments", "photos", "models", tk(TAB_A),
+      # README TOO (2026-11-05): it always renders for the maker (the Write-a-README door is its
+      # content), so unnamed it would land in the preset tail — Parts — and Parts would never be empty.
+      @project.update!(panels: @project.panels.merge("order" => [ "readme", "attachments", "photos", "models", tk(TAB_A),
                                                                   "build_log", "tasks", tk(TAB_B), "bom", "publish" ]))
       @project.build_log_entries.create!(user: @user, body: "Glued the base.", logged_at: Time.current)
 
@@ -172,6 +174,8 @@ module Web
     test "Save rekeys a new tab in order and titles, keeps the name, and a deleted tab is gone" do
       tabbed!
       draft = { layout: 1, panels: [
+        # The README panel (2026-11-05) is a slot the editor holds, so the draft names it first.
+        { key: "readme", hidden: false, width: "full" },
         { key: "attachments", hidden: false, width: "full", view: "tiles" },
         { key: "photos", hidden: false, width: "full" },
         { key: "tab:new-1", kind: "tab", name: "  Notes  " },
@@ -192,10 +196,10 @@ module Web
       assert_redirected_to project_path(@project)
 
       panels = @project.reload.panels
-      minted = panels["order"][2]
+      minted = panels["order"][3]
       assert_match(/\Atab:[0-9a-f]{12}\z/, minted)
       assert_equal "Notes", panels["titles"][minted]
-      assert_equal [ "attachments", "photos", minted, "build_log", tk(TAB_B), "bom", "tasks", "models",
+      assert_equal [ "readme", "attachments", "photos", minted, "build_log", tk(TAB_B), "bom", "tasks", "models",
                      "schematics", "wiring", "releases", "sheets", "calculations" ], panels["order"]
       refute_includes panels["order"], tk(TAB_A), "a tab absent from the posted draft is removed"
       refute panels["titles"].key?(tk(TAB_A))

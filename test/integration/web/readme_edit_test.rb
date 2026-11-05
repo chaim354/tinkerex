@@ -102,6 +102,20 @@ module Web
       assert_select ".readme-editor", 0
     end
 
+    # THE ONE WAY TO AN EDITOR WITH NO FOLDER is the no-folder REFUSAL, which re-renders it open; the
+    # Insert bar stays out of it (found in review), or its Image chooser would open at the library
+    # root with no project folder to be rooted at.
+    test "a refusal for a project with no folder re-renders the editor without the Insert bar" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Folderless")
+      project.update_column(:folder_node_id, nil)
+
+      patch project_readme_path(project), params: { content: "# Lamp\n" }
+
+      assert_match(/no folder in the library yet/, refusal)
+      assert_select ".readme-editor .readme-insert", 0
+    end
+
     # A REFUSED SAVE COMES BACK AS THE OPEN EDITOR (2026-11-02, the UX audit's B3), 422, with the
     # sentence inside it and the draft in the textarea — never a redirect and an alert that drop the
     # draft. Answers the sentence.
