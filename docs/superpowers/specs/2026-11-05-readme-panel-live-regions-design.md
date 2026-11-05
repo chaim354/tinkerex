@@ -41,8 +41,10 @@ a maker may hide it, no preset does, and the layout editor brings it back.
 A new `projects/_readme.html.erb` renders the panel: `<section class="panel readme-panel"
 id="project-readme">`, a heading, the rendered markdown in `.markdown`, the note where there is one,
 and the existing `projects/_readme_editor` as its door — so "Write a README" has a home when the
-folder holds none. `panel_has_rows?("readme")` answers `@readme_row.present?`, so a page opened
-with `?add=readme` renders it quiet like any other empty on-demand panel.
+folder holds none. `readme` is NOT an on-demand panel: the maker's page always renders it when it
+is visible, because the editor door is its content when there is no README yet, so `?add=readme`
+is never offered and `panel_has_rows?` has no case for it. *(Amended 2026-11-05 while implementing;
+the first draft gave it an on-demand arm.)*
 
 **What leaves:** `projects/_readme_card` is deleted, and `projects/_attachments` renders the root
 repository card only for its git facts. `Maker::RepoCard.for` takes `readme:` (default `true`); the

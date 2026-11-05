@@ -66,22 +66,46 @@ module Web
       assert_select ".readme-card", 0
     end
 
-    test "a hidden README panel costs no port read; a shown one costs exactly one" do
-      project = project!(readme: "# Lamp\n")
-      reads = 0
-      original = FileLayer.current.method(:read)
-      counting = ->(*args, **kw) { reads += 1; original.call(*args, **kw) }
+    # Every port verb a README costs this page: ONE `read` (its bytes, for the panel) and ONE `stat`
+    # (its token, for the editor's `base_token`). Both counted, because a stat the controller took
+    # unconditionally would stay invisible to a read-only spy (found in review).
+    def counting_port_calls
+      calls = Hash.new(0)
+      spies = %i[read stat].to_h do |verb|
+        original = FileLayer.current.method(verb)
+        [ verb, ->(*args, **kw) { calls[verb] += 1; original.call(*args, **kw) } ]
+      end
+      replacing(FileLayer.current, :read, spies[:read]) do
+        replacing(FileLayer.current, :stat, spies[:stat]) { yield }
+      end
+      calls
+    end
 
-      replacing(FileLayer.current, :read, counting) { get project_path(project) }
-      assert_equal 1, reads
+    test "a hidden README panel costs no port read and no stat; a shown one costs one of each" do
+      project = project!(readme: "# Lamp\n")
+
+      shown = counting_port_calls { get project_path(project) }
+      assert_equal({ read: 1, stat: 1 }, shown)
       assert_select "#project-readme"
 
       project.update!(panels: { "hidden" => [ "readme" ] })
-      reads = 0
-      replacing(FileLayer.current, :read, counting) { get project_path(project) }
+      hidden = counting_port_calls { get project_path(project) }
       assert_response :success
-      assert_equal 0, reads
+      assert_equal({}, hidden)
       assert_select "#project-readme", 0
+    end
+
+    # A FOLDER THAT IS GONE renders no README panel at all — no heading over nothing beside the Files
+    # panel's own note (found in review): there is nothing to show and no door to write one.
+    test "a project whose folder is unavailable renders no README panel" do
+      project = project!(readme: "# Lamp\n")
+      FileLayer.current.delete(@user, node_id: project.reload.folder_node_id)
+
+      get project_path(project)
+
+      assert_response :success
+      assert_select "#project-readme", 0
+      assert_select ".readme-panel", 0
     end
 
     test "layout-edit mode renders the panel without the editor door" do
@@ -111,49 +135,97 @@ module Web
     # status, the current renderer revision (so the page's ThumbnailMap re-enqueues nothing) and a
     # PNG attached, which is what `showable?` asks for. `find_or_initialize_by`: the scan already
     # minted the node's PENDING row (§14b), and a Preview is one row per (user, node, kind).
+    def ready_thumbnail!(node)
+      token = FileLayer.current.stat(@user, node_id: node.node_id).content_token
+      preview = @user.maker_previews.find_or_initialize_by(node_id: node.node_id, kind: "thumbnail")
+      preview.update!(version_id: token, status: "ready",
+                      renderer_revision: Maker::Previews::Enqueue.revision_for_name(node.name, "thumbnail"))
+      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
+      assert preview.showable?, "the fixture's preview is not showable, so the test would prove nothing"
+      preview
+    end
+
+    # What `preview_src` answers in a view: `url_for(preview.asset)`, which Active Storage resolves to
+    # the redirect route (no `resolve_model_to_route` override in config/). Spelled through the route
+    # helper here because the view's `url_for` needs a request to stand in.
+    def thumbnail_src(preview) = rails_storage_redirect_path(preview.asset)
+
     test "a README picture of a model whose thumbnail is ready loads from the thumbnail" do
       project = project!(readme: "![box](laser/box.lbrn2)\n")
       box = @user.nodes.present.find_by!(name: "box.lbrn2")
-      token = FileLayer.current.stat(@user, node_id: box.node_id).content_token
-      preview = @user.maker_previews.find_or_initialize_by(node_id: box.node_id, kind: "thumbnail")
-      preview.update!(version_id: token, status: "ready",
-                      renderer_revision: Maker::Previews::Enqueue.revision_for_name("box.lbrn2", "thumbnail"))
-      preview.asset.attach(io: StringIO.new("\x89PNG\r\n\x1A\n".b), filename: "t.png", content_type: "image/png")
-      assert preview.showable?, "the fixture's preview is not showable, so the test would prove nothing"
-      # What `preview_src` answers in a view: `url_for(preview.asset)`, which Active Storage resolves
-      # to the redirect route (no `resolve_model_to_route` override in config/). Spelled through the
-      # route helper here because the view's `url_for` needs a request to stand in.
-      expected = rails_storage_redirect_path(preview.asset)
+      preview = ready_thumbnail!(box)
 
       get project_path(project)
 
       assert_response :success
       assert_select "#project-readme .markdown img", count: 1
-      assert_select "#project-readme .markdown img[src=?]", expected
+      assert_select "#project-readme .markdown img[src=?]", thumbnail_src(preview)
       assert_select "#project-readme .markdown img[src=?]", blob_file_path(box.node_id), 0
     end
 
-    test "a README holding every directive costs a constant number of queries" do
-      project = project!(readme: "<!-- tinkerex:files laser -->\n<!-- tinkerex:bom -->\n<!-- tinkerex:tasks -->\n<!-- tinkerex:log -->\n")
+    # THE UNION TERM (spec §5): an `image` region's node joins the page's ONE thumbnail query even when
+    # no tile draws it. Here the laser folder's PANEL is hidden, so `tile_ids` leaves `box.lbrn2` out
+    # and only `@readme_source.image_node_ids` can bring its ready thumbnail to the render; without
+    # the term the emitter never sees a ready thumbnail and writes the link form, and this goes red.
+    test "an image region's thumbnail reaches the page through the README's own union term" do
+      project = project!(readme: "# Lamp\n")
+      box = @user.nodes.present.find_by!(name: "box.lbrn2")
+      @root.join("Projects", project.slug, "README.md").write("<!-- tinkerex:image #{box.node_id} The box -->\n")
+      Library::ScanJob.new.perform(user_id: @user.id)
+      laser = @user.nodes.present.find_by!(name: "laser", parent_node_id: project.reload.folder_node_id)
+      project.update!(panels: { "hidden" => [ Maker::ProjectKind.folder_key(laser.node_id) ] })
+      preview = ready_thumbnail!(box)
+
+      get project_path(project)
+
+      assert_response :success
+      assert_select "#project-readme .markdown img[src=?]", thumbnail_src(preview)
+      assert_select "#project-readme .markdown a", { text: "The box", count: 0 }, "the region is a picture, not a link"
+    end
+
+    # EVERY SOURCE A README READS GROWS WITH N, and every BOM target kind is seeded — a free-text line
+    # with a supplier, an inventory item, a design file OUTSIDE the folder (the batched name lookup) —
+    # because a nil foreign key costs no query at all, so a BOM of free-text lines could never show a
+    # missing eager load (found in review). Measured twice: with the BOM panel shown (the controller's
+    # lines reach the context) and hidden (the context loads them itself).
+    test "a README holding every directive costs a constant number of queries, with the BOM panel shown or hidden" do
+      project = project!(readme: "# Lamp\n")
+      box = @user.nodes.present.find_by!(name: "box.lbrn2")
+      @root.join("Projects", project.slug, "README.md").write(
+        "<!-- tinkerex:files laser -->\n<!-- tinkerex:bom -->\n<!-- tinkerex:tasks -->\n<!-- tinkerex:log 50 -->\n" \
+        "<!-- tinkerex:image #{box.node_id} -->\n"
+      )
+      acme = @user.maker_suppliers.create!(name: "Acme")
       bom = project.boms.create!(user: @user)
+      counter = 0
       seed = lambda do |n|
-        n.times do |i|
-          bom.lines.create!(user: @user, part_name: "part #{i}", quantity: 1, unit: "each", position: i)
+        n.times do
+          i = (counter += 1)
+          @root.join("Projects", project.slug, "laser", "f#{i}.svg").write("<svg/>")
+          @root.join("Projects", "stock-#{i}.stl").write("solid\nendsolid\n") # outside the project folder
+          Library::ScanJob.new.perform(user_id: @user.id)
+          outside = @user.nodes.present.find_by!(name: "stock-#{i}.stl")
+          item = @user.maker_inventory_items.create!(name: "item #{i}", supplier: acme)
+          bom.lines.create!(user: @user, part_name: "part #{i}", supplier: acme, quantity: 1, unit: "each", position: 3 * i)
+          bom.lines.create!(user: @user, inventory_item: item, quantity: 2, unit: "each", position: 3 * i + 1)
+          bom.lines.create!(user: @user, node_id: outside.node_id, quantity: 1, unit: "each", position: 3 * i + 2)
           project.tasks.create!(user: @user, title: "task #{i}", status: "todo", position: i)
           project.build_log_entries.create!(user: @user, entry_type: "note", logged_at: Time.current - i.hours, body: "<div>e#{i}</div>")
-          @root.join("Projects", project.slug, "laser", "f#{i}.svg").write("<svg/>")
         end
-        Library::ScanJob.new.perform(user_id: @user.id)
+      end
+      measure = lambda do |label|
+        seed.call(2)
+        get project_path(project)
+        small = count_queries { get project_path(project) }
+        seed.call(6)
+        get project_path(project)
+        large = count_queries { get project_path(project) }
+        assert_equal small, large, "#{label}: the README panel grows with the data — #{small} queries at the small size, #{large} at the large"
       end
 
-      seed.call(2)
-      get project_path(project)
-      small = count_queries { get project_path(project) }
-      seed.call(6)
-      get project_path(project)
-      large = count_queries { get project_path(project) }
-
-      assert_equal small, large, "the README panel grows with the data: #{small} queries at the small size, #{large} at the large"
+      measure.call("BOM panel shown")
+      project.update!(panels: { "hidden" => [ "bom" ] })
+      measure.call("BOM panel hidden")
     end
   end
 end

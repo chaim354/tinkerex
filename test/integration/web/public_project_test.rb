@@ -154,6 +154,10 @@ module Web
     test "the README is a panel in the layout's order, headed, and leaves the page when hidden" do
       get path
       assert_select ".panel-slot .readme-panel .panel-head h2", text: "README"
+      # The default order leads with the README (Maker::ProjectKind::LEAD) — asserted so that a
+      # README pinned LAST inside the grid cannot pass the reordered check below by accident.
+      slots = css_select(".project-panels .panel-slot .panel").map { |p| p["class"] }
+      assert_operator slots.index { |c| c.include?("readme-panel") }, :<, slots.index { |c| c.include?("photos-panel") }
       # Photos ahead of the README: the visitor sees the owner's order.
       @project.update!(panels: { "order" => %w[photos readme attachments] })
       get path
@@ -205,6 +209,65 @@ module Web
       assert_select ".readme-panel .markdown img[src=?]", base_url, { count: 0 }, "never the STL bytes"
       assert_select ".readme-panel .markdown a", { text: "The base", count: 0 }, "the region is a picture now"
       assert_select ".readme-panel [src^='/files/'], .readme-panel [href^='/files/']", 0
+    end
+
+    # HIDDEN MEANS UNREAD ON THE VISITOR'S PAGE TOO: the README's bytes are a port read — a WAN one on
+    # chunk_remote — and nothing reads them for a panel the maker hid: not the partial (never
+    # rendered), not the thumbnail union (gated on the panel's visibility). Counted on the ROOT README's
+    # node, because the fixture's firmware repository card reads its own README on every visit.
+    test "a hidden README is never read from the port; a shown one is read once" do
+      readme = @user.nodes.present.find_by!(name: "README.md", parent_node_id: @project.folder_node_id)
+      root_reads = 0
+      original = FileLayer.current.method(:read)
+      counting = ->(*args, **kw) { root_reads += 1 if kw[:node_id] == readme.node_id; original.call(*args, **kw) }
+
+      replacing(FileLayer.current, :read, counting) { get path }
+      assert_equal 1, root_reads
+
+      @project.update!(panels: { "hidden" => [ "readme" ] })
+      root_reads = 0
+      replacing(FileLayer.current, :read, counting) { get path }
+      assert_response :success
+      assert_equal 0, root_reads
+    end
+
+    # CONSTANT IN N ON THE VISITOR'S PAGE, with every directive and every BOM target kind seeded — a
+    # free-text line with a supplier, an inventory item, a design file OUTSIDE the folder — because a
+    # nil foreign key costs no query, so free-text lines alone could never show a missing eager load.
+    test "a README holding every directive costs the visitor's page a constant number of queries" do
+      folder = @user.nodes.present.find_by!(node_id: @project.folder_node_id)
+      models = @user.nodes.present.find_by!(name: "models", parent_node_id: folder.node_id)
+      library_root = @user.nodes.present.find_by!(node_id: folder.parent_node_id)
+      readme = @user.nodes.present.find_by!(name: "README.md", parent_node_id: folder.node_id)
+      body = "<!-- tinkerex:files models -->\n<!-- tinkerex:bom -->\n<!-- tinkerex:tasks -->\n<!-- tinkerex:log 50 -->\n" \
+             "<!-- tinkerex:image #{@f[:base].node_id} -->\n"
+      @root.join(readme.storage_path).write(body)
+      readme.update!(size: body.bytesize)
+      acme = @user.maker_suppliers.create!(name: "Acme")
+      bom = @project.current_bom || @project.boms.create!(user: @user)
+      counter = 0
+      seed = lambda do |n|
+        n.times do
+          i = (counter += 1)
+          outside = make_file!(@user, "stock-#{i}.stl", library_root, body: "solid")
+          make_file!(@user, "part-#{i}.stl", models, body: "solid")
+          item = @user.maker_inventory_items.create!(name: "item #{i}", supplier: acme)
+          bom.lines.create!(user: @user, part_name: "part #{i}", supplier: acme, quantity: 1, unit: "each", position: 100 + 3 * i)
+          bom.lines.create!(user: @user, inventory_item: item, quantity: 2, unit: "each", position: 101 + 3 * i)
+          bom.lines.create!(user: @user, node_id: outside.node_id, quantity: 1, unit: "each", position: 102 + 3 * i)
+          @project.tasks.create!(user: @user, title: "task #{i}", status: "todo", position: i)
+          @project.build_log_entries.create!(user: @user, entry_type: "note", logged_at: Time.current - i.hours, body: "<div>e#{i}</div>")
+        end
+      end
+
+      seed.call(2)
+      get path
+      small = count_queries { get path }
+      seed.call(6)
+      get path
+      large = count_queries { get path }
+
+      assert_equal small, large, "the visitor's README grows with the data — #{small} queries at the small size, #{large} at the large"
     end
 
     # --- 5. files: the folder root, plus one panel per subfolder --------------------
@@ -667,6 +730,29 @@ module Web
     # is nil, `Enqueue.current_preview?` refuses a blank version_id — deliberately, since `nil ==
     # nil` would serve a coincidence of representation as an answer about content — and the map
     # answers nil for a row that looks perfectly good in the database.
+    # The house stub helper (Minitest 6 has no Object#stub): replaces a SINGLETON method for the block.
+    def replacing(owner, name, replacement)
+      mod = owner.singleton_class
+      own = mod.instance_methods(false).include?(name)
+      original = mod.instance_method(name)
+      mod.define_method(name, &replacement)
+      yield
+    ensure
+      own ? mod.define_method(name, original) : mod.remove_method(name)
+    end
+
+    # page_query_budget_test.rb's counter: SCHEMA, TRANSACTION and PRAGMA are the process's, not the page's.
+    def count_queries
+      n = 0
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        n += 1 unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+      end
+      yield
+      n
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
     def ready_cover!(node)
       node.update!(content_hash: "h-#{node.node_id}")
       preview = @user.maker_previews.create!(

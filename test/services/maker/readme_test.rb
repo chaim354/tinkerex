@@ -260,6 +260,14 @@ module Maker
       file!("README.md", @folder, body: "<!-- tinkerex:image abc -->\n<!-- tinkerex:image def A caption -->\n<!-- tinkerex:bogus x -->\n")
       assert_equal %w[abc def], Maker::Readme.source(user: @user, rows: listing.loose).image_node_ids
 
+      # ONLY THE REGIONS THAT RENDER (Live::MAX_REGIONS) feed the thumbnail union (found in review).
+      readme = @user.nodes.present.find_by!(name: "README.md")
+      many = (1..25).map { |i| "<!-- tinkerex:image id#{i} -->" }.join("\n") + "\n"
+      @root.join(readme.storage_path).binwrite(many)
+      readme.update!(size: many.bytesize)
+      assert_equal (1..Maker::Readme::Live::MAX_REGIONS).map { |i| "id#{i}" },
+                   Maker::Readme.source(user: @user, rows: listing.loose).image_node_ids
+
       file!("README.markdown", @folder, body: "x", size: Maker::Readme::READ_LIMIT + 1)
       @user.nodes.present.find_by!(name: "README.md").update!(deleted: true)
       big = Maker::Readme.source(user: @user, rows: listing.loose)

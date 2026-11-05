@@ -80,7 +80,7 @@
           @repo_cards holds one for every repo? Dir on the page (ProjectsController#show), so a
           missing entry would be a real bug rather than a normal case; the `&&` is defensive. %>
       <% if dir.repo? && (card = @repo_cards[dir.node_id]) %>
-        <%= render "projects/repo_card", card:, editable: false %>
+        <%= render "projects/repo_card", card: card %>
       <% end %>
       <% if view == "browser" %>
         <%# THE FINDER-STYLE BROWSER (2026-09-07), which takes any Dir — a plain folder switched to

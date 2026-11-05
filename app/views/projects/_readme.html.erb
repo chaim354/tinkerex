@@ -11,7 +11,14 @@
 
   IN LAYOUT-EDIT MODE THE DOOR IS LEFT OUT: that mode arranges the page, and a form inside a slot the
   editor drags is not wanted. The editor partial takes `listing:` for its Insert menu (Task 4).
+
+  NOTHING AT ALL OVER AN UNAVAILABLE FOLDER (found in review): with the folder in the Trash or the
+  library unmounted there is no README to show and no door to write one (`@readme_editable` is
+  false), and a heading over nothing beside the Files panel's folder-missing note said less than the
+  empty space does. The slot then renders nothing, as the card did in that state. In layout-edit mode
+  a HIDDEN panel keeps its heading as the ghost the editor arranges (`@readme_editable` is true there).
 %>
+<% if @readme || @readme_editable %>
 <section class="panel readme-panel" id="project-readme">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "readme") %></h2>
@@ -27,3 +34,4 @@
     <%= render "projects/readme_editor", project: @project, row: @readme_row, listing: @listing %>
   <% end %>
 </section>
+<% end %>

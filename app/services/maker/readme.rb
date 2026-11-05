@@ -51,7 +51,9 @@ module Maker
     # calls; `.for` below is both in one for every caller with no such ordering to respect. nil means
     # "this listing holds no README". `text` is nil, and `note` says why, when the file was not read.
     Source = Data.define(:row, :text, :note, :regions) do
-      def image_node_ids = regions.select(&:recognised?).filter_map(&:node_id)
+      # Only the regions that will RENDER (Live::MAX_REGIONS): a thirty-region README must not put
+      # thirty nodes into the thumbnail query and its backfill budget for twenty pictures.
+      def image_node_ids = regions.first(Live::MAX_REGIONS).select(&:recognised?).filter_map(&:node_id)
     end
 
     # WHAT "WRITE A README" STARTS FROM (stage 4, S4-4). Short on purpose: a template a maker has to
