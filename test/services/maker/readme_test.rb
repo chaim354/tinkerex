@@ -268,13 +268,15 @@ module Maker
       assert_match(/too large/, big.note)
     end
 
-    # `<li>`, NOT `checked`: Maker::Markdown's allowlist has no `input`, so the sanitiser unwraps the
-    # checkbox kramdown emits for `- [x]` and only the item's text reaches the page (probed 2026-11-05).
+    # THE SAVED BODY RENDERS AS WRITTEN — `checked` is the checkbox kramdown emits for `- [x]`, kept by
+    # Maker::Markdown since 2026-11-05 (its `input` allowance). The two `refute`s are documentation
+    # rather than evidence: the sanitiser drops an HTML comment on its own, so they cannot fail even
+    # if `Live.expand` never ran; what pins the expand is the context-bearing test above.
     test "for with no context renders a region's saved body and strips the markers" do
       file!("README.md", @folder, body: "<!-- tinkerex:tasks -->\n\n- [x] saved\n\n<!-- /tinkerex -->\n")
       html = readme_for.html
 
-      assert_includes html, "<li>"
+      assert_includes html, "checked"
       assert_includes html, "saved"
       refute_includes html, "<!--"
       refute_includes html, "tinkerex"

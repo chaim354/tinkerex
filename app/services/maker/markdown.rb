@@ -32,8 +32,9 @@ module Maker
     # allowlist used to UNWRAP the input, so a README's checklist — and the `tasks` region's done marks
     # — rendered as a plain list with the `[x]` gone. `#keep_task_checkboxes` below is the half that
     # makes the entry narrow: every `input` that is not a checkbox is removed before the sanitiser
-    # runs, and the ones kept carry `type`, `checked` and `disabled` and no other attribute. `type`,
-    # `checked` and `disabled` on any other allowed element are inert.
+    # runs, and the ones kept carry `type`, `checked` and `disabled` and no other attribute. On any
+    # other allowed element `checked` and `disabled` are inert, and `type` changes only an `<ol>`'s
+    # numbering — the author's own choice, with no security weight.
     ALLOWED_TAGS = %w[p br h1 h2 h3 h4 h5 h6 ul ol li strong em code pre blockquote a img table thead tbody tr th td hr del input].freeze
     # `id` IS ALLOWED FOR HEADINGS AND FOR NOTHING ELSE, AND THE ALLOWLIST CANNOT SAY SO — Rails'
     # `sanitize` takes one flat attribute list with no per-tag arm, so `id` here would also permit
