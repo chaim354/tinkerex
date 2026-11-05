@@ -49,9 +49,13 @@ module Maker
       # becomes its text rather than a guess at where it points.
       base = tree.path_for(node.parent_node_id)
       index = base ? link_index(user, node.parent_node_id, tree) : {}
-      html = Maker::Readme.render_markdown(text, base_path: base.to_s, index:,
-                                                 link: Maker::RepoCard::DEFAULT_LINK,
-                                                 image_link: Maker::Readme::MAKER_IMAGE_LINK)
+      # A README's live regions show their SAVED bodies here, markers off (2026-11-05): this page has
+      # no project to expand against, and the snapshot is exactly what the file holds for a reader
+      # outside the project page.
+      html = Maker::Readme.render_markdown(Maker::Readme::Live.expand(text, context: nil, mode: :page),
+                                           base_path: base.to_s, index:,
+                                           link: Maker::RepoCard::DEFAULT_LINK,
+                                           image_link: Maker::Readme::MAKER_IMAGE_LINK)
       new(html:, problem: nil)
     # TWO ARMS, Current's rule: the store not answering is an outage the banner names; a file that
     # is gone is not, so its arm raises nothing.

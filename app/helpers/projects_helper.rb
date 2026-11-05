@@ -106,7 +106,33 @@ module ProjectsHelper
   # README card, through Maker::Readme.render_markdown, so the block and the card cannot disagree.
   def project_markdown(text, listing)
     Maker::Readme.render_markdown(text.to_s, base_path: listing.path, index: listing.path_index,
-                                  link: Maker::RepoCard::DEFAULT_LINK, image_link: Maker::Readme::MAKER_IMAGE_LINK)
+                                  link: Maker::RepoCard::DEFAULT_LINK, image_link: maker_image_link(listing, @page_thumbs))
+  end
+
+  # THE MAKER'S PICTURE OF A FILE, BY NODE (2026-11-05, live regions; spec §5). An image file is its
+  # bytes — the blob route, the door the hero and an image block already load from; any other file is
+  # its READY thumbnail, where `![x](models/base.stl)` used to render the model's bytes as a broken
+  # picture. nil DROPS the <img> (Maker::Readme.render_markdown), which is why Live::ImageLine writes
+  # a LINK rather than an image while no thumbnail is ready. `listing` says which node a resolved id
+  # is; `thumbs` is the page's one ThumbnailMap (nil on a render that built none — then every
+  # non-image picture is dropped rather than broken). A node the listing does not hold cannot have
+  # been resolved by the folder resolver at all, so that arm is defensive, not reachable.
+  #
+  # AN SVG IS IMAGE BYTES HERE THOUGH IT SITS OUTSIDE `INLINE_IMAGE_EXTS`: every browser this app
+  # targets draws one as an <img>, which is what `![plate](docs/plate.svg)` has done since the UX
+  # audit's C2 (project_hub_audit_test.rb pins it on the blob route, for a README and a text block
+  # alike). That list answers the FILE PAGE's question, where Measure claims an SVG before the :image
+  # branch ever asks (FilePreview#preview_kind); keyed on it alone, an SVG with no thumbnail yet
+  # would vanish from the page instead of drawing.
+  def maker_image_link(listing, thumbs)
+    lambda do |id|
+      row = listing.row_for(id)
+      next blob_file_path(id) if row.nil? || Maker::FileAttachment.inline_image?(row.node.name) ||
+                                 File.extname(row.node.name).casecmp?(".svg")
+
+      thumb = thumbs&.thumb(id)
+      thumb&.showable? ? preview_src(thumb) : nil
+    end
   end
 
   # One muted line under the heading, or nothing. Escaped by `content_tag`; an intro is text.

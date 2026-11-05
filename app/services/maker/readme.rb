@@ -1,9 +1,12 @@
 module Maker
-  # ONE README, RENDERED FOR A CARD — the repo card's `readme_facts` (stage 3, S3-2) with the two
+  # ONE README, READ THEN RENDERED — the repo card's `readme_facts` (stage 3, S3-2) with the two
   # things a second caller needs to vary pulled out as parameters: WHICH rows to search (a repo
   # dir's own files vs the project folder's loose files) and WHERE a resolved relative link points
   # (the private `/files/:id` page vs the public project URL). Extracted for the public project
-  # page (stage 3, S3-4); `Maker::RepoCard` is now its first caller, not a second copy.
+  # page (stage 3, S3-4); `Maker::RepoCard` is now its first caller, not a second copy. SINCE THE
+  # LIVE REGIONS (2026-11-05) THE READER IS TWO STEPS: `.source` finds, reads and parses the file,
+  # `.render` expands its regions and renders the markdown, and `.for` is both in one call for a
+  # caller with no ordering between them to respect (the project page has one — spec §5).
   #
   # READS THROUGH THE PORT, NEVER `File.read` — a README is a catalog file like any other
   # (git-editing.md), so this works on share, s3 and chunk_remote alike, and is NOT gated on
@@ -41,6 +44,15 @@ module Maker
     # RENDER above bounded nothing by itself (review, S3-2). The catalog already knows the size; a
     # README past this is never read, and the card says so.
     READ_LIMIT = CAP * 4
+
+    # STEP ONE OF TWO (2026-11-05, live regions; spec §5): find and READ the README, capped, and parse
+    # its regions — but render nothing yet. The project page needs the `image` regions' node ids
+    # BEFORE it builds its one thumbnail query and the rendered HTML AFTER, so the two steps are two
+    # calls; `.for` below is both in one for every caller with no such ordering to respect. nil means
+    # "this listing holds no README". `text` is nil, and `note` says why, when the file was not read.
+    Source = Data.define(:row, :text, :note, :regions) do
+      def image_node_ids = regions.select(&:recognised?).filter_map(&:node_id)
+    end
 
     # WHAT "WRITE A README" STARTS FROM (stage 4, S4-4). Short on purpose: a template a maker has to
     # delete half of is worse than a blank page. The two headings are the two things the project
@@ -106,15 +118,22 @@ module Maker
       pictures = fragment.css("img[src]").select { |img| issued.key?(img["src"]) }
       return html if pictures.empty?
 
-      pictures.each { |img| img["src"] = image_link.call(issued.fetch(img["src"])) }
+      # nil FROM THE ARM DROPS THE PICTURE (2026-11-05): the node-aware maker arm answers nil for a
+      # non-image file with no ready thumbnail, and an <img> with a blank src is a broken picture
+      # that also fetches the page itself.
+      pictures.each do |img|
+        url = image_link.call(issued.fetch(img["src"]))
+        url ? img["src"] = url : img.remove
+      end
       fragment.to_html.html_safe # sanitised by Maker::Markdown.render; only a src changed since
     end
 
-    def self.for(user:, rows:, base_path:, listing:, link:, image_link: default_image_link(link))
+    def self.source(user:, rows:)
       row = row_in(rows)
       return nil if row.nil?
       if row.node.size.to_i > READ_LIMIT
-        return new(html: nil, note: "README too large to show here (#{row.node.size.to_i / 1024} KB); open the file instead.")
+        return Source.new(row:, text: nil, regions: [],
+                          note: "README too large to show here (#{row.node.size.to_i / 1024} KB); open the file instead.")
       end
 
       bytes = FileLayer.current.read(user, node_id: row.node_id)
@@ -122,20 +141,36 @@ module Maker
       # `.scrub` after forcing UTF-8: a byte cap can split a multi-byte character at the tail, and a
       # NAS file is not guaranteed to be valid UTF-8 to begin with (§14b makes the same point about
       # filenames) — either way this must degrade to a replacement character, never raise
-      # Encoding::InvalidByteSequenceError out of a card into a 500 for the whole page.
+      # Encoding::InvalidByteSequenceError out of a panel into a 500 for the whole page.
       text = (truncated ? bytes.byteslice(0, CAP) : bytes).dup.force_encoding(Encoding::UTF_8).scrub
-      # THE ONE FOLDER RESOLVER (Maker::Markdown.folder_resolver, through #render_markdown): a
-      # content block resolves against the project folder with the same arithmetic, so the two
-      # cannot drift.
-      html = render_markdown(text, base_path:, index: listing.path_index, link:, image_link:)
-      new(html:, note: (truncated ? "Showing the first #{CAP / 1024} KB of this README." : nil))
+      Source.new(row:, text:, regions: Live.regions(text),
+                 note: (truncated ? "Showing the first #{CAP / 1024} KB of this README." : nil))
     # TWO ARMS, ONE NOTE. The store not answering is an outage the layout's banner names
     # (app/models/current.rb); a README that is gone is not, so its arm raises nothing.
     rescue FileLayer::FetchError
       Current.library_unreachable = true
-      new(html: nil, note: "README unavailable.")
+      Source.new(row:, text: nil, regions: [], note: "README unavailable.")
     rescue FileLayer::NotFound
-      new(html: nil, note: "README unavailable.")
+      Source.new(row:, text: nil, regions: [], note: "README unavailable.")
+    end
+
+    # STEP TWO: expand the live regions against `context` (Maker::Readme::Live::Context; nil is a
+    # caller with nothing to expand against — a nested repository's card, the file page — and then
+    # the markers go and the saved bodies stay) and render the markdown. THE ONE FOLDER RESOLVER
+    # (Maker::Markdown.folder_resolver, through #render_markdown): a content block resolves against the
+    # project folder with the same arithmetic, so the two cannot drift.
+    def self.render(source, base_path:, index:, link:, image_link: default_image_link(link), context: nil)
+      return new(html: nil, note: source.note) if source.text.nil?
+
+      text = Live.expand(source.text, context:, mode: :page)
+      new(html: render_markdown(text, base_path:, index:, link:, image_link:), note: source.note)
+    end
+
+    def self.for(user:, rows:, base_path:, listing:, link:, image_link: default_image_link(link), context: nil)
+      source = source(user:, rows:)
+      return nil if source.nil?
+
+      render(source, base_path:, index: listing.path_index, link:, image_link:, context:)
     end
   end
 end

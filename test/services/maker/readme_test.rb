@@ -233,5 +233,78 @@ module Maker
       assert_match(/## Files/, Maker::Readme.template_for(plain))
       assert_match(/## Build log/, Maker::Readme.template_for(plain))
     end
+
+    # --- live regions (2026-11-05) ----------------------------------------------------------------
+
+    test "source reads and parses once; render expands against a context and renders" do
+      laser = dir!("laser", @folder)
+      file!("box.lbrn2", laser, body: "x")
+      file!("README.md", @folder, body: "# Lamp\n\n<!-- tinkerex:files laser -->\n\nold\n\n<!-- /tinkerex -->\n")
+      list = listing
+      source = Maker::Readme.source(user: @user, rows: list.loose)
+
+      assert_equal [ "files" ], source.regions.map(&:directive)
+      assert_equal [], source.image_node_ids
+      context = Maker::Readme::Live::Context.new(user: @user, project: @project, listing: list)
+      readme = Maker::Readme.render(source, base_path: list.path, index: list.path_index, link: LINK, context:)
+
+      box = @user.nodes.present.find_by!(name: "box.lbrn2")
+      assert_includes readme.html, "<table>"
+      assert_includes readme.html, %(href="/u/ada/desk-lamp/files/#{box.node_id}") # the caller's link lambda ran
+      assert_includes readme.html, ">box.lbrn2</a>"
+      refute_includes readme.html, "old"
+      refute_includes readme.html, "<!--"
+    end
+
+    test "source names the image regions' node ids, and a too-large or unreadable README has none" do
+      file!("README.md", @folder, body: "<!-- tinkerex:image abc -->\n<!-- tinkerex:image def A caption -->\n<!-- tinkerex:bogus x -->\n")
+      assert_equal %w[abc def], Maker::Readme.source(user: @user, rows: listing.loose).image_node_ids
+
+      file!("README.markdown", @folder, body: "x", size: Maker::Readme::READ_LIMIT + 1)
+      @user.nodes.present.find_by!(name: "README.md").update!(deleted: true)
+      big = Maker::Readme.source(user: @user, rows: listing.loose)
+      assert_nil big.text
+      assert_equal [], big.image_node_ids
+      assert_match(/too large/, big.note)
+    end
+
+    # `<li>`, NOT `checked`: Maker::Markdown's allowlist has no `input`, so the sanitiser unwraps the
+    # checkbox kramdown emits for `- [x]` and only the item's text reaches the page (probed 2026-11-05).
+    test "for with no context renders a region's saved body and strips the markers" do
+      file!("README.md", @folder, body: "<!-- tinkerex:tasks -->\n\n- [x] saved\n\n<!-- /tinkerex -->\n")
+      html = readme_for.html
+
+      assert_includes html, "<li>"
+      assert_includes html, "saved"
+      refute_includes html, "<!--"
+      refute_includes html, "tinkerex"
+    end
+
+    test "render_markdown drops a picture whose image arm answers nil instead of leaving a blank src" do
+      models = dir!("models", @folder)
+      file!("base.stl", models, body: "x")
+      list = listing
+      html = Maker::Readme.render_markdown("![base](models/base.stl) and [base](models/base.stl)", base_path: list.path,
+                                           index: list.path_index, link: LINK, image_link: ->(_id) { nil })
+
+      assert_no_match(/<img/, html)
+      assert_includes html, ">base</a>"
+    end
+
+    test "RepoCard.for can be told to leave the README to the panel" do
+      file!("README.md", @folder, body: "# Lamp\n")
+      list = listing
+      dir = Maker::ProjectFolderListing::Dir.new(node_id: @folder.node_id, name: @project.name, path: list.path,
+                                                 repo?: true, children: list.tree, files: list.loose)
+      root = @user.nodes.present.find_by!(node_id: @folder.node_id)
+      caps = FileLayer.current.capabilities
+
+      with = Maker::RepoCard.for(user: @user, dir:, root_node: root, listing: list, capabilities: caps)
+      without = Maker::RepoCard.for(user: @user, dir:, root_node: root, listing: list, capabilities: caps, readme: false)
+
+      assert_includes with.readme_html, "Lamp"
+      assert_nil without.readme_html
+      assert_nil without.readme_note
+    end
   end
 end
