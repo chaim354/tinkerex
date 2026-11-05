@@ -935,6 +935,19 @@ survives redeploys.
 - **Bytes never flow through Rails.** On the s3 backend the app only signs presigned URLs and the
   browser PUT/GETs the bucket directly, so the bucket endpoint must be reachable from every client;
   on chunk_remote the sync server does the signing (its own env, in `chaim354/tinkerex-sync`).
+- **kamal-proxy's response buffering is OFF for the app (`proxy: buffering: responses: false`,
+  2026-11-04), and a curl probe over 1 MiB is why.** curl adds `Expect: 100-continue` to any body
+  over 1 MiB, and with response buffering on, kamal-proxy (v0.9.2 on the box; v0.10.2, the newest
+  tag, is the same) latches the upstream's interim `100 Continue` as the final status: a request the
+  app refuses before reading the body — `POST /mcp` over `McpRequestGuard`'s limit — came back
+  `200 OK` carrying the 413's body, and the proxy logged a 100 (basecamp/kamal-proxy#265,
+  tinkerex#515). The flag rides on `kamal-proxy deploy`, so it lands at each destination's next
+  `kamal deploy` with no proxy reboot; the cost is that a slow client now holds its Puma thread for
+  the whole response. Until a destination has been redeployed since, probe a large body there with
+  `-H "Expect:"` or at the container's own address, and read a 200 or 502 that appears only with
+  Expect as the proxy's answer, not the app's. The sync accessory keeps buffering on — nothing that
+  talks to it sends Expect. When a proxy release fixes #265: pin it with `proxy: run: version:`,
+  `kamal proxy reboot`, and drop the block together with its guard in `test/deploy_hygiene_test.rb`.
 - **In-browser viewers & bucket CORS (the s3 backend).** The 3D viewer, KiCanvas, the Gerber
   viewer and the public bundle all `fetch` a file's bytes from `/files/:id/blob` (or the public
   file route). On the **s3** library backend that endpoint 302-redirects to a cross-origin presigned

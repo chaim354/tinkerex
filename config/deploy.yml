@@ -60,6 +60,24 @@ proxy:
   hosts:
     - chunk.tinkerex.local
     - chunk.tinkerex.home
+  # RESPONSE BUFFERING IS OFF, DELIBERATELY, UNTIL basecamp/kamal-proxy#265 SHIPS A FIX. With it on,
+  # kamal-proxy latches an upstream's interim `100 Continue` as the final status: a client that sends
+  # `Expect: 100-continue` (curl does, by default, for any body over 1 MiB) and is refused before
+  # the body is read -- POST /mcp over McpRequestGuard's 1 MiB limit -- reads the app's 413 as
+  # `200 OK`, and the proxy's log and metrics record a 100. Reproduced through the proxy on the box
+  # and in a bare Docker proxy against a stand-in upstream, on v0.9.2 (what the box runs) and
+  # v0.10.2 (the newest tag, 2026-11-04); with response buffering OFF the same request comes back
+  # 413, measured (tinkerex#515). kamal renders this as `--buffer-responses=false` on `kamal-proxy
+  # deploy`, so it takes effect at each destination's next `kamal deploy` -- no `kamal proxy reboot`.
+  # The cost is the buffer's reason for existing: a slow client now holds its Puma thread for the
+  # whole response, where the proxy used to absorb it. REQUEST buffering stays ON -- unrelated to
+  # the bug, and it is what shields the pool from a slow upload. Every overlay inherits this block
+  # through kamal's hash deep-merge (`hosts` is an array and is REPLACED; `buffering` is a hash and
+  # is not), ovh included; the sync accessory keeps the defaults, since nothing that talks to it
+  # sends Expect. When a proxy release fixes #265: pin it with `proxy: run: version:`, `kamal proxy
+  # reboot`, and delete this block AND its guard in test/deploy_hygiene_test.rb in the same commit.
+  buffering:
+    responses: false
 
 # Shared container registry: GitHub Container Registry (ghcr.io). The Mac builds the
 # image once and pushes here; both servers (Unraid + OVH) pull the same image. Auth is a
