@@ -135,7 +135,7 @@ after one reloads the page, so the rendered view is never of bytes the save repl
 
 **THE README DOOR IS STILL CONFINED STRUCTURALLY, NOT BY A NAME CHECK, AND THAT DID NOT LOOSEN.**
 It takes **no node id from the client**: it resolves the file through
-`Maker::Readme.row_in(listing.loose)` — the same call both project-page cards render from — so the
+`Maker::Readme.row_in(listing.loose)` — the same call the README panel renders from — so the
 only file it can ever write is one of the six `Maker::Readme::NAMES` at the project folder's root.
 **Since 2026-11-05 that door also EXPANDS the README's live regions before writing**
 (`Maker::Readme::Live`, `:file` mode; `docs/superpowers/specs/2026-11-05-readme-panel-live-regions-design.md`

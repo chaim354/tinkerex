@@ -425,7 +425,7 @@
   .readme-panel .markdown { max-height: 70vh; margin-top: 0; }
   .readme-panel .readme-editor { margin-top: 12px; }
 
-  /* --- The README editor (stage 4, S4-4): the composer inside a README card. `.composer` itself
+  /* --- The README editor (stage 4, S4-4): the composer inside the README panel (a README card until 2026-11-05). `.composer` itself
      is a component (components.css) and is only QUALIFIED here, never redeclared — design-system
      rule 3. The mount and the textarea are two states of one control: CodeMirror renders into the
      first and hides the second, and with no JS the second is what the maker types into. --- */

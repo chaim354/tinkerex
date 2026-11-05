@@ -119,6 +119,9 @@ module Maker
         order = Maker::ProjectKind.layout_for(kind:, overrides: nil).order
         assert_equal Maker::Project::PANELS.sort, order.sort, "#{kind} drops or invents a panel"
         assert_equal Maker::ProjectKind::LEAD, order.first(Maker::ProjectKind::LEAD.size), "#{kind}"
+        # PINNED BY NAME, not through the constant: the line above stays green with `readme` gone
+        # from LEAD (mutation-checked 2026-11-05), and the README leading every page is the claim.
+        assert_equal "readme", order.first, "#{kind} does not open with the README"
       end
     end
 

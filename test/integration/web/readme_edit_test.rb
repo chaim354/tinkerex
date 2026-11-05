@@ -2,7 +2,7 @@ require "test_helper"
 require "support/git_repo_fixture"
 
 module Web
-  # STAGE 4, S4-4 (story 5.3; spec §2 D3): the README editor on the project page's README card, for
+  # STAGE 4, S4-4 (story 5.3; spec §2 D3): the README editor on the project page's README panel (its own panel since 2026-11-05; a card inside Files before), for
   # ANY project — a plain folder as much as a working tree.
   #
   # A FRESH SHARE LIBRARY PER TEST, PINNED BEFORE ANY FIXTURE RUNS, for the reason
