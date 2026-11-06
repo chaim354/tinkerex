@@ -1,11 +1,20 @@
 <%#
-  THE README EDITOR (stage 4, S4-4; story 5.3). Mounted inside BOTH cards' `.readme` region —
-  projects/_readme_card for a plain folder, projects/_repo_card for a folder that IS a working
-  tree — so a maker writes documentation the same way whichever shape their project has.
+  THE README EDITOR (stage 4, S4-4; story 5.3). Mounted in the README panel (projects/_readme) since
+  2026-11-05, for every project, repository or not — so a maker writes documentation the same way
+  whichever shape their project has. (Before the panel it sat inside both cards' `.readme` region:
+  the Files panel's README card and the root repository card, which the panel replaced.)
 
-  Locals: project, row (the README's Maker::ProjectFolderListing::Row, or nil when there is none).
+  Locals: project, row (the README's Maker::ProjectFolderListing::Row, or nil when there is none),
+  listing (the Maker::ProjectFolderListing, for the Insert menu's folders and the chooser's root;
+  optional — a refusal passes it too).
   Optional — A REFUSED SAVE (2026-11-02, the UX audit's B3; Projects::ReadmesController): draft (the
   text that was posted), base_token (the token it was posted with), error, open.
+
+  THE INSERT BAR (2026-11-05, live regions; spec §7) sits above the buffer and starts `hidden`:
+  readme_controller.js reveals it once the editor is live, so without JavaScript the inserts are
+  simply absent and a directive can still be typed by hand. Its Files-table menu lists the root and
+  each first-level subfolder off `listing`; Image opens the Miller-columns chooser rooted at the
+  project folder.
 
   CLOSED, AND LAZY (the modelviewer `lazy` argument): readme_controller.js fetches the README's
   bytes on the first toggle-open and not before, so a project page nobody edits pays no port read
@@ -34,9 +43,13 @@
 <% draft = local_assigns[:draft] %>
 <% error = local_assigns[:error] %>
 <% drafting = !draft.nil? %>
+<% listing = local_assigns[:listing] %>
 <details class="composer readme-editor" id="readme-editor" data-controller="readme" data-action="toggle->readme#reveal"
          data-readme-url-value="<%= row && !drafting ? blob_file_path(row.node_id) : "" %>"
-         data-readme-draft-value="<%= drafting %>" <%= "open" if local_assigns[:open] %>>
+         data-readme-draft-value="<%= drafting %>"
+         data-readme-children-url-value="<%= library_children_path %>"
+         data-readme-folder-id-value="<%= listing&.folder_id %>"
+         data-readme-folder-name-value="<%= project.name %>" <%= "open" if local_assigns[:open] %>>
   <summary class="btn small"><%= row ? "Edit README" : "Write a README" %></summary>
   <% if error.present? %>
     <div class="form-errors flash-alert composer-error" role="alert">
@@ -60,6 +73,28 @@
       <%= hidden_field_tag :base_token, local_assigns[:base_token] %>
     <% elsif row %>
       <%= hidden_field_tag :base_token, FileLayer.current.stat(current_user, node_id: row.node_id)&.content_token %>
+    <% end %>
+    <%# ONLY WITH A FOLDER (found in review): the no-folder REFUSAL re-renders this editor open, and
+        an Image chooser with no root to be rooted at would browse the whole library — nothing a pick
+        there could do (the save is refused again; a foreign id is "no longer in the project"), but
+        "a pick cannot leave the project" should be true by construction, not by consequence. %>
+    <% if listing&.available? %>
+    <div class="readme-insert" data-readme-target="insert" hidden>
+      <span class="muted readme-insert-label">Insert</span>
+      <details class="menu" data-controller="menu">
+        <summary class="btn small">Files table</summary>
+        <div class="menu-list">
+          <button type="button" class="menu-item" data-action="readme#insertFiles" data-path=".">Root files</button>
+          <% Array(listing&.tree).each do |dir| %>
+            <button type="button" class="menu-item" data-action="readme#insertFiles" data-path="<%= dir.name %>"><%= dir.name %></button>
+          <% end %>
+        </div>
+      </details>
+      <button type="button" class="btn small" data-action="readme#insertDirective" data-directive="bom">Bill of materials</button>
+      <button type="button" class="btn small" data-action="readme#insertDirective" data-directive="tasks">Tasks</button>
+      <button type="button" class="btn small" data-action="readme#insertDirective" data-directive="log">Build log</button>
+      <button type="button" class="btn small" data-action="readme#insertImage">Image</button>
+    </div>
     <% end %>
     <div class="readme-mount" data-readme-target="mount"></div>
     <% locked = row.present? && !drafting %>

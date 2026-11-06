@@ -3,7 +3,7 @@ module Maker
   # a `.md` only as source; FilesController#show now asks this for the Rendered view it offers beside
   # the Source one, and renders the source view alone whenever this has no html to give.
   #
-  # THE SAME RENDERER AND THE SAME TWO ARMS AS THE PROJECT'S README CARD: Maker::Readme.render_markdown
+  # THE SAME RENDERER AND THE SAME TWO ARMS AS THE PROJECT'S README PANEL: Maker::Readme.render_markdown
   # with the maker's page link (Maker::RepoCard::DEFAULT_LINK) for a link and the blob route
   # (Maker::Readme::MAKER_IMAGE_LINK) for a picture, so `[base](models/base.stl)` opens that file's
   # page and `![plate](plate.svg)` loads its bytes, and raw HTML is stripped by Maker::Markdown's one
@@ -20,13 +20,13 @@ module Maker
   # over-cap file answers `problem: :too_large` without a read, and a file gone between the stat and
   # the read answers nil. In every one of those the page renders the source view exactly as before.
   class MarkdownFile < Data.define(:html, :problem)
-    # WHAT WILL BE READ AT ALL — the README card's own read limit (256 KB), the same bound for the
+    # WHAT WILL BE READ AT ALL — the README panel's own read limit (256 KB), the same bound for the
     # same reason: the port's `read` takes no byte limit, so the catalog's size is the gate.
     LIMIT = Maker::Readme::READ_LIMIT
 
     # HOW FAR A RELATIVE LINK REACHES. The file's own folder and the folders beneath it, breadth
     # first, so `docs/plate.svg` and `models/base.stl` resolve the way they do on the project's
-    # README card, whose index is the whole project folder. The folders come off the LibraryTree the
+    # README panel, whose index is the whole project folder. The folders come off the LibraryTree the
     # page already built for the Path row (no query); their files are ONE query, capped, so the cost
     # is constant in the size of the folder (page_query_budget_test.rb). Past either cap a link
     # renders as its own text, Maker::Markdown's answer for a path it cannot resolve.
@@ -49,9 +49,13 @@ module Maker
       # becomes its text rather than a guess at where it points.
       base = tree.path_for(node.parent_node_id)
       index = base ? link_index(user, node.parent_node_id, tree) : {}
-      html = Maker::Readme.render_markdown(text, base_path: base.to_s, index:,
-                                                 link: Maker::RepoCard::DEFAULT_LINK,
-                                                 image_link: Maker::Readme::MAKER_IMAGE_LINK)
+      # A README's live regions show their SAVED bodies here, markers off (2026-11-05): this page has
+      # no project to expand against, and the snapshot is exactly what the file holds for a reader
+      # outside the project page.
+      html = Maker::Readme.render_markdown(Maker::Readme::Live.expand(text, context: nil, mode: :page),
+                                           base_path: base.to_s, index:,
+                                           link: Maker::RepoCard::DEFAULT_LINK,
+                                           image_link: Maker::Readme::MAKER_IMAGE_LINK)
       new(html:, problem: nil)
     # TWO ARMS, Current's rule: the store not answering is an outage the banner names; a file that
     # is gone is not, so its arm raises nothing.

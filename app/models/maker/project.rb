@@ -63,7 +63,8 @@ module Maker
     # handed a partial name that does not exist.
     # `models` (2026-10-21): the project's 3D models as cards — projects/_models, Maker::ProjectModels.
     # `calculations` (2026-10-21): results saved from the calculator modal — projects/_calculations.
-    PANELS = %w[attachments photos models schematics build_log tasks bom wiring releases sheets calculations].freeze
+    # `readme` (2026-11-05): the folder's README as its own panel — projects/_readme, Maker::Readme::Live.
+    PANELS = %w[readme attachments photos models schematics build_log tasks bom wiring releases sheets calculations].freeze
 
     # HOW ONE PANEL DRAWS WHAT IT HOLDS (2026-09-08, folder panels; spec decision 6). Per panel and
     # persisted in `panels["views"]`, which is what retired the page-wide `project_view` cookie: a
@@ -77,13 +78,15 @@ module Maker
     # vocabulary, and layout_for drops any value outside it.
     VIEWS = %w[tiles list browser].freeze
 
-    # What the chooser calls each one. Its own map rather than `key.humanize`, because four of the
-    # twelve disagree with what humanize would say: `attachments` is "Files" (the panel has been
+    # What the chooser calls each one. Its own map rather than `key.humanize`, because five of the
+    # thirteen disagree with what humanize would say: `readme` is "README" (the file's own spelling,
+    # not "Readme"), `attachments` is "Files" (the panel has been
     # headed Files since S2-2 — the key is the partial's name, and renaming the partial would touch
     # eight call sites), `models` is "3D models" (the rail's word for that catalog, UX audit H),
     # `bom` is "Bill of materials", and `build_log` is "Build log", not "Build Log". A chooser whose labels differ from the headings above them is a chooser nobody
     # trusts. Totality pinned in project_kind_test.rb.
     PANEL_LABELS = {
+      "readme" => "README",
       "attachments" => "Files", "photos" => "Photos", "models" => "3D models", "schematics" => "Schematics",
       "build_log" => "Build log", "tasks" => "Tasks", "bom" => "Bill of materials",
       "wiring" => "Wiring", "releases" => "Releases", "sheets" => "Sheets", "calculations" => "Calculations"

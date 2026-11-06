@@ -774,7 +774,7 @@ wraps the file page's viewer chain in a Rendered / Source toggle (`.view-toggle`
   The source viewer fetches its bytes in the browser, so the rendered view is the only server read,
   gated on the catalog's size at `Maker::Readme::READ_LIMIT` (256 KB) before anything is read. It is
   not a catalog pull and touches no metadata in the store, which is what §2/§14a forbid on a GET.
-- **THE README CARD'S RENDERER AND ITS TWO ARMS**, `Maker::Readme.render_markdown`: a relative link opens
+- **THE README PANEL'S RENDERER AND ITS TWO ARMS**, `Maker::Readme.render_markdown`: a relative link opens
   the file's page, a picture loads its blob, raw HTML goes through `Maker::Markdown`'s one sanitising
   pass. Links resolve against the file's folder and the folders beneath it (breadth-first off the
   LibraryTree the Path row already plucks, `.git` never entered), whose files are ONE capped query —

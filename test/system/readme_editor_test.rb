@@ -34,7 +34,7 @@ class ReadmeEditorTest < ApplicationSystemTestCase
 
   test "the README editor mounts on the project page, saves what was typed, and the card shows it" do
     visit project_path(@project)
-    assert_selector ".readme-card .markdown h1", text: "Lamp"
+    assert_selector ".readme-panel .markdown h1", text: "Lamp"
 
     # THE EDITOR IS LAZY: nothing is fetched and nothing mounts until the details opens.
     assert_no_selector ".readme-editor .cm-editor"
@@ -55,9 +55,41 @@ class ReadmeEditorTest < ApplicationSystemTestCase
 
     # THE REDIRECTED PAGE, NOT THE BUFFER: the card is rebuilt from the bytes the port reads back.
     assert_selector ".flash-notice", text: "Saved the README."
-    assert_selector ".readme-card .markdown", text: MARKER
+    assert_selector ".readme-panel .markdown", text: MARKER
     # THE BYTES ON DISK, not the page's own idea of them.
     assert_includes File.read(@path), MARKER
+
+    assert_no_console_errors
+  end
+
+  # LIVE REGIONS (2026-11-05): what no request test can see — that the Insert bar writes into the
+  # CodeMirror buffer, that a filled region loads COLLAPSED, and that the Save then fills it.
+  test "Insert writes a tasks region at the cursor, the save fills it, and it reopens collapsed" do
+    @project.tasks.create!(user: @user, title: "Sand the base", status: "done", position: 0)
+    visit project_path(@project)
+    find(".readme-editor summary", text: /edit readme/i).click
+    assert_selector ".readme-editor .cm-editor", wait: 10
+    assert_selector ".readme-insert:not([hidden])"
+
+    content = find(".readme-editor .cm-content")
+    content.click
+    content.send_keys(:control, :end)
+    click_on "Tasks"
+    assert_selector ".readme-editor .cm-content", text: "<!-- tinkerex:tasks -->"
+    click_on "Save README"
+
+    assert_selector ".flash-notice", text: "Saved the README."
+    # kramdown's task list is `<li><input type="checkbox" checked disabled>` with no class on the
+    # item (Maker::Markdown#keep_task_checkboxes), so the box and the text are asserted, not a class.
+    assert_selector "#project-readme .markdown li", text: "Sand the base"
+    assert_selector "#project-readme .markdown li > input[type=checkbox][checked][disabled]"
+    assert_includes File.read(@path), "- [x] Sand the base"
+
+    # Reopened, the region is one line again: the generated body is not offered for editing.
+    find(".readme-editor summary", text: /edit readme/i).click
+    assert_selector ".readme-editor .cm-editor", wait: 10
+    assert_selector ".readme-editor .cm-content", text: "<!-- tinkerex:tasks -->"
+    assert_no_selector ".readme-editor .cm-content", text: "Sand the base"
 
     assert_no_console_errors
   end

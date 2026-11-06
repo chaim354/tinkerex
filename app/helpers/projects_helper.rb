@@ -103,10 +103,33 @@ module ProjectsHelper
   # A TEXT BLOCK'S MARKDOWN ON THE MAKER'S PAGE: relative links resolve against the project folder
   # the way the README does, a link opens the file's page and a picture loads its bytes (C2 —
   # `![x](docs/plate.svg)` pointed at the HTML page drew a broken image). The same two arms as the
-  # README card, through Maker::Readme.render_markdown, so the block and the card cannot disagree.
+  # README panel, through Maker::Readme.render_markdown, so the block and the panel cannot disagree.
   def project_markdown(text, listing)
     Maker::Readme.render_markdown(text.to_s, base_path: listing.path, index: listing.path_index,
-                                  link: Maker::RepoCard::DEFAULT_LINK, image_link: Maker::Readme::MAKER_IMAGE_LINK)
+                                  link: Maker::RepoCard::DEFAULT_LINK, image_link: maker_image_link(listing, @page_thumbs))
+  end
+
+  # THE MAKER'S PICTURE OF A FILE, BY NODE (2026-11-05, live regions; spec §5). An image file is its
+  # bytes — the blob route, the door the hero and an image block already load from; any other file is
+  # its READY thumbnail, where `![x](models/base.stl)` used to render the model's bytes as a broken
+  # picture. nil DROPS the <img> (Maker::Readme.render_markdown), which is why Live::ImageLine writes
+  # a LINK rather than an image while no thumbnail is ready. `listing` says which node a resolved id
+  # is; `thumbs` is the page's one ThumbnailMap (nil on a render that built none — then every
+  # non-image picture is dropped rather than broken). A node the listing does not hold cannot have
+  # been resolved by the folder resolver at all, so that arm is defensive, not reachable.
+  #
+  # WHICH FILES ARE PICTURES IS `Maker::Readme::Live.picture?`'s ONE ANSWER — the inline-image list
+  # plus SVG, which `![plate](docs/plate.svg)` has drawn from the blob route since the UX audit's C2
+  # (project_hub_audit_test.rb pins it, for a README and a text block alike); keyed on
+  # `inline_image?` alone, an SVG with no thumbnail yet would vanish from the page instead of drawing.
+  def maker_image_link(listing, thumbs)
+    lambda do |id|
+      row = listing.row_for(id)
+      next blob_file_path(id) if row.nil? || Maker::Readme::Live.picture?(row.node.name)
+
+      thumb = thumbs&.thumb(id)
+      thumb&.showable? ? preview_src(thumb) : nil
+    end
   end
 
   # One muted line under the heading, or nothing. Escaped by `content_tag`; an intro is text.

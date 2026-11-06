@@ -120,13 +120,13 @@ module Web
                           content_hash: "h-firmware-readme", current_version_id: "v-firmware-readme")
       # STAGE 4, S4-4: A README AT THE FOLDER'S OWN ROOT, WHICH IS THE READ-THE-README BRANCH.
       # `projects/_readme_editor` renders on every project page, but with NO root README both it and
-      # the README card take their empty branches and touch nothing — so a page seeded without this
+      # the README panel take their empty branches and touch nothing — so a page seeded without this
       # row measures the feature's cheapest shape and says nothing about its real one.
       #
       # MEASURED: adding it moves this page 34 -> 36 queries, and the two are named rather than
       # absorbed. Both are single-node lookups and both are CONSTANT — one for the page, not one per
       # row, which is the only property this file asserts:
-      #   * `Maker::Readme.for` reads the README through the port for the card, and on share a read
+      #   * `Maker::Readme.for` reads the README through the port for the panel, and on share a read
       #     resolves the node first (FileLayer::Share#live_node!).
       #   * `projects/_readme_editor` stats the same node for the form's `base_token`, likewise one
       #     `nodes` query on share (FileLayer::Share#stat).

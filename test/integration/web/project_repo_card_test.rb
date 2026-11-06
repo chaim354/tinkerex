@@ -218,7 +218,8 @@ module Web
 
       assert_response :success
       assert_select ".attachments-panel .repo-card .repo-summary", text: "First cut"
-      assert_select ".attachments-panel .repo-card .markdown h1", text: "Lamp"
+      assert_select "#project-readme .markdown h1", text: "Lamp"
+      assert_select ".attachments-panel .repo-card .markdown", 0
       assert_select ".attachments-panel .panel-head a[href=?]", repo_commit_path(root.node_id), text: "Commits"
       assert_select ".attachments-panel .panel-head a[href=?]", repo_history_path(root.node_id), text: "History"
       assert_select "p.loose-note", text: /This folder is a git repository/
@@ -244,8 +245,8 @@ module Web
       get project_path(project)
 
       assert_response :success
-      assert_select ".attachments-panel .readme-card .markdown h1", text: "Tray"
-      assert_select ".attachments-panel .readme-card .repo-facts", count: 0
+      assert_select "#project-readme .markdown h1", text: "Tray"
+      assert_select "#project-readme .repo-facts", count: 0
       assert_select ".attachments-panel .panel-head a", text: "Commits", count: 0
       assert_select "p.loose-note", text: /Loose files are filed into their folders on the next scan/
       # THE README IS THE CARD, NOT A LOOSE FILE (2026-11-02, the UX audit's C3): it was listed under

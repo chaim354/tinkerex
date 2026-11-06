@@ -2,7 +2,7 @@ require "test_helper"
 require "support/git_repo_fixture"
 
 module Web
-  # STAGE 4, S4-4 (story 5.3; spec §2 D3): the README editor on the project page's README card, for
+  # STAGE 4, S4-4 (story 5.3; spec §2 D3): the README editor on the project page's README panel (its own panel since 2026-11-05; a card inside Files before), for
   # ANY project — a plain folder as much as a working tree.
   #
   # A FRESH SHARE LIBRARY PER TEST, PINNED BEFORE ANY FIXTURE RUNS, for the reason
@@ -60,7 +60,7 @@ module Web
       get project_path(project)
 
       assert_response :success
-      assert_select ".readme-card .readme-editor[data-controller=readme]"
+      assert_select ".readme-panel .readme-editor[data-controller=readme]"
       assert_select ".readme-editor[data-readme-url-value=?]", blob_file_path(node.node_id)
       assert_select ".readme-editor summary", text: "Edit README"
       assert_select ".readme-editor input[name=base_token][value=?]", token_for(user, node)
@@ -102,6 +102,20 @@ module Web
       assert_select ".readme-editor", 0
     end
 
+    # THE ONE WAY TO AN EDITOR WITH NO FOLDER is the no-folder REFUSAL, which re-renders it open; the
+    # Insert bar stays out of it (found in review), or its Image chooser would open at the library
+    # root with no project folder to be rooted at.
+    test "a refusal for a project with no folder re-renders the editor without the Insert bar" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Folderless")
+      project.update_column(:folder_node_id, nil)
+
+      patch project_readme_path(project), params: { content: "# Lamp\n" }
+
+      assert_match(/no folder in the library yet/, refusal)
+      assert_select ".readme-editor .readme-insert", 0
+    end
+
     # A REFUSED SAVE COMES BACK AS THE OPEN EDITOR (2026-11-02, the UX audit's B3), 422, with the
     # sentence inside it and the draft in the textarea — never a redirect and an alert that drop the
     # draft. Answers the sentence.
@@ -127,7 +141,7 @@ module Web
       assert_equal "# Lamp\n\n## Build steps\n", FileLayer.current.read(user, node_id: node.node_id)
 
       follow_redirect!
-      assert_select ".readme-card .markdown h2[id=user-content-build-steps]", text: "Build steps"
+      assert_select ".readme-panel .markdown h2[id=user-content-build-steps]", text: "Build steps"
     end
 
     test "saving with no README creates README.md at the folder root" do
@@ -281,7 +295,7 @@ module Web
 
     # --- a root repository gets the same editor, plus a pending edit ----------------------------
 
-    test "a root working tree gets the editor inside its repo card and the save records a pending edit" do
+    test "a root working tree gets the editor in the README panel, and the save records a pending edit" do
       user = sign_in
       project = user.maker_projects.create!(name: "Firmware")
       project.ensure_library_folder!(user)
@@ -298,7 +312,8 @@ module Web
       node = readme_node(user, project)
 
       get project_path(project)
-      assert_select ".repo-card .readme-editor[data-controller=readme]"
+      assert_select ".readme-panel .readme-editor[data-controller=readme]"
+      assert_select ".repo-card .readme-editor", 0
 
       patch project_readme_path(project),
             params: { content: "# Firmware v2\n", base_token: token_for(user, node) }
@@ -306,6 +321,84 @@ module Web
       assert_equal [ node.node_id ], Maker::RepoEdit.where(user:).pluck(:node_id)
       assert_equal project.reload.folder_node_id,
                    Maker::RepoEdit.find_by(user:, node_id: node.node_id).repo_root_node_id
+    end
+
+    # --- live regions (2026-11-05; spec §6, §7) ----------------------------------------------------
+
+    def project_with_files!(user, readme:, files:)
+      project = user.maker_projects.create!(name: "Desk Lamp")
+      project.ensure_library_folder!(user)
+      dir = Pathname.new(library_root).join("Projects", project.slug)
+      files.each { |rel, body| dir.join(rel).dirname.mkpath; dir.join(rel).write(body) }
+      dir.join("README.md").write(readme)
+      Library::ScanJob.new.perform(user_id: user.id)
+      project
+    end
+
+    def readme_on_disk(project) = File.read(File.join(library_root, "Projects", project.slug, "README.md"))
+
+    test "a save fills a hand-typed region with its table and closes it; the page renders it live" do
+      user = sign_in
+      project = project_with_files!(user, readme: "# Lamp\n", files: { "models/base.stl" => "solid\nendsolid\n" })
+      node = readme_node(user, project)
+
+      patch project_readme_path(project),
+            params: { content: "# Lamp\n\n<!-- tinkerex:files models -->\n", base_token: token_for(user, node) }
+
+      assert_redirected_to project_path(project)
+      on_disk = readme_on_disk(project)
+      assert_includes on_disk, "<!-- tinkerex:files models -->\n\n| File | Kind | Size | Modified |\n"
+      assert_includes on_disk, "| [base.stl](models/base.stl) | Models |"
+      assert_includes on_disk, "\n\n<!-- /tinkerex -->\n"
+      follow_redirect!
+      assert_select "#project-readme .markdown table td a", text: "base.stl"
+      assert_select "#project-readme .markdown", text: /tinkerex/, count: 0
+    end
+
+    test "a save replaces whatever was posted inside a region" do
+      user = sign_in
+      project = project_with_files!(user, readme: "# Lamp\n", files: {})
+      project.tasks.create!(user:, title: "Sand", status: "done", position: 0)
+      node = readme_node(user, project)
+
+      patch project_readme_path(project),
+            params: { content: "<!-- tinkerex:tasks -->\n\n- [ ] my own line\n\n<!-- /tinkerex -->\n", base_token: token_for(user, node) }
+
+      on_disk = readme_on_disk(project)
+      assert_includes on_disk, "- [x] Sand"
+      refute_includes on_disk, "my own line"
+    end
+
+    test "the size cap applies to the expanded file, and the draft is what was typed" do
+      user = sign_in
+      project = project_with_files!(user, readme: "# Lamp\n", files: { "models/base.stl" => "solid\nendsolid\n" })
+      node = readme_node(user, project)
+      prose = "x" * (FilesController::EDITABLE_MAX_BYTES - 60)
+      draft = "#{prose}\n<!-- tinkerex:files models -->\n"
+
+      patch project_readme_path(project), params: { content: draft, base_token: token_for(user, node) }
+
+      assert_response :unprocessable_entity
+      assert_select ".readme-editor .composer-error", text: /too large to edit here once its live tables are filled in/
+      assert_select ".readme-editor textarea[name=content]", text: draft
+      assert_equal "# Lamp\n", readme_on_disk(project)
+    end
+
+    test "the editor carries the Insert bar, hidden until the script enables it, with the folder menu and the chooser's root" do
+      user = sign_in
+      project = project_with_files!(user, readme: "# Lamp\n", files: { "laser/a.svg" => "<svg/>", "models/b.stl" => "solid\nendsolid\n" })
+      folder_id = project.reload.folder_node_id
+
+      get project_path(project)
+
+      assert_select ".readme-editor[data-readme-children-url-value=?]", library_children_path
+      assert_select ".readme-editor[data-readme-folder-id-value=?]", folder_id
+      assert_select ".readme-editor .readme-insert[hidden]"
+      assert_select ".readme-insert .menu-item[data-path='.']", text: "Root files"
+      assert_select ".readme-insert .menu-item[data-path=laser]", text: "laser"
+      assert_select ".readme-insert .menu-item[data-path=models]", text: "models"
+      %w[bom tasks log].each { |d| assert_select ".readme-insert button[data-directive=?]", d }
+      assert_select ".readme-insert button[data-action='readme#insertImage']", text: "Image"
     end
   end
 end

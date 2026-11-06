@@ -152,7 +152,8 @@ module Maker
       folders = [ [ "d-fw", true ] ]
       layout = project.panel_layout(folders:)
 
-      assert_equal [ "attachments", "folder:d-fw", "photos" ], layout.order.first(3)
+      # The folder is spliced between Files and Photos; the README leads them all (2026-11-05).
+      assert_equal [ "readme", "attachments", "folder:d-fw", "photos" ], layout.order.first(4)
       assert_equal "list", layout.view_for("folder:d-fw")
       assert_includes project.visible_panels(folders:), "folder:d-fw"
     end

@@ -50,12 +50,15 @@ module Maker
     # silently pointed nowhere would look exactly like a card with no links.
     DEFAULT_LINK = ->(id) { Rails.application.routes.url_helpers.file_path(id) }
 
-    def self.for(user:, dir:, root_node:, listing:, capabilities:, link: DEFAULT_LINK)
+    # `readme: false` (2026-11-05, live regions; spec §2): the ROOT card is built without one — the
+    # project's README is its own panel now, and the card keeps only its git facts. Nested
+    # repositories' cards keep theirs: a nested repo's README is not the project's.
+    def self.for(user:, dir:, root_node:, listing:, capabilities:, link: DEFAULT_LINK, readme: true)
       head, tags, refusal = git_facts(user:, dir:, root_node:, capabilities:)
       # `dir.path` is the repo dir's FULL library path — the shape `listing.path_index` keys on, and
       # what a relative href in this README resolves against (Maker::Readme's own rule).
-      readme = Maker::Readme.for(user:, rows: dir.files, base_path: dir.path, listing:, link:)
-      new(dir:, head:, tags:, readme_html: readme&.html, readme_note: readme&.note, refusal:)
+      card_readme = readme ? Maker::Readme.for(user:, rows: dir.files, base_path: dir.path, listing:, link:) : nil
+      new(dir:, head:, tags:, readme_html: card_readme&.html, readme_note: card_readme&.note, refusal:)
     end
 
     class << self

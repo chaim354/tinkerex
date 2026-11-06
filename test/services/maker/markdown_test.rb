@@ -22,6 +22,21 @@ class Maker::MarkdownTest < ActiveSupport::TestCase
     assert_match %r{<pre><code>puts 1}, html
   end
 
+  # TASK-LIST CHECKBOXES SURVIVE, DISABLED (2026-11-05, live regions): kramdown renders `- [x]` as an
+  # <input>, and the allowlist used to UNWRAP it, so a checklist lost its marks on the page while the
+  # same file showed them everywhere else. Only a checkbox survives, with nothing but its three
+  # attributes; any other input is removed outright.
+  test "a task list keeps its checkboxes, disabled and bare; any other input is removed" do
+    html = Maker::Markdown.render("- [x] done\n- [ ] open\n\n<input type=\"text\" name=\"q\">\n\n" \
+                                  "<input type=\"checkbox\" checked onclick=\"evil()\" class=\"x\" id=\"attributes\">\n")
+
+    assert_equal 3, html.scan("<input").size
+    assert_equal 2, html.scan(/<input[^>]*checked/).size
+    assert_equal 3, html.scan(/<input[^>]*disabled/).size
+    assert_no_match(/type="text"|name=|onclick|class=|id="attributes"/, html)
+    assert_match %r{<li>\s*<input[^>]*type="checkbox"[^>]*>\s*done\s*</li>}, html
+  end
+
   # RAW HTML IS NOT KRAMDOWN'S TO STRIP — it passes `<script>` through verbatim (probed at the
   # console). The renderer removes executable elements WITH their content before the allowlist
   # sanitizer runs, because that sanitizer UNWRAPS a disallowed tag (Loofah's PermitScrubber, not
@@ -171,7 +186,7 @@ class Maker::MarkdownTest < ActiveSupport::TestCase
   # THE `user-content-` PREFIX IS THE FIX FOR A MEASURED COLLISION (a5b6e66's review). A README's
   # ids land in the SAME document as the app's own: `## Project Tasks` rendered `id="project-tasks"`,
   # which is the Turbo Stream target `Projects::TasksController` replaces — resolved by
-  # `getElementById`, first match in tree order, and the README card renders BEFORE the tasks
+  # `getElementById`, first match in tree order, and the README panel renders BEFORE the tasks
   # panel. GitHub's convention, so a maker who knows it is not surprised by it.
   test "a heading keeps its id, normalized to a-z 0-9 and hyphens, inside the user-content namespace" do
     html = Maker::Markdown.render(<<~MD)

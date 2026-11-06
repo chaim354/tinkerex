@@ -158,21 +158,39 @@ module Maker
     # link, and this page only stops showing it.
     def shown?(node) = permits?(node) && !hidden?(node)
 
-    # The FOLDER's own README, rendered, or nil when it holds none. `defined?` rather than `||=`
-    # because nil is a real answer here and `||=` would re-read the port on every call for a folder
-    # that has no README at all.
+    # STEP ONE OF THE README (2026-11-05, live regions): read and parse, so `#thumbs` can fold the
+    # `image` regions' node ids into the page's one thumbnail query. `defined?` rather than `||=`
+    # because nil is a real answer here (no README at all).
+    def readme_source
+      return @readme_source if defined?(@readme_source)
+
+      @readme_source = Maker::Readme.source(user: owner, rows: listing.loose)
+    end
+
+    # The FOLDER's own README, rendered LIVE through the public seam, or nil when it holds none.
+    #
+    # `base_path` IS THE FOLDER'S OWN LIBRARY PATH, NOT "": `listing.path_index` keys on full
+    # library paths ("Projects/desk-lamp/models/base.stl"), so a README at the folder root
+    # resolves `models/base.stl` against `listing.path` ("Projects/desk-lamp"). A base that is
+    # not the README's real directory resolves NOTHING and the links quietly become plain text —
+    # pinned in test/services/maker/readme_test.rb ("a base_path that is not the README's own
+    # directory resolves nothing").
+    #
+    # EVERY DIRECTIVE RENDERS HERE, tasks included (spec §5): the maker put the region in the README
+    # on purpose, and the bundle already ships the file with its snapshot. The links are the public
+    # byte and preview URLs; a BOM part that is an inventory item is a name, never a link.
     def readme
       return @readme if defined?(@readme)
 
-      # `base_path` IS THE FOLDER'S OWN LIBRARY PATH, NOT "": `listing.path_index` keys on full
-      # library paths ("Projects/desk-lamp/models/base.stl"), so a README at the folder root
-      # resolves `models/base.stl` against `listing.path` ("Projects/desk-lamp"). A base that is
-      # not the README's real directory resolves NOTHING and the links quietly become plain text —
-      # pinned in test/services/maker/readme_test.rb ("a base_path that is not the README's own
-      # directory resolves nothing").
-      @readme = Maker::Readme.for(user: owner, rows: listing.loose, base_path: listing.path, listing:,
-                                  link: ->(id) { file_url_for(id) })
+      source = readme_source
+      @readme = source && Maker::Readme.render(
+        source, base_path: listing.path, index: listing.path_index,
+        link: ->(id) { file_url_for(id) }, image_link: ->(id) { image_url_for(id) },
+        context: Maker::Readme::Live::Context.new(user: owner, project:, listing:, bom_lines:, tasks:, entries:, thumbs:)
+      )
     end
+
+    def tasks = @tasks ||= project.tasks.order(:position, :created_at).to_a
 
     # The README's own ROW, or nil — the same row `#readme` renders, asked for as a row so the
     # bundle manifest can name it (`readme_path`) without rendering anything. `Maker::Readme.row_in`
@@ -189,7 +207,7 @@ module Maker
     end
 
     def bom_lines
-      @bom_lines ||= (bom = project.current_bom) ? bom.lines.includes(:inventory_item).to_a : []
+      @bom_lines ||= (bom = project.current_bom) ? bom.lines.includes(:inventory_item, :supplier).to_a : []
     end
 
     def connections = @connections ||= project.connections.to_a
@@ -446,7 +464,9 @@ module Maker
         owner,
         [ cover_node&.node_id ] + shown_rows.map(&:node_id) +
           entries.flat_map(&:file_attachments).map(&:node_id).select { |id| page_nodes.key?(id) } +
-          blocks.select { |block| block.kind == "image" }.filter_map { |block| block_image_node(block)&.node_id }
+          blocks.select { |block| block.kind == "image" }.filter_map { |block| block_image_node(block)&.node_id } +
+          # THE README'S LIVE PICTURES, only when its panel shows — a hidden README is never read here.
+          (panel_visible?("readme") ? Array(readme_source&.image_node_ids) : [])
       )
     end
 
@@ -609,6 +629,19 @@ module Maker
     def preview_url_for(node_id, kind: "thumbnail")
       Rails.application.routes.url_helpers.public_file_preview_path(handle, project.slug, node_id, kind,
                                                                     **link_params)
+    end
+
+    # THE VISITOR'S PICTURE OF A FILE, BY NODE (2026-11-05, live regions; spec §5) — the public twin
+    # of ProjectsHelper#maker_image_link: a picture file is its byte URL, any other file its READY
+    # thumbnail through the preview route, and nil (the picture is dropped) while none is ready.
+    # WHICH FILES ARE PICTURES IS `Maker::Readme::Live.picture?`'s ONE ANSWER — the inline-image
+    # list plus SVG — shared with the `image` emitter and the maker's arm, so the file, the maker's
+    # page and a visitor's cannot disagree about which files draw from their own bytes.
+    def image_url_for(node_id)
+      row = listing.row_for(node_id)
+      return file_url_for(node_id) if row.nil? || Maker::Readme::Live.picture?(row.node.name)
+
+      thumbs.thumb(node_id)&.showable? ? preview_url_for(node_id) : nil
     end
 
     # WHETHER ONE PANEL HAS A PUBLIC FACE ON THIS PROJECT (hardening, 2026-09-08; tinkerex#283) — the

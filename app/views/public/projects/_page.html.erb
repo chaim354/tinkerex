@@ -103,18 +103,6 @@
   </div>
 <% end %>
 
-<% readme = pub.readme %>
-<% if readme&.html.present? %>
-  <section class="panel readme-panel">
-    <div class="markdown"><%= readme.html %></div>
-    <% if readme.note %>
-      <p class="muted readme-note"><%= readme.note %></p>
-    <% end %>
-  </section>
-<% elsif readme&.note %>
-  <p class="muted readme-note"><%= readme.note %></p>
-<% end %>
-
 <%# THE HERO (stage 4, S4-5; story 5.7): the same picture the private page has led with since S4-1,
     in the same place on it, on the page a visitor sees. An image-role cover is the picture itself
     through the public BYTE route; any other cover is its READY server thumbnail. NO POLL and NO
@@ -162,7 +150,8 @@
   THE MAP IS THE WHOLE DEFINITION OF "HAS A PUBLIC FACE". `tasks`, `sheets` and `publish` are
   absent from it and are therefore absent from a visitor's page WHATEVER the order says, which is
   exactly what they were before this loop existed -- there is no second list to keep in step, and a
-  maker who drags Tasks to the top does not publish their task list.
+  maker who drags Tasks to the top does not publish their task list. `readme` joined it on
+  2026-11-05 — the README used to be pinned above the hero outside this loop.
 
   EVERY PARTIAL IS NAMED WITH ITS FULL PATH, AND MUST STAY THAT WAY -- including `repo_card` below.
   A bare `render "photos"` resolves against the CONTROLLER's prefixes, not this file's directory:
@@ -195,7 +184,8 @@
   leaves this page entirely, along with the bundle. The key carries the node id, `pub.folder_dir`
   resolves it against the same listing the layout was built from, and the map below never sees it.
 %>
-<% public_panels = { "attachments" => "public/projects/files",
+<% public_panels = { "readme"      => "public/projects/readme",
+                     "attachments" => "public/projects/files",
                      "photos"      => "public/projects/photos",
                      "schematics"  => "public/projects/schematics",
                      "build_log"   => "public/projects/build_log",

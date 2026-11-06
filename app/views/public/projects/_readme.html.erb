@@ -1,0 +1,24 @@
+<%#
+  THE README, PUBLIC (2026-11-05, live regions; spec §2): where the maker placed it, through the
+  layout like every other panel — it was pinned above the hero before, whatever the order said.
+  Rendered LIVE through the public seam (Maker::PublicProject#readme: byte and preview URLs, the
+  owner's BOM, tasks and build log), so a visitor sees the tables the maker does. A README that is
+  gone or unreadable renders its note, as before. Nothing here names a maker route (the seam
+  guard's third arm, test/architecture_invariants_test.rb).
+  Local: pub (Maker::PublicProject).
+%>
+<% readme = pub.readme %>
+<% if readme&.html.present? || readme&.note %>
+  <section class="panel readme-panel">
+    <div class="panel-head">
+      <h2><%= panel_title(pub.layout, "readme") %></h2>
+    </div>
+    <%= panel_intro(pub.layout, "readme") %>
+    <% if readme.html.present? %>
+      <div class="markdown"><%= readme.html %></div>
+    <% end %>
+    <% if readme.note %>
+      <p class="muted readme-note"><%= readme.note %></p>
+    <% end %>
+  </section>
+<% end %>

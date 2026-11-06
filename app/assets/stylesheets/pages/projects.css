@@ -218,6 +218,11 @@
   .markdown { font-size: 13px; line-height: 1.55; max-height: 360px; overflow: auto; margin-top: 6px; }
   .markdown > :first-child { margin-top: 0; }
   .markdown > :last-child { margin-bottom: 0; }
+  /* A task-list item (2026-11-05): kramdown's `- [x]` checkbox stands where the bullet was, as
+     GitHub draws it; the item carries no class (the sanitiser strips them), so it is found by its
+     child. */
+  .markdown li:has(> input[type="checkbox"]) { list-style: none; }
+  .markdown li > input[type="checkbox"] { margin: 0 6px 0 -1.4em; vertical-align: middle; }
   .markdown h1, .markdown h2, .markdown h3, .markdown h4, .markdown h5, .markdown h6 { font-size: 1em; margin: 0.8em 0 0.3em; }
   .markdown h1 { font-size: 1.3em; }
   .markdown h2 { font-size: 1.15em; }
@@ -415,12 +420,19 @@
   /* --- The sweep's own line (stage 4, S4-2): under the Files head, above the groups. --- */
   .sweep-note { margin: 0 0 10px; font-size: 11px; }
 
-  /* --- The README editor (stage 4, S4-4): the composer inside a README card. `.composer` itself
+  /* --- The README panel (2026-11-05): a document, not a card, so its markdown gets the room a
+     table needs; the generic .markdown cap (360px, above) is the card's. --- */
+  .readme-panel .markdown { max-height: 70vh; margin-top: 0; }
+  .readme-panel .readme-editor { margin-top: 12px; }
+
+  /* --- The README editor (stage 4, S4-4): the composer inside the README panel (a README card until 2026-11-05). `.composer` itself
      is a component (components.css) and is only QUALIFIED here, never redeclared — design-system
      rule 3. The mount and the textarea are two states of one control: CodeMirror renders into the
      first and hides the second, and with no JS the second is what the maker types into. --- */
   .readme-editor { margin-top: 10px; }
   .readme-editor .readme-form { display: flex; flex-direction: column; gap: 8px; }
+  .readme-editor .readme-insert { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .readme-editor .readme-insert-label { font-size: 12px; margin-right: 2px; }
   .readme-editor .readme-source { width: 100%; font: 12px/1.5 var(--font-mono); resize: vertical; }
   .readme-editor .readme-mount .cm-editor { max-height: 60vh; }
   .readme-editor .readme-bar { display: flex; align-items: center; gap: 10px; }

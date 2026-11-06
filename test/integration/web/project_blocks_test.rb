@@ -76,7 +76,8 @@ module Web
       b = block!(kind: "text", body: "b")
       get project_path(@project)
       ids = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["id"] }
-      assert_equal [ bkey(a), bkey(b), "attachments" ], ids.first(3)
+      # `project-readme`: the README panel leads the fixed panels since 2026-11-05 (Maker::ProjectKind::LEAD).
+      assert_equal [ bkey(a), bkey(b), "project-readme" ], ids.first(3)
     end
 
     # --- the edit page -------------------------------------------------------------------------------

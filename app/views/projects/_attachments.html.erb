@@ -33,11 +33,10 @@
   same element for the same reason — one document-level listener, every tile. A folder panel is a
   SIBLING subtree and carries its own pair; there is no element that could cover both.
 
-  THE PANEL OPENS WITH THE FOLDER'S OWN CARD (stage 4, S4-1): `projects/_repo_card` over
-  ProjectsController#show's @root_card when @listing.root_repo? (the folder IS a working tree —
-  the head also carries a `repo` badge and Commits/History, and the loose caption says the sweep
-  leaves those files alone), else `projects/_readme_card` over @readme when the folder has a plain
-  README. Neither is inside the "no files yet" check below: a README is content.
+  THE PANEL OPENS WITH THE REPOSITORY CARD when the folder IS a working tree (`projects/_repo_card`
+  over ProjectsController#show's @root_card: latest commit, tag, Commits/History) — its git facts
+  alone, since 2026-11-05: the README is its own panel (projects/_readme). Neither is inside the
+  "no files yet" check below.
 
   THE PANEL IS THE FOLDER'S ROOT NOW, NOT THE WHOLE TREE (2026-09-08, folder panels; spec
   decision 4). Every DEPTH-ONE subfolder is its own panel (projects/_folder_panel), so the
@@ -159,17 +158,10 @@
           data-scanreload-since-value="<%= current_user.library_scanned_stamp %>"></span>
   <% end %>
 
-  <%# THE ROOT'S CARD (stage 4, S4-1), above the groups, for every project that has one: the
-      repository card when the folder itself is a working tree (README, latest commit, tag), the
-      README alone otherwise. Outside the empty check below on purpose — a README is content.
-      STAGE 4, S4-4: the card renders even with NO README, because it now carries the "Write a
-      README" door (@readme_editable is true whenever the folder is available). %>
+  <%# THE REPOSITORY CARD, when the folder itself is a working tree: latest commit, tag, Commits and
+      History. The README it used to carry is the README panel's (2026-11-05). %>
   <% if @root_card %>
-    <%= render "projects/repo_card", card: @root_card, project: @project,
-               readme_row: @readme_row, editable: @readme_editable %>
-  <% elsif @readme || @readme_editable %>
-    <%= render "projects/readme_card", readme: @readme, editable: @readme_editable,
-               readme_row: @readme_row, project: @project %>
+    <%= render "projects/repo_card", card: @root_card %>
   <% end %>
 
   <%# BACKUPS COME OUT FIRST, pulled out of the tree wherever they physically sit and keyed on the
@@ -180,7 +172,7 @@
       like every other group, for the rare case an
       addon's own output happens to look like one. %>
   <% backups = @listing.backups.reject { |r| @generated_ids.include?(r.node_id) } %>
-  <%# THE README THE CARD ABOVE RENDERS IS NOT LOOSE (2026-11-02, the UX audit's C3): it is the
+  <%# THE README THE README PANEL RENDERS IS NOT LOOSE (2026-11-02, the UX audit's C3): it is the
       project's own description, the filing pass never moves it (`:project_readme`), and listing it
       under Loose beside "a README stays here" contradicted itself in one sentence. It is still in
       Recently changed and in the Library. Only the card's row leaves: a second README-named file

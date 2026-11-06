@@ -114,11 +114,14 @@ module Maker
       end
     end
 
-    test "every kind's order is a permutation of PANELS, and every kind opens with Files then Photos" do
+    test "every kind's order is a permutation of PANELS, and every kind opens with README, Files then Photos" do
       Maker::Project::KINDS.each do |kind|
         order = Maker::ProjectKind.layout_for(kind:, overrides: nil).order
         assert_equal Maker::Project::PANELS.sort, order.sort, "#{kind} drops or invents a panel"
         assert_equal Maker::ProjectKind::LEAD, order.first(Maker::ProjectKind::LEAD.size), "#{kind}"
+        # PINNED BY NAME, not through the constant: the line above stays green with `readme` gone
+        # from LEAD (mutation-checked 2026-11-05), and the README leading every page is the claim.
+        assert_equal "readme", order.first, "#{kind} does not open with the README"
       end
     end
 
@@ -137,9 +140,9 @@ module Maker
       refute laser.visible?("releases")
       assert laser.visible?("build_log")
 
-      # `models` (2026-10-21) is third in PANELS, so it is the first key after the lifted pair.
+      # `models` (2026-10-21) is fourth in PANELS since `readme` led it (2026-11-05), so it is the first key after the lifted pair.
       electronics = Maker::ProjectKind.layout_for(kind: "electronics", overrides: nil)
-      assert_equal %w[attachments photos schematics wiring models build_log], electronics.visible.first(6)
+      assert_equal %w[readme attachments photos schematics wiring models], electronics.visible.first(6)
     end
 
     test "an unknown kind falls back to other's preset rather than raising" do
@@ -228,7 +231,7 @@ module Maker
       [ nil, { "hidden" => %w[tasks] }, { "order" => Maker::Project::PANELS } ].each do |overrides|
         order = Maker::ProjectKind.layout_for(kind: "other", overrides:, folders: FOLDERS).order
 
-        assert_equal [ "attachments", key(FIRMWARE), key(MODELS), "photos" ], order.first(4), overrides.inspect
+        assert_equal [ "readme", "attachments", key(FIRMWARE), key(MODELS), "photos" ], order.first(5), overrides.inspect
         assert_equal (Maker::Project::PANELS + [ key(FIRMWARE), key(MODELS) ]).sort, order.sort, overrides.inspect
       end
     end
@@ -405,7 +408,7 @@ module Maker
       assert_equal Maker::Project::PANELS, other.order
       assert_equal [], other.hidden
       assert_equal Maker::Project::PANELS, other.visible
-      assert_equal %w[attachments photos schematics wiring models build_log],
+      assert_equal %w[readme attachments photos schematics wiring models],
                    Maker::ProjectKind.layout_for(kind: "electronics", overrides: nil, folders: []).visible.first(6)
     end
 
@@ -510,7 +513,7 @@ module Maker
 
     test "block keys join the vocabulary, a block the stored order does not name lands FIRST, and kinds are kept" do
       layout = Maker::ProjectKind.layout_for(kind: "other", overrides: nil, folders: FOLDERS, blocks: BLOCKS)
-      assert_equal [ bkey("aaaaaaaaaaaa"), bkey("bbbbbbbbbbbb"), "attachments" ], layout.order.first(3)
+      assert_equal [ bkey("aaaaaaaaaaaa"), bkey("bbbbbbbbbbbb"), "readme" ], layout.order.first(3)
       assert layout.block?(bkey("aaaaaaaaaaaa"))
       refute layout.block?("attachments")
       assert_equal "text", layout.block_kind(bkey("aaaaaaaaaaaa"))
