@@ -65,8 +65,9 @@ const saveFailure = (e) => {
 // `params`, when opened via "Load"/"Duplicate & tweak"/the history panel, or null for a fresh
 // generator.
 // editingState: THE SAVED BOX THIS EDITOR IS EDITING — a full entry from state.list(), or null for
-// a new box. Present, Save appends a revision to it; absent, Save creates one. That is the whole
-// difference between the two acts, and the header below is what makes it visible, because the
+// a new box. Present, Save appends a revision to it; absent, Save creates one — and from then on
+// this editor is editing the box it made, so the next Save appends to that (`adopt`). That is the
+// whole difference between the two acts, and the header below is what makes it visible, because the
 // button says the same word either way.
 // onBack(): return to the gallery. onSaved(): a save completed — the caller re-fetches states.
 // onOpenGenerator(key, prefillValues, editingState): re-open the editor (same or another
@@ -152,17 +153,19 @@ export function mountEditor(root, {
   $("key").textContent = generator.key
   $("title").textContent = generator.title
 
-  // WHICH BOX THIS EDITOR IS EDITING, and at which revision. The number lives in a variable rather
-  // than being read off `editingState` at each use because a successful save APPENDS one, so what
-  // is on screen goes stale the moment the user presses Save (see onSaveClick's bump).
-  let revision = editingState?.revision ?? 1
+  // WHICH BOX THIS EDITOR IS EDITING, and at which revision. Both live in variables rather than being
+  // read off the `editingState` argument because a save changes them: a revision APPENDS one, so the
+  // number on screen goes stale the moment the user presses Save (see onSaveClick's bump), and a
+  // save that MAKES a box leaves this editor editing that box (see `adopt` below).
+  let editing = editingState
+  let revision = editing?.revision ?? 1
   const renderEditingHeader = () => {
-    if (!editingState) return
+    if (!editing) return
     $("editing").hidden = false
-    $("editing").textContent = `Editing “${editingState.name}” · v${revision}`
+    $("editing").textContent = `Editing “${editing.name}” · v${revision}`
   }
   renderEditingHeader()
-  if (editingState) $("name").value = editingState.name
+  if (editing) $("name").value = editing.name
 
   // ONLY MEANINGFUL WHILE EDITING — a fresh generator's Save already creates a new box, so a second
   // button saying so would be two controls for one act.
@@ -174,7 +177,10 @@ export function mountEditor(root, {
   // stylesheet carries `.addon-card[hidden]` and `.box-toc-list li[hidden]` rules for exactly this
   // collision; a bundle cannot add a third (it ships no CSS), so it removes the node instead. Every
   // other `hidden` in this file sits on a class that sets no `display` and works as written.
-  if (!editingState) $("save-as-new").remove()
+  //
+  // HELD IN A VARIABLE so `adopt` can put it back once a save gives this editor a box to fork from.
+  const saveAsNewBtn = $("save-as-new")
+  if (!editing) saveAsNewBtn.remove()
 
   // The third argument is where the chooser reports a failure it cannot handle itself (a host that
   // advertises pick:folder and wired up no chooser, a capability answered false). Without it the
@@ -194,12 +200,36 @@ export function mountEditor(root, {
   // Loading a revision re-opens this same editor, still editing this same box, with those values in
   // the form — which is what makes an old design recoverable when the FILE of that revision is gone
   // (on share and s3 it is: one file per box, overwritten — design §2).
-  const historyPanel = editingState ? mountHistory($("history"), {
-    stateId: editingState.id,
-    currentRevision: revision,
-    onLoad: (params) => onOpenGenerator(generator.key, params, editingState),
-  }) : null
-  if (historyPanel) destroyers.push(historyPanel)
+  //
+  // RE-MOUNTED BY `adopt`, because the box it shows is whichever one this editor is editing NOW.
+  let historyPanel = null
+  const mountHistoryPanel = () => {
+    historyPanel?.destroy()
+    historyPanel = mountHistory($("history"), {
+      stateId: editing.id,
+      currentRevision: revision,
+      onLoad: (params) => onOpenGenerator(generator.key, params, editing),
+    })
+  }
+  if (editing) mountHistoryPanel()
+  destroyers.push({ destroy: () => historyPanel?.destroy() })
+
+  // FROM HERE ON THIS EDITOR IS EDITING `state`: the box its first save made, the fork "Save as new
+  // box" made, or the box a join offer appended to. Without this the editor went on believing it was
+  // making a new box, so the NEXT save was another create — and in a plain folder that is
+  // Tools::AddonsController#refuse_taken_names!'s terminal 422 ("…already exists in that folder.
+  // Rename the save or pick another folder."), refused by the file the first save had just written.
+  // Save, tweak, save again is the flow somebody iterating on a design takes, and it was a dead end
+  // everywhere but a project folder, where a 409 join offer happened to rescue it. After a fork the
+  // same gap pointed the next save at the ORIGINAL, under the fork's name, which the fork's own file
+  // then refused the same way.
+  const adopt = (state) => {
+    editing = state
+    revision = state.revision ?? 1
+    renderEditingHeader()
+    if (!saveAsNewBtn.isConnected) $("save").before(saveAsNewBtn)
+    mountHistoryPanel()
+  }
   destroyers.push(mountSections(root))
   destroyers.push(mountTraySync($("groups")))
 
@@ -310,7 +340,7 @@ export function mountEditor(root, {
 
     // WHICH BOX THIS SAVE REVISES, or null to create one. A fresh generator has nothing to revise,
     // and "Save as new box" is the user saying so explicitly.
-    const revising = asNew || !editingState ? null : editingState
+    const revising = asNew || !editing ? null : editing
 
     // THE BOX AN OFFER TO JOIN WAS ACCEPTED FOR. Written only by the arm below that makes that
     // offer, and read once, immediately after the first save returns.
@@ -366,6 +396,10 @@ export function mountEditor(root, {
       onReplace: onReplace(state),
     })
 
+    // THE BOXES THIS EDITOR ALREADY KNEW OF, taken before the save so findCreated can tell the box a
+    // create makes from every box that existed already.
+    const known = new Set(states.map((s) => s.id))
+
     try {
       let saved = await submit(revising)
       // The retry the dialog promised, now carrying the id. `onReplace(join)` gives it the PLAIN
@@ -383,24 +417,34 @@ export function mountEditor(root, {
         // where the SERVER's answer wins.
         //
         // WRITTEN BACK ONTO THE STATE OBJECT TOO, because it is the SAME object a re-mount is handed:
-        // the history panel's onLoad passes `editingState` straight back to showEditor, so bumping
-        // only the local would make loading a revision reopen the editor one behind. boxes.js
-        // replaces this object wholesale on the states refresh `onSaved` triggers, so the mutation
-        // is short-lived by construction.
+        // the history panel's onLoad passes `editing` straight back to showEditor, so bumping only
+        // the local would make loading a revision reopen the editor one behind. boxes.js replaces
+        // this object wholesale on the states refresh `onSaved` triggers, so the mutation is
+        // short-lived by construction.
         if (revising) {
           revision += 1
           revising.revision = revision
           renderEditingHeader()
           historyPanel?.refresh(revision)
         }
-        // REBOUND, NOT MERELY TRIGGERED. `states` is the array this mount was handed and
-        // findStateOwning reads it at call time, so without taking the refreshed list back a box
-        // created in THIS session stays invisible to the next save in it — save, tweak, save again
-        // then mints a SECOND box (probed: count=2, revisions=[1, 1]), which is exactly the flow
-        // somebody iterating on a design takes. It is also what makes a second offer in one session
-        // count up rather than quoting the same revision number twice. The `|| states` keeps the old
-        // list when the caller answers nothing, as onSaved's own catch does when the refetch fails.
+        // A JOIN APPENDED TO A BOX THIS EDITOR WAS NOT EDITING: the same optimistic bump, onto the
+        // box that took it, which this editor then edits. `join` and `revising` are never both set —
+        // onReplace offers a join only to a save that is not revising.
+        if (join) {
+          join.revision = (join.revision ?? 1) + 1
+          adopt(join)
+        }
+        // REBOUND, NOT MERELY TRIGGERED. `states` is the array this mount was handed, and both
+        // lookups that read it do so at call time: findCreated just below, which is how this editor
+        // learns which box its own create made, and findStateOwning, for a later save that is not
+        // revising. Without taking the refreshed list back, a box made in THIS session is invisible
+        // to both. The `|| states` keeps the old list when the caller answers nothing, as onSaved's
+        // own catch does when the refetch fails.
         states = await onSaved() || states
+        if (!revising && !join) {
+          const made = findCreated(states, known, name, generator.key)
+          if (made) adopt(made)
+        }
       }
     } catch (e) {
       setSaveStatus(saveFailure(e), true)
@@ -415,8 +459,10 @@ export function mountEditor(root, {
   const onSave = () => onSaveClick(false)
   const onSaveNew = () => onSaveClick(true)
   $("save").addEventListener("click", onSave)
-  // `?.` because the button is REMOVED, not hidden, when there is nothing to fork (see above).
-  $("save-as-new")?.addEventListener("click", onSaveNew)
+  // ON THE HELD NODE, NEVER `$("save-as-new")`: on a fresh generator the button is detached here
+  // (REMOVED, not hidden — see above), so a lookup finds nothing, and the button `adopt` later puts
+  // back would be one that does nothing when pressed.
+  saveAsNewBtn.addEventListener("click", onSaveNew)
 
   const onBackClick = () => onBack()
   $("back").addEventListener("click", onBackClick)
@@ -425,7 +471,7 @@ export function mountEditor(root, {
     for (const d of destroyers) d?.destroy?.()
     $("preview-btn").removeEventListener("click", preview.preview)
     $("save").removeEventListener("click", onSave)
-    $("save-as-new")?.removeEventListener("click", onSaveNew)
+    saveAsNewBtn.removeEventListener("click", onSaveNew)
     $("back").removeEventListener("click", onBackClick)
   }
 }
@@ -528,6 +574,23 @@ function findStateOwning(states, replaceFiles, generatorKey) {
     return names.has(`${base}.svg`) || names.has(`${base}-plan.svg`)
   })
   return matches.length === 1 ? matches[0] : null
+}
+
+// THE BOX A CREATE JUST MADE, read out of the states list refreshed after it, because the save door
+// answers a create with a redirect rather than JSON and `host.files.save` therefore hands back no id
+// (`data` is `{}`; the SDK's own comment says so). It is the entry that was NOT in the list this
+// editor held before the save, made with this generator, under the name just sent — the host stores
+// `name` exactly as posted, so equality is exact.
+//
+// EXACTLY ONE OR NOTHING, the same conservatism as findStateOwning above. The refresh runs after the
+// save committed, so this save's own box is always in it; a second match can only be a same-named box
+// made elsewhere meanwhile, and adopting either would be a guess. Nothing adopted is the safe answer:
+// the next save is a create again, which the host refuses rather than letting it overwrite anything.
+// A refresh that failed hands back the old list, which holds no new entry at all.
+function findCreated(states, knownIds, name, generatorKey) {
+  const made = states.filter((s) =>
+    !knownIds.has(s.id) && s.name === name && String(s.data?.generator ?? "") === generatorKey)
+  return made.length === 1 ? made[0] : null
 }
 
 function escapeHtml(s) {

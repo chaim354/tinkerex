@@ -50,11 +50,14 @@ class BoxRevisionsTest < ApplicationSystemTestCase
   end
 
   test "a left click on a saved box opens the editor, editing that box" do
-    create_box("Shelf box", x: "123")
-    # A FRESH GENERATOR HAS NOTHING TO FORK FROM, so the button is not there to press. Asserted from
-    # the editor create_box just saved in, which is that state exactly.
+    # A FRESH GENERATOR HAS NOTHING TO FORK FROM, so the button is not there to press. Asserted
+    # BEFORE any save: once the editor has saved, it is editing the box it made and the button is
+    # back (the fresh-generator revision test below asserts that half).
+    visit tools_addon_path("boxes")
+    open_addon_card("ABox")
     assert_no_selector '[data-role="save-as-new"]'
 
+    create_box("Shelf box", x: "123")
     open_saved("Shelf box")
 
     assert_selector '[data-role="editing"]', text: "Editing “Shelf box” · v1"
@@ -90,6 +93,39 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     assert_no_console_errors ignoring: [ SAMPLE_404 ]
   end
 
+  # THE FLOW SOMEBODY ITERATING ACTUALLY TAKES — a fresh generator, save, tweak a param, save again,
+  # no navigation in between — into a PLAIN folder (here the library root), which is where it was a
+  # dead end. The editor did not know the id of the box its own first save had made, so the second
+  # save was another CREATE, and #refuse_taken_names! answered it with the terminal 422 "…already
+  # exists in that folder. Rename the save or pick another folder." Every other revising test here
+  # navigates to a saved box first, and the one same-mount test saved into a PROJECT folder, where a
+  # 409 join offer happened to rescue it — which is why nothing caught this.
+  test "save, tweak, save again from a fresh generator revises the box it just made" do
+    visit tools_addon_path("boxes")
+    open_addon_card("ABox")
+    find('[data-param="x"]').set("111")
+    find('[data-role="name"]').set("Shelf box")
+    find('[data-role="save"]').click
+    assert_selector '[data-role="save-status"]', text: "Saved."
+    node_id = Maker::AddonState.sole.files.sole.node_id
+
+    # The first save turned this editor into one editing the box it made, exactly as opening that
+    # box from the saved rail would have.
+    assert_selector '[data-role="editing"]', text: "Editing “Shelf box” · v1"
+    assert_selector '[data-role="save-as-new"]'
+
+    find('[data-param="x"]').set("222")
+    find('[data-role="save"]').click
+    state = wait_for_revision(2)
+
+    assert_equal 1, Maker::AddonState.count
+    assert_equal [ 1, 2 ], state.revisions.map(&:revision)
+    assert_equal "222", state.data["params"]["x"]
+    assert_equal node_id, state.files.sole.node_id
+    assert_selector '[data-role="editing"]', text: "Editing “Shelf box” · v2"
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
+  end
+
   test "Save as new box forks the design rather than revising it" do
     create_box("Shelf box")
     open_saved("Shelf box")
@@ -101,6 +137,18 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     assert_equal 2, Maker::AddonState.count
     assert_equal [ 1, 1 ], Maker::AddonState.order(:id).map(&:revision)
     assert_equal [ "Shelf box", "Shelf box mk2" ], Maker::AddonState.order(:id).map(&:name)
+
+    # AND THE EDITOR NOW EDITS THE FORK, not the box it was opened on. It used to go on naming the
+    # ORIGINAL, so the next Save revised that box under the fork's name — and the fork's own
+    # `shelf-box-mk2.svg`, which the original does not own, refused it with the terminal 422.
+    assert_selector '[data-role="editing"]', text: "Editing “Shelf box mk2” · v1"
+    find('[data-param="x"]').set("222")
+    find('[data-role="save"]').click
+    fork = wait_for_revision(2)
+
+    assert_equal "Shelf box mk2", fork.name
+    assert_equal "222", fork.data["params"]["x"]
+    assert_equal [ "Shelf box", 1 ], Maker::AddonState.order(:id).first.then { |s| [ s.name, s.revision ] }
   end
 
   test "the history panel is lazy, refetches after a save, and loads a revision back" do
@@ -188,15 +236,30 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     assert_equal 2, original.revision
     assert_equal "222", original.data["params"]["x"]
     assert_equal [ 1, 2 ], original.revisions.map(&:revision)
+
+    # AND THE EDITOR NOW EDITS THAT BOX, so the next save appends without asking a second time. Were
+    # it still a fresh editor, this save would meet the same 409 and an unanswered confirm, which the
+    # next page interaction raises on.
+    assert_selector '[data-role="editing"]', text: "Editing “Shelf box” · v2"
+    find('[data-param="x"]').set("333")
+    find('[data-role="save"]').click
+    wait_for_revision(3)
+    assert_equal 1, Maker::AddonState.count
+    assert_selector '[data-role="editing"]', text: "Editing “Shelf box” · v3"
+    assert_no_console_errors ignoring: [ SAMPLE_404, SAVE_409 ]
   end
 
-  # THE FLOW SOMEBODY ITERATING ACTUALLY TAKES — save, tweak a param, save again, with no navigation
-  # in between — and the one that survived this branch's first round. `mountEditor` is handed
-  # `states` at mount and the router used to rebind only its own copy, so a box created moments
-  # earlier was invisible to the lookup that offers to join it: probed at count=2, revisions=[1, 1],
-  # two boxes both called "Shelf box". Every other test in this file navigates first, which is
-  # exactly why none of them could see it.
-  test "save, tweak, save again in one mount joins the box it just created" do
+  # THE SAME-MOUNT FLOW AGAIN, INTO A PROJECT FOLDER — the one place it used to reach a question rather
+  # than a dead end. The eager intake nudge files the first save's output under `design/`, leaving the
+  # project root vacant, so a second save that did not name its box met #resolve_placements' 409 and a
+  # "Save as revision 2?" offer. It names its box now, and the host's own-file exemption answers
+  # instead: no question at all, exactly as when revising a box opened from the saved rail. An
+  # unexpected confirm would be unanswered here, and the next page interaction raises on it.
+  #
+  # THE HEADER IS AWAITED BEFORE THE SECOND SAVE, and not for tidiness: "Saved." appears before the
+  # states refresh that tells the editor which box it made, so a click sent on "Saved." alone can
+  # race it and post a create.
+  test "save, tweak, save again into a project folder revises without asking" do
     lamp = project_folder
 
     visit tools_addon_path("boxes", in: lamp)
@@ -204,22 +267,21 @@ class BoxRevisionsTest < ApplicationSystemTestCase
     find('[data-param="x"]').set("111")
     find('[data-role="name"]').set("Shelf box")
     find('[data-role="save"]').click
-    assert_selector '[data-role="save-status"]', text: "Saved."
+    assert_selector '[data-role="editing"]', text: "Editing “Shelf box” · v1"
+    node_id = Maker::AddonState.sole.files.sole.node_id
 
     find('[data-param="x"]').set("222")
-    accept_confirm(/Save as revision 2 of “Shelf box”/) { find('[data-role="save"]').click }
+    find('[data-role="save"]').click
     wait_for_revision(2)
-    assert_equal 1, Maker::AddonState.count
-    assert_equal "222", Maker::AddonState.sole.data["params"]["x"]
-
-    # AND THE OFFER COUNTS UP. The same staleness would quote "revision 2" a second time, because
-    # the number is read from a list fetched before the first save — so this asserts the rebind
-    # happens after EVERY save, not just the one that created the box.
     find('[data-param="x"]').set("333")
-    accept_confirm(/Save as revision 3 of “Shelf box”/) { find('[data-role="save"]').click }
-    wait_for_revision(3)
+    find('[data-role="save"]').click
+    state = wait_for_revision(3)
+
     assert_equal 1, Maker::AddonState.count
-    assert_no_console_errors ignoring: [ SAMPLE_404, SAVE_409 ]
+    assert_equal "333", state.data["params"]["x"]
+    assert_equal node_id, state.files.sole.node_id
+    assert_selector '[data-role="editing"]', text: "Editing “Shelf box” · v3"
+    assert_no_console_errors ignoring: [ SAMPLE_404 ]
   end
 
   test "a right click on a saved box offers the detail view and the file" do

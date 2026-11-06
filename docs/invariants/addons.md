@@ -348,6 +348,19 @@
   state does NOT own, and ADOPTED it into `state.files`** — §14a's orphaning shape with the sign
   flipped, introduced by the very commit that added the exemption. `resolve_placements`' cheaper
   `.key?` arm is safe only because it runs AFTER this one; reorder the two and it stops being.
+- **A REVISING BUNDLE MUST GO ON EDITING THE BOX ITS OWN CREATE MADE, AND THE SAVE DOOR DOES NOT
+  SAY WHICH ONE.** The exemption above covers only a save that NAMES its box, so an editor that still
+  believes it is making a new box sends its second save as another create, and in a plain folder
+  that is `#refuse_taken_names!`'s terminal 422, refused by the file the first save just wrote. That
+  shipped in the Box Generator: save, tweak, save again was a dead end (2026-11-05). `#create`
+  answers success with a redirect, so `host.files.save`'s `data` is `{}` and carries no id; the
+  boxes editor reads it from the states list refreshed after the save (`findCreated`: the one new
+  entry with this generator and this name, else nothing adopted). **A project folder MASKS the
+  gap:** the intake nudge vacates the picked folder, so the same save meets the answerable 409 and
+  a join offer instead. That is why `box_revisions_test.rb` drives save-tweak-save into the library
+  root as well as into a project folder. A JSON success branch on `#create` would remove the
+  lookup, needs a `Host::LEVEL` bump, and still leaves the fallback in the bundle, because bundles
+  and Rails deploy separately.
 - **A REVISION ROW IS IMMUTABLE, AND `attr_readonly` IS WHAT REFUSES THE REWRITE — NOT THE MISSING
   `updated_at`.** `Maker::AddonStateRevision` marks `addon_state_id`/`revision`/`data` readonly, so
   assignment, `update!` AND `update_columns` all raise on a persisted row (the last with the parent

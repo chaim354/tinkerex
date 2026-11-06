@@ -53,7 +53,8 @@ export default {
         onShowState: showState,
       }))
 
-    // `editingState` present -> Save appends a revision to that box; absent -> Save creates one.
+    // `editingState` present -> Save appends a revision to that box; absent -> Save creates one, and
+    // the editor goes on editing the box it made.
     const showEditor = (key, prefillValues, editingState = null) => {
       const generator = generators.find((g) => g.key === key)
       if (!generator) { showGallery(); return } // an unknown/removed generator key -> back to the gallery
@@ -68,9 +69,9 @@ export default {
         //
         // AND IT RETURNS THE NEW LIST, WHICH THE EDITOR REBINDS. Reassigning `states` here only
         // moves THIS scope's binding: the editor was handed the old array at mount and goes on
-        // holding it, so a box created in the current session was invisible to its own
-        // findStateOwning — save, tweak, save again minted a SECOND box, the flow a user is most
-        // likely to take. Probed before the fix: count=2, revisions=[1, 1].
+        // holding it, and it reads the refreshed list to learn which box its own create just made
+        // (findCreated) — without that, a box made in the current session is invisible to the editor
+        // that made it, and save, tweak, save again is another create.
         onSaved: async () => {
           try { states = await fetchStates() } catch (_e) { /* keep the stale list */ }
           return states
