@@ -21,13 +21,14 @@
 #   ssh root@192.168.1.146 'chown -R 1001:121 /mnt/user/appdata/tinkerex-ci'
 #
 # 1001:121 IS MEASURED, NOT ASSUMED, AND THE OBVIOUS GUESS IS WRONG. In
-# myoung34/github-runner:2.336.0 the runner user is `uid=1001(runner) gid=121(runner)` —
+# myoung34/github-runner:2.338.2-ubuntu-noble (2026-11-05; the same in 2.336.0 before it) the
+# runner user is `uid=1001(runner) gid=121(runner)` —
 # `runner:x:1001:121::/home/runner:/bin/sh` — not the 1000:1000 a reader would expect from the usual
 # first-user convention. An earlier draft of this file said 1000:1000, which would have left the
 # work dir unwritable on first boot in exactly the way described above. Re-measure if the base image
 # tag ever moves:
 #
-#   docker run --rm --entrypoint sh myoung34/github-runner:2.336.0 -c 'id runner'
+#   docker run --rm --entrypoint sh myoung34/github-runner:2.338.2-ubuntu-noble -c 'id runner'
 #
 # And if `RUNNER_UID`/`RUNNER_GID` are ever set on the stack, this chown goes stale SILENTLY and
 # reproduces the same first-boot failure — they are deliberately not set below.
@@ -157,7 +158,7 @@ x-host-budget:
 # correctly, so they stay here. `cpuset` cannot: each runner gets its own threads, so each service
 # names its own.
 x-runner: &runner
-  image: tinkerex-ci-runner:2026-10-22.1
+  image: tinkerex-ci-runner:2026-11-05.1
   restart: unless-stopped
   mem_limit: 4g
   # EQUAL TO mem_limit, SO A RUNNER CAN NEVER SWAP. The box has no swap today and Docker warns that
@@ -199,6 +200,9 @@ services:
       # `maker-unraid` is the BOX label. test/ci_hygiene_test.rb treats those as different things on
       # purpose — a job carrying only a box label names no family and is an offender.
       LABELS: self-hosted,linux,X64,maker-unraid
+      # The runner version is the IMAGE's (ci/runner/Dockerfile's base tag) and never self-updates —
+      # and GitHub retires old versions, so when it does every runner here deregisters in a loop
+      # until the base tag is bumped and the image rebuilt (2026-11-05, on 2.336.0). README cause 4.
       DISABLE_AUTO_UPDATE: "true"
       RUNNER_NAME: tinkerex-unraid-1
     # A BIND MOUNT ONTO THE ARRAY, NOT A NAMED VOLUME — see the header. A named volume would sit on
