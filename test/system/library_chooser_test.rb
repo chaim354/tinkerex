@@ -46,7 +46,8 @@ class LibraryChooserTest < ApplicationSystemTestCase
     click_on "Create the owner account"
 
     unless @share
-      assert_current_path "/"
+      # A person whose account was just made is shown the onboarding wizard first (2026-11-09).
+      assert_current_path welcome_path
       assert_no_console_errors
       return
     end
@@ -71,6 +72,10 @@ class LibraryChooserTest < ApplicationSystemTestCase
     assert_equal "Workshop/3d", find("input[name='relative']", visible: false).value
 
     click_on "Use this folder"
+    # Recent, which sends the new owner on to the onboarding wizard (2026-11-09). Skipping it lands
+    # on Recent, whose getting-started panel names the folder just chosen.
+    assert_current_path welcome_path
+    click_on "Skip for now"
     assert_current_path "/"
     within(".getting-started .file-sources") { assert_text "Workshop/3d" }
     assert_equal "Workshop/3d", Setting.get(Tinkerex::LibraryRoot::KEY)
