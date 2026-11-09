@@ -39,13 +39,15 @@ module Web
 
     test "an unknown return_to redirects as before" do
       upload({ "a.svg" => SVG }, return_to: "https://elsewhere.example/")
-      assert_redirected_to %r{/files/[^/]+\z}
+      # THE EXACT PAGE, NOT A PATTERN: %r{/files/[^/]+\z} also matches the files track's Done URL
+      # (/welcome/files/done?project=lamp), so a guard written that way cannot fail (review, 2026-11-09).
+      assert_redirected_to file_path(@user.nodes.present.find_by!(name: "a.svg").node_id)
     end
 
     test "a flag on an upload into a folder that is no project's changes nothing" do
       cad = FileLayer.current.mkdir(@user, parent_node_id: nil, name: "cad")
       upload({ "a.svg" => SVG }, parent_node_id: cad.node_id, return_to: "welcome_files")
-      assert_redirected_to %r{/files/[^/]+\z}
+      assert_redirected_to file_path(@user.nodes.present.find_by!(name: "a.svg").node_id)
     end
 
     # A README, because it is the one name the sweep never files (Maker::AttachToProject keeps a README
