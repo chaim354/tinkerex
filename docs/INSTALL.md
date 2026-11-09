@@ -205,6 +205,27 @@ The password is in `docker-compose.yml` in plain text, and in Docker's record of
 (`docker volume inspect`), so keep the file to yourself (`chmod 600 docker-compose.yml` on a Mac or
 Linux). Docker masks it in its error messages.
 
+### Reaching the folder from your other computers
+
+No NAS is needed for that: share the library folder from the machine running Tinkerex, with the
+sharing its own system already has, and your other computers open it like any network folder.
+
+- **Mac** — System Settings → General → Sharing: turn on File Sharing, click its ⓘ, add the folder
+  under Shared Folders and give your account Read & Write. For Windows computers, also tick your
+  account under Options… → Windows File Sharing. Connect with Finder's Go → Connect to Server
+  (`smb://<the Mac's name or IP address>`), or `\\<name or IP>` from Windows.
+- **Windows** — right-click the folder → Properties → Sharing → Share…, and add your account with
+  Read/Write. Connect with `\\<the PC's name>\<folder>`, or `smb://<name>/<folder>` from a Mac. A
+  folder inside the WSL2 filesystem cannot be shared this way; keep the library on the Windows drive.
+- **Linux** — install Samba from your distribution and add a share with `path =` the folder,
+  `read only = no` and `force user =` the folder's owner, then `sudo smbpasswd -a <that user>` and
+  restart Samba. `force user` keeps what other computers write owned by the user the app runs as
+  (`PUID`, above), so the app can still edit it.
+
+What your other computers change appears in the app within 15 minutes, the same as for any other
+program writing to the folder, and the `.DS_Store` and `._` files a Mac leaves behind are ignored.
+They reach the files only while this machine is on and awake.
+
 ### Building from source instead of pulling
 
 With a clone of this repository and a sibling checkout of `chaim354/tinkerex-addons` at
