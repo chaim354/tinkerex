@@ -3,8 +3,9 @@
 <%= render "welcome/steps", current: :files %>
 <% if @folder %>
   <div class="welcome-files">
-    <p>Use <strong>Upload</strong> in the top bar: it saves into <code><%= folder_destination.caption %></code>,
-      this project's folder.</p>
+    <%# WHERE THE FILES GO, ONCE. How to add them (Upload, the share, the desktop app) is the shared
+        partial below, whose first sentence is already about Upload. %>
+    <p>What you add goes into <code><%= folder_destination.caption %></code>, this project's folder.</p>
     <% if track == "models" %>
       <p>STL and 3MF files go into <code><%= @shelves.fetch("stl") %>/</code>, and each one becomes a
         model under <%= link_to "3D models", files_models_path %>.</p>

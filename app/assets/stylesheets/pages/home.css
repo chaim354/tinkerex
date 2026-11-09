@@ -75,4 +75,6 @@
   .welcome-nav { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; margin-top: var(--space-5); }
   .welcome-landed h3 { margin: var(--space-4) 0 var(--space-2); font-size: 13px; color: var(--fg-muted); }
   .getting-started-tour { margin-bottom: var(--space-4); }
+  /* Skip sits under the Project step's form, not in its button row, and the 3D Done note under the tiles. */
+  .project-form + .welcome-skip, .welcome-note { margin-top: var(--space-3); }
 }
