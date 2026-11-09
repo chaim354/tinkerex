@@ -860,6 +860,18 @@ class FilesController < ApplicationController
     # same folder N times and report only the last file's view of it.
     intake_result = intake_project_folder(info.node_id)
 
+    # THE ONBOARDING WIZARD'S WAY BACK (2026-11-09): an upload from its Files step lands on its Done
+    # step, single or batch, with the notice it would have had anyway. After the sweep, so Done lists
+    # the files already filed. HTML only: the JSON door's callers read a node_id, never a redirect.
+    if request.format.html? && (done = welcome_return_path(params[:parent_node_id]))
+      notice = if uploads.size > 1 || refused.any?
+        batch_upload_notice(written.map(&:name), intake_result, refused:)
+      else
+        project_intake_notice(intake_result, uploads.first.original_filename)
+      end
+      return redirect_to(done, notice:)
+    end
+
     if uploads.size > 1 || refused.any?
       return redirect_back_or_to(files_path,
                                  notice: batch_upload_notice(written.map(&:name), intake_result, refused:))
@@ -1914,6 +1926,20 @@ class FilesController < ApplicationController
   # THE SAME WALK #show and #inspector make into `@repo_root`, which is what decides whether their
   # views offer the control at all — so the views hide it for exactly the nodes these doors refuse.
   def in_working_tree?(node) = Library::WorkingTree.new(current_user).in_working_tree?(node)
+
+  # WHERE THE WIZARD'S UPLOAD GOES BACK TO, or nil for every other upload. `return_to` IS AN
+  # ALLOWLISTED FLAG NAMING A TRACK, NEVER A URL (rename_move_landing's rule, below), and the project
+  # is found from the folder the bytes went into, so the flag on an upload anywhere else changes
+  # nothing. layouts/_topbar_upload renders it, on WelcomeController#files alone.
+  WELCOME_RETURNS = { "welcome_files" => "files", "welcome_models" => "models" }.freeze
+
+  def welcome_return_path(parent_node_id)
+    track = WELCOME_RETURNS[params[:return_to]]
+    return if track.nil? || parent_node_id.blank?
+
+    project = current_user.maker_projects.find_by(folder_node_id: parent_node_id.to_s)
+    welcome_done_path(track:, project: project.slug) if project
+  end
 
   # WHERE A RENAME OR MOVE LANDS, whichever way it went. `return_to` IS AN ALLOWLISTED FLAG, NOT A
   # URL — the attach control's rule (Projects::AttachmentsController#attach_redirect_path), so it

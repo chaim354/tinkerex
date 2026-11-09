@@ -49,6 +49,11 @@
                   html: { multipart: true } do |f| %>
       <%= hidden_field_tag :parent_node_id, parent_value, id: nil,
                            data: { zip_upload_target: "parent", upload_pick_target: ("parent" if pick) } %>
+      <%# THE WIZARD'S WAY BACK (2026-11-09): only WelcomeController#files sets upload_return, so every
+          other page renders no field and files#create redirects as it always has. %>
+      <% if upload_return %>
+        <%= hidden_field_tag :return_to, upload_return.flag, id: nil %>
+      <% end %>
       <%# `include_hidden: false` IS LOAD-BEARING. `f.file_field` with `multiple: true` renders a
           companion `<input name="file[]" type="hidden" value="">` so an empty selection still
           submits the key, which put a bare "" at the head of `params[:file]`, and the server
@@ -77,6 +82,7 @@
                             uploader_unpack_url_value: files_unpack_folder_path,
                             uploader_unpacked_url_value: files_unpacked_path,
                             uploader_model_exts_value: Maker::FileAttachment::MODEL_EXTS,
+                            uploader_redirect_url_value: upload_return&.url,
                             upload_pick_target: ("uploader" if pick) } do %>
       <%= tag.input type: "file", multiple: true, id: "topbar_upload_file", hidden: true,
                     data: { uploader_target: "input", action: "uploader#upload",

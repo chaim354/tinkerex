@@ -170,6 +170,29 @@ module Web
       assert_select "a[href=?]", welcome_done_path(track: "models", project: project.slug), text: "I'll add files later"
     end
 
+    # TWO WIRE SHAPES BEHIND ONE UPLOAD (§14a: port_writable? picks the door). Branched on the
+    # capability, never skipped, so all three legs run it: share and s3 render the form's hidden
+    # flag, chunk_remote the uploader's redirect value.
+    test "the Files step points the top bar's Upload back at Done" do
+      project, folder = project_with_rows
+      get welcome_files_path(track: "models", project: project.slug)
+      done = welcome_done_path(track: "models", project: project.slug)
+      if FileLayer.current.capabilities.port_writable?
+        assert_select "header.topbar form.uploader" do
+          assert_select "input[type=hidden][name=return_to][value=?]", "welcome_models"
+          assert_select "input[type=hidden][name=parent_node_id][value=?]", folder.node_id
+        end
+      else
+        assert_select "header.topbar [data-controller=uploader][data-uploader-redirect-url-value=?]", done
+        assert_select "header.topbar [data-controller=uploader][data-uploader-parent-node-id-value=?]", folder.node_id
+      end
+      # Every other page renders neither: Recent, with the account no longer pending so it stays there.
+      @user.update_column(:onboarding_pending, false)
+      get root_path
+      assert_select "input[name=return_to]", count: 0
+      assert_select "[data-uploader-redirect-url-value]", count: 0
+    end
+
     test "the files track's Files step names the shelves from the user's own filing rules" do
       project, = project_with_rows
       get welcome_files_path(track: "files", project: project.slug)

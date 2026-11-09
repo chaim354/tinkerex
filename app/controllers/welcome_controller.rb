@@ -50,14 +50,16 @@ class WelcomeController < ApplicationController
   end
 
   # Upload is this page's one action, aimed at the project's folder and pointed back at Done
-  # (FolderDestination#use_upload_return, Task 4). The folder is ensured best-effort first, as
-  # ProjectsController#show does: a create whose folder failed gets another try on every visit, and
-  # a port failure renders the folder-pending state instead of a 500.
+  # (FolderDestination#use_upload_return: the share/s3 form's allowlisted `return_to` flag, the chunk
+  # uploader's redirectUrl). The folder is ensured best-effort first, as ProjectsController#show
+  # does: a create whose folder failed gets another try on every visit, and a port failure renders
+  # the folder-pending state instead of a 500.
   def files
     @folder = project_folder
     if @folder
       use_folder_destination(@folder.node_id, path: Maker::LibraryTree.new(current_user).path_for(@folder.node_id),
                                               primary: true)
+      use_upload_return("welcome_#{track}", url: welcome_done_path(track:, project: @project.slug))
     end
     rules = Maker::FilingRules.for(current_user)
     @shelves = NAMED_EXTS.index_with { |ext| rules.fetch(ext, Maker::ProjectFolders::OTHER) }
