@@ -1,0 +1,11 @@
+<% content_for :title, "Tour — Tinkerex" %>
+<div class="page-head"><h1><%= track == "models" ? "Tinkerex for your 3D models" : "Tinkerex for your files" %></h1></div>
+<%= render "welcome/steps", current: :tour %>
+<div class="welcome-cards">
+  <%= render(track == "models" ? "welcome/tour_models" : "welcome/tour_files") %>
+</div>
+<div class="welcome-nav">
+  <%= link_to "Back", welcome_path, class: "btn" %>
+  <%= link_to "Next: your first project", welcome_project_path(track:), class: "btn primary" %>
+  <%= render "welcome/skip" %>
+</div>

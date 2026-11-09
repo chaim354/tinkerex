@@ -33,6 +33,12 @@ class HomeController < ApplicationController
   SQL
 
   def index
+    # A PERSON WHOSE ACCOUNT WAS JUST MADE IS SHOWN THE ONBOARDING WIZARD FIRST (2026-11-09), from here
+    # and nowhere else: sign-in lands on Recent, so this is the first page a new account opens, while a
+    # link from anywhere else to a file still works. Never the demo account, whose visitor came to
+    # look around (Tinkerex::Demo).
+    return redirect_to(welcome_path) if current_user.onboarding_pending? && !Tinkerex::Demo.demo?(current_user)
+
     # `.includes(:file_attachments)` is load-bearing, not decoration: `cover_node_id` falls back to
     # `derived_cover_node_id`, which reads the `file_attachments` association -- without the eager
     # load that is a query PER PROJECT, bounded only by RECENT_PROJECTS (6), which is constant

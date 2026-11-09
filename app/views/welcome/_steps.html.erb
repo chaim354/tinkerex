@@ -1,0 +1,9 @@
+<%# locals: (current:) %>
+<%# WHERE THE PERSON IS IN THE FIVE STEPS. Text, not links: Back and Next on each page are the way
+    between steps, so a step not reached yet is never a link to a page that needs a project nobody
+    has made. A native <ol>, so a screen reader hears the count. %>
+<ol class="welcome-steps">
+  <% WelcomeController::STEPS.each do |key, label| %>
+    <%= tag.li label, class: ("is-current" if key == current), "aria-current": ("step" if key == current) %>
+  <% end %>
+</ol>

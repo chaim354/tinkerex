@@ -501,6 +501,20 @@ root to: "home#index"
   end
   get "help", to: "help#show", as: :help
 
+  # THE ONBOARDING WIZARD (2026-11-09; docs/superpowers/specs/2026-11-09-onboarding-wizard-design.md).
+  # The track lives in the URL and THE CONSTRAINT IS ITS ONLY CHECK: anything but `files` or `models`
+  # is a 404 before WelcomeController runs, which renders a track's pages by comparing against
+  # "models" and would otherwise show the files track for any word at all.
+  get  "welcome",      to: "welcome#choose", as: :welcome
+  post "welcome/skip", to: "welcome#skip",   as: :welcome_skip
+  scope "welcome/:track", constraints: { track: /files|models/ } do
+    get  "tour",    to: "welcome#tour",           as: :welcome_tour
+    get  "project", to: "welcome#new_project",    as: :welcome_project
+    post "project", to: "welcome#create_project"
+    get  "files",   to: "welcome#files",          as: :welcome_files
+    get  "done",    to: "welcome#done",           as: :welcome_done
+  end
+
   # --- Addons (Tools) — the /tools gallery + every addon's UI ---
   # EVERY addon is now manifest-driven and served by the generic surface (Tools::AddonsController,
   # `tools/:key` below). `generators`, `boxes` and — last — `openscad` have all migrated, so no

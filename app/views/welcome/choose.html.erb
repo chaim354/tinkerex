@@ -1,0 +1,17 @@
+<% content_for :title, "Welcome — Tinkerex" %>
+<div class="page-head"><h1>What will you mostly use Tinkerex for?</h1></div>
+<%= render "welcome/steps", current: :choose %>
+<%# NO ACCENT ON THIS PAGE: the two cards are equal and neither is the default. %>
+<p class="welcome-lede">Pick one to see the parts of Tinkerex that matter most for it, then set up
+  your first project. Everything works either way.</p>
+<div class="welcome-choices">
+  <%= link_to welcome_tour_path(track: "files"), class: "welcome-choice" do %>
+    <h2>Organize my files</h2>
+    <p>Laser, CNC, electronics and documents.</p>
+  <% end %>
+  <%= link_to welcome_tour_path(track: "models"), class: "welcome-choice" do %>
+    <h2>Organize my 3D models</h2>
+    <p>STL, 3MF, STEP and prints.</p>
+  <% end %>
+</div>
+<%= render "welcome/skip" %>

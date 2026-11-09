@@ -1,0 +1,35 @@
+<% content_for :title, "Your first project — Tinkerex" %>
+<div class="page-head"><h1>Your first project</h1></div>
+<%= render "welcome/steps", current: :project %>
+<%= form_with model: @project, scope: :project, url: welcome_project_path(track:), method: :post,
+              class: "project-form" do |f| %>
+  <% if @project.errors.any? %>
+    <div class="form-errors flash-alert" role="alert"><%= @project.errors.full_messages.to_sentence %></div>
+  <% end %>
+  <label class="field">
+    <span>Name</span>
+    <%= f.text_field :name, required: true, autofocus: true %>
+  </label>
+  <label class="field">
+    <span>Description</span>
+    <%= f.text_area :description, rows: 3, placeholder: "What are you building?" %>
+  </label>
+  <% if track == "models" %>
+    <p class="welcome-kind">This will be a 3D printing project. You can change its type later, from
+      the project's Edit page.</p>
+  <% else %>
+    <label class="field">
+      <span>Type</span>
+      <%= f.select :kind, options_for_select(WelcomeController::FILES_KINDS.map { |k| [ Maker::ProjectKind.label(k), k ] },
+                                             @project.kind) %>
+      <span class="field-hint muted">Sets which panels the project's page shows. You can change it later.</span>
+    </label>
+  <% end %>
+  <p class="muted welcome-other-way">A folder you put directly inside <code>Projects/</code> becomes a
+    project on its own, too.</p>
+  <div class="welcome-nav">
+    <%= link_to "Back", welcome_tour_path(track:), class: "btn" %>
+    <%= f.submit "Create project", class: "btn primary" %>
+  </div>
+<% end %>
+<%= render "welcome/skip" %>

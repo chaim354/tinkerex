@@ -1,0 +1,31 @@
+<% content_for :title, "#{@project.name} is ready — Tinkerex" %>
+<div class="page-head"><h1><%= @project.name %> is ready</h1></div>
+<%= render "welcome/steps", current: :done %>
+<% if @groups.any? %>
+  <section class="welcome-landed" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
+    <% @groups.each do |folder, nodes| %>
+      <h3><%= folder ? "#{folder}/" : "Project folder" %></h3>
+      <div class="recent-grid">
+        <% nodes.each do |node| %>
+          <%= render "home/file_card", node: node, covers: @covers, origins: @addon_origins %>
+        <% end %>
+      </div>
+    <% end %>
+  </section>
+  <% if track == "models" %>
+    <p class="muted">Your 3D files are being added to <%= link_to "3D models", files_models_path %> now.</p>
+  <% end %>
+<% else %>
+  <p class="welcome-empty">No files yet. Anything you put in
+    <code><%= Maker::ProjectFolders::ROOT %>/<%= @project.slug %></code> is filed into this project.</p>
+<% end %>
+<div class="welcome-nav">
+  <%# `.btn-name` because the label interpolates a name (design-system.md rule 11: `.btn` is nowrap). %>
+  <%= link_to "Open #{@project.name}", project_path(@project), class: "btn primary btn-name" %>
+  <% if track == "models" %>
+    <%= link_to "Go to 3D models", files_models_path, class: "btn" %>
+  <% else %>
+    <%= link_to "Go to Library", (@project.folder_node_id ? files_path(folder: @project.folder_node_id) : files_path),
+                class: "btn" %>
+  <% end %>
+</div>

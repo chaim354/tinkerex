@@ -122,7 +122,7 @@ module Web
       assert_response :success
     end
 
-    test "a fresh install's first sign-up lands on the library page on share, on Recent elsewhere" do
+    test "a fresh install's first sign-up lands on the library page on share, on the onboarding wizard elsewhere" do
       delete destroy_user_session_path
       User.delete_all
       Setting.forget(KEY)
@@ -137,8 +137,10 @@ module Web
         assert_select "h1", "Library folder"
         assert_select "button.btn.primary", "Use this folder"
       else
+        # Recent, which sends the new owner on to the onboarding wizard (2026-11-09).
+        assert_redirected_to welcome_path
+        follow_redirect!
         assert_response :success
-        assert_equal root_path, path
       end
     end
 

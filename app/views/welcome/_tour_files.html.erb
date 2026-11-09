@@ -1,0 +1,34 @@
+<%# THE FILES TRACK'S CARDS. Sentences reused from the landing page (landings/show) and
+    shared/_where_files_come_from, which were checked against the code; the tools named are in the
+    addons bundle's manifests. The first card's heading is the Help page's ("Your library"), never
+    "a folder": the partial under it says bucket on s3 and the desktop app on a sync server. %>
+<article class="panel welcome-card">
+  <h2>Your library</h2>
+  <%= render "shared/where_files_come_from", projects: false %>
+  <p class="welcome-where">It is <%= link_to "Library", files_path %>, in the sidebar.</p>
+</article>
+<article class="panel welcome-card">
+  <h2>Previews for what you make</h2>
+  <p>SVG, DXF, PDF, LightBurn, Gerber boards, images and code open in the browser, and the Library
+    shows a thumbnail of each.</p>
+</article>
+<article class="panel welcome-card">
+  <%= image_tag "landing/measure.jpg", width: 1120, height: 700, loading: "lazy", class: "welcome-shot",
+                alt: "The Measure view: a LightBurn file's shapes, each one clickable to measure" %>
+  <h2>Cut files, measured</h2>
+  <p>LightBurn, SVG and DXF files show their real size, and print at 1:1 to check against stock.</p>
+</article>
+<article class="panel welcome-card">
+  <%= image_tag "landing/project.jpg", width: 1120, height: 700, loading: "lazy", class: "welcome-shot",
+                alt: "A project page: its cover, its file count and its recently changed files" %>
+  <h2>A folder becomes a project</h2>
+  <%= render "shared/where_files_come_from", sources: false %>
+</article>
+<article class="panel welcome-card">
+  <%= image_tag "landing/boxes.jpg", width: 1120, height: 700, loading: "lazy", class: "welcome-shot",
+                alt: "The box generator: a box's size and material settings beside a preview of its cut sheet" %>
+  <h2>Tools that make files</h2>
+  <p>The Box Generator, Labels and Text to Outline make cut files and save them straight into your
+    library.</p>
+  <p class="welcome-where"><%= link_to "Tools", tools_path %>, in the sidebar.</p>
+</article>
