@@ -9,7 +9,7 @@ module Web
   # MUTATION-CHECKED (§15), each run red and restored:
   #   - PanelsController#refuse answering the redirect for JSON too: the 422 test goes red.
   #   - ProjectsController#update redirecting a Publishing refusal again: the re-render test goes red.
-  #   - ProjectsController#ensure_project_folder returning `e.class.name` into the notice again: the
+  #   - Maker::CreateProject.ensure_folder returning `e.class.name` into the notice again: the
   #     create test goes red on "FileLayer::".
   #   - "The link IS the credential" restored in projects/_publish: the copy test goes red.
   class ProjectEditAreaTest < ActionDispatch::IntegrationTest
