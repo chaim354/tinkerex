@@ -20,8 +20,9 @@ namespace :tinkerex do
     # .enqueue_first_for says why it is the door's job). Decided before the create, because
     # afterwards there is always an account.
     first = !User.exists?
-    # The first account is the admin (Settings → Users), as the sign-up form's is.
-    user = User.create!(email:, password: pw, confirmed_at: Time.current, admin: first)
+    # The first account is the admin (Settings → Users), as the sign-up form's is. Pending, as every
+    # door's person is: the owner made here meets the onboarding wizard on their first web sign-in.
+    user = User.create!(email:, password: pw, confirmed_at: Time.current, admin: first, onboarding_pending: true)
     # An operator at a console chose the mount by mounting it (K §3): confirm it, so the first scan
     # below is not paused waiting for a browser. After the create, so an account that fails to
     # save confirms nothing.

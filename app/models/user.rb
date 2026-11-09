@@ -282,8 +282,9 @@ class User < ApplicationRecord
         # attach — the caller surfaces a generic SSO failure.
         raise AccountLinkRefused, "email already linked to an account"
       else
-        # No collision: a brand-new account, so trusting the provider email is safe.
-        new(email:)
+        # No collision: a brand-new account, so trusting the provider email is safe. A new person,
+        # so shown the onboarding wizard as a sign-up is.
+        new(email:, onboarding_pending: true)
       end
 
     # IdP delivered the email -> treat as confirmed (skip Devise's confirmation email).

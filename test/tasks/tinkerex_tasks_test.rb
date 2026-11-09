@@ -44,6 +44,7 @@ class TinkerexTasksTest < ActiveSupport::TestCase
     u = User.find_by!(email: "maker@example.com")
     assert u.confirmed?
     assert u.valid_password?(PASSWORD)
+    assert u.onboarding_pending?, "the account made at the console is shown the wizard on its first web sign-in"
   end
 
   # The FIRST account on a fresh server enqueues the first library scan (J, 2026-10-15), a later one

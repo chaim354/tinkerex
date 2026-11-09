@@ -73,6 +73,7 @@ module Web
       owner = User.find_by!(email: "owner@example.com")
       assert owner.confirmed?
       assert owner.admin?
+      assert owner.onboarding_pending?, "the owner is shown the onboarding wizard on first sign-in"
       assert_equal owner.id, controller.current_user&.id, "the owner is signed straight in"
     end
 
