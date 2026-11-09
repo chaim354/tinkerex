@@ -45,10 +45,14 @@ feature. Cards with a matching landing screenshot show it: `landing/viewer.jpg` 
 `landing/boxes.jpg` the box generator. `landing/library.jpg` is not used, because it is untracked
 work in the owner's checkout.
 
-**Every sentence is one the app already says and someone has checked.** It comes from the landing
-page (`landings/show`), the Help page (`help/show`, checked against `model-intake.md`), or
-`shared/_where_files_come_from`. The tools named are in the addons bundle's manifests. If the
-behaviour changes, change the sentence.
+**Every sentence has been checked against the app.** Most are text the app already shows, from
+the landing page (`landings/show`), the Help page (`help/show`, checked against `model-intake.md`)
+or `shared/_where_files_come_from`. The rest are checked against the code named beside them:
+- the previews sentence against the renderers in `app/services/maker/previews/`;
+- the "in the sidebar" pointers against the rail's unconditional links (`layouts/_rail`);
+- the tool names against the addons bundle's manifests and code.
+
+If the behaviour changes, change the sentence.
 
 **Files track**
 1. **Your library is a folder.** `shared/_where_files_come_from` with `projects: false`.
