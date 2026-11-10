@@ -167,11 +167,10 @@
         has a library of its own.<% else %>is refused at boot, because every account sees the same
         library.<% end %>
       <code>SMTP_ADDRESS</code> turns mail on. An admin adds accounts, resets passwords and makes other
-      admins under Settings → Users, with no mail needed. From the console,
-      <code>bin/rails 'tinkerex:owner[EMAIL]'</code> adds a confirmed account and
-      <code>bin/rails 'tinkerex:password[EMAIL]'</code> resets a password, each reading the new
-      password from <code>TINKEREX_PASSWORD</code>, and <code>bin/rails 'tinkerex:admin[EMAIL]'</code>
-      makes an account an admin when none is left to do it.</p>
+      admins under Settings → Users, with no mail needed. Only when no admin can sign in,
+      <code>bin/rails 'tinkerex:password[EMAIL]'</code> sets a new password, read from
+      <code>TINKEREX_PASSWORD</code>, and <code>bin/rails 'tinkerex:admin[EMAIL]'</code> makes an
+      account an admin.</p>
     <p>The source is at <%= link_to "github.com/chaim354/tinkerex", "https://github.com/chaim354/tinkerex" %>.</p>
   </details>
 </div>
