@@ -443,7 +443,9 @@ parallel path ~1.3 s.
 
 > **Ready-to-run cutover tooling** for everything in §2/§3/§6 (idempotent rclone migration
 > + CORS apply + `presigned_roundtrip` smoke + a deploy.yml R2 example) lives in
-> **`scripts/r2-cutover/`** — start with `scripts/r2-cutover/RUNBOOK.md`.
+> **`chaim354/tinkerex-sync`'s [`docs/r2-cutover/`](https://github.com/chaim354/tinkerex-sync/tree/main/docs/r2-cutover)**
+> (moved there from this repo's `scripts/r2-cutover/` on 2026-11-10, and marked historical there
+> too) — start with its `RUNBOOK.md`.
 
 ## 6. Summary checklist
 

@@ -4,7 +4,7 @@
 # chunk_remote work and for `bin/ci test-chunk-remote`.
 #
 # WHY A SIBLING CHECKOUT: the binary is built from source with cargo, and a checkout is where the
-# source is -- the same ../tinkerex-client convention scripts/r2-cutover/smoke.sh already uses.
+# source is -- the same sibling-checkout convention as ../tinkerex-client.
 #
 # TWO SUBCOMMANDS, because CI has to background the boot and still know the token:
 #   prepare  build the binary, migrate its DB, mint a device token AND a fresh SYNC_ADMIN_TOKEN

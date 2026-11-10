@@ -73,7 +73,6 @@
 /docs/
 /test/
 /ci/
-/scripts/
 
 # GPL sidecar images (sidecar/boxes = GPL-3.0, sidecar/openscad = GPL-2.0) are built + pushed
 # SEPARATELY, each from its own directory as build context. The Rails Dockerfile does `COPY . .`,
