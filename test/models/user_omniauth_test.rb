@@ -13,6 +13,7 @@ class UserOmniauthTest < ActiveSupport::TestCase
     end
     assert_equal "oauth@example.com", user.email
     assert user.confirmed?, "an IdP-verified email is treated as confirmed"
+    assert user.onboarding_pending?, "a first IdP sign-in is a new person, shown the wizard"
     assert_equal user, UserIdentity.find_by(provider: "openid_connect", uid: "abc-123").user
   end
 

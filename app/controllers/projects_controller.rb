@@ -558,10 +558,9 @@ class ProjectsController < ApplicationController
 
   def create
     @project = current_user.maker_projects.new(project_params)
-    if demo_may_publish?(@project) && @project.save
-      failure = ensure_project_folder(@project)
-      redirect_to project_path(@project), notice: created_notice(@project, failure),
-                                          alert: (folder_failure_alert(failure) if failure)
+    result = Maker::CreateProject.call(current_user, @project) if demo_may_publish?(@project)
+    if result&.created?
+      redirect_to project_path(@project), notice: result.notice, alert: result.alert
     else
       render :new, status: :unprocessable_entity
     end
@@ -752,53 +751,6 @@ class ProjectsController < ApplicationController
         []
       end
       tags.any? ? [ dir.name, dir.node_id, tags ] : nil
-    end
-  end
-
-  # Best-effort: a project MUST save even if the library backend can't make its folder right now
-  # (unmounted NAS, bucket blip). The folder is re-ensured on the next upload. Never fail creation
-  # on a folder hiccup — hence the broad rescue.
-  #
-  # IT RETURNS THE FAILURE NOW RATHER THAN SWALLOWING IT (stage 4, S4-6; story 1.2). "Project
-  # created." over a folder that was never made is the one flash a maker cannot act on: the next
-  # save from LightBurn goes to a directory that does not exist, and the only record was a log
-  # line. FileLayer::FetchError (try again) and everything else (FileLayer::UnsupportedOperation
-  # never succeeds on retry) are different problems, so the answer says WHICH — as a symbol, never
-  # the class name, which used to reach the flash verbatim (the UX audit's C10: a maker cannot act
-  # on "FileLayer::FetchError"). The class and message still go to the log, where an operator reads.
-  def ensure_project_folder(project)
-    project.ensure_library_folder!(current_user)
-    nil
-  rescue FileLayer::FetchError => e
-    Rails.logger.warn("[projects] folder ensure failed for #{project.slug}: #{e.class} #{e.message}")
-    :unreachable
-  rescue StandardError => e
-    Rails.logger.warn("[projects] folder ensure failed for #{project.slug}: #{e.class} #{e.message}")
-    :refused
-  end
-
-  # THE FOLDER IS NAMED FROM THE SLUG, NOT LOOKED UP — and that is exact rather than approximate
-  # HERE and only here: #create always reaches ensure_library_folder!'s minting branch (a brand-new
-  # project has no folder_node_id), and that branch builds [ROOT, slug] literally. A project ADOPTED
-  # in place never comes through this action, so no sentence built here can name the wrong path.
-  #
-  # THE FAILURE IS AN ALERT BESIDE THE NOTICE, never folded into it (2026-11-02): the project WAS
-  # created, which is news, and its folder was not, which is a problem — and a problem in a
-  # `flash-notice` is drawn under the word "Done". Each names the next step in the maker's terms.
-  # "The next time you open the project" is literal: #show re-ensures the folder on every render.
-  def created_notice(project, failure)
-    return "Created #{project.name}." if failure
-
-    "Created #{project.name}. Its folder is #{Maker::ProjectFolders::ROOT}/#{project.slug}."
-  end
-
-  def folder_failure_alert(failure)
-    if failure == :unreachable
-      "The library could not be reached, so the project folder was not created yet. It is made " \
-        "the next time you open the project while the library is available."
-    else
-      "The project folder could not be made in the library; a file or folder there may already " \
-        "have its name. It is tried again each time you open the project."
     end
   end
 

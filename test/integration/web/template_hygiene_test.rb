@@ -637,6 +637,18 @@ module Web
         # Onboarding (2026-10-13): the Help page needs no fixture. Its three backend arms are
         # rendered by help_page_test.rb, which swaps the capabilities the page reads.
         "help" => help_path,
+        # The onboarding wizard (2026-11-09): every step on both tracks. @project's folder is rows
+        # (project_folder_rows! above), so Files renders its upload arm with no mkdir on any leg, and
+        # its two attachments give Done its tiles (home/_file_card) rather than its empty arm.
+        "welcome" => welcome_path,
+        "welcome tour (files)" => welcome_tour_path(track: "files"),
+        "welcome tour (models)" => welcome_tour_path(track: "models"),
+        "welcome project (files)" => welcome_project_path(track: "files"),
+        "welcome project (models)" => welcome_project_path(track: "models"),
+        "welcome files (files)" => welcome_files_path(track: "files", project: @project.slug),
+        "welcome files (models)" => welcome_files_path(track: "models", project: @project.slug),
+        "welcome done (files)" => welcome_done_path(track: "files", project: @project.slug),
+        "welcome done (models)" => welcome_done_path(track: "models", project: @project.slug),
         # STAGE 3, S3-4: THE PUBLIC SURFACE, five pages over ten templates. Signed in, which is
         # neither a mistake nor a weakening: Public::BaseController stands on
         # ActionController::Base and never reads the session (the seam guard in

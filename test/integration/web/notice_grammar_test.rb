@@ -10,7 +10,7 @@ module Web
   #
   # WHAT IS SCANNED: the string literal right after `notice:` / `alert:` (and `flash[:x] =`,
   # `flash.now[:x] =`) in app/controllers/** and app/views/**, with a `\`-continued literal joined
-  # to its next line, comment lines skipped. A notice built in a method (`created_notice`,
+  # to its next line, comment lines skipped. A notice built in a method (`Maker::CreateProject::Result#notice`,
   # `publish_notice`, `project_intake_sentence`) is not a literal at the door and is not seen; those
   # were swept by hand in the same change. Devise's strings live in config/locales and are T6's.
   #

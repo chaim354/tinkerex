@@ -158,6 +158,11 @@ module Users
     # passwords only. Protected, as Devise's own is: a public method on a controller is an action.
     def build_resource(hash = {})
       super
+      # EVERY PERSON WHO SIGNS UP IS SHOWN THE ONBOARDING WIZARD ONCE (2026-11-09) — the owner and a
+      # later sign-up alike, so this sits ABOVE the first-owner return. A door, not a User callback,
+      # for the reason the admin flag is one: a callback would also mark the demo account and every
+      # account the suite makes.
+      resource.onboarding_pending = true
       return unless Tinkerex::Registration.first_owner?
 
       resource.skip_confirmation!

@@ -1,0 +1,36 @@
+<%# THE 3D TRACK'S CARDS. The catalog, print-log and Printables sentences are the Help page's
+    (help/show, checked against docs/invariants/model-intake.md), the viewer's the landing page's;
+    the tools named are in the addons bundle's manifests. The catalog card keeps Help's "a
+    project's own folder is never a model": without it, the folder this wizard is about to make
+    (Projects/slug, a folder inside a top-level folder) would read as one model. %>
+<article class="panel welcome-card">
+  <h2>Models find themselves</h2>
+  <p>A 3D file loose at the top of the library, in a top-level folder, in <code>Models/</code> or in
+    a project's <code>models/</code> folder is a model of its own, and a folder inside a top-level
+    folder or a <code>models/</code> folder is one model holding what is inside it. A project's own
+    folder is never a model. New files become models on the next library scan.</p>
+  <p class="welcome-where"><%= link_to "3D models", files_models_path %>, in the sidebar.</p>
+</article>
+<article class="panel welcome-card">
+  <%= image_tag "landing/viewer.jpg", width: 1120, height: 700, loading: "lazy", class: "welcome-shot",
+                alt: "The 3D viewer: a model turned in the browser, its size on three axes beneath it" %>
+  <h2>A 3D viewer that speaks millimetres</h2>
+  <p>STL, 3MF, STEP and a dozen more open in the browser with their size on three axes.</p>
+</article>
+<article class="panel welcome-card">
+  <h2>A print log for every model</h2>
+  <p>A model's page keeps its print log. A failed print waits under <em>Needs attention</em> on
+    Recent for a week, until a later print of that model is logged or its status is changed.</p>
+</article>
+<article class="panel welcome-card">
+  <h2>Bring in a download</h2>
+  <p>A model downloaded from Printables as a zip comes in whole with
+    <%= link_to "Import a Printables zip", new_model_path %>, which unpacks it into <code>Models/</code>
+    with its pictures and instructions.</p>
+</article>
+<article class="panel welcome-card">
+  <h2>Tools that make printable parts</h2>
+  <p>Gridfinity Bins, Simple Parts, Lithophane and OpenSCAD make printable files and save them
+    straight into your library.</p>
+  <p class="welcome-where"><%= link_to "Tools", tools_path %>, in the sidebar.</p>
+</article>

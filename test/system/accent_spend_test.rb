@@ -134,7 +134,15 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/settings/users" => [ "Add user" ],
       "/settings/users/:id/edit" => [ "Set password" ],
       # Devices (pentest H1b, 2026-10-22): no one action; each row's Sign out is a danger link.
-      "/settings/devices" => []
+      "/settings/devices" => [],
+      # THE ONBOARDING WIZARD (2026-11-09): Choose spends nothing, its two cards being equal; Tour spends
+      # its Next, Project its Create, Files the top bar's Upload (aimed at the new project's folder), and
+      # Done its Open.
+      "/welcome" => [],
+      "/welcome/files/tour" => [ "Next: your first project" ],
+      "/welcome/models/project" => [ "Create project" ],
+      "/welcome/files/files" => [ "Upload" ],
+      "/welcome/models/done" => [ "Open Desk Lamp" ]
     }
     paths = {
       "/" => root_path, "/files" => files_path, "/files/models" => files_models_path,
@@ -148,7 +156,12 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/inventory/suppliers" => suppliers_path, "/inventory/locations" => locations_path,
       "/settings/shelves" => settings_shelves_path, "/settings/library" => settings_library_path,
       "/settings/users" => settings_users_path, "/settings/users/:id/edit" => edit_settings_user_path(@other_account),
-      "/settings/devices" => settings_devices_path
+      "/settings/devices" => settings_devices_path,
+      "/welcome" => welcome_path,
+      "/welcome/files/tour" => welcome_tour_path(track: "files"),
+      "/welcome/models/project" => welcome_project_path(track: "models"),
+      "/welcome/files/files" => welcome_files_path(track: "files", project: @project.slug),
+      "/welcome/models/done" => welcome_done_path(track: "models", project: @project.slug)
     }
 
     actual = paths.transform_values do |path|

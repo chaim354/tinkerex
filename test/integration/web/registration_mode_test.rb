@@ -33,6 +33,9 @@ module Web
       owner = User.find_by!(email: "owner@example.com")
       assert owner.confirmed?, "the owner needs no confirmation mail"
       follow_redirect!
+      # Recent, which sends a person whose account was just made on to the onboarding wizard.
+      assert_redirected_to welcome_path
+      follow_redirect!
       assert_response :success, "signed in and landed on a real page, not bounced to the sign-in page"
 
       delete destroy_user_session_path

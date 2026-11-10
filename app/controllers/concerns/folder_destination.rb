@@ -18,7 +18,7 @@ module FolderDestination
   end
 
   included do
-    helper_method :folder_destination, :upload_primary?
+    helper_method :folder_destination, :upload_primary?, :upload_return
   end
 
   private
@@ -36,4 +36,14 @@ module FolderDestination
   def use_folder_destination(node_id, path:, primary: false)
     @folder_destination = Destination.new(node_id:, path: path.to_s, primary:)
   end
+
+  # WHERE A SUCCESSFUL TOP-BAR UPLOAD GOES NEXT, on the one page that changes it: the onboarding
+  # wizard's Files step (WelcomeController#files). `flag` is the allowlisted `return_to` the share/s3
+  # form posts (FilesController#welcome_return_path reads it); `url` is the chunk uploader's
+  # redirectUrl, which it follows after a clean run. nil on every other page, so
+  # layouts/_topbar_upload renders exactly what it did before.
+  UploadReturn = Data.define(:flag, :url)
+
+  def upload_return = @upload_return
+  def use_upload_return(flag, url:) = (@upload_return = UploadReturn.new(flag:, url:))
 end

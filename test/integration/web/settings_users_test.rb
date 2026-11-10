@@ -143,6 +143,7 @@ module Web
       created = User.find_by!(email: "new@example.com")
       assert created.confirmed?
       assert_not created.admin?
+      assert created.onboarding_pending?, "the person an admin added is shown the onboarding wizard"
       scans = enqueued_jobs.select { |j| j[:job] == Library::ScanJob }.map { |j| j[:args].first["user_id"] }
       assert_equal(caps.scannable? ? [ created.id ] : [], scans)
 

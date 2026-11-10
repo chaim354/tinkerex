@@ -25,7 +25,8 @@ module Settings
     # POST /settings/users {user: {email, password, admin}}. Confirmed on the spot, as tinkerex:owner
     # does: the admin chose this person, and a self-hosted server usually has no mail to confirm by.
     def create
-      @new_user = User.new(new_user_params.merge(confirmed_at: Time.current, admin: params.dig(:user, :admin) == "1"))
+      @new_user = User.new(new_user_params.merge(confirmed_at: Time.current, admin: params.dig(:user, :admin) == "1",
+                                                 onboarding_pending: true))
       if password_given?(@new_user, new_user_params[:password]) && @new_user.save
         # ON A SCANNABLE BACKEND (share, s3) EACH ACCOUNT HOLDS ITS OWN CATALOG OF THE ONE LIBRARY,
         # filled by Library::ScanJob per user, so without this the new account opens an empty library

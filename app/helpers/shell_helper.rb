@@ -11,7 +11,8 @@ module ShellHelper
   # controller not listed here lights nothing, which is correct for Devise's signed-out pages (they
   # render without the rail anyway).
   SECTIONS = {
-    "home" => %w[home],
+    # The onboarding wizard (2026-11-09) is Recent's own flow — the page it opens from — so it lights Recent.
+    "home" => %w[home welcome],
     "files" => %w[files library_browse notes repo_commits repo_histories],
     "models" => %w[models],
     "projects" => %w[projects],

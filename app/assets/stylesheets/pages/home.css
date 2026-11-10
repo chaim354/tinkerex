@@ -47,4 +47,34 @@
   .getting-started-steps strong { color: var(--fg); font-weight: 600; }
   .getting-started-steps > li > :last-child,
   .getting-started .file-sources > :last-child { margin-bottom: 0; }
+
+  /* THE ONBOARDING WIZARD (2026-11-09), which lights Recent and so lives in Recent's sheet. Built
+     from the app's own components — `.panel` cards, `.btn` buttons, `.recent-grid` tiles — so what is
+     here is the step rail, the two choice cards and the spacing between. Nothing is accent: each
+     step's one action is a `.btn.primary` or the top bar's Upload (design-system.md rule 13). */
+  .welcome-steps { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); margin: 0 0 var(--space-5);
+                   padding: 0; list-style-position: inside; font-size: 13px; color: var(--fg-muted); }
+  .welcome-steps > li::marker { font-weight: 600; }
+  .welcome-steps > li.is-current { color: var(--fg); font-weight: 600; }
+  .welcome-lede, .welcome-files, .welcome-kind, .welcome-other-way, .welcome-empty { max-width: var(--prose-measure); }
+  .welcome-lede { color: var(--fg-muted); }
+  .welcome-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: var(--space-4);
+                     max-width: 720px; margin: var(--space-4) 0 var(--space-5); }
+  .welcome-choice { display: block; padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-panel);
+                    background: var(--surface); color: var(--fg); text-decoration: none; }
+  .welcome-choice:hover, .welcome-choice:focus-visible { border-color: var(--fg-muted); }
+  .welcome-choice h2 { margin: 0 0 var(--space-1); font-size: 17px; }
+  .welcome-choice p { margin: 0; color: var(--fg-muted); }
+  .welcome-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: var(--space-4); }
+  .welcome-card h2 { margin-bottom: var(--space-2); font-size: 15px; }
+  .welcome-card p { color: var(--fg-muted); }
+  .welcome-card strong { color: var(--fg); font-weight: 600; }
+  .welcome-shot { display: block; width: 100%; height: auto; margin-bottom: var(--space-3);
+                  border: 1px solid var(--line); border-radius: var(--radius-control); }
+  .welcome-where { font-size: 13px; }
+  .welcome-nav { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; margin-top: var(--space-5); }
+  .welcome-landed h3 { margin: var(--space-4) 0 var(--space-2); font-size: 13px; color: var(--fg-muted); }
+  .getting-started-tour { margin-bottom: var(--space-4); }
+  /* Skip sits under the Project step's form, not in its button row, and the 3D Done note under the tiles. */
+  .project-form + .welcome-skip, .welcome-note { margin-top: var(--space-3); }
 }

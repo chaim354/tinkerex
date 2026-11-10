@@ -89,7 +89,7 @@ module McpServer
                 .merge(description: p.description, note: note).compact
         end
 
-        # ProjectsController#ensure_project_folder's best effort, for its reason: the project exists
+        # Maker::CreateProject's best effort, for its reason: the project exists
         # whether or not the library answered, and the folder is tried again on the next project
         # view. Only the two port failures are swallowed; anything else propagates.
         def self.ensure_folder(user, p)

@@ -1,0 +1,37 @@
+<% content_for :title, "Add files — Tinkerex" %>
+<div class="page-head"><h1>Add files to <%= @project.name %></h1></div>
+<%= render "welcome/steps", current: :files %>
+<% if @folder %>
+  <div class="welcome-files">
+    <%# WHERE THE FILES GO, ONCE. How to add them (Upload, the share, the desktop app) is the shared
+        partial below, whose first sentence is already about Upload. %>
+    <p>What you add goes into <code><%= folder_destination.caption %></code>, this project's folder.</p>
+    <% if track == "models" %>
+      <p>STL and 3MF files go into <code><%= @shelves.fetch("stl") %>/</code>, and each one becomes a
+        model under <%= link_to "3D models", files_models_path %>.</p>
+    <% else %>
+      <p>Files you add at the top of the folder are filed into type folders: an SVG into
+        <code><%= @shelves.fetch("svg") %>/</code>, a LightBurn file into <code><%= @shelves.fetch("lbrn2") %>/</code>,
+        a PDF into <code><%= @shelves.fetch("pdf") %>/</code>. A README stays where it is.</p>
+    <% end %>
+    <%= render "shared/where_files_come_from", projects: false %>
+  </div>
+<% else %>
+  <%# TWO CASES, SPLIT AS THE PROJECT PAGE SPLITS THEM (projects/_attachments): with no
+      folder_node_id the mint failed and is retried on every visit; with one, the folder is in the
+      trash or gone, and Maker::Project#ensure_library_folder! never re-mints it, so promising it
+      would be made again would be false. %>
+  <div class="welcome-folder-pending flash-alert" role="alert">
+    <% if @project.folder_node_id.present? %>
+      <p>This project's folder is in the trash or was removed, so there is nowhere to upload to.
+        <%= link_to "Restore it", trash_index_path %>, or make another folder a project.</p>
+    <% else %>
+      <p>This project's folder is not in the library yet, so there is nowhere to upload to. It is made
+        the next time this page or the project opens while the library is available.</p>
+    <% end %>
+    <p><%= link_to "Try again", welcome_files_path(track:, project: @project.slug) %></p>
+  </div>
+<% end %>
+<div class="welcome-nav">
+  <%= link_to "I'll add files later", welcome_done_path(track:, project: @project.slug), class: "linkbtn" %>
+</div>

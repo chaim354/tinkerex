@@ -27,6 +27,8 @@
 <% if @recent_files.empty? %>
   <section class="panel home-section getting-started">
     <div class="panel-head"><h2>Getting started</h2><%= link_to "Help explains all of this", help_path, class: "muted" %></div>
+    <p class="getting-started-tour"><%= link_to "Take the tour", welcome_path %>: it walks you through
+      what Tinkerex does and sets up your first project.</p>
     <ol class="getting-started-steps">
       <li>
         <h3>Bring your files in</h3>
@@ -48,21 +50,7 @@
     <div class="panel-head"><h2>Recently changed</h2><%= link_to "Library", files_path, class: "muted" %></div>
     <div class="recent-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% @recent_files.each do |node| %>
-        <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
-        <% href = file_path(node.node_id) %>
-        <% if Maker::Previews::Registry.for_filename(node.name).present? %>
-          <%= link_to href, class: "grid-card file-cell",
-                      data: file_open_data(thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node, @addon_origins[node.node_id]))) do %>
-            <%= render "files/thumb", thumb: @covers.thumb(node.node_id), ext_label: ext_label,
-                       url: preview_src(@covers.thumb(node.node_id)), photo: Maker::FileAttachment.photo?(node.name) %>
-            <span class="grid-name"><%= node.name %></span>
-          <% end %>
-        <% else %>
-          <%= link_to href, class: "grid-card", data: file_open_data(file_menu_data(node, @addon_origins[node.node_id])) do %>
-            <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
-            <span class="grid-name"><%= node.name %></span>
-          <% end %>
-        <% end %>
+        <%= render "home/file_card", node: node, covers: @covers, origins: @addon_origins %>
       <% end %>
     </div>
   </section>

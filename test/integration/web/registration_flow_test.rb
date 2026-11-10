@@ -62,6 +62,7 @@ module Web
     test "a new maker is told an email was sent, on the page they actually land on" do
       email = sign_up!
       assert User.exists?(email:), "the account should exist"
+      assert User.find_by!(email:).onboarding_pending?, "every sign-up is shown the wizard, not only the owner's"
 
       follow_redirect!
       assert_response :success, "sign-up should land on a page, not another gated redirect"
