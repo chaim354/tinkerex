@@ -12,7 +12,7 @@ module Library
   #
   # IDEMPOTENT, so a re-run costs a pass over the table and destroys nothing. It stays callable by
   # hand for exactly that reason — a library scanned by the new code before the migration ran needs
-  # this, not a raised threshold (docs/DEPLOY.md).
+  # this, not a raised threshold (docs/guides/DEPLOY.md).
   #
   # SCANNABLE BACKENDS ONLY, AND THE GATE IS THE SAME ONE Library::ScanJob ASKS. Three reasons, and
   # the first alone is sufficient: the guard this exists to keep from tripping runs from
@@ -89,7 +89,7 @@ module Library
     #
     # `reason` CARRIES THE SENTENCE, and the caller must not compose its own. There are TWO ways to
     # decline and they mean opposite things — a chunk_remote deployment declining is CORRECT and
-    # documented (docs/DEPLOY.md records the exact line), while an environment with no backend
+    # documented (docs/guides/DEPLOY.md records the exact line), while an environment with no backend
     # configured declining on a real deployment means the purge DID NOT HAPPEN. Both are
     # `declined: true, destroyed: 0`, so a caller that wrote its own sentence could only tell them
     # apart by asking FileLayer again — which is the second reason this member exists rather than
@@ -151,7 +151,7 @@ module Library
       adapter = FileLayer.current
       return if adapter.capabilities.scannable?
 
-      # WORDED EXACTLY AS docs/DEPLOY.md RECORDS IT — an operator matches this line against the
+      # WORDED EXACTLY AS docs/guides/DEPLOY.md RECORDS IT — an operator matches this line against the
       # doc to tell a correct skip from a problem.
       "#{adapter.class} is not a scannable backend, so nothing here indexed the contents of a " \
         ".git and nothing scans them away"

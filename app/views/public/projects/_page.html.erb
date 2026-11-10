@@ -63,7 +63,7 @@
       byte passes through Rails that a plain download would not already have moved (§15). The
       status line is where a refused fetch is reported -- on the s3 deployment the public file
       route redirects to a presigned URL at the bucket, a cross-origin fetch that reads only
-      under the bucket's CORS rule (docs/DEPLOY.md) and the connect-src the port names for the
+      under the bucket's CORS rule (docs/guides/DEPLOY.md) and the connect-src the port names for the
       CSP, so the button must SAY it failed rather than sit there having done nothing.
 
       `bundle.any?` IS THE ONLY CONDITION AND NO PANEL GATE JOINS IT (hardening, 2026-09-08;

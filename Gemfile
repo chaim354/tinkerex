@@ -86,7 +86,7 @@ gem "mcp", "~> 1.9"
 #
 # IT DOES NOT COVER PACKING. Rugged::Repository exposes 69 instance methods and not one matches
 # pack/repack/gc/prune; Packbuilder, Indexer and Odb are undefined. Measured against the built gem,
-# not read off its README. Nothing here packs -- see docs/roads-not-taken.md §9 for why that
+# not read off its README. Nothing here packs -- see docs/reference/roads-not-taken.md §9 for why that
 # matters only if git on s3 is ever revived.
 gem "rugged"
 

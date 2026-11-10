@@ -16,7 +16,7 @@
     /files/:id/blob/:name and a visitor's /u/:handle/:slug/files/:id/:name (stage 4, S4-5).
 
     ON S3 the embed's fetch follows a presigned redirect to the bucket — cross-origin, so it
-    reads only under the bucket's CORS rule (docs/DEPLOY.md) and the connect-src the port
+    reads only under the bucket's CORS rule (docs/guides/DEPLOY.md) and the connect-src the port
     names for the CSP (FileLayer#presigned_origin), exactly as modelviewer_controller.js's
     model fetch does. %>
 <div class="kicanvas-stage"

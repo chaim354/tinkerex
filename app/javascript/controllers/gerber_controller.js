@@ -44,7 +44,7 @@ import { installPanZoom } from "lib/svg_pan_zoom"
 //
 // ON S3 THE FETCH BELOW LEAVES THE ORIGIN, as modelviewer_controller.js's and
 // kicanvas_controller.js's do: the blob route answers a presigned redirect to the bucket, which
-// the browser reads only if the bucket's CORS rule allows this origin (docs/DEPLOY.md), under a
+// the browser reads only if the bucket's CORS rule allows this origin (docs/guides/DEPLOY.md), under a
 // connect-src the port names for the CSP (FileLayer#presigned_origin). Shared by every
 // client-side viewer in this app; the share and chunk_remote deployments stream from Rails and
 // never leave the origin.

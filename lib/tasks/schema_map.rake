@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 namespace :schema do
-  desc "Regenerate docs/schema-map.html from the four schema dumps (every table, column and relationship)"
+  desc "Regenerate docs/reference/schema-map.html from the four schema dumps (every table, column and relationship)"
   task map: :environment do
     problems = SchemaMap.problems
     if problems.any?
@@ -23,13 +23,13 @@ namespace :schema do
   end
 
   namespace :map do
-    desc "Report whether docs/schema-map.html is still the current schema, without rewriting it"
+    desc "Report whether docs/reference/schema-map.html is still the current schema, without rewriting it"
     task check: :environment do
       problems = SchemaMap.problems
       problems.each { |p| warn "  - #{p}" }
       abort "SchemaMap's authored half disagrees with the schema (above)." if problems.any?
-      abort "docs/schema-map.html is stale — run `bin/rails schema:map`." unless SchemaMap.current?
-      puts "docs/schema-map.html is current."
+      abort "docs/reference/schema-map.html is stale — run `bin/rails schema:map`." unless SchemaMap.current?
+      puts "docs/reference/schema-map.html is current."
     end
   end
 end

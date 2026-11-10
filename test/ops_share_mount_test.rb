@@ -269,7 +269,7 @@ class OpsShareMountTest < ActiveSupport::TestCase
     assert_operator check, :<, build, "the stale-mount check must sit in the pre-flight, before `kamal build push`"
     assert_operator recovery, :<, build
 
-    deploy_doc = ROOT.join("docs/DEPLOY.md").read
+    deploy_doc = ROOT.join("docs/guides/DEPLOY.md").read
     assert_includes deploy_doc, "ops/share-mount-recover.sh"
     assert_includes deploy_doc, "bin/share-mount-monitor-install"
   end

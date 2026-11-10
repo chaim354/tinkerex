@@ -23,7 +23,7 @@ Rails.application.configure do
   # data that does not exist.
   #
   # Production is unchanged: it reads credentials, and `RAILS_MASTER_KEY` already reaches all four
-  # deployments through .kamal/secrets-common (docs/DEPLOY.md).
+  # deployments through .kamal/secrets-common (docs/guides/DEPLOY.md).
   config.active_record.encryption.primary_key = "test-only-primary-key-not-a-secret-000000"
   config.active_record.encryption.deterministic_key = "test-only-deterministic-key-not-secret-00"
   config.active_record.encryption.key_derivation_salt = "test-only-key-derivation-salt-not-secret"

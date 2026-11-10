@@ -4,7 +4,7 @@ import { Controller } from "@hotwired/stimulus"
 //
 // WHY A FALLBACK EXISTS AT ALL, AND WHY IT IS NOT BELT AND BRACES. `navigator.clipboard` is gated
 // on a SECURE CONTEXT, and this app is routinely self-hosted at a plain-http hostname on a LAN
-// (docs/DEPLOY.md) — so on the deployment this button is FOR, the modern API is simply `undefined`.
+// (docs/guides/DEPLOY.md) — so on the deployment this button is FOR, the modern API is simply `undefined`.
 // A copy button that silently does nothing there is worse than no button. `document.execCommand`
 // is deprecated and is still the only thing that works in that context.
 //

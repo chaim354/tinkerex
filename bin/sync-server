@@ -140,7 +140,7 @@ case "${1:-}" in
     # ENV["SYNC_ADMIN_TOKEN"] on THIS app's side. Unlike CHUNK_REMOTE_TOKEN above, nothing on the
     # server mints this one -- it is a constant-time string compare, nothing issues or digests it --
     # so `prepare` generates the shared value itself, once per boot cycle, the same way a real
-    # deployment generates one and puts it in both apps' Kamal secrets (docs/DEPLOY.md §2b).
+    # deployment generates one and puts it in both apps' Kamal secrets (docs/guides/DEPLOY.md §2b).
     admin_token="$(openssl rand -hex 32)"
     if [ -z "$admin_token" ]; then
       echo "openssl rand produced no output -- refusing to write a blank admin credential" >&2

@@ -14,7 +14,7 @@
 # library — keeps answering 200, so nothing alerts. The next `kamal deploy -d share` then fails at
 # container create with docker exit 125 (`error evaluating symlinks from mount source … stale file
 # handle`), because docker hands the new container the dead mount the old one is still holding.
-# Five deploys found it that way between 2026-10-22 and 2026-11-04 (docs/DEPLOY.md §2).
+# Five deploys found it that way between 2026-10-22 and 2026-11-04 (docs/guides/DEPLOY.md §2).
 #
 # THE RECOVERY, AND WHY EACH GUARD IS IN FRONT OF IT. `docker stop` the old container (the cifs
 # mount count drops 1 → 0), `docker rm` any half-created new one, and the next share deploy mounts

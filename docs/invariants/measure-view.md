@@ -11,7 +11,7 @@
 > **The `§14h` anchor still exists in CLAUDE.md and code cites it from the preview stack** — a
 > citation resolves to the stub there, which points here.
 >
-> **Adding a fifth format?** `docs/adding-a-preview-format.md` is the walkthrough; this file is the
+> **Adding a fifth format?** `docs/guides/adding-a-preview-format.md` is the walkthrough; this file is the
 > set of rules it must not break.
 
 > **FOUR FORMATS, ONE PAYLOAD.** `.lbrn/.lbrn2`, `.mage`, `.dxf` and `.svg` all measure, through

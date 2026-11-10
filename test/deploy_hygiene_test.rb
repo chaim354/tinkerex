@@ -461,7 +461,7 @@ class DeployHygieneTest < ActiveSupport::TestCase
   # test above), so on an Unraid share or s3 destination the reset would replace, every night, the
   # library the author's own accounts work in. The base is chunk_remote, where each account has its
   # own library, so there the absence is the design's choice rather than a data-loss guard: the
-  # Unraid boxes keep their console demo account (docs/DEPLOY.md §5).
+  # Unraid boxes keep their console demo account (docs/guides/DEPLOY.md §5).
   #
   # WHICH WAY AN OVERLAY-ONLY KEY INHERITS, MEASURED rather than assumed (2026-10-14, kamal 2.12.0,
   # probe keys planted in a scratch copy of the four files): `-d <dest>` deep-merges deploy.yml with

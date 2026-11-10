@@ -424,7 +424,7 @@ bundle until `bin/build-tracespace` has run; the deploy image had the bundle and
 2026-09-07. **The CI runner image carries node for the reason it carries resvg** — without it every
 render assertion in `gerber_test.rb`/`gerber_zip_test.rb` SKIPS, which is green over nothing.
 
-**"CONVERT THE GERBERS AND USE THE 3D VIEWER" WAS ASKED AND REFUSED** — `docs/roads-not-taken.md`
+**"CONVERT THE GERBERS AND USE THE 3D VIEWER" WAS ASKED AND REFUSED** — `docs/reference/roads-not-taken.md`
 §10. A board export is a 2D artefact and the fab house reads exactly what tracespace draws; there
 is no permissively licensed Gerber→mesh pipeline, and extruding copper and mask polygons needs
 booleans and hundreds of thousands of triangles to arrive at a worse picture of the same layers.
@@ -675,7 +675,7 @@ the live one, or a second Save bar, goes red.
 **ON S3 A VIEWER'S FETCH LEAVES THE ORIGIN, AND BOTH HALVES OF LETTING IT ARE STATED ONCE.** The
 blob route answers a presigned redirect to the bucket, so the 3D viewer, KiCanvas, the Gerber viewer
 and the public bundle all fetch cross-origin. The browser reads that response only if (1) the
-bucket's CORS rule allows this app's origin — an operator step Rails cannot perform, `docs/DEPLOY.md`
+bucket's CORS rule allows this app's origin — an operator step Rails cannot perform, `docs/guides/DEPLOY.md`
 — and (2) the CSP's `connect-src` names the bucket's origin, which
 `config/initializers/content_security_policy.rb` asks the port for per response
 (`FileLayer#presigned_origin`: the SDK's resolved endpoint on s3, nil on share and chunk_remote,

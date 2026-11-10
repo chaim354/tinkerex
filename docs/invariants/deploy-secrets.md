@@ -5,7 +5,7 @@
 > accessory's env — and not at all otherwise. **The rules did not change and nothing was dropped.**
 >
 > **The `§14g` anchor still exists in CLAUDE.md** and any code or doc citing it resolves to the stub
-> there, which points here. `docs/DEPLOY.md` is the operator-facing companion.
+> there, which points here. `docs/guides/DEPLOY.md` is the operator-facing companion.
 
 - **KAMAL CANNOT NOTICE AN UNREADABLE SECRET, SO `bin/secrets-preflight` IS NOT OPTIONAL.** It
   expands `$(…)` in `.kamal/secrets*` through Ruby **backticks, which discard exit status** — a
@@ -30,7 +30,7 @@
   so `op://Personal/…` failing is by design, not a broken vault.
 - **EVERY SECRET FAILING AT ONCE MEANS THE TOKEN EXPIRED — DON'T DEBUG THE REPO.** The token
   reaches the process through the environment and so is invisible to this tree: nothing here can
-  be edited to fix it, and `git log` will show nothing that broke it. Re-mint per `docs/DEPLOY.md`.
+  be edited to fix it, and `git log` will show nothing that broke it. Re-mint per `docs/guides/DEPLOY.md`.
   **ONE secret failing is the opposite diagnosis** — a wrong ref or field name in that single
   `.kamal/secrets*` line. `bin/secrets-preflight --all` tells the two apart at a glance, and prints
   which auth path is in use.

@@ -71,7 +71,7 @@ Where the bytes live is chosen per deployment by **`LIBRARY_BACKEND`**, behind o
 
 **The one architectural idea worth carrying in your head** is why `chunk_remote` mirrors instead
 of asking: a remote-mounted filesystem does not work over the WAN (synchronous metadata
-round-trips, ~1 s/file — measured, `docs/roads-not-taken.md`). So metadata reads answer from a
+round-trips, ~1 s/file — measured, `docs/reference/roads-not-taken.md`). So metadata reads answer from a
 **local** table and the WAN is never in the metadata path. **That is a rule, not a description:**
 §14a forbids closing the resulting staleness with a synchronous pull in a read path. The mirror
 is refreshed by this app's own writes and by one recurring job, and bounded staleness (~2 min) is
@@ -198,7 +198,7 @@ one `CHUNK_*`-looking variable this app *does* read is **`CHUNK_REMOTE_URL`**, w
 sync server's address.
 
 **Bare "deploy" means the three Unraid destinations — `chunk_remote` (the base), `share`, `s3`.**
-Deploy OVH only on explicit request. `docs/DEPLOY.md`.
+Deploy OVH only on explicit request. `docs/guides/DEPLOY.md`.
 
 > **Historical note:** a fourth destination, `remote`, once sat outside bare "deploy" — **an excluded
 > destination drifts** (`chunk_remote` reached Stage 5 never having run on hardware). It is the base now.
@@ -256,15 +256,15 @@ Deploy OVH only on explicit request. `docs/DEPLOY.md`.
 ## 10. Repo layout
 
 ```
-/                Rails 8 maker app (app/, config/, db/) + docs/ (incl. DEPLOY.md)
+/                Rails 8 maker app (app/, config/, db/) + docs/ (incl. guides/DEPLOY.md)
 /tools           SERVER-side renderers exec'd as subprocesses, never client code — which is why
                  they live here: stl-thumbnailer (Rust STL→PNG, Maker::Previews::Stl) and
                  gerber-svg (the pinned tracespace bundle under node, Maker::Previews::Gerber).
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
                  bin/backup-cron-install. Only its destination table is gated; invariants in §14i.
-/docs            sync-protocol.md, SYNC_SERVER.md, DEPLOY.md, roads-not-taken.md,
-                 architecture-sync-engine.md, adr/
+/docs            INSTALL.md, sync-protocol.md, addon-api-v1.md (linked by URL or by sibling repos, so
+                 they stay put); guides/ (DEPLOY, mcp, preview formats); reference/; README.md
 /docs/invariants §14's AREA rules, one file per area — addons.md, measure-view.md,
                  deploy-secrets.md, backup-restore.md, model-intake.md. NOT optional reading and NOT
                  demoted: each is §14 material that binds only inside its own subsystem,
@@ -284,9 +284,9 @@ forward everywhere, where rewriting history does not** — a rewrite invents tim
 already-migrated databases fail with "table already exists," fixable only by hand-inserting
 `schema_migrations` rows on every live database.
 
-> **The two pre-split `/docs` files were dealt with on 2026-08-25 (§12.13):** `docs/SYNC_SERVER.md`
-> moved to `chaim354/tinkerex-sync` (a redirect stub stays — ~8 documents cite the path) and
-> `docs/architecture-sync-engine.md` is marked HISTORICAL, kept for the *why* only. `docs/sync-protocol.md` is current.
+> **Audits, fix logs, finished plans and specs, research and HISTORICAL docs were deleted on
+> 2026-11-10** (330 files). Comments still cite some by path: `git show 9c65d143:<path>` reads one.
+> The planning skills still write a feature's spec and plan under `docs/superpowers/`.
 
 ---
 
@@ -403,7 +403,7 @@ gh repo clone chaim354/tinkerex-client ../tinkerex-client   # its CLAUDE.md has 
 **NO CI LEG HERE REACHES INTO `tinkerex-client` ANY MORE (2026-08-25).** `nightly.yml` and
 `client-contract.yml` are deleted — both tested sync↔client with no code from this repo involved,
 and both were broken in ways only measurement showed (the record, §11; the corrected recipes went to
-the siblings in `docs/superpowers/specs/2026-08-25-cross-repo-ci-handoff.md`). **`ci.yml` is the only
+the siblings in the 2026-08-25 cross-repo CI handoff spec, now in git history). **`ci.yml` is the only
 workflow left**: `preflight` plus one job per gate, each invoking `bin/ci <gate>`. This repo's half of
 the wire contract is `bin/ci test-chunk-remote`, which is not moving.
 
@@ -415,7 +415,7 @@ making `" 2"`-suffixed duplicates in the repo, which can break a build: `find . 
 > The condensed **abandoned/superseded approaches** (remote mount, JuiceFS data plane,
 > Cloudflare-native sync, WinFsp-as-default, last-writer-wins, the `mtime=now` hack, FSKit)
 > — *what was considered → why rejected → current approach* — live in
-> **`docs/roads-not-taken.md`**. Read it before reviving any of them.
+> **`docs/reference/roads-not-taken.md`**. Read it before reviving any of them.
 
 Each line below cost a real bug **in this repo**. the record (§11) has the full story for any of
 them. Invariants belonging to the sync engine or the desktop client live in those repos'
@@ -947,7 +947,7 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   synchronous metadata round-trips → ~1 s/file (Phase 0, measured). Every production system
   uses **local metadata + async sync + on-demand hydration**. That pivot is the whole reason
   this architecture exists, and it is why `chunk_remote` mirrors rather than asks (§2). Do not
-  go back to a remote mount. (`docs/roads-not-taken.md`; JuiceFS itself was abandoned for chatty
+  go back to a remote mount. (`docs/reference/roads-not-taken.md`; JuiceFS itself was abandoned for chatty
   WAN metadata, no internal ACL, and FUSE-driver licensing.)
 - **Edge-SQLite (Cloudflare D1, Turso) can't back a mount** — no driver + chatty-metadata
   latency. They *would* fit the coarse-manifest model, but we use Rails + Postgres/SQLite to
@@ -1106,7 +1106,7 @@ references across 22 files in `app/`, `lib/` and `test/` (`grep -rl '§14f' app/
 **Read that file before touching** `.kamal/secrets*`, `bin/secret`, `bin/secrets-preflight`,
 `config/deploy*.yml`, or an accessory's env. It holds why the preflight is not optional (kamal
 cannot notice an unreadable secret), the per-destination rule, what may live in `secrets-common`,
-the redirection-order leak, and the accessory-secrets rule. `docs/DEPLOY.md` is the operator
+the redirection-order leak, and the accessory-secrets rule. `docs/guides/DEPLOY.md` is the operator
 companion. Nothing was dropped; this anchor stays.
 
 ### 14h. Shape measurement, the Measure view → **`docs/invariants/measure-view.md`**
