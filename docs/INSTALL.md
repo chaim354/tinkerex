@@ -3,7 +3,7 @@
 A self-hosted library for a maker's files, run with Docker Compose on your own machine — a Mac, a
 Windows machine or a Linux box. This page is the whole of what a new install needs: the quick start,
 the settings you can change, the optional pieces, and — in section 7, with the advanced options'
-own rows in section 9 — **the reference for every environment variable the app reads**. Those
+own rows in section 9 — **the reference for every environment variable this install reads**. Those
 tables are guarded by `test/install_docs_test.rb`, which fails the build when the code reads a
 variable this page does not name, so they are current by construction rather than by promise.
 
@@ -12,9 +12,8 @@ the app indexes them, and that folder stays yours — editable with anything els
 network share on another computer (section 3). Sections 1 to 8 are that path, and they are all a new
 install needs.
 
-The other ways to run it — your own S3 bucket instead of a folder, the sync server that gives each
-account its own library with versions, and Postgres instead of SQLite — are **a work in progress**.
-They are collected in section 9, Advanced, and nothing before it depends on them.
+Postgres instead of SQLite is **a work in progress**, in section 9, Advanced; nothing before it
+depends on it.
 
 ## 1. What you need
 
@@ -259,27 +258,23 @@ at. Without mail it need not be set. `SMTP_PORT` (587), `SMTP_USER_NAME` and
 
 **Who may sign up.** `REGISTRATION` is `closed` by default in production: the first account is the
 owner and nobody else gets the page. **`REGISTRATION=open` is refused at boot**, on purpose: every
-account indexes the *same* folder, so an open sign-up would hand any visitor your files. (Open
-sign-ups belong to the sync server, an advanced backend where each account has its own library —
-section 9.)
+account indexes the *same* folder, so an open sign-up would hand any visitor your files.
 
 **Adding a user.** The first account is the server's admin, and an admin manages users under
 **Settings → Users**, with no mail involved:
 
 - **Add a user**: an email, a password you choose and pass on to the person (at least 10
   characters, shown as you type it), and whether it is an admin too. It is confirmed on the spot.
-  Every account on a folder or bucket library sees the same files, and can change and delete them.
-- **On a user's own page**: set a new password (this also confirms the account and signs it
-  out of every browser and every desktop app), sign out one of its desktop apps, make it an admin or
+  Every account sees the same files, and can change and delete them.
+- **On a user's own page**: set a new password (this also confirms the account and signs it out of
+  every browser and every connected app), sign out one of its connected apps, make it an admin or
   stop it being one, or delete it, by typing its address. Deleting removes its projects, notes, tags
-  and its copy of the catalog; every file in the library stays. On a sync-server library, a desktop
-  app that is signed out keeps its separate sync key, so its files keep syncing until that key is
-  removed on the sync server.
+  and its copy of the catalog; every file in the library stays.
 
-**Your own desktop apps** are listed under **Settings → Devices**, where you can sign any of them out.
-A new password signs out all of them, and one unused for `DEVICE_IDLE_DAYS` (90 by default) is signed
-out on its own. Wrong passwords never lock an account; repeated attempts from one place are slowed
-down instead.
+**The apps connected to your account** (an AI assistant over MCP, for one) are listed under
+**Settings → Devices**, where you can sign any of them out. A new password signs out all of them,
+and one unused for `DEVICE_IDLE_DAYS` (90 by default) is signed out on its own. Wrong passwords
+never lock an account; repeated attempts from one place are slowed down instead.
 
 Your own account is changed on the Account page, behind your current password, and the only admin
 cannot delete their account while other accounts exist. An install from before admins existed made
@@ -365,16 +360,15 @@ docker compose up -d
 ## 7. Environment reference
 
 Every variable the share install reads, plus the ones only `docker compose` reads (marked
-*compose*). The advanced options' variables — the s3 backend's, the sync server's and Postgres's —
-are in section 9's own table; the two tables together name every variable the app reads. "Required"
-means required for that feature; the default is what you get when the variable is unset. The compose
-file sets the ones marked *set by compose*; the rest come from `.env`.
+*compose*). Postgres's variables are in section 9's own table. "Required" means required for that
+feature; the default is what you get when the variable is unset. The compose file sets the ones
+marked *set by compose*; the rest come from `.env`.
 
 | variable | required? | default | what it does |
 |---|---|---|---|
 | **Core** | | | |
 | `SECRET_KEY_BASE` | no | generated on the first start, kept at `storage/secret_key_base` in the volume | Signs sessions and cookies. Set it to use your own (`openssl rand -hex 64`); a blank value counts as unset. Changing or losing it signs everyone out and nothing else. |
-| `LIBRARY_BACKEND` | no (the image defaults to `share`) | `share` | Where the files live. `share` (a folder) is the default and what this page installs; leave it unset. The other two values, `s3` and `chunk_remote`, are the advanced backends in section 9, a work in progress. Chosen per deployment, never per user. An explicit blank refuses the boot, and so does any value other than these three spelled exactly (`S3`, or a stray space, included). |
+| `LIBRARY_BACKEND` | no (the image defaults to `share`) | `share` | Where the files live. `share` (a folder) is the default and what this page installs; leave it unset. Chosen per deployment, never per user. An explicit blank refuses the boot, and so does a misspelled value (`Share`, or a stray space). |
 | `LIBRARY_PATH` | no | `/library` (the image default) | The folder mounted inside the container. The library is this folder or one chosen inside it in the browser (section 2). The boot checks that it exists, is a directory, and is writable by the app's user — by writing a probe file, because mode bits lie on network mounts. |
 | `TIME_ZONE` | no | the host's zone (`TZ`, else the zone `/etc/localtime` links to), else `UTC` — inside the image that is `UTC` | The zone every time on the page is shown in, as a tz database name such as `America/New_York` or `Europe/Berlin`. Set it: the container's clock is UTC whatever the host's is. The nightly jobs (the trash purge, the cleanups) run on this clock too. A name the app does not know refuses the boot, and the name is matched exactly, so `america/new_york` or a stray space is refused as well. |
 | `TZ` | no | — | The usual container zone variable: used when `TIME_ZONE` is unset and it names a zone, ignored otherwise. Set `TIME_ZONE` instead; if you set both, keep them equal, because the nightly jobs read `TZ` first. |
@@ -391,7 +385,7 @@ file sets the ones marked *set by compose*; the rest come from `.env`.
 | `TINKEREX_ADDONS_PATH` | build overlay | `../tinkerex-addons` | Path to a checkout of `chaim354/tinkerex-addons`, the build context for the addon bundle server in `docker-compose.build.yml`. |
 | `COMPOSE_FILE` | no | — | Docker's own: `COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml` in `.env` saves typing `-f` on every command. |
 | **Accounts and mail** (section 4) | | | |
-| `REGISTRATION` | no | `closed` in production | `closed`: only the first account (the owner) can sign up. `open`: anyone can — **refused at boot**, because every account indexes one library. Only the sync server (section 9) accepts it. |
+| `REGISTRATION` | no | `closed` in production | `closed`: only the first account (the owner) can sign up. `open`: anyone can — **refused at boot**, because every account indexes one library. |
 | `DEMO_ACCOUNT_EMAIL` | no | — (no demo) | Set it to turn the sign-in page into a demo: one click signs visitors into the shared account it names, which cannot change its credentials, publish or enrol a device, and is destroyed and re-seeded from `db/seeds/demo` every night at 04:00 UTC (run `bin/rails tinkerex:demo:setup` once to create it). **Every account indexes the same library, so visitors see all of it and the reset replaces all of it: set it only on a server that holds nothing else.** |
 | `DEMO_MAX_UPLOAD_BYTES` | no | `26214400` (25 MB) | The largest single file the demo account may upload, as a whole number of bytes. Anything else (`25MB`) refuses to boot while demo mode is on. |
 | `SMTP_ADDRESS` | for mail | — (no mail) | The SMTP host. Setting it turns delivery on; everything below has a sensible default. |
@@ -404,7 +398,7 @@ file sets the ones marked *set by compose*; the rest come from `.env`.
 | `TINKEREX_PASSWORD` | for the console tasks | — | The password `bin/rails tinkerex:owner` / `tinkerex:password` read, so that it never sits on a command line. |
 | `OMNIAUTH_ENABLED` | no | off | Any value turns on OpenID Connect login. |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | with `OMNIAUTH_ENABLED` | — | The provider's issuer URL (discovery is used), the client credentials, and the callback URL registered with the provider. |
-| `DEVICE_IDLE_DAYS` | no | `90` | Days a desktop app may go without using the maker API before its sign-in expires and it must sign in again. Its file sync uses a separate key on the sync server, which this does not touch. `0` keeps every device signed in until it is signed out under Settings → Devices or its account's password changes. |
+| `DEVICE_IDLE_DAYS` | no | `90` | Days a connected app may go without using the API before its sign-in expires and it must sign in again. `0` keeps every device signed in until it is signed out under Settings → Devices or its account's password changes. |
 | **The Tools gallery** (section 2) | | | |
 | `ADDON_SOURCE_URL` | *set by compose* (`http://addons`) | — | The addon bundle server. Takes precedence over the path below. |
 | `ADDON_SOURCE_PATH` | no | `/rails/public/addons` in the image (empty) | A directory of addon bundles on disk, the alternative to a bundle server. Empty means an empty gallery. |
@@ -432,104 +426,16 @@ file sets the ones marked *set by compose*; the rest come from `.env`.
 The repository ships `config/credentials.yml.enc`, encrypted with a key only the author holds. The
 app does not need it: with no master key, Rails reads that file as empty and takes the session
 secret from `SECRET_KEY_BASE` or, when that is unset, from the file generated into the volume on the
-first start (and, on the sync server backend in section 9, the `ACTIVE_RECORD_ENCRYPTION_*` values
-from the environment). A master key that is *present but wrong* is a different case — Rails
-tries to decrypt the file, fails, and the boot crashes with `ActiveSupport::MessageEncryptor::InvalidMessage`.
+first start. A master key that is *present but wrong* is a different case — Rails tries to decrypt
+the file, fails, and the boot crashes with `ActiveSupport::MessageEncryptor::InvalidMessage`.
 So leave it unset. The only reason to set it is if you have deleted `config/credentials.yml.enc` and
 generated your own with `bin/rails credentials:edit`, in which case it is your key and your file.
 
 ## 9. Advanced (a work in progress)
 
-Sections 1 to 8 install the `share` backend, and it is the one to use. This section collects the
-other ways to run Tinkerex. **Each is still a work in progress**: the steps are rougher than the
-rest of this page — the sync server is built from source, and neither the s3 backend nor Postgres
-has a template — and they may change from one release to the next. Reach for one only when a folder
-cannot do what you need.
-
-### Your own S3 bucket instead of a folder
-
-The `s3` backend indexes an S3-compatible bucket (SeaweedFS, MinIO, R2, AWS) the same way: the
-object is the truth, no versions, current state only. There is no template for it; the recipe is a
-small overlay, because the image defaults to the share backend and `docker-compose.yml` binds the
-`/library` folder. Save this as `docker-compose.s3.yml`, put the five `LIBRARY_S3_*` values in
-`.env`, and start with `-f docker-compose.yml -f docker-compose.s3.yml`:
-
-```yaml
-services:
-  web:
-    environment:
-      LIBRARY_BACKEND: s3
-      LIBRARY_PATH: ""
-    volumes: !override
-      - tinkerex_storage:/rails/storage
-```
-
-`LIBRARY_S3_BUCKET`, `LIBRARY_S3_ACCESS_KEY_ID` and `LIBRARY_S3_SECRET_ACCESS_KEY` are required;
-`LIBRARY_S3_ENDPOINT` for anything that is not AWS; `LIBRARY_S3_PREFIX` to use one folder of the
-bucket. The boot checks that they are present and nothing more — a wrong credential surfaces on
-first use, never as a crash loop.
-
-As with a folder, every account indexes the same bucket, so `REGISTRATION=open` is refused at boot
-here too, and deleted files move to a `.trash/` in the bucket that `LIBRARY_TRASH_DAYS` empties. The
-sweep that files a project's loose files right after an upload moves at most 5 on this backend
-(`PROJECT_ORGANIZE_EAGER_MAX_MOVES`, 25 on a folder); the 15-minute sweep files the rest.
-
-### The sync server (chunk_remote)
-
-The `share` backend is one folder, one library, current state only. The **sync server** is what
-gives each account its own library, keeps every version of every file, makes trash restore and
-history possible, and is what the desktop client (`chaim354/tinkerex-client`) syncs against. On
-this backend the app is itself a client of the sync server: it reads file metadata from a local
-mirror and sends writes over HTTP. Your files then live inside the sync server's volume as
-content-addressed chunks, not as plain files on disk.
-
-It is a compose overlay that adds a `sync` service, built from a sibling checkout of
-`chaim354/tinkerex-sync` (its `Dockerfile.rust`, a single static binary):
-
-```sh
-git clone https://github.com/chaim354/tinkerex-sync.git ../tinkerex-sync
-```
-
-In `.env`, fill in the block under "Work in progress: the sync server":
-
-- `SYNC_SECRET_KEY_BASE` — `openssl rand -hex 64`. The sync server's own session secret; it signs
-  the URLs chunks are fetched from.
-- `SYNC_ADMIN_TOKEN` — `openssl rand -hex 32`. **The same value reaches both services**: the app
-  uses it to create a library on the sync server for each new account, and the sync server checks it
-  against its own copy.
-- `SYNC_PUBLIC_URL` — the address your other devices reach the sync server at, scheme included:
-  `http://<this host>:3001` (the published port below), or the name a reverse proxy in front of it
-  answers to. The desktop app is handed it when it signs in. The app itself keeps using
-  `http://sync:3000`, a name only the compose network resolves, so the two are never the same.
-- `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY`, `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` and
-  `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` — `openssl rand -hex 16` each (any string of 32 or
-  more characters works). They encrypt each account's sync credential in the database. **Keep them
-  with your backups**: losing them makes every stored sync credential unreadable, and there is
-  nothing to derive them from.
-
-The sync server image is not yet pulled by the overlay — it is built from the checkout — so this
-path still needs the clone above. Then start with both files:
-
-```sh
-docker compose -f docker-compose.yml -f docker-compose.chunk_remote.yml up -d --build
-```
-
-(or put `COMPOSE_FILE=docker-compose.yml:docker-compose.chunk_remote.yml` in `.env` and keep typing
-plain `docker compose`). The overlay switches the app to `LIBRARY_BACKEND=chunk_remote`, drops the
-`/library` mount, points it at `http://sync:3000` on the compose network, and publishes the sync
-server on port **3001** (`TINKEREX_SYNC_PORT`) — that published port is what devices and the desktop
-client connect to, so it has to be reachable from them, and `SYNC_PUBLIC_URL` has to name it as they
-see it. The sync server runs with its scheduler on (`SYNC_SCHEDULER: "true"` in the overlay): expired
-pending commits are reaped hourly, orphaned chunk bytes weekly, and retention keeps every version —
-nothing you uploaded is ever pruned. `REGISTRATION=open` is allowed here, and only here.
-
-To update, `git pull` in `../tinkerex-sync` as well, and add `--build` to the command above.
-
-**Backups.** The sync server keeps its database and every chunk in the `tinkerex_sync_storage`
-volume, mounted at `/rails/host/storage` in the `sync` container; on this backend that volume takes
-the place of the library folder in section 6. Take the same `.backup` against
-`/rails/host/storage/production.sqlite3` in the `sync` container plus a copy of its `chunk-store/`
-directory — or stop the stack and copy the whole volume.
+Sections 1 to 8 are a complete install, and the `share` backend they set up is the one to use.
+Postgres instead of SQLite is **still a work in progress**: it has no template, and the steps may
+change from one release to the next.
 
 ### Postgres instead of SQLite
 
@@ -539,30 +445,10 @@ and cable databases are derived from it by name and must already exist.
 
 ### Reference: the advanced variables
 
-The same columns as section 7. *compose* marks a variable only `docker compose` reads, *sync* one
-only the sync server reads.
+The same columns as section 7.
 
 | variable | required? | default | what it does |
 |---|---|---|---|
-| **The s3 backend** | | | |
-| `LIBRARY_S3_BUCKET`, `LIBRARY_S3_ACCESS_KEY_ID`, `LIBRARY_S3_SECRET_ACCESS_KEY` | s3 | — | The bucket and credentials. The boot checks they are present; it never touches the network. |
-| `LIBRARY_S3_ENDPOINT` | for non-AWS | — | The endpoint URL (SeaweedFS, MinIO, R2). Path-style requests are used. |
-| `LIBRARY_S3_REGION` | no | `auto` | |
-| `LIBRARY_S3_PREFIX` | no | — (the whole bucket) | A key prefix that is the library's root, e.g. `library/`. |
-| **The sync server** | | | |
-| `CHUNK_REMOTE_URL` | chunk_remote, *set by compose* (`http://sync:3000`) | — | The sync server's address as seen from the app. |
-| `SYNC_PUBLIC_URL` | chunk_remote | — | The sync server's address as seen from your other devices, scheme included; the desktop app is handed it when it signs in. With compose, `http://<this host>:3001` or the name a reverse proxy in front of that port answers to. `CHUNK_REMOTE_URL` is the same server as seen from the app, a name only the app's own network resolves, so the two differ on purpose. The boot refuses chunk_remote without it. |
-| `SYNC_ADMIN_TOKEN` | chunk_remote | — | The operator credential the app uses to create each new account's library on the sync server. **Identical on both services.** `openssl rand -hex 32`. |
-| `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` | chunk_remote | — (read from credentials, which a stranger's image cannot decrypt) | Encrypts each account's sync credential at rest. 32+ characters; **keep it**. |
-| `ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY` | chunk_remote | — | Same; the key for deterministic encryption. |
-| `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` | chunk_remote | — | Same; the salt the two keys are derived with. |
-| `TINKEREX_SYNC_PATH` | chunk_remote, *compose* | `../tinkerex-sync` | Path to a checkout of `chaim354/tinkerex-sync`, the build context for the sync server. |
-| `TINKEREX_SYNC_PORT` | no, *compose* | `3001` | The host port the sync server is published on; what devices connect to. |
-| `SYNC_SECRET_KEY_BASE` | chunk_remote, *compose* | — | Becomes the sync server's own `SECRET_KEY_BASE`. `openssl rand -hex 64`; distinct from the app's. |
-| `SYNC_SCHEDULER` | chunk_remote, *set by compose* (`"true"`) | — | The sync server's housekeeping: expired pending commits reaped hourly, orphaned chunk bytes weekly, retention that keeps every version. The app never reads it. |
-| `STORAGE_BACKEND` | *sync*, set by the overlay | — | The sync server's chunk store: `local` (a directory in its volume) or `s3`. The overlay sets `local`. |
-| `CHUNK_LOCAL_DIR` | *sync* | `/rails/host/storage/chunk-store` | Where the local chunk store lives, inside the `tinkerex_sync_storage` volume. |
-| `CHUNK_PUBLIC_URL` | *sync*, no | the request's own host | The base URL the sync server writes into chunk download links. Unset, each client gets links on the host it connected through, which is right for this layout; set it only when a reverse proxy in front changes the public address. |
 | **Postgres instead of SQLite** | | | |
 | `DATABASE_URL` | no | — (SQLite in the volume) | A `postgres://` URL switches every database to Postgres. |
 | `DB_SSLMODE` | no | `prefer` for a localhost URL, else `require` | libpq's sslmode. |

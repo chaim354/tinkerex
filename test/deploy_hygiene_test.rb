@@ -103,12 +103,12 @@ class DeployHygieneTest < ActiveSupport::TestCase
   # THE COMPOSE GENERATOR READS docker-compose.yml AT RENDER TIME (Tinkerex::ComposeTemplate,
   # 2026-10-21), so the image must carry it -- and every test runs from a checkout, where the file is
   # always there, so nothing else would notice the image losing it: /install/compose would answer 500
-  # on every deployment behind a green suite. Only the base file is re-included; the build and sync
-  # overlays describe a clone's setup and stay out. Mutation-checked: deleting the `!` line goes red.
+  # on every deployment behind a green suite. Only the base file is re-included; the build overlay
+  # describes a clone's setup and stays out. Mutation-checked: deleting the `!` line goes red.
   test "the image carries docker-compose.yml for the compose generator, and only that compose file" do
     refute dockerignored?("docker-compose.yml"), "add `!/docker-compose.yml` to .dockerignore after `/docker-compose*.yml`"
     assert_equal Tinkerex::ComposeTemplate::SOURCE, ROOT.join("docker-compose.yml")
-    %w[docker-compose.build.yml docker-compose.chunk_remote.yml].each do |overlay|
+    %w[docker-compose.build.yml].each do |overlay|
       assert dockerignored?(overlay), "#{overlay} reached the image; only the base compose file is the generator's"
     end
   end
