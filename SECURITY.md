@@ -7,9 +7,9 @@ pull request.
 ## Reporting a vulnerability
 
 Open a private report on GitHub: this repository's **Security** tab, then **Report a
-vulnerability**. It reaches the maintainer and nobody else. The same door exists on the sibling
-repositories, `chaim354/tinkerex-sync`, `chaim354/tinkerex-client` and `chaim354/tinkerex-addons`,
-so report against the repository that holds the code, and use this one when unsure.
+vulnerability**. It reaches the maintainer and nobody else. The same door exists on
+`chaim354/tinkerex-addons`, so report against the repository that holds the code, and use this one
+when unsure.
 
 Include what you can: the affected version or image digest, the `LIBRARY_BACKEND` in use, the steps
 to reproduce, and what an attacker gains. A proof of concept against your own installation is
@@ -24,12 +24,12 @@ advisory is published once the fix is out.
 ## Scope
 
 In scope: the Rails app in this repository and the images built from it
-(`ghcr.io/chaim354/tinkerex`, `boxes-sidecar`, `openscad-sidecar`), the addon bundles
-(`tinkerex-addons`), the sync server (`tinkerex-sync`) and the desktop client (`tinkerex-client`).
+(`ghcr.io/chaim354/tinkerex`, `boxes-sidecar`, `openscad-sidecar`), and the addon bundles
+(`tinkerex-addons`).
 
 Two things are documented behaviour rather than flaws, and belong in an ordinary issue if you think
-they should change: on the `share` and `s3` backends every account on one server indexes the same
-library (`docs/INSTALL.md`), and the public demo's library is wiped and re-seeded nightly.
+they should change: every account on one server indexes the same library (`docs/INSTALL.md`), and
+the public demo's library is wiped and re-seeded nightly.
 
 ## Supported versions
 

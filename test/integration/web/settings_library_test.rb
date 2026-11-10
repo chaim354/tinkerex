@@ -449,7 +449,7 @@ module Web
       get settings_path
 
       assert_select "a.settings-name[href=?]", settings_library_path, text: "Library folder"
-      assert_select ".settings-fact", text: @share ? "whole folder" : /storage bucket|sync server/
+      assert_select ".settings-fact", text: @share ? "whole folder" : /server storage|sync server/
     end
   end
 end

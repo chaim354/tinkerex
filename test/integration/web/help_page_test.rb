@@ -1,5 +1,6 @@
 require "test_helper"
 require "support/fake_addon_source"
+require "support/hidden_backend_words"
 require "support/public_fixture"
 
 module Web
@@ -14,6 +15,7 @@ module Web
   # said none of them.
   class HelpPageTest < ActionDispatch::IntegrationTest
     include PublicFixture
+    include HiddenBackendWords
 
     OPERATOR = "For the person running this server".freeze
 
@@ -116,9 +118,13 @@ module Web
       assert_match(/Rescan library/, maker_text)
       assert_match(/keeps no older versions/i, maker_text)
       assert_no_match(/desktop app/i, maker_text)
+      # The WHOLE of main, the operator's collapsed section included: that is where "the three
+      # library backends" and the sync-server REGISTRATION sentence lived.
+      assert_no_hidden_backend_words(main_text.squish, "Help on a folder library")
 
       replacing(FileLayer.current, :capabilities, -> { bucket }) { get help_path }
-      assert_match(/storage bucket/i, maker_text)
+      assert_match(/storage this server was set up with/i, maker_text)
+      assert_no_hidden_backend_words(maker_text, "Help on an s3 library")
       assert_match(/Rescan library/, maker_text)
       assert_no_match(/folder on this server/i, maker_text)
 

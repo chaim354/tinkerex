@@ -1,11 +1,13 @@
 require "test_helper"
+require "support/hidden_backend_words"
 
 # docs/INSTALL.md IS THE ENVIRONMENT REFERENCE, and this is what keeps it complete: every variable
 # the app reads (`ENV["X"]`, `ENV.fetch("X"...)`, and `env["X"]` / `env.fetch("X")` in the lib
 # modules and adapters that take an env hash) must have a row in its reference table, except the
-# names below, which are dev/CI/author-only and documented where they are used. A variable added
-# to the code and not to the table fails here. The table may hold MORE than the code reads — the
-# compose-only knobs, the sync server's own variables, the keys Rails itself consumes — never less.
+# names below, which are dev/CI/author-only and documented where they are used, and the hidden
+# backends' (HIDDEN_BACKEND_VARIABLES). A variable added to the code and not to the table fails
+# here. The table may hold MORE than the code reads — the compose-only knobs, the keys Rails itself
+# consumes — never less.
 class InstallDocsTest < ActiveSupport::TestCase
   DOC = Rails.root.join("docs/INSTALL.md")
   ROOTS = %w[app lib config bin/docker-entrypoint bin/thrust].freeze
@@ -23,6 +25,20 @@ class InstallDocsTest < ActiveSupport::TestCase
   # variables at all: they are the Rack request header and peer address CloudflareOnly reads as
   # `env["…"]` on the request's env hash (config/initializers/trusted_proxies.rb), the same spelling
   # the scan looks for.
+
+  # THE s3 AND chunk_remote BACKENDS STILL RUN (the author's Unraid destinations and the public OVH
+  # box) BUT ARE NO LONGER OFFERED TO INSTALLERS (2026-11-10, docs/superpowers/specs/
+  # 2026-11-10-hide-s3-sync-and-desktop-design.md), so their variables have no row and the page
+  # must not name them. DERIVED from the boot guard's own required lists, so a knob the guard comes
+  # to require is exempted with it; the optional ones are named here. A NEW variable read only by
+  # those backends belongs in OPTIONAL; anything else still needs a row.
+  HIDDEN_BACKEND_OPTIONAL = %w[
+    LIBRARY_S3_ENDPOINT LIBRARY_S3_REGION LIBRARY_S3_PREFIX
+    ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY ACTIVE_RECORD_ENCRYPTION_DETERMINISTIC_KEY
+    ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT
+  ].freeze
+  HIDDEN_BACKEND_VARIABLES = (LibraryBackendCheck::S3_REQUIRED + LibraryBackendCheck::CHUNK_REMOTE_REQUIRED +
+                              HIDDEN_BACKEND_OPTIONAL).uniq.freeze
 
   # `env` as well as `ENV`, and `.fetch(` as well as `[`: FileLayer::S3.from_env reads its five
   # LIBRARY_S3_* knobs as `env.fetch("...")` on an injected hash, and a pattern that only knew
@@ -59,7 +75,7 @@ class InstallDocsTest < ActiveSupport::TestCase
   end
 
   test "every variable the app reads has a row in docs/INSTALL.md's reference table" do
-    names = names_read_by_the_code - NOT_FOR_INSTALLERS
+    names = names_read_by_the_code - NOT_FOR_INSTALLERS - HIDDEN_BACKEND_VARIABLES
     assert_operator names.size, :>=, 20, "the scan found too few variables — did the pattern or the roots break?"
     documented = documented_names
     assert_operator documented.size, :>=, 20, "the table parse found almost nothing — did the table's shape change?"
@@ -69,12 +85,23 @@ class InstallDocsTest < ActiveSupport::TestCase
 
   test "the compose files and the env example name no variable the table does not" do
     documented = documented_names
-    %w[docker-compose.yml docker-compose.build.yml docker-compose.chunk_remote.yml .env.example].each do |file|
+    %w[docker-compose.yml docker-compose.build.yml .env.example].each do |file|
       used = Rails.root.join(file).read.scan(/\b([A-Z][A-Z0-9_]{3,})(?:=|:)/).flatten.uniq - NOT_FOR_INSTALLERS
       floor = file == "docker-compose.build.yml" ? 1 : 3 # the build overlay names one: TINKEREX_ADDONS_PATH
       assert_operator used.size, :>=, floor, "#{file} names almost no variables — did the file or the pattern break?"
       undocumented = used - documented
       assert_empty undocumented, "#{file} uses #{undocumented.join(', ')} but docs/INSTALL.md's table has no row for them"
     end
+  end
+
+  test "the install guide and the files it hands out name no hidden backend" do
+    %w[docs/INSTALL.md docker-compose.yml docker-compose.build.yml .env.example].each do |file|
+      text = Rails.root.join(file).read
+      named = HIDDEN_BACKEND_VARIABLES.select { |v| text.include?(v) }
+      assert_empty named, "#{file} names #{named.join(', ')}, a variable of a backend installers are not offered"
+      hits = HiddenBackendWords.hits_in(text)
+      assert_empty hits, "#{file} mentions a hidden backend:\n#{hits.join("\n")}"
+    end
+    refute Rails.root.join("docker-compose.chunk_remote.yml").exist?, "the sync-server overlay is not handed out"
   end
 end

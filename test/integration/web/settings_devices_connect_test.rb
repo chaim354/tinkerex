@@ -31,7 +31,7 @@ module Web
         assert_select "input[name=?][maxlength='80']:not([size])", "device[name]"
         assert_select "input[type=submit][value=Connect]"
       end
-      assert_select "p.muted", text: /desktop apps and assistants/
+      assert_select "p.muted", text: /The apps and assistants connected/
     end
 
     test "connecting mints a device with no sync grant, shows the token once, and the token opens /mcp" do

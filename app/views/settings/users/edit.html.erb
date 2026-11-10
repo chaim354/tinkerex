@@ -20,7 +20,7 @@
   <% if @user.errors.any? %>
     <div class="form-errors" role="alert"><%= @user.errors.full_messages.to_sentence %>.</div>
   <% end %>
-  <p class="muted">Signs <%= @user.email %> out of every browser and every desktop app.
+  <p class="muted">Signs <%= @user.email %> out of every browser and every connected app.
     <% if capabilities.syncable? %>File sync from a desktop app runs on its own key on the sync server
     and carries on.<% end %></p>
   <%# scope: :user, for the reason the add form on the Users page gives: the field must be
@@ -64,7 +64,7 @@
   <% devices = @user.devices.to_a.sort_by(&:last_active_at).reverse %>
   <% idle_limit = Device.idle_limit %>
   <% if devices.empty? %>
-    <p class="muted">No desktop app is signed in to <%= @user.email %>.</p>
+    <p class="muted">No app is signed in to <%= @user.email %>.</p>
   <% else %>
     <p class="muted">Signing a device out ends its access to this server.
       <% if capabilities.syncable? %>It can still sync files until it is removed from the sync server

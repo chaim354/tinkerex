@@ -39,8 +39,8 @@ module Files
                                           col_cap: Maker::Xlsx::Workbook::COL_CAP)
     rescue Maker::Xlsx::Unreadable => e
       refuse(:unprocessable_entity, e.message)
-    rescue FileLayer::FetchError => e
-      refuse(:service_unavailable, e.message)
+    rescue FileLayer::FetchError
+      refuse(:service_unavailable, ::FilesController::UNREACHABLE)
     rescue FileLayer::NotFound
       refuse(:not_found, Maker::TextSave::REMOVED)
     end
@@ -65,8 +65,8 @@ module Files
       render json: { ok: true, content_token: result.content_token }
     rescue Maker::Xlsx::Refused, Maker::Xlsx::Unreadable => e
       refuse(:unprocessable_entity, e.message)
-    rescue FileLayer::FetchError => e
-      refuse(:service_unavailable, e.message)
+    rescue FileLayer::FetchError
+      refuse(:service_unavailable, ::FilesController::UNREACHABLE)
     rescue FileLayer::NotFound
       refuse(:conflict, Maker::TextSave::REMOVED)
     end

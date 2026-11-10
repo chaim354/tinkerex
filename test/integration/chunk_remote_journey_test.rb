@@ -385,8 +385,9 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
   #
   # ONE ANSWER IS CHANGED, AND ONLY THE GAP SIGNAL: nothing schedules tinkerex-sync's
   # `prune_changelog` yet, so no real server can be made to report a gap. `oldest_seq` reads as
-  # `head_seq + 1`, which is what a server whose changelog was pruned empty reports (sync-protocol.md
-  # §8.3). Every node the resync then applies is the server's own reply, read off the real wire.
+  # `head_seq + 1`, which is what a server whose changelog was pruned empty reports (tinkerex-sync's
+  # docs/sync-protocol.md §8.3). Every node the resync then applies is the server's own reply, read
+  # off the real wire.
   test "a resync applies the real /v1/tree reply: a file the mirror never saw comes back readable" do
     skip_unless_remote_server
     user = sign_in

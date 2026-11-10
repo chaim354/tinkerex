@@ -89,7 +89,7 @@ module Web
                              secret_access_key: "sk", client: Object.new)
       [
         [ FileLayer.current.capabilities, "the library folder may be unmounted" ],
-        [ s3.capabilities, "the storage bucket isn't answering" ],
+        [ s3.capabilities, "the library storage isn't answering" ],
         [ FileLayer::ChunkRemote::CAPABILITIES, "the sync server may be down" ]
       ].each do |caps, cause|
         replacing(FileLayer.current, :capabilities, -> { caps }) do

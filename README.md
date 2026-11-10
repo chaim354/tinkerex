@@ -3,17 +3,14 @@
 A self-hosted library for a maker's files — 3D models (STL, 3MF, OBJ), CAD (STEP, IGES, native
 formats), laser files (LightBurn, SVG, DXF), PDFs, Gerbers, images — with thumbnails rendered on the
 server, a 3D viewer in the browser, projects with tasks, a build log and a bill of materials,
-inventory, and a Tools gallery of add-ons that save their output straight into the library. The
-desktop sync client lives in `chaim354/tinkerex-client` and is still being brought up.
+inventory, and a Tools gallery of add-ons that save their output straight into the library.
 
 ## Status
 
 It runs on real hardware, every day, for its author. It holds your files in a **folder you point it
-at** — a directory on the box, or a NAS share — as plain files you can edit with anything else; that
-is the default, and the install below sets it up. Other ways to hold them (your own S3 bucket, or the
-sync server that adds per-account libraries and versions) are a work in progress, collected under
-Advanced in the guide. It is open source under the Apache License 2.0, and the images are published
-on ghcr.io under `chaim354`.
+at** — a directory on the box, or a NAS share — as plain files you can edit with anything else, and
+the install below sets it up. It is open source under the Apache License 2.0, and the images are
+published on ghcr.io under `chaim354`.
 
 ## Quick start
 
@@ -61,16 +58,12 @@ folder with anything. Both recipes are in the guide.
 | repository | what it is | licence |
 |---|---|---|
 | `chaim354/tinkerex` (this one) | The web app: library, previews, projects, inventory, Tools. | Apache-2.0 |
-| `chaim354/tinkerex-sync` | The sync server: chunks, versions, the changelog; a single Rust binary. | MIT |
-| `chaim354/tinkerex-client` | The desktop client: the mounts and the sync engine, in Rust. | Apache-2.0 |
 | `chaim354/tinkerex-addons` | The addon bundles the Tools gallery serves. | MIT |
 
 ## Developing
 
 `bin/setup` prepares a development checkout. `bin/ci` runs every gate, and `bin/ci --list` names
-them; the suite runs once per library backend — `test` (share), `test-s3` and `test-chunk-remote`,
-the last against a sibling checkout of `tinkerex-sync` — and the three must report identical run
-counts. `CLAUDE.md` is the architecture: the port between the app and whatever holds the bytes, the
+them. `CLAUDE.md` is the architecture: the port between the app and whatever holds the bytes, the
 data model, and the invariants that a change must not undo.
 
 ## Security
@@ -81,7 +74,6 @@ Found a vulnerability? Report it privately through the repository's Security tab
 ## Licence
 
 Copyright 2026 Charles Schwartz. Licensed under the Apache License, Version 2.0 (`LICENSE`); you may
-not use this repository except in compliance with it. The sibling repositories are MIT
-(`tinkerex-sync`, `tinkerex-addons`) and Apache-2.0 (`tinkerex-client`). Every dependency shipped
-is permissive as well (`CLAUDE.md` §9); the two GPL sidecars are separate images invoked over HTTP,
-never linked.
+not use this repository except in compliance with it. The addon bundles (`tinkerex-addons`) are MIT.
+Every dependency shipped is permissive as well (`CLAUDE.md` §9); the two GPL sidecars are separate
+images invoked over HTTP, never linked.

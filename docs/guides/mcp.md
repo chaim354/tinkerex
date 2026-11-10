@@ -28,7 +28,7 @@ folders and read its text files. It cannot delete anything, upload anything, or 
 
 4. **claude.ai's hosted connectors** need OAuth, which this server does not offer yet.
 
-The assistant appears on the Devices page like a desktop app, with the same idle expiry
+The assistant appears on the Devices page like any other connected app, with the same idle expiry
 (`DEVICE_IDLE_DAYS`, 90 by default), and **Sign out** there revokes its token at once. Changing your
 password signs out every device and assistant. The shared demo account cannot connect one.
 

@@ -15,8 +15,8 @@ module V1
   # app with no /v1 namespace at all, so the suite would stay green over a deleted API. Pinning
   # that POST /v1/devices/login is NOT a 404 makes absence the claim and presence the instrument.
   class SyncSurfaceAbsentTest < ActionDispatch::IntegrationTest
-    # Verb + path exactly as docs/sync-protocol.md spells them, so a route re-added under the
-    # protocol's own name is caught rather than a near-miss spelling.
+    # Verb + path exactly as tinkerex-sync's docs/sync-protocol.md spells them, so a route re-added
+    # under the protocol's own name is caught rather than a near-miss spelling.
     ABSENT = [
       [ :post,   "/v1/commit" ],
       [ :post,   "/v1/commit/abc/finalize" ],

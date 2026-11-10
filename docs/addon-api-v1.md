@@ -622,10 +622,10 @@ await host.files.save({
 - **On a host below level 3 the field is ignored and the save creates.** There is nothing to
   feature-detect — declare `min_host: 3` if revising is load-bearing for your bundle.
 
-**There is no per-revision archive of the bytes.** One file per item, overwritten. On a chunk-backed
-host the old bytes survive in the library's own version chain; on a share- or S3-backed host they do
-not. The **params** always survive, in the history below — which is what makes an old design
-recoverable: load its values and save, and that becomes the next revision.
+**There is no per-revision archive of the bytes.** One file per item, overwritten. Whether the old
+bytes survive depends on the host; do not count on it. The **params** always survive, in the history
+below — which is what makes an old design recoverable: load its values and save, and that becomes
+the next revision.
 
 #### `body` may be text or bytes (host level 2)
 
@@ -1193,7 +1193,7 @@ only when you did not.
 |---|---|---|---|
 | `would_replace` | 409 | `WouldReplaceError` | The save would replace files this addon wrote before. `.files` is `[{name, folder}]`. |
 | `unsupported_operation` | 422 | `NameTakenError` | An output name is already taken in the folder you picked. |
-| `not_found` | 422 | `AddonError` | **A missing destination folder does NOT produce this — see the warning below.** What does: an output `name` the library cannot index — `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, or `.trash` at the library root (plus `.maker-tmp-*` on a share-backed host). Rename the output. Raised only on a share/S3-backed host; a chunk-backed host accepts those names. 422 rather than 404 because the endpoint is fine and the request was refused. |
+| `not_found` | 422 | `AddonError` | **A missing destination folder does NOT produce this — see the warning below.** What does: an output `name` the library cannot index — `.DS_Store`, `._x`, `__MACOSX`, `.Trashes`, or `.trash` at the library root (plus `.maker-tmp-*` on a share-backed host). Rename the output. 422 rather than 404 because the endpoint is fine and the request was refused. |
 | `fetch_error` | 503 | `ServiceUnavailableError` | The library is unreachable — for example an unmounted share. Retry later; there is nothing to fix in your request. |
 | `not_found` | 404 | `AddonError` | **`files.read`.** No such file: a node id that is not yours, one that never existed, one that has been deleted, or a folder. All four answer identically on purpose — a split would tell you which node ids are real. |
 | `not_found` | 404 | `AddonError` | **`files.save` with a `stateId`, and `state.revisions`.** No such saved item for this addon: an id that never existed, one belonging to another user, or one under another addon's `states_key`. Identical for all three, for the same reason. A save that answers this **wrote nothing** — the item is resolved before any byte is written. |
@@ -1207,7 +1207,7 @@ only when you did not.
 > resolved against your own live folders, and an id that matches nothing **falls back to `nil`, which
 > means the library root** — *before* any storage call, so there is nothing left to raise. The save
 > then answers **302, a success**, and your file lands somewhere the user did not choose. Verified
-> against a running host on both the chunk and share backends.
+> against a running host.
 >
 > There is no error to catch and no response field that reports it, so **an addon cannot detect this
 > after the fact** — `save` has no JSON success branch to name the folder it actually used. What you
@@ -1364,7 +1364,7 @@ up when the host ships it — no new release of your bundle required.
 | Renaming a saved state without re-saving it, and deleting one at all | `state:crud`. **Revising is not this** — `stateId` on `files.save` (shipped at level 3) updates an item through the *save* door, which writes library bytes. A rename-only or delete path needs the direct `PATCH`/`DELETE` endpoints this capability names, and neither exists. |
 | Deleting, pruning, diffing or annotating a **revision** | Not reserved. The history is deliberately thin: append on save, read back, load old params into your form. Nothing else was built, and nothing is planned under a name you can detect. |
 | Paging on `state.list()` or `state.revisions()` | Not reserved. Both are unbounded today and stay that way; if either ever needs bounding it will be a cursor plus a `has_more`, not a silent cap. |
-| A per-revision archive of the output bytes | Not reserved. One file per item, overwritten (§3). The params are the history; on a chunk-backed host the old bytes also survive in the library's own version chain, but that is the host's storage backend and not something your bundle can require. |
+| A per-revision archive of the output bytes | Not reserved. One file per item, overwritten (§3). The params are the history; whether the old bytes also survive is up to the host, and not something your bundle can require. |
 | Addon-owned collections — structured records that are neither files nor states | `data` |
 | Reading maker data: inventory, projects, BOM | `maker:read` |
 | Reading the user's current project | `project:current` |

@@ -151,6 +151,27 @@ module Web
       assert_match(/not a readable \.xlsx/, response.parsed_body["error"])
     end
 
+    # AN UNREACHABLE LIBRARY ANSWERS THE PLAIN SENTENCE, NEVER THE STORE'S OWN ERROR (2026-11-10).
+    # A FetchError's message is for the log: on s3 it names the AWS error class, on a share the
+    # file's path. Both doors used to hand it to the browser verbatim.
+    test "an unreachable library is refused with the plain sentence on read and on save" do
+      node = seed_xlsx!("bom.xlsx", xlsx_bytes)
+      token = token_for(node)
+      adapter = FileLayer.current.singleton_class
+      adapter.define_method(:read) { |*, **| raise FileLayer::FetchError, "\"bom.xlsx\": Aws::S3::Errors::ServiceUnavailable (bucket down)" }
+      begin
+        get file_spreadsheet_path(node.node_id), as: :json
+        assert_response :service_unavailable
+        assert_equal FilesController::UNREACHABLE, response.parsed_body["error"]
+
+        save!(node, [ set(0, 0, "x") ], token:)
+        assert_response :service_unavailable
+        assert_equal FilesController::UNREACHABLE, response.parsed_body["error"]
+      ensure
+        adapter.remove_method(:read)
+      end
+    end
+
     test "another user's workbook and a file that is not a workbook have no door" do
       mine = seed_plain_file!("notes.txt", "hello")
       other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com", password: PASSWORD, confirmed_at: Time.current)

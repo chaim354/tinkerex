@@ -79,11 +79,11 @@ module Maker
       # ONLY THE port_writable BRANCH TAKES IT, AND chunk_remote NEEDS NOTHING — its upload is not
       # missing this check, it already has a stronger one. #write_chunk commits against the existing
       # node with `base_version_id: existing&.current_version_id`, and the sync server answers a
-      # STALE base with a recorded CONFLICT rather than a silent overwrite (§6; docs/sync-protocol.md,
-      # "Last-writer-wins was false"). So the mirror's staleness costs a conflict row, never a lost
-      # edit — where share and s3 have no version to conflict against and would simply overwrite.
-      # Passing a token down there would be a second, weaker guard keyed on the very mirror that
-      # lags.
+      # STALE base with a recorded CONFLICT rather than a silent overwrite (§6; tinkerex-sync's
+      # docs/sync-protocol.md, "Last-writer-wins was false"). So the mirror's staleness costs a
+      # conflict row, never a lost edit — where share and s3 have no version to conflict against and
+      # would simply overwrite. Passing a token down there would be a second, weaker guard keyed on
+      # the very mirror that lags.
       def write_bytes!(user, parent_node_id:, name:, bytes:, replace: false, expect_token: nil)
         f = { name:, bytes: }
         caps = FileLayer.current.capabilities

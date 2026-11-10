@@ -39,7 +39,7 @@
         <%# User#revoke_devices_after_password_change (pentest H1b). %>
         <span class="field-hint">Leave blank to keep your current password. At least
           <%= @minimum_password_length || Devise.password_length.min %> characters. A new password
-          signs out every desktop app (Settings → Devices).</span>
+          signs out every connected app (Settings → Devices).</span>
       </div>
 
       <div class="field">

@@ -79,7 +79,7 @@ the accepted trade — the same trade `Library::ScanJob`'s poll already makes fo
 
 The sync engine's own design — chunking, versions, the changelog, conflict records — is
 **`chaim354/tinkerex-sync`'s** concern. The wire between us is specified in
-`docs/sync-protocol.md`; the client half this app implements is §6.
+`docs/sync-protocol.md` in `chaim354/tinkerex-sync`; the client half this app implements is §6.
 
 ---
 
@@ -157,10 +157,10 @@ current-state only** — a deliberate departure, §14a.
 
 ## 6. Talking to the sync server (`chunk_remote` only)
 
-`docs/sync-protocol.md` is the normative wire spec. **This app implements the CLIENT half and
-serves none of it** — `/v1/changes`, `/v1/tree`, `/v1/commit`, `/v1/chunks/*`, `/v1/conflicts`,
-`/v1/locks`, `/v1/trash`, `/v1/nodes` and `/v1/share_links` are **not routed here** (§12.12). A
-desktop client syncs against `tinkerex-sync`, never against this app.
+`docs/sync-protocol.md` in `chaim354/tinkerex-sync` is the normative wire spec. **This app
+implements the CLIENT half and serves none of it** — `/v1/changes`, `/v1/tree`, `/v1/commit`,
+`/v1/chunks/*`, `/v1/conflicts`, `/v1/locks`, `/v1/trash`, `/v1/nodes` and `/v1/share_links` are
+**not routed here** (§12.12). A desktop client syncs against `tinkerex-sync`, never against this app.
 
 `FileLayer::ChunkRemote` (~1000 lines, `app/services/file_layer/chunk_remote*`) calls exactly
 eight endpoints: `/v1/tree`, `/v1/changes`, `/v1/commit`, `/v1/commit/:id/finalize`,
@@ -263,7 +263,7 @@ Deploy OVH only on explicit request. `docs/guides/DEPLOY.md`.
 /sidecar         GPL services invoked over HTTP only: boxes (GPL-3.0), openscad (GPL-2.0)
 /ops             Scripts that run ON the box, not in the app — backup-db.sh, installed by
                  bin/backup-cron-install. Only its destination table is gated; invariants in §14i.
-/docs            INSTALL.md, sync-protocol.md, addon-api-v1.md (linked by URL or by sibling repos, so
+/docs            INSTALL.md, addon-api-v1.md (linked by URL or by a sibling repo, so
                  they stay put); guides/ (DEPLOY, mcp, preview formats); reference/; README.md
 /docs/invariants §14's AREA rules, one file per area — addons.md, measure-view.md,
                  deploy-secrets.md, backup-restore.md, model-intake.md. NOT optional reading and NOT

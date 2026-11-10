@@ -35,7 +35,7 @@ module Web
     test "the hub links to Devices with a count" do
       sign_in_web!(@user, password: PASSWORD)
       get settings_path
-      assert_select "ul.settings-hub li", text: /Devices\s*2 desktop apps/ do
+      assert_select "ul.settings-hub li", text: /Devices\s*2 connected apps/ do
         assert_select "a.settings-name[href=?]", settings_devices_path
       end
     end
@@ -183,7 +183,7 @@ module Web
       sign_in_web!(@user, password: PASSWORD)
       get settings_devices_path
       notes = css_select("main p.muted").map { |p| p.text.squish }
-      assert_match(/\AThe desktop apps and assistants connected to your account/, notes.first)
+      assert_match(/\AThe apps and assistants connected to your account/, notes.first)
       assert_match(/\ASigning a device out ends its access to this server/, notes.second)
       assert_select ".topbar nav.breadcrumb [aria-current=page]", "Devices"
     end
@@ -194,7 +194,7 @@ module Web
       @user.devices.delete_all
       sign_in_web!(admin, password: PASSWORD)
       get edit_settings_user_path(@user)
-      assert_select "section.user-manage p.muted", text: "No desktop app is signed in to #{@user.email}."
+      assert_select "section.user-manage p.muted", text: "No app is signed in to #{@user.email}."
     end
   end
 end

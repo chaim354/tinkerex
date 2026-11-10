@@ -14,7 +14,7 @@ class SettingsController < ApplicationController
         rel = Tinkerex::LibraryRoot.relative
         rel.present? ? "/#{rel}" : "whole folder"
       else
-        capabilities.presignable? ? "storage bucket" : "sync server"
+        capabilities.presignable? ? "server storage" : "sync server"
       end
     @shelf_count = Maker::Shelves.count_for(current_user)
     @supplier_count = current_user.maker_suppliers.count

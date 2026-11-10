@@ -85,7 +85,8 @@ named below. Trimmed long-form notes used to live in `docs/plan-direct-client.md
 - **Current approach:** each commit sends its `base_version_id`; a stale base records a
   **conflict** (both versions kept) and the client prompts keep-one / split-into-two
   (`Sync::Conflicts`, `GET /v1/conflicts`, `POST /v1/nodes/:id/resolve_conflict`). A base
-  that IS current is a clean fast-forward. (`CLAUDE.md` §6, `docs/sync-protocol.md`.)
+  that IS current is a clean fast-forward. (`CLAUDE.md` §6, tinkerex-sync's
+  `docs/sync-protocol.md`.)
 
 ## 6. `mtime = now`-on-pull freshness hack — REPLACED by Option B (real nanos mtime + active invalidation)
 

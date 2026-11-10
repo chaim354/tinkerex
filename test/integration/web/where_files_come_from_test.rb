@@ -1,4 +1,5 @@
 require "test_helper"
+require "support/hidden_backend_words"
 require "support/public_fixture"
 
 module Web
@@ -18,6 +19,7 @@ module Web
   # established is not a guard).
   class WhereFilesComeFromTest < ActionDispatch::IntegrationTest
     include PublicFixture
+    include HiddenBackendWords
 
     # The house stub helper (new_menu_test.rb carries the same body; Minitest 6 has no Object#stub).
     # Replaces a SINGLETON method for the block, removing an inherited one after.
@@ -68,7 +70,7 @@ module Web
       sources = text_of(".getting-started .file-sources")
       assert_match(/Upload, in the top bar/, sources)
       assert_match(/library folder on the server.*within 15 minutes.*Rescan library/, sources)
-      refute_match(/desktop app|storage bucket/, sources, "a share library has neither")
+      refute_match(/desktop app|storage this server uses/, sources, "a share library has neither")
 
       assert_match(/directly inside Projects\/.*becomes a project within 15 minutes/,
                    text_of(".getting-started .projects-intake"))
@@ -87,12 +89,13 @@ module Web
       assert_select ".home-files .recent-grid .grid-card", 1
     end
 
-    test "a bucket-backed library names the bucket, not a folder" do
+    test "an s3-backed library names its storage, not a folder" do
       with_capabilities(s3_capabilities) { get root_path }
       assert_response :success
       sources = text_of(".getting-started .file-sources")
-      assert_match(/storage bucket.*within 15 minutes.*Rescan library/, sources)
+      assert_match(/storage this server uses.*within 15 minutes.*Rescan library/, sources)
       refute_match(/library folder|desktop app/, sources)
+      assert_no_hidden_backend_words(sources, "Recent's sources on an s3 library")
     end
 
     test "a synced library names the desktop app and promises no scan" do
@@ -102,7 +105,7 @@ module Web
       assert_match(/Upload, in the top bar/, sources)
       assert_match(/desktop app/, sources)
       # Nothing polls a chunk_remote library and there is no Rescan door (require_scannable!).
-      refute_match(/15 minutes|Rescan library|library folder|storage bucket/, sources)
+      refute_match(/15 minutes|Rescan library|library folder|storage this server uses/, sources)
       # Discovery runs every 15 minutes on this backend too (config/recurring.yml).
       assert_match(/becomes a project within 15 minutes/, text_of(".getting-started .projects-intake"))
     end

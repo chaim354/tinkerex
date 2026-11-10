@@ -1,4 +1,5 @@
 require "test_helper"
+require "support/hidden_backend_words"
 require "support/public_fixture"
 
 module Web
@@ -10,6 +11,7 @@ module Web
   # three roots in an order that matters; these are what go red if it changes.
   class LandingTest < ActionDispatch::IntegrationTest
     include PublicFixture # make_owner!, sign_in_as
+    include HiddenBackendWords
 
     INSTALL_URL = Tinkerex::Landing::INSTALL_URL
     SOURCE_URL = Tinkerex::Landing::SOURCE_URL
@@ -80,6 +82,16 @@ module Web
       # comment ending at a quoted `%>` prints its own prose and leaks the delimiter (§14d).
       assert_not_includes response.body, "<%", "the landing leaked an ERB opener"
       assert_not_includes response.body, "%>", "the landing leaked an ERB closer"
+    end
+
+    # THE PITCH OFFERS THE FOLDER INSTALL ONLY (2026-11-10): s3 and the sync server still run, but
+    # the page a stranger reads first names neither, nor a bucket or a desktop app.
+    test "the landing names no storage but a folder" do
+      demo_on!
+      get root_path
+      assert_response :success
+      assert_no_hidden_backend_words(css_select("main").text.squish, "the landing")
+      assert_select "li", text: /Point it at a folder.*A folder or a NAS share/m
     end
 
     # THE ACCENT IS SPENT ONCE (design-system.md rule 13), on the action this page exists for.
