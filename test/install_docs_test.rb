@@ -1,4 +1,5 @@
 require "test_helper"
+require "support/hidden_backend_words"
 
 # docs/INSTALL.md IS THE ENVIRONMENT REFERENCE, and this is what keeps it complete: every variable
 # the app reads (`ENV["X"]`, `ENV.fetch("X"...)`, and `env["X"]` / `env.fetch("X")` in the lib
@@ -38,7 +39,6 @@ class InstallDocsTest < ActiveSupport::TestCase
   ].freeze
   HIDDEN_BACKEND_VARIABLES = (LibraryBackendCheck::S3_REQUIRED + LibraryBackendCheck::CHUNK_REMOTE_REQUIRED +
                               HIDDEN_BACKEND_OPTIONAL).uniq.freeze
-  HIDDEN_WORDS = /\bS3\b|\bbuckets?\b|chunk[_-]remote|sync[ -]server|sync engine|tinkerex-sync|tinkerex-client|desktop (?:app|client)/i
 
   # `env` as well as `ENV`, and `.fetch(` as well as `[`: FileLayer::S3.from_env reads its five
   # LIBRARY_S3_* knobs as `env.fetch("...")` on an injected hash, and a pattern that only knew
@@ -99,7 +99,7 @@ class InstallDocsTest < ActiveSupport::TestCase
       text = Rails.root.join(file).read
       named = HIDDEN_BACKEND_VARIABLES.select { |v| text.include?(v) }
       assert_empty named, "#{file} names #{named.join(', ')}, a variable of a backend installers are not offered"
-      hits = text.lines.each_with_index.filter_map { |l, i| "#{i + 1}: #{l.strip}" if l.match?(HIDDEN_WORDS) }
+      hits = HiddenBackendWords.hits_in(text)
       assert_empty hits, "#{file} mentions a hidden backend:\n#{hits.join("\n")}"
     end
     refute Rails.root.join("docker-compose.chunk_remote.yml").exist?, "the sync-server overlay is not handed out"

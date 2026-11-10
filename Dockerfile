@@ -284,7 +284,7 @@ ENV F3D_BIN="/opt/f3d/bin/f3d"
 # with nothing mounted there (lib/library_backend_check.rb). The production guard that refuses a
 # BLANK value still fires on an explicit `LIBRARY_BACKEND=`, the shape of a misconfigured
 # destination. Every Kamal destination sets the backend explicitly; docker-compose.yml relies on
-# this default, and the chunk_remote overlay overrides it.
+# this default.
 ENV LIBRARY_BACKEND="share" \
     LIBRARY_PATH="/library"
 

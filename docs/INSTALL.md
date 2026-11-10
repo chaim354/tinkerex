@@ -4,7 +4,7 @@ A self-hosted library for a maker's files, run with Docker Compose on your own m
 Windows machine or a Linux box. This page is the whole of what a new install needs: the quick start,
 the settings you can change, the optional pieces, and — in section 7, with the advanced options'
 own rows in section 9 — **the reference for every environment variable this install reads**. Those
-tables are guarded by `test/install_docs_test.rb`, which fails the build when the code reads a
+tables are guarded by `test/install_docs_test.rb`, which fails the build when this install reads a
 variable this page does not name, so they are current by construction rather than by promise.
 
 **This page installs the `share` backend, the default**: your files stay plain files in a folder,
@@ -310,8 +310,7 @@ four `OIDC_*` values in the table. A provider login creates a confirmed account 
 
 ```sh
 docker compose pull
-docker compose up -d                # with the same -f overlay as before, if you use one,
-                                    # or set COMPOSE_FILE in .env once
+docker compose up -d
 ```
 
 The database migrates itself when the container starts (the entrypoint runs `db:prepare` before
@@ -433,9 +432,8 @@ generated your own with `bin/rails credentials:edit`, in which case it is your k
 
 ## 9. Advanced (a work in progress)
 
-Sections 1 to 8 are a complete install, and the `share` backend they set up is the one to use.
-Postgres instead of SQLite is **still a work in progress**: it has no template, and the steps may
-change from one release to the next.
+Sections 1 to 8 are a complete install. Postgres instead of SQLite is **still a work in
+progress**: it has no template, and the steps may change from one release to the next.
 
 ### Postgres instead of SQLite
 
