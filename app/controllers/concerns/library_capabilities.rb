@@ -32,10 +32,8 @@ module LibraryCapabilities
   #
   # ASCII on purpose: these are API response bodies, not comments.
   CAPABILITY_ABSENT = {
-    versioned: "this deployment keeps no file history. A share- or s3-backed library is " \
-               "current-state only (spec §2 decision 4), so there is nothing to list or restore.",
-    syncable: "this deployment has no sync engine. A share- or s3-backed library has no " \
-              "changelog, no chunks, and no devices syncing it (spec §3.3).",
+    versioned: "this deployment keeps no file history, so there is nothing to list or restore.",
+    syncable: "this deployment does not sync files to devices.",
     port_writable: "this deployment does not take file bytes through the server."
   }.freeze
 

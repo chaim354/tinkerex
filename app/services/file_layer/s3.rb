@@ -160,7 +160,7 @@ module FileLayer
       # content is simply gone. Must raise rather than silently serve current bytes: previews key
       # on this token, so answering with different content than was asked for is a correctness bug.
       if content_token.present? && content_token != node.content_hash
-        raise NotFound, "content #{content_token.inspect} is not current (s3 keeps no history)"
+        raise NotFound, "content #{content_token.inspect} is not current (this library keeps no history)"
       end
 
       key = key_for(node)
@@ -1061,9 +1061,8 @@ module FileLayer
       # CLIENT condition (Phase 4 -> 409/422) and it must stay catchable by `rescue StandardError`.
       # NotImplementedError is a ScriptError and means the DEPLOYMENT is mis-wired -> 501.
       raise UnsupportedOperation,
-            "#{node.node_id.inspect} is a #{node.kind}: s3-mode move is files only — S3 has no " \
-            "directory to move and no rename, so this would mean a non-atomic cascade over " \
-            "every key under the prefix, with no undo for a half-finished one"
+            "#{node.node_id.inspect} is a #{node.kind}: this library moves files only, one at a " \
+            "time, never a whole folder"
     end
 
     # copy_object's 5GiB cap, refused from data we already hold rather than from an error class we
@@ -1080,8 +1079,8 @@ module FileLayer
     def copyable_size!(node)
       return if node.size.to_i <= COPY_MAX_BYTES
       raise UnsupportedOperation,
-            "#{node.node_id.inspect} is #{node.size} bytes: over S3's 5GiB copy cap, and both " \
-            "delete and move are copy-then-delete here. Refusing rather than half-deleting it."
+            "#{node.node_id.inspect} is #{node.size} bytes: over the 5 GiB this library can move " \
+            "or delete in one step. Refusing rather than half-deleting it."
     end
 
     # The restored object's own size/mtime/identity, so the next scan skips it instead of

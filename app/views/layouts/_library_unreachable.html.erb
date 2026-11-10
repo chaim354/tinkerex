@@ -13,7 +13,7 @@
   <% cause = if capabilities.syncable?
                "the sync server may be down"
              elsif capabilities.presignable?
-               "the storage bucket isn't answering"
+               "the library storage isn't answering"
              else
                "the library folder may be unmounted"
              end %>

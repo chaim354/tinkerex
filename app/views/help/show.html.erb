@@ -31,9 +31,9 @@
     <h2 id="library">Your library</h2>
     <% if capabilities.scannable? %>
       <% if capabilities.presignable? %>
-        <p>Your library is a storage bucket. Anything put into it by other means appears here
-          within 15 minutes, or straight away with <em>Rescan library</em> under ⋯ in the
-          <%= link_to "Library", files_path %>.</p>
+        <p>Your library is the storage this server was set up with. Anything put into it by other
+          means appears here within 15 minutes, or straight away with <em>Rescan library</em> under
+          ⋯ in the <%= link_to "Library", files_path %>.</p>
       <% else %>
         <p>Your library is a folder on this server. Anything put there — over a NAS share, by a
           slicer or another program, by copying it in — appears here within 15 minutes, or
@@ -157,13 +157,15 @@
   <details id="server">
     <summary>For the person running this server</summary>
     <p><%= link_to "docs/INSTALL.md", "https://github.com/chaim354/tinkerex/blob/main/docs/INSTALL.md" %>
-      covers installing, the three library backends, mail, accounts and backups.</p>
+      covers installing, mail, accounts and backups.</p>
     <p>Tools: <code>ADDON_SOURCE_URL</code> points at an addon bundle server, or
       <code>ADDON_SOURCE_PATH</code> at a directory of bundles. A tool that needs a service stays
       greyed out until <code>&lt;NAME&gt;_SIDECAR_URL</code> points at it:
       <code>BOXES_SIDECAR_URL</code>, <code>OPENSCAD_SIDECAR_URL</code>.</p>
     <p>Accounts: <code>REGISTRATION</code> is closed by default, and <code>REGISTRATION=open</code>
-      is accepted only on the sync-server backend, where every account has a library of its own.
+      <% if capabilities.syncable? %>is accepted only on the sync-server backend, where every account
+        has a library of its own.<% else %>is refused at boot, because every account sees the same
+        library.<% end %>
       <code>SMTP_ADDRESS</code> turns mail on. An admin adds accounts, resets passwords and makes other
       admins under Settings → Users, with no mail needed. From the console,
       <code>bin/rails 'tinkerex:owner[EMAIL]'</code> adds a confirmed account and
