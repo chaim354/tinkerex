@@ -5,6 +5,9 @@ formats), laser files (LightBurn, SVG, DXF), PDFs, Gerbers, images — with thum
 server, a 3D viewer in the browser, projects with tasks, a build log and a bill of materials,
 inventory, and a Tools gallery of add-ons that save their output straight into the library.
 
+**Try it first:** the public demo at <https://tinkerex.com> signs you in with one click, with nothing
+to install.
+
 ## Status
 
 It runs on real hardware, every day, for its author. It holds your files in a **folder you point it
@@ -15,25 +18,19 @@ published on ghcr.io under `chaim354`.
 ## Quick start
 
 You need Docker: Docker Desktop on a Mac or Windows machine, or Docker Engine with the Compose
-plugin on Linux. Download [`docker-compose.yml`](docker-compose.yml) into the folder that holds your
-files, or into an empty folder, and in that folder:
+plugin on Linux.
 
-```sh
-docker compose up -d
-```
+1. Download [`docker-compose.yml`](docker-compose.yml) into the folder that holds your files, or
+   into a new, empty folder. That folder becomes your library.
+2. In that folder, run `docker compose up -d`. The first start takes a few minutes.
+3. Open <http://localhost:8080> and create your account. The first account is the owner and admin,
+   and it needs no email.
+4. Confirm the folder, or pick one inside it, then take the short welcome tour or skip it.
 
-Open `http://localhost:8080`, create the first account, then confirm the folder, or pick one inside
-it. Nothing to generate, edit or chown first; the full guide, with every setting you can change, is
-**[`docs/INSTALL.md`](docs/INSTALL.md)**.
-
-## First run
-
-The first account you create is the owner: it is confirmed on the spot, without a mail server, and
-sign-ups close behind it. Later accounts come from the console, as section 4 of the guide shows.
-The folder the compose file is in is your library, files and all. To keep the file somewhere else,
-`LIBRARY_HOST_PATH=/path/to/files` in a `.env` beside it names the folder instead. Files on another
-computer's network share work too: the compose file carries the lines for it, commented out, and the
-guide's section 3 walks through them.
+After the first account nobody else can sign up: the owner adds people under **Settings → Users**.
+To keep the compose file somewhere else, `LIBRARY_HOST_PATH=/path/to/files` in a `.env` beside it
+names the folder instead, and a network share on another computer works too. The full guide, with
+every setting you can change, is **[`docs/INSTALL.md`](docs/INSTALL.md)**.
 
 ## Where files come from
 

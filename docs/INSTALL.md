@@ -1,19 +1,15 @@
 # Installing Tinkerex
 
-A self-hosted library for a maker's files, run with Docker Compose on your own machine — a Mac, a
-Windows machine or a Linux box. This page is the whole of what a new install needs: the quick start,
-the settings you can change, the optional pieces, and — in section 7, with the advanced options'
-own rows in section 9 — **the reference for every environment variable this install reads**. Those
-tables are guarded by `test/install_docs_test.rb`, which fails the build when this install reads a
-variable this page does not name, so they are current by construction rather than by promise.
+Tinkerex is a library for a maker's files — 3D models, CAD, laser and PCB files, PDFs, images — that
+runs on your own computer: a Mac, a Windows machine or a Linux box. Your files stay ordinary files in
+a folder you choose, editable with anything else; Tinkerex indexes them, draws their thumbnails and
+lets you gather them into projects.
 
-**This page installs the `share` backend, the default**: your files stay plain files in a folder,
-the app indexes them, and that folder stays yours — editable with anything else; it can also be a
-network share on another computer (section 3). Sections 1 to 8 are that path, and they are all a new
-install needs.
+**Want to look around first?** The public demo at <https://tinkerex.com> signs you in with one
+click, with nothing to install. It is wiped and set up again every night.
 
-Postgres instead of SQLite is **a work in progress**, in section 9, Advanced; nothing before it
-depends on it.
+**Sections 1 and 2 are all a new install needs.** The rest of this page is for later: changing a
+setting, mail and more accounts, updates and backups. Section 7 lists every setting by name.
 
 ## 1. What you need
 
@@ -36,46 +32,56 @@ an arm64 Linux box. The author runs this on a Mac and on Linux; the Windows path
 
 ## 2. Quick start
 
-Put [`docker-compose.yml`](../docker-compose.yml) (download it from this repository) in the folder
-that holds your files — or in an empty folder — and in that folder:
+About ten minutes, most of it waiting for the first download.
 
-> **Or make one with your settings filled in** at <https://tinkerex.com/install/compose>: your
-> folder or network share, port, user and mail, written into the file for you. The page builds the
-> file in your browser and sends nothing you type anywhere, passwords included. Any Tinkerex server
-> has the same page at `/install/compose`.
+**1. Get the compose file.** Download [`docker-compose.yml`](../docker-compose.yml) from this
+repository, or make one with your settings already filled in at
+<https://tinkerex.com/install/compose>: your folder or network share, port, user and mail. That page
+builds the file in your browser and sends nothing you type anywhere, passwords included. Any
+Tinkerex server has the same page at `/install/compose`.
+
+**2. Put it in the folder that holds your files**, or in a new, empty folder. That folder becomes
+your library: Tinkerex reads what is in it, uploads land in it, and anything you delete in the app
+moves to a `.trash` folder inside it. So not your Downloads folder.
+
+**3. Start it.** Open a terminal in that folder (Terminal on a Mac, PowerShell on Windows) and run:
 
 ```sh
 docker compose up -d
-docker compose logs -f web      # until Puma reports it is listening; Ctrl-C leaves it running
 ```
 
-Whatever folder the file is in becomes the library: it is indexed, uploads land in it, and deleted
-files move to a `.trash/` inside it. So not your Downloads folder.
+The first start downloads four images, which takes a few minutes. Then open
+<http://localhost:8080> in your browser.
 
-The first start pulls the four images. `curl http://localhost:8080/up` answers `200` once the app is
-ready; the compose healthcheck polls the same path. Open `http://localhost:8080`.
+**4. Create your account.** The first time, the page says **Create the owner account** where the
+sign-in form would be. The first account is the owner and the server's admin, and it needs no email
+confirmation and no mail server. After it, nobody else can sign up: you add other people yourself,
+under **Settings → Users** (section 4).
 
-**If a container exits**, `docker compose logs web` has the reason, and it is one sentence naming the
-problem. The app refuses to boot on a misconfiguration rather than starting and failing later.
+**5. Confirm your library folder.** Tinkerex shows the folder it was given and asks once. **Use this
+folder** takes all of it; **Choose a folder inside it** lets you pick one folder within it instead.
+The first scan starts when you confirm, and from then on new files appear within 15 minutes, or
+straight away with **Rescan library** on the Library page.
 
-### First run: the first account is the owner
+**6. Take the tour, or skip it.** A short welcome asks whether you mostly organize files (laser,
+CNC, electronics, documents) or 3D models, shows what Tinkerex does for that, and walks you through
+your first project and its first upload. **Skip for now** is on every step, and **Take the tour** on
+the Help page brings it back.
 
-With no account yet, opening the server shows **Create the owner account** in place of the sign-in
-form, and says what it is: *"This is the server's first account. It becomes the owner and needs no
-email confirmation."* Create it; you are signed in, as the server's admin. **After that, sign-ups
-are closed** — the sign-up page answers "Sign-ups are closed" and the link disappears — and an admin
-adds more accounts under Settings → Users (section 4). No mail server is involved in any of this.
+### If something goes wrong
 
-**Then the app asks once which folder is the library.** The next screen names the mounted folder — *the folder your docker-compose.yml is in*, or the path you
-typed in `LIBRARY_HOST_PATH` — and says what will happen to it: it is indexed every 15 minutes,
-uploads land in it, and deletions move into its `.trash/`. **Use this folder** confirms it.
-**Choose a folder inside it** opens a folder picker over it, to make the library one folder within
-it; the picker lists folders only, never a dot-folder, `.trash`, a link or another hidden or
-reserved name, and **Use this folder** then confirms the one you picked. The first scan runs after
-you confirm, not at sign-up. Until then nothing is scanned and every page brings you back to that
-screen, except Help, changing your email or password, and signing out. Creating the first account
-with `bin/rails tinkerex:owner` (section 4) confirms the whole mounted folder itself, so a console
-install is not asked.
+- **The page doesn't load.** Give it another minute, then run `docker compose logs web` in the same
+  folder. If the app stopped, its last lines say why, in one sentence: it refuses to start on a
+  wrong setting rather than failing later.
+- **The library is not the folder you meant.** The compose file has to be in that folder, or a
+  `.env` file beside it has to name it; section 3 shows how, and how to use a network share instead.
+
+### Your library folder
+
+The folder Tinkerex was given is the one the compose file is in, or the path in `LIBRARY_HOST_PATH`
+(section 3). Until you confirm it, nothing is scanned and every page brings you back to that
+question, except Help, your account page and signing out. The folder picker lists folders only,
+never a hidden folder, `.trash` or a link.
 
 **To change it later**, an admin opens Settings → Library folder. The folder is every account's
 library, so only an admin chooses or changes it: any other account sees the same page read-only, and
@@ -280,26 +286,22 @@ Your own account is changed on the Account page, behind your current password, a
 cannot delete their account while other accounts exist. An install from before admins existed made
 its oldest account the admin when it updated (passing over the demo account, if there is one).
 
-**From the console.** Three tasks do the same with no browser: create an account (confirmed; the
-first one on a server is the admin), reset a password and confirm the account, and make an account
-an admin, which is the way back for a server with no admin left — one whose accounts all came from
-single sign-on, say. A password is read from `TINKEREX_PASSWORD`, never from the command line, so
-that it stays out of your shell history and out of `ps`; the `read -rs` below prompts for it without
-echo:
+**Locked out?** Accounts are added and managed in Settings → Users, so this is only for a server
+where no admin can sign in: the only admin forgot their password and there is no mail server to
+reset it, say, or every account came from single sign-on. In the folder with the compose file, the
+first command below sets a new password for an account and confirms it, and the last makes an
+account an admin. The password is read from `TINKEREX_PASSWORD`, never from the command line, so it
+stays out of your shell history; `read -rs` prompts for it without showing what you type:
 
 ```sh
 read -rs TINKEREX_PASSWORD && export TINKEREX_PASSWORD
-docker compose exec -e TINKEREX_PASSWORD web bin/docker-entrypoint bin/rails 'tinkerex:owner[someone@example.net]'
-docker compose exec -e TINKEREX_PASSWORD web bin/docker-entrypoint bin/rails 'tinkerex:password[someone@example.net]'
+docker compose exec -e TINKEREX_PASSWORD web bin/docker-entrypoint bin/rails 'tinkerex:password[you@example.net]'
 unset TINKEREX_PASSWORD
-docker compose exec web bin/docker-entrypoint bin/rails 'tinkerex:admin[someone@example.net]'
+docker compose exec web bin/docker-entrypoint bin/rails 'tinkerex:admin[you@example.net]'
 ```
 
-`bin/docker-entrypoint` in front of the command runs it as the same user the server runs as
-(`PUID`). A bare `docker compose exec` runs as root, and a task that creates files would leave them
-owned by root.
-
-`tinkerex:owner` refuses an address that already exists and a password under 10 characters;
+`bin/docker-entrypoint` runs each as the same user the server runs as (`PUID`); a bare
+`docker compose exec` would run as root. A password must be at least 10 characters, and
 `tinkerex:admin` refuses an unknown address and the demo account.
 
 **Single sign-on** through an OpenID Connect provider is its own door: `OMNIAUTH_ENABLED` plus the
@@ -358,10 +360,11 @@ docker compose up -d
 
 ## 7. Environment reference
 
-Every variable the share install reads, plus the ones only `docker compose` reads (marked
-*compose*). Postgres's variables are in section 9's own table. "Required" means required for that
-feature; the default is what you get when the variable is unset. The compose file sets the ones
-marked *set by compose*; the rest come from `.env`.
+Every variable this install reads, plus the ones only `docker compose` reads (marked *compose*).
+Postgres's variables are in section 9's own table. `test/install_docs_test.rb` fails the build when
+the app reads a variable these tables do not name, so they stay complete. "Required" means required
+for that feature; the default is what you get when the variable is unset. The compose file sets the
+ones marked *set by compose*; the rest come from `.env`.
 
 | variable | required? | default | what it does |
 |---|---|---|---|
@@ -394,7 +397,7 @@ marked *set by compose*; the rest come from `.env`.
 | `SMTP_DOMAIN` | no | `APP_HOST` | The HELO name. |
 | `SMTP_STARTTLS` | no | on | STARTTLS, on unless set to `false`. |
 | `MAIL_FROM` | no | `no-reply@<APP_HOST>` | The sender of every message. |
-| `TINKEREX_PASSWORD` | for the console tasks | — | The password `bin/rails tinkerex:owner` / `tinkerex:password` read, so that it never sits on a command line. |
+| `TINKEREX_PASSWORD` | for the locked-out commands | — | The new password `bin/rails tinkerex:password` reads (section 4, "Locked out?"), so that it never sits on a command line. |
 | `OMNIAUTH_ENABLED` | no | off | Any value turns on OpenID Connect login. |
 | `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`, `OIDC_REDIRECT_URI` | with `OMNIAUTH_ENABLED` | — | The provider's issuer URL (discovery is used), the client credentials, and the callback URL registered with the provider. |
 | `DEVICE_IDLE_DAYS` | no | `90` | Days a connected app may go without using the API before its sign-in expires and it must sign in again. `0` keeps every device signed in until it is signed out under Settings → Devices or its account's password changes. |
