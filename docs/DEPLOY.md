@@ -22,7 +22,7 @@ Docker build, no repo checkout, and no source transfer to either server.
 
 > **Keep the build context lean.** The build context is the repo minus `.dockerignore`. We
 > exclude `client/` (~15 GB Rust workspace), `.claude/` (~700 MB agent worktrees), `docs/`,
-> `test/`, `ci/`, `scripts/`. With those out the context is ~tens of KB; leave them in and it
+> `test/`, `ci/`. With those out the context is ~tens of KB; leave them in and it
 > balloons to **8 GB+** and every build crawls.
 
 ---
