@@ -7,7 +7,7 @@ import JSZip from "jszip"
 // Sequential fetches, so a folder of large STLs does not open a hundred connections at once; a
 // failed fetch stops the build and NAMES THE FILE. On the s3 deployment that route REDIRECTS to a
 // presigned URL at the bucket, so the fetch is cross-origin: it reads only if the bucket's CORS
-// rule allows this origin (docs/DEPLOY.md), under a connect-src the port names for the CSP
+// rule allows this origin (docs/guides/DEPLOY.md), under a connect-src the port names for the CSP
 // (FileLayer#presigned_origin). S3-2 recorded the gap as connect-src's; the half that actually
 // refused the bytes was the bucket's missing CORS rule.
 export default class extends Controller {

@@ -272,7 +272,7 @@ if [ -n "$OUT_VOLUME" ]; then
     echo "   Nothing would have failed: the archives would be written and verified, and every" >&2
     echo "   monitor would go green, while the array stopped receiving backups." >&2
     echo "   Fix it with bin/backup-cron-install, which owns the NAS path. Do NOT 'docker volume" >&2
-    echo "   rm' anything first — see docs/DEPLOY.md §6." >&2
+    echo "   rm' anything first — see docs/guides/DEPLOY.md §6." >&2
     for dest in "${DESTS[@]}"; do
       ping_kuma "$dest" down "output volume $OUT_VOLUME is not on the array" ""
     done

@@ -571,6 +571,6 @@ only the sync server reads.
 
 ## 10. Where the author's own deploy recipe lives
 
-`docs/DEPLOY.md` describes how the author deploys this app — Kamal from a Mac, secrets from
+`docs/guides/DEPLOY.md` describes how the author deploys this app — Kamal from a Mac, secrets from
 1Password, three Unraid destinations and an OVH box. It is the record of those deployments, not an
 install guide, and nothing in it is needed to run the compose files above.

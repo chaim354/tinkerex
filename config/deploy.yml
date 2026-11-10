@@ -85,7 +85,7 @@ proxy:
 # git). A package's visibility is set per package on ghcr.io and does NOT follow the repo's:
 # this image has been public since 2026-10-26 (the repo went public that day), the sync
 # accessory's is still private, and the servers pull both with the same token (read:packages).
-# See docs/DEPLOY.md.
+# See docs/guides/DEPLOY.md.
 registry:
   server: ghcr.io
   username: chaim354
@@ -144,7 +144,7 @@ env:
     # THE ZONE EVERY TIME ON THE PAGE IS SHOWN IN (lib/tinkerex/time_zone.rb, UX audit D1). The
     # container's own clock is UTC whatever the box's is -- kamal passes no TZ and the image's
     # /etc/localtime is Etc/UTC -- so without this a note read 03:11 for a file saved at 22:09.
-    # America/New_York because the box is (docs/DEPLOY.md's backup section asserts the VM's zone).
+    # America/New_York because the box is (docs/guides/DEPLOY.md's backup section asserts the VM's zone).
     # Not a secret. Every overlay inherits it through env.clear's deep merge, ovh included. A name
     # ActiveSupport does not know REFUSES the boot, so test/deploy_hygiene_test.rb checks the
     # merged value for every destination. The unzoned schedules in config/recurring.yml read this
@@ -290,7 +290,7 @@ builder:
 #   user: app
 
 # Accessory services. A sidecar is built, booted (first time) or rebooted, and verified by
-# `bin/publish-sidecar <name>`; a new one is added by `bin/rails generate sidecar` (docs/DEPLOY.md).
+# `bin/publish-sidecar <name>`; a new one is added by `bin/rails generate sidecar` (docs/guides/DEPLOY.md).
 # The boxes sidecar is the forked boxes.py Python service (sidecar/boxes) — a SEPARATE, GPL-3.0
 # image built + pushed separately from the Rails app. NO `port:` -> internal-only, reachable on the kamal network as
 # `tinkerex-boxes`; the app's BOXES_SIDECAR_URL points at it. One accessory serves all three app
@@ -393,7 +393,7 @@ accessories:
     # /etc/hosts client reaches, `.home` is what a phone over Tailscale reaches — and the same
     # one-box-one-proxy rule: a name registered by two services is silently won by the last deploy
     # (test/deploy_hygiene_test.rb asserts the accessory's names collide with no destination's).
-    # Publishing the names is outside this repo: docs/DEPLOY.md §4.
+    # Publishing the names is outside this repo: docs/guides/DEPLOY.md §4.
     #
     # STILL NO `port:`. Publishing 3000 on the host would bypass the proxy and its Host routing; the
     # proxy is the one door. What stands behind it is gated by design: the v1 API by device token,

@@ -53,7 +53,7 @@ env:
     # deployment refused the connection until 2026-09-06, so the catalog stayed empty and there was
     # nothing for a preview to fail on. Probe before "correcting" it back:
     # `curl -sI http://192.168.1.2:8333/` answers `Server: SeaweedFS ...`; `.8:8333` refuses.
-    # The store also has to KNOW this deployment's identity — docs/DEPLOY.md, "bucket CORS".
+    # The store also has to KNOW this deployment's identity — docs/guides/DEPLOY.md, "bucket CORS".
     LIBRARY_S3_ENDPOINT: http://192.168.1.2:8333
     LIBRARY_S3_BUCKET: my-bucket
     LIBRARY_S3_PREFIX: library/

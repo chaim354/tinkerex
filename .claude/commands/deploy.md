@@ -62,7 +62,7 @@ Confirm the commits you intend to ship are in that log. Then:
   > it deliberately or not at all.
 
   If the preflight reports failures, read which ones: **every secret failing at once means the
-  service-account token expired** — re-mint per `docs/DEPLOY.md`, and do not go looking for a
+  service-account token expired** — re-mint per `docs/guides/DEPLOY.md`, and do not go looking for a
   repo change, since the token arrives through the environment and nothing in this tree can affect
   it. **One secret failing is the opposite diagnosis** — a wrong ref or field in that single
   `.kamal/secrets*` line.
@@ -91,7 +91,7 @@ Confirm the commits you intend to ship are in that log. Then:
   continue** — the share deploy below is what remounts it, and that container's first boot may
   restart once (the boot guard can run before the fresh mount is visible; docker's restart policy
   absorbs it). Anything other than `library ok` or `Stale file handle` — no container, a hang — is
-  also a stop. `docs/DEPLOY.md` §2 has the full story and the 5-minute monitor
+  also a stop. `docs/guides/DEPLOY.md` §2 has the full story and the 5-minute monitor
   (`bin/share-mount-monitor-install`) that sees this without a deploy.
 
 ## 2. Build once, deploy three times

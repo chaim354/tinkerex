@@ -1,6 +1,6 @@
 require "test_helper"
 
-# Guards `docs/schema-map.html` — a GENERATED document checked into a directory of hand-written
+# Guards `docs/reference/schema-map.html` — a GENERATED document checked into a directory of hand-written
 # ones, which is a shape that goes stale silently by construction. Nothing in `bin/ci` reads a
 # `docs/` file, so without this the map would go on describing whatever schema was current the
 # day someone last ran the task (CLAUDE.md §15, "Keeping the docs honest").

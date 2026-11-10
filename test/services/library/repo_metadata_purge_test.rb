@@ -212,7 +212,7 @@ module Library
     # THE TWO DECLINE REASONS MUST READ DIFFERENTLY, which is the whole reason `reason` exists and
     # the reason the migration prints it instead of re-deriving one. Both are `declined: true` with
     # `destroyed: 0`, and they mean opposite things: a chunk_remote decline is CORRECT and is
-    # recorded as expected output in docs/DEPLOY.md, while an unconfigured environment declining on
+    # recorded as expected output in docs/guides/DEPLOY.md, while an unconfigured environment declining on
     # a real deployment means the purge did not happen. One shared sentence makes the second
     # unreadable — and printing the first one's text ("FileLayer::ChunkRemote is not a scannable
     # backend") for it would be an actively FALSE statement about a deployment holding no

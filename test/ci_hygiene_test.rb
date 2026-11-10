@@ -238,10 +238,10 @@ class CiHygieneTest < ActiveSupport::TestCase
   #
   # CLAUDE.md LEFT THIS LIST ON 2026-09-02 (tinkerex#164) and moved to the RUN list above. It was
   # here to demonstrate that `**.md` catches root-level markdown, not just docs/ — true, and still
-  # demonstrated by docs/DEPLOY.md, which no gate reads. What made CLAUDE.md different is that a
+  # demonstrated by docs/guides/DEPLOY.md, which no gate reads. What made CLAUDE.md different is that a
   # gate DOES read it, which is this list's own disqualifying criterion.
   PATHS_THAT_MUST_SKIP_CI = [
-    "docs/DEPLOY.md"
+    "docs/guides/DEPLOY.md"
   ].freeze
 
   test "ci.yml's paths filter runs CI for every file a bin/ci gate reads" do
@@ -923,7 +923,7 @@ class CiHygieneTest < ActiveSupport::TestCase
 
     # One GitHub filter pattern as a Regexp. GitHub documents `*` as "zero or more characters but
     # does not match /" and `**` as "zero or more of ANY character, including /" — which is why
-    # `**.md` matches a root-level CLAUDE.md as well as docs/DEPLOY.md.
+    # `**.md` matches a root-level CLAUDE.md as well as docs/guides/DEPLOY.md.
     #
     # It also documents `?`, `+` and `[]`, and they do NOT mean what a shell glob means by them
     # (`?` is "zero or one of the PRECEDING character"). Rather than model those wrongly, this

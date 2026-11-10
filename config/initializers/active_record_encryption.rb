@@ -2,7 +2,7 @@
 # `active_record_encryption:` (primary_key / deterministic_key / key_derivation_salt, each
 # generated once by `bin/rails db:encryption:init` and never meant to be regenerated --
 # regenerating replaces all three and makes every already-encrypted column permanently
-# undecryptable; see docs/DEPLOY.md for the rotation story). They reach the app exactly the way
+# undecryptable; see docs/guides/DEPLOY.md for the rotation story). They reach the app exactly the way
 # secret_key_base always has: RAILS_MASTER_KEY decrypts config/credentials.yml.enc at boot
 # (config/master.key locally, an env var in every deployment). No new deploy plumbing follows
 # from that -- RAILS_MASTER_KEY is already resolved for all four destinations

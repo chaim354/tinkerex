@@ -1,6 +1,6 @@
 # frozen_string_literal: true
 
-# Builds `docs/schema-map.html`: one self-contained page showing every table, every column and
+# Builds `docs/reference/schema-map.html`: one self-contained page showing every table, every column and
 # every relationship across all four databases. `bin/rails schema:map` regenerates it, and
 # `test/schema_map_test.rb` goes red when the checked-in page no longer matches what this
 # produces — so the map cannot quietly describe a schema that has moved on, which is the failure
@@ -46,7 +46,7 @@ module SchemaMap
     "cable"   => "db/cable_schema.rb"
   }.freeze
 
-  OUTPUT   = "docs/schema-map.html"
+  OUTPUT   = "docs/reference/schema-map.html"
   TEMPLATE = "lib/schema_map/template.html"
 
   # Left-to-right columns on the canvas. Grouping is *architectural*, not alphabetical: accounts

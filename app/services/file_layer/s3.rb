@@ -84,7 +84,7 @@ module FileLayer
       #
       # local_worktree: false — a flat keyspace has no directory to hand to git. Making this true
       # would mean materialising the repository first; measured at 11,287 GETs on a cold container
-      # for an unpacked repo (docs/roads-not-taken.md §9).
+      # for an unpacked repo (docs/reference/roads-not-taken.md §9).
       Capabilities.new(versioned: false, syncable: false, presignable: true, scannable: true,
                        port_writable: true, local_worktree: false)
     end

@@ -42,7 +42,7 @@ Rails.application.configure do
     # NEVER hand-writes a store address from LIBRARY_S3_ENDPOINT: the adapter reads the SDK's
     # resolved endpoint, so this names what the wire will carry, and nil — `'self'` only — on the
     # two backends that stream from Rails (share, chunk_remote). The OTHER half is the bucket's
-    # CORS rule, which Rails cannot set: docs/DEPLOY.md. Pinned per leg by
+    # CORS rule, which Rails cannot set: docs/guides/DEPLOY.md. Pinned per leg by
     # test/integration/web/content_security_policy_test.rb.
     #
     # `respond_to?` IS FOR THE TEST DOUBLES, not for a real adapter: controller tests install a

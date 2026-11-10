@@ -6,7 +6,7 @@
 > dropped.**
 >
 > **The `§14i` anchor still exists in CLAUDE.md** and anything citing it resolves to the stub there,
-> which points here. `docs/DEPLOY.md` §6 restates these for operators.
+> which points here. `docs/guides/DEPLOY.md` §6 restates these for operators.
 
 > **NOTHING IN `bin/ci` CAN GO RED FOR ANY LINE BELOW** — this is shell, cron and docs, and the five
 > scripts' only gate, `test/ops_backup_table_test.rb`, holds their destination TABLE to the Kamal
@@ -16,7 +16,7 @@
 > `--keep` ≥ 1 and its deliberate divergence from §14a, `ping.env` parsed-never-sourced, the Active
 > Storage blobs in the archive) carry their whole argument *inside `ops/backup-db.sh` itself* — beside
 > the line you must edit to break them, or in that file's header — so loading them every session buys
-> nothing that opening the file does not. They are not weaker for it; `docs/DEPLOY.md` §6 restates
+> nothing that opening the file does not. They are not weaker for it; `docs/guides/DEPLOY.md` §6 restates
 > them for operators. Below spans two files or more, where no one comment can be the guard.
 > `docs/STATUS.md` has the arc and the stubbed-box harness. Prove a change against stubs, never the
 > live NAS or a real volume.
@@ -64,4 +64,4 @@
   an oversight** — readable *and deletable* by anyone on the LAN. Accepted for a home LAN; the
   catalog and every preview blob are in the clear (the digests are the least of it). Revisit before
   this box is reachable from anywhere else, and alongside `docs/plan-encryption.md` (§12.2), which is
-  the same question one layer down. `docs/DEPLOY.md` §6 states what each alternative costs.
+  the same question one layer down. `docs/guides/DEPLOY.md` §6 states what each alternative costs.

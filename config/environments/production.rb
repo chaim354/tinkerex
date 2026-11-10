@@ -46,7 +46,7 @@ Rails.application.configure do
   # to improve security. That is almost certainly why these lines sat commented rather than set.
   #
   # SET FORCE_SSL=1 ON ANY HOST REACHABLE FROM THE INTERNET. Without it the session cookie is
-  # sent on plain-HTTP requests to the same host. See docs/DEPLOY.md.
+  # sent on plain-HTTP requests to the same host. See docs/guides/DEPLOY.md.
   if ENV["FORCE_SSL"].present?
     config.assume_ssl = true
     config.force_ssl  = true

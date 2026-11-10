@@ -81,7 +81,7 @@ dests=${line_dests:-chunk share s3 sync}
 
 # THE CRONTAB LINE IS A LOCAL TIME, so it says nothing on its own about when the job actually runs.
 # bin/backup-cron-install asserts this at install time; re-reading it here means a timezone changed
-# on the box afterwards cannot go on quietly contradicting docs/DEPLOY.md §6 — the installer's
+# on the box afterwards cannot go on quietly contradicting docs/guides/DEPLOY.md §6 — the installer's
 # check is a moment, and this one is every time anyone looks. NOTE the limit, which is why the
 # crontab line above is not consulted for it: the line records NO zone, so the comparison is
 # against THIS script's own BACKUP_TZ default. A box whose zone was ACCEPTED at install time
@@ -97,7 +97,7 @@ if [ "${box_tz:-UNKNOWN}" = "$tz_expect" ]; then
   echo "    timezone $box_tz  ($(date '+%H:%M %Z'))"
 else
   echo "    !! timezone is ${box_tz:-unreadable}, but the schedule is documented as $tz_expect"
-  echo "       the nightly is firing at a different hour than docs/DEPLOY.md §6 claims."
+  echo "       the nightly is firing at a different hour than docs/guides/DEPLOY.md §6 claims."
   if [ -n "$box_tz" ]; then
     echo "       (if you installed with BACKUP_TZ=$box_tz on purpose, re-run with it set here too.)"
   fi

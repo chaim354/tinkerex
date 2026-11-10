@@ -14,7 +14,7 @@ module Tinkerex
   #
   # TWO DOORS THIS DOES NOT GOVERN, ON PURPOSE. `User.from_omniauth` mints a confirmed account for
   # any identity the provider vouches for whatever the mode: enabling OMNIAUTH_ENABLED is the
-  # opt-in, and the provider decides who may sign in (docs/DEPLOY.md "Accounts"). And
+  # opt-in, and the provider decides who may sign in (docs/guides/DEPLOY.md "Accounts"). And
   # `first_owner?` is a plain `User.exists?` with no database-level claim, so two sign-ups
   # interleaving inside one request's window on an EMPTY server would both become owners — a
   # millisecond window on a box nobody else knows exists yet; recorded, not guarded.

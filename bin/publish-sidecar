@@ -88,5 +88,5 @@ fi
 echo "==> live: tinkerex-$NAME is serving $REVISION."
 if [ "$first" = yes ]; then
   echo "    FIRST BOOT: redeploy chunk_remote, share and s3 so the app carries the sidecar URL"
-  echo "    (config/deploy.yml env.clear) — bin/secrets-preflight --all first, docs/DEPLOY.md §2."
+  echo "    (config/deploy.yml env.clear) — bin/secrets-preflight --all first, docs/guides/DEPLOY.md §2."
 fi

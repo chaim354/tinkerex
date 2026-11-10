@@ -33,8 +33,11 @@
 # unmerged branch reports MISSING; a LANDED row with no SHA reports NO-SHA. Exit is non-zero for
 # MISSING or NO-SHA only — PICKED is a warning, since the work did ship.
 #
-# Usage: bin/verify-fix-log [docs/FIX-LOG-YYYY-MM-DD.md]
-DOC="${1:-docs/FIX-LOG-2026-08-19.md}"
+# Usage: bin/verify-fix-log <ledger.md>
+# The ledger it was written for, docs/FIX-LOG-2026-08-19.md, left the tree with the docs cleanup of
+# 2026-11-10, so there is no default any more. To check it again:
+#   git show 9c65d143:docs/FIX-LOG-2026-08-19.md > tmp/fix-log.md && bin/verify-fix-log tmp/fix-log.md
+DOC="${1:?usage: bin/verify-fix-log <ledger.md> (see the comment above for the deleted 2026-08-19 log)}"
 onmain=0; picked=0; missing=0; norefs=0
 while IFS= read -r row; do
   id=$(echo "$row" | sed 's/^| \*\*\([^*]*\)\*\*.*/\1/')

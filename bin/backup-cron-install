@@ -18,7 +18,7 @@
 #
 # NOT `appdata`, THOUGH THAT IS THE CONVENTIONAL UNRAID CHOICE AND WAS THIS SCRIPT'S DEFAULT UNTIL
 # A REVIEW CAUGHT IT. It is READ-ONLY TO GUEST on this host, so the bootstrap `mkdir` below cannot
-# even create the subdirectory; the `backups` share was created for this instead. docs/DEPLOY.md §6
+# even create the subdirectory; the `backups` share was created for this instead. docs/guides/DEPLOY.md §6
 # recorded that in the same commit that shipped `appdata` as the default here — so the rule and the
 # code contradicted each other from the first day, and the default is the half nobody reads.
 #
@@ -61,7 +61,7 @@ if [ "${1:-}" = --uninstall ]; then
 fi
 
 # ---- the schedule is a LOCAL time, so the box's clock is part of the contract -------------------
-# `30 3` means 03:30 in whatever zone the cron daemon is running in, and docs/DEPLOY.md §6 states
+# `30 3` means 03:30 in whatever zone the cron daemon is running in, and docs/guides/DEPLOY.md §6 states
 # that as 03:30 America/New_York. Nothing made that true: a stock Ubuntu server VM is Etc/UTC, in
 # which case the same crontab line fires at 23:30 or 22:30 Eastern depending on the season, and
 # the only symptom is archives with unexpected timestamps that nobody reads closely.
@@ -96,7 +96,7 @@ REMOTE
 if [ "$BOX_TZ" = UNKNOWN ]; then
   if ! $TZ_DECLARED; then
     echo "!! cannot read the timezone on $HOST, so the schedule cannot be verified." >&2
-    echo "   $AT_CLOCK is a LOCAL time and docs/DEPLOY.md §6 claims $TZ_EXPECT; unverified, that is" >&2
+    echo "   $AT_CLOCK is a LOCAL time and docs/guides/DEPLOY.md §6 claims $TZ_EXPECT; unverified, that is" >&2
     echo "   a doc claim rather than a fact. Re-run with BACKUP_TZ=<zone> to state it deliberately." >&2
     exit 1
   fi
@@ -104,13 +104,13 @@ if [ "$BOX_TZ" = UNKNOWN ]; then
 elif [ "$BOX_TZ" != "$TZ_EXPECT" ]; then
   echo "!! $HOST is on $BOX_TZ, but this schedule is written for $TZ_EXPECT." >&2
   echo "   '$AT * * *' is a LOCAL time, so the nightly would fire at $AT_CLOCK $BOX_TZ while" >&2
-  echo "   docs/DEPLOY.md §6 goes on claiming $TZ_EXPECT. Nothing would look broken." >&2
+  echo "   docs/guides/DEPLOY.md §6 goes on claiming $TZ_EXPECT. Nothing would look broken." >&2
   echo >&2
   echo "   Either point the box's clock at the documented zone:" >&2
   echo "     ssh $HOST 'sudo timedatectl set-timezone $TZ_EXPECT'" >&2
   echo "   or accept the box's zone and say so, which is then what gets asserted from now on:" >&2
   echo "     BACKUP_TZ=$BOX_TZ bin/backup-cron-install" >&2
-  echo "   (update docs/DEPLOY.md §6 to match if you take the second route.)" >&2
+  echo "   (update docs/guides/DEPLOY.md §6 to match if you take the second route.)" >&2
   exit 1
 else
   echo "    $HOST is on $BOX_TZ — the nightly fires at $AT_CLOCK there, as documented"
@@ -139,7 +139,7 @@ if docker volume inspect "$volume" >/dev/null 2>&1; then
   current=$(docker volume inspect --format '{{.Options.device}}' "$volume")
   if [ "$current" != "$nas/$subdir" ]; then
     # THE ADVICE HERE USED TO BE `docker volume rm`, WHICH IS THE ONE MOVE THIS FILE'S OWN HEADER
-    # AND docs/DEPLOY.md §6 BOTH FORBID. It is also most likely to be aimed at the RIGHT volume:
+    # AND docs/guides/DEPLOY.md §6 BOTH FORBID. It is also most likely to be aimed at the RIGHT volume:
     # the commonest way to reach this branch is a run whose BACKUP_NAS/BACKUP_SUBDIR are wrong,
     # in which case the volume is correct and deleting it is what loses the archives.
     cat >&2 <<EOF
@@ -148,7 +148,7 @@ if docker volume inspect "$volume" >/dev/null 2>&1; then
 !! but this run composed
 !!     $nas/$subdir
 !!
-!! DO NOT 'docker volume rm $volume'. Per docs/DEPLOY.md §6, Kamal only ensures a volume
+!! DO NOT 'docker volume rm $volume'. Per docs/guides/DEPLOY.md §6, Kamal only ensures a volume
 !! EXISTS, so the next reference recreates the name as a plain EMPTY LOCAL volume on the VM.
 !! The nightly then goes on reporting success while writing into the very disk this whole
 !! arrangement exists to avoid, and the real archives on the array simply stop being visible.
@@ -203,7 +203,7 @@ echo "==> Uptime Kuma push URLs"
 # its monitor could not be pinged in EITHER direction. That whitelist is gone; the table is it.
 # A NEW DESTINATION THEREFORE MOVES THREE THINGS: a row in that table (test/ops_backup_table_test.rb
 # holds the rows to the Kamal config and fails while one is missing), bin/backup-status's closed
-# set (the same test holds it to the table), and docs/DEPLOY.md §6's list of push monitors an
+# set (the same test holds it to the table), and docs/guides/DEPLOY.md §6's list of push monitors an
 # operator must create in Uptime Kuma, the one step no test can see.
 UPDATES=""
 for d in $DESTS; do
