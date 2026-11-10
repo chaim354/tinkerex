@@ -8,7 +8,6 @@ the Kaneo project CLAUDE.md §11 names, read with `bin/log`.
 | file | what it is |
 |---|---|
 | `INSTALL.md` | How a stranger runs the app with docker compose; the environment reference (kept complete by `test/install_docs_test.rb`). The landing page and Help link to its GitHub URL. |
-| `sync-protocol.md` | The normative wire spec between this app and the sync server. `tinkerex-sync` and `tinkerex-client` cite it by this path. |
 | `addon-api-v1.md` | How to write an addon for the Tools gallery. `tinkerex-addons` cites it by this path. |
 
 ## `guides/`

@@ -3,10 +3,11 @@
 module FileLayer
   class ChunkRemote
     # THE MAKER APP AS A SYNC CLIENT — pulls changelog deltas from a remote sync server and applies
-    # them to this app's OWN `nodes`, which is what `apply_remote` does in Rust (sync-protocol.md;
-    # design §6). This is the piece that lets `chunk_remote` reads be LOCAL SQL: once the tree is
-    # mirrored here, `stat`/`stat_all`/`trashed` never touch the WAN, and CLAUDE.md §2's "the WAN is
-    # never in the metadata path" becomes true of the maker app for the first time.
+    # them to this app's OWN `nodes`, which is what `apply_remote` does in Rust (tinkerex-sync's
+    # docs/sync-protocol.md; design §6). This is the piece that lets `chunk_remote` reads be LOCAL
+    # SQL: once the tree is mirrored here, `stat`/`stat_all`/`trashed` never touch the WAN, and
+    # CLAUDE.md §2's "the WAN is never in the metadata path" becomes true of the maker app for the
+    # first time.
     #
     # ONE UPSERT FOR EVERY OP, NOT A BRANCH PER OP. Each entry carries the node's FULL post-change
     # state (`Sync::Changes.serialize` emits parent_node_id, name, kind, deleted, mode, mtime), so
@@ -46,10 +47,11 @@ module FileLayer
 
         # THE GAP IS DECIDED EXACTLY ONCE, OUTSIDE THE LOOP, AND THAT PLACEMENT IS LOAD-BEARING
         # RATHER THAN TIDY. A server can report an `oldest_seq` that stays ABOVE the cursor we
-        # resync TO -- `head_seq + 1` is what an emptied changelog reports (sync-protocol.md) --
-        # so re-asking per page would resync forever against it, never applying anything. Once is
-        # also all the question is worth: a resync re-reads the whole tree and leaves the cursor at
-        # the server's own head, which cannot be behind what survived the prune.
+        # resync TO -- `head_seq + 1` is what an emptied changelog reports (tinkerex-sync's
+        # docs/sync-protocol.md) -- so re-asking per page would resync forever against it, never
+        # applying anything. Once is also all the question is worth: a resync re-reads the whole
+        # tree and leaves the cursor at the server's own head, which cannot be behind what survived
+        # the prune.
         if gapped?(body)
           full_resync(head_seq: body["head_seq"].to_i)
           resynced = true
@@ -166,14 +168,15 @@ module FileLayer
           @user.transaction do
             nodes.each do |n|
               # A TREE NODE CARRIES ITS CONTENT FLAT -- `version_id`, `size`, `manifest` beside its
-              # name (sync-protocol.md §8.4), where a change entry nests `version` (§8.3) -- so this
-              # arm reads its own shape and hands `upsert` what `apply_page` hands it. Handing over
-              # nothing once let every resync repair a node's place and keep its stale content: a
-              # file created while the mirror was behind listed at 0 bytes and 404'd on read, a
-              # changed one served its old bytes. No `version_id` is no content IN THIS REPLY -- a
-              # directory, a symlink, or a FILE whose current version no longer resolves on the
-              # server (tree.rs omits all three keys then) -- like a change entry with no `version`:
-              # nil, never the empty slice, which is truthy and would wipe the row's version and size.
+              # name (tinkerex-sync's docs/sync-protocol.md §8.4), where a change entry nests
+              # `version` (§8.3) -- so this arm reads its own shape and hands `upsert` what
+              # `apply_page` hands it. Handing over nothing once let every resync repair a node's
+              # place and keep its stale content: a file created while the mirror was behind listed
+              # at 0 bytes and 404'd on read, a changed one served its old bytes. No `version_id` is
+              # no content IN THIS REPLY -- a directory, a symlink, or a FILE whose current version
+              # no longer resolves on the server (tree.rs omits all three keys then) -- like a
+              # change entry with no `version`: nil, never the empty slice, which is truthy and
+              # would wipe the row's version and size.
               version = n["version_id"] ? n.slice("version_id", "size") : nil
               upsert(n, deleted: false, version:, manifest: n["manifest"])
             end
@@ -196,8 +199,9 @@ module FileLayer
             if node
               # A CHANGE ENTRY CARRIES ITS CONTENT AT THE ENTRY LEVEL -- `version` and `manifest`
               # beside `node`, never inside it -- and only on a `put` whose version still resolves
-              # (sync-protocol.md §8.3). Every other op omits both, and so does a `put` whose version
-              # was pruned since: `upsert` then leaves the row's content alone rather than nulling it.
+              # (tinkerex-sync's docs/sync-protocol.md §8.3). Every other op omits both, and so does
+              # a `put` whose version was pruned since: `upsert` then leaves the row's content alone
+              # rather than nulling it.
               upsert(node, deleted: node["deleted"], version: entry["version"], manifest: entry["manifest"])
               # A LIVE FILE LANDING SOMEWHERE is the only kind of entry that can need filing, so
               # only those parents are collected. Directories have nothing to file and a tombstone

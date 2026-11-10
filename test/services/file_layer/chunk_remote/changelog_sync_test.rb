@@ -56,10 +56,11 @@ module FileLayer
         e = { "seq" => seq, "op" => op, "node_id" => node_id,
               "node" => { "node_id" => node_id, "parent_node_id" => parent, "name" => name,
                           "kind" => kind, "deleted" => deleted, "mode" => nil, "mtime" => 1 } }
-        # `version` AND `manifest` TRAVEL TOGETHER, AS THE SERVER SENDS THEM (sync-protocol.md §8.3;
-        # `Change` in tinkerex-sync's services/changes.rs): both on a `put` whose version still
-        # resolves, neither otherwise -- and the manifest rides on the ENTRY, beside `node`. So a
-        # `size:` given with any other op adds nothing: a move or a delete never carries content.
+        # `version` AND `manifest` TRAVEL TOGETHER, AS THE SERVER SENDS THEM (tinkerex-sync's
+        # docs/sync-protocol.md §8.3; `Change` in tinkerex-sync's services/changes.rs): both on a
+        # `put` whose version still resolves, neither otherwise -- and the manifest rides on the
+        # ENTRY, beside `node`. So a `size:` given with any other op adds nothing: a move or a
+        # delete never carries content.
         if size && op == "put"
           e["version"] = { "version_id" => "v-#{seq}", "manifest_id" => "m", "size" => size }
           e["manifest"] = [ { "hash" => "h-#{seq}", "offset" => 0, "length" => size } ]
@@ -67,13 +68,13 @@ module FileLayer
         e
       end
 
-      # A /v1/tree NODE, IN THE SHAPE THE SERVER SENDS IT (sync-protocol.md §8.4; `TreeNode` in
-      # tinkerex-sync's services/tree.rs): a file's content lies FLAT on the node -- `version_id`,
-      # `size`, `manifest` -- and there is no `deleted`, because the tree lists live nodes only. Keys
-      # a node has no value for are ABSENT, as the server omits them. The one tree fake here that
-      # carried content once nested a `version` object no tree has ever sent -- the applier's own
-      # misreading -- so the only test of the resync arm confirmed the bug instead of catching it
-      # (CLAUDE.md §14e); the other two carried no content at all.
+      # A /v1/tree NODE, IN THE SHAPE THE SERVER SENDS IT (tinkerex-sync's docs/sync-protocol.md
+      # §8.4; `TreeNode` in tinkerex-sync's services/tree.rs): a file's content lies FLAT on the
+      # node -- `version_id`, `size`, `manifest` -- and there is no `deleted`, because the tree
+      # lists live nodes only. Keys a node has no value for are ABSENT, as the server omits them.
+      # The one tree fake here that carried content once nested a `version` object no tree has ever
+      # sent -- the applier's own misreading -- so the only test of the resync arm confirmed the bug
+      # instead of catching it (CLAUDE.md §14e); the other two carried no content at all.
       def tree_node(node_id, name, kind: "file", parent: nil, size: nil, version_id: "v-#{node_id}",
                     manifest: [ { "hash" => "h-#{node_id}", "offset" => 0, "length" => size } ])
         n = { "node_id" => node_id, "parent_node_id" => parent, "name" => name,
@@ -110,8 +111,9 @@ module FileLayer
       # THE INCREMENTAL ARM'S HALF OF THE CONTRACT THE RESYNC ARM BROKE, pinned because the fix
       # moved it: the manifest used to reach the applier through an instance variable set around
       # the call, and is now an argument. A `put` carries its content at the ENTRY level -- `version`
-      # beside `node`, `manifest` beside both (sync-protocol.md §8.3) -- and every other op omits
-      # both keys, so the move after it must leave the content it landed exactly as it was.
+      # beside `node`, `manifest` beside both (tinkerex-sync's docs/sync-protocol.md §8.3) -- and
+      # every other op omits both keys, so the move after it must leave the content it landed
+      # exactly as it was.
       test "a change entry lands its version, size and manifest, and a later move keeps them" do
         t = FakeTransport.new(pages: { 0 => [ entry(1, "n1", "a.stl", size: 12),
                                               entry(2, "n1", "moved.stl", parent: "dirB", op: "move") ] },
@@ -261,8 +263,9 @@ module FileLayer
 
       # THE GAP IS ASKED ONCE, NOT PER PAGE -- the hazard the fold introduces if it is written
       # carelessly. `oldest_seq` need not fall below the cursor a resync lands on: an emptied
-      # changelog reports `head_seq + 1` (docs/sync-protocol.md), which is ABOVE it, so a per-page
-      # check would resync, re-check, resync... forever, applying nothing and holding the job.
+      # changelog reports `head_seq + 1` (tinkerex-sync's docs/sync-protocol.md), which is ABOVE it,
+      # so a per-page check would resync, re-check, resync... forever, applying nothing and holding
+      # the job.
       test "the pruned-gap check is evaluated ONCE, so an oldest_seq above the post-resync cursor cannot resync forever" do
         @user.update_column(:remote_sync_cursor, 5)
         t = ResyncCountingTransport.new(pages: { 50 => [] }, oldest_seq: 51, head_seq: 50,
