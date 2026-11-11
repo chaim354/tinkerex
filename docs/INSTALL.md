@@ -47,11 +47,12 @@ moves to a `.trash` folder inside it. So not your Downloads folder.
 **3. Start it.** Open a terminal in that folder (Terminal on a Mac, PowerShell on Windows) and run:
 
 ```sh
-docker compose up -d
+docker compose up -d --pull always
 ```
 
-The first start downloads four images, which takes a few minutes. Then open
-<http://localhost:8080> in your browser.
+The first start downloads four images, which takes a few minutes. `--pull always` makes it fetch
+the newest ones even if Docker already holds older copies from an earlier try; without it, Docker
+starts whatever it already has. Then open <http://localhost:8080> in your browser.
 
 **4. Create your account.** The first time, the page says **Create the owner account** where the
 sign-in form would be. The first account is the owner and the server's admin, and it needs no email
@@ -187,8 +188,8 @@ no `.env`. Everything goes in `docker-compose.yml`, which carries the lines comm
    (`//192.168.1.50/Files`). It only names the folder on the setup page, which otherwise says "the
    folder your docker-compose.yml is in".
 
-Then `docker compose up -d`. The first run is the same as with a folder (section 2): the share is
-the mounted folder, and you can choose a folder inside it.
+Then `docker compose up -d --pull always`. The first run is the same as with a folder (section 2):
+the share is the mounted folder, and you can choose a folder inside it.
 
 **The share must be reachable when the app starts.** Docker connects to it as the container starts,
 so while the other computer is off or asleep the app does not start: `docker compose up -d` stops

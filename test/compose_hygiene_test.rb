@@ -53,6 +53,30 @@ class ComposeHygieneTest < ActiveSupport::TestCase
     assert_nil services.dig("web", "platform"), "the app image is multi-arch; a pin would force emulation on Apple silicon"
   end
 
+  # A FIRST START RUNS WHATEVER IMAGE DOCKER ALREADY HOLDS (2026-11-11). `docker compose up -d` pulls
+  # only an image missing from the local cache, so a machine that tried Tinkerex before starts that
+  # old build: a server made that day on a Mac holding an October :latest had no welcome tour, which
+  # shipped in November. Every place a newcomer is told to start it says `--pull always`. The update
+  # line and the re-runs after a settings change stay bare on purpose: they keep the image in hand.
+  # The generated file's header is pinned in test/system/compose_generator_test.rb.
+  FIRST_START = "docker compose up -d --pull always"
+  BARE_START = /docker compose up -d(?! --pull always)/
+
+  test "every first start a newcomer is told to run pulls the newest images" do
+    regions = {
+      "docker-compose.yml's start line" => Rails.root.join("docker-compose.yml").read[/^#.*pull and start.*$/],
+      "README.md's quick start" => section(Rails.root.join("README.md").read, "## Quick start"),
+      "docs/INSTALL.md's quick start" => section(Rails.root.join("docs/INSTALL.md").read, "## 2. Quick start"),
+      "the compose page's next step" =>
+        Rails.root.join("app/views/public/compose/show.html.erb").read[%r{<p class="compose-next.*?</p>}m]
+    }
+    regions.each do |name, text|
+      assert text, "#{name} is gone: find where a newcomer is now told to start it and point this at it"
+      assert_includes text, FIRST_START, name
+      assert_no_match BARE_START, text, "#{name} starts whatever image Docker already holds"
+    end
+  end
+
   test "the build overlay restores a build for every service under a :local name" do
     services = compose("docker-compose.build.yml").fetch("services")
     assert_equal SERVICES.sort, services.keys.sort
@@ -63,5 +87,13 @@ class ComposeHygieneTest < ActiveSupport::TestCase
     assert_equal [ "${LIBRARY_HOST_PATH:-./library}:/library" ], services.dig("web", "volumes"),
                  "in a clone '.' is the repository; the overlay puts the mount back to ./library " \
                  "(compose merges volumes by container path, so the storage volume survives)"
+  end
+
+  private
+
+  # A markdown section: its heading line through the line before the next heading at its level or above.
+  def section(doc, heading)
+    level = heading[/\A#+/].size
+    doc[Regexp.new("^#{Regexp.escape(heading)}$.*?(?=^[#]{1,#{level}} |\\z)", Regexp::MULTILINE)]
   end
 end

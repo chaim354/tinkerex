@@ -123,7 +123,7 @@
           set is not announced, so it stays and empties instead (pages/public.css collapses it). %>
       <p class="compose-status" data-compose-target="status" role="status"></p>
       <pre class="compose-preview" data-compose-target="preview" data-copy-target="source" tabindex="0" aria-label="The docker-compose.yml"></pre>
-      <p class="compose-next muted">Save it in the folder it names, run <code>docker compose up -d</code> there and open the address in its first lines. The first account you create is the owner. <a href="<%= guide %>">The install guide</a> explains every setting.</p>
+      <p class="compose-next muted">Save it in the folder it names, run <code>docker compose up -d --pull always</code> there and open the address in its first lines. The first account you create is the owner. <a href="<%= guide %>">The install guide</a> explains every setting.</p>
     </section>
   </div>
 <% end %>

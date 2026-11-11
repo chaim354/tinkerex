@@ -22,7 +22,8 @@ plugin on Linux.
 
 1. Download [`docker-compose.yml`](docker-compose.yml) into the folder that holds your files, or
    into a new, empty folder. That folder becomes your library.
-2. In that folder, run `docker compose up -d`. The first start takes a few minutes.
+2. In that folder, run `docker compose up -d --pull always`. The first start takes a few minutes;
+   `--pull always` fetches the newest images even if Docker kept older ones from an earlier try.
 3. Open <http://localhost:8080> and create your account. The first account is the owner and admin,
    and it needs no email.
 4. Confirm the folder, or pick one inside it, then take the short welcome tour or skip it.

@@ -1,7 +1,7 @@
 # Tinkerex with the Tools gallery: four containers, and THE FOLDER THIS FILE IS IN is the library.
 # Put the file in the folder that holds your files, or in an empty one, and in that folder:
 #
-#   docker compose up -d                           pull and start; then http://localhost:8080
+#   docker compose up -d --pull always             pull and start; then http://localhost:8080
 #   docker compose pull && docker compose up -d    update
 #
 # Whatever folder the file is in becomes the library, with a .trash/ inside it, so not Downloads.
