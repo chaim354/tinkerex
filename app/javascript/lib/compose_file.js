@@ -273,7 +273,7 @@ function header(c, { source, guide }) {
     `# Tinkerex${c.tools ? " with the Tools gallery" : ""}${source ? `, made at ${inComment(source)}` : ""}.`,
     "# In the folder this file is in:",
     "#",
-    `#   docker compose up -d                           pull and start; then http://localhost:${c.port}`,
+    `#   docker compose up -d --pull always             pull and start; then http://localhost:${c.port}`,
     "#   docker compose pull && docker compose up -d    update",
     "#"
   ]

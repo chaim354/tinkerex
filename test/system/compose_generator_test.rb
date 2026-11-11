@@ -148,7 +148,8 @@ class ComposeGeneratorSystemTest < ApplicationSystemTestCase
     expected = comments(repo) - comments(repo_header) - markers
     assert_equal expected.sort, comments(body).sort, "the file's comments are not the repo file's"
     assert_includes header, "made at #{current_url.split('?').first}"
-    assert_includes header, "docker compose up -d"
+    assert_match(/docker compose up -d --pull always +pull and start/, header,
+                 "the start line must pull: a bare up -d starts whatever image Docker already holds")
     assert_equal yaml, build({}).first["yaml"], "the page's own preview is not what the module builds from the form's defaults"
   end
 
