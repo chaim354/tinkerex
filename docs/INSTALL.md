@@ -13,64 +13,146 @@ setting, mail and more accounts, updates and backups. Section 7 lists every sett
 
 ## 1. What you need
 
-- **Docker.** On a Mac or a Windows machine, [Docker Desktop](https://www.docker.com/products/docker-desktop/).
-  On Linux, Docker Engine with the Compose plugin. Either way `docker compose version` must say
-  2.24 or newer.
-- **A folder for your files**, or an empty one: the folder you put the compose file in is the
-  library.
+- **A computer that stays on**: a Mac, a Windows PC or a Linux machine. Tinkerex runs on it, and
+  your other computers and phones open it in their web browser over your home network. While that
+  computer is asleep or off, nobody can reach Tinkerex.
+- **Docker Desktop**, the free program that runs Tinkerex: download it
+  [for a Mac](https://docs.docker.com/desktop/setup/install/mac-install/) or
+  [for Windows](https://docs.docker.com/desktop/setup/install/windows-install/). It is free for
+  personal use. On Linux, Docker Engine with the Compose plugin instead; `docker compose version`
+  must say 2.24 or newer.
+- **A folder for your files**: the one that already holds them, or a new, empty one such as
+  `Workshop` in your home folder.
 - Nothing else: no Ruby, no database server, no mail server, no secrets to generate. The database is
   SQLite in a Docker volume, and the session secret is generated on the first start and kept there.
 
-Four images are pulled: the app, the two tools (a box generator and OpenSCAD) and the small server
-that holds the tool bundles. The app image is built for amd64 and arm64, so an Apple-silicon Mac or a
-Raspberry Pi-class box runs it natively; STEP, IGES, OBJ and the other mesh formats get a generic
-icon instead of a thumbnail on arm64 (F3D ships no Linux arm64 build; STL, SVG, DXF, LightBurn, PDF,
-images and Gerber all render). The three Tools images are published for amd64 only (OpenSCAD is an
-x86 AppImage; the other two are built that way today), and the compose file says so, so Docker
-Desktop on an Apple-silicon Mac pulls them and runs them under emulation; section 3 has the note for
-an arm64 Linux box. The author runs this on a Mac and on Linux; the Windows path has not been run.
-
 ## 2. Quick start
 
-About ten minutes, most of it waiting for the first download.
+About fifteen minutes, most of it waiting for downloads. You type one line; the rest is clicking.
 
-**1. Get the compose file.** Download [`docker-compose.yml`](../docker-compose.yml) from this
-repository, or make one with your settings already filled in at
-<https://tinkerex.com/install/compose>: your folder or network share, port, user and mail. That page
-builds the file in your browser and sends nothing you type anywhere, passwords included. Any
-Tinkerex server has the same page at `/install/compose`.
+**1. Install Docker Desktop and open it.** Install it like any other app (the links are in section
+1), open it and accept its terms. Once its window says the engine is running, open its **Settings**,
+and under **General** tick **Start Docker Desktop when you sign in to your computer**, so Tinkerex
+comes back by itself after a restart.
 
-**2. Put it in the folder that holds your files**, or in a new, empty folder. That folder becomes
-your library: Tinkerex reads what is in it, uploads land in it, and anything you delete in the app
-moves to a `.trash` folder inside it. So not your Downloads folder.
+**2. Choose the folder for your files.** Use the folder that already holds them, or make a new,
+empty one. Tinkerex shows what is in it, saves your uploads into it, and moves anything you delete
+in Tinkerex to a `.trash` folder inside it. So not your Downloads folder.
 
-**3. Start it.** Open a terminal in that folder (Terminal on a Mac, PowerShell on Windows) and run:
+**3. Download the setup file into that folder.** Open <https://tinkerex.com/install/compose> and
+press **Download**; the settings it starts with suit most people. Move the `docker-compose.yml` it
+saves into your folder. The page writes the file in your browser and sends nothing you type
+anywhere, passwords included, and it is also where you set up a network share, another port or mail.
+Any Tinkerex server has the same page at `/install/compose`, and the plain file is
+[`docker-compose.yml`](../docker-compose.yml) in this repository.
+
+**4. Start Tinkerex.** Open a terminal in your folder:
+
+- **Mac:** open **Terminal** (press ⌘ and the space bar, type `Terminal`, press Return). Type `cd`
+  and a space, drag your folder from Finder onto the Terminal window, and press Return.
+- **Windows:** open your folder in File Explorer, click the address bar at the top, type
+  `powershell` and press Enter.
+- **Linux:** open a terminal in the folder.
+
+Then copy this line, paste it into the terminal and press Return:
 
 ```sh
 docker compose up -d --pull always
 ```
 
-The first start downloads four images, which takes a few minutes. `--pull always` makes it fetch
-the newest ones even if Docker already holds older copies from an earlier try; without it, Docker
-starts whatever it already has. Then open <http://localhost:8080> in your browser.
+The first start downloads Tinkerex, which takes a few minutes; it is done when the last lines say
+**Started**. `--pull always` fetches the newest version even if this computer tried Tinkerex
+before. You can close the terminal then: Tinkerex keeps running in Docker Desktop, which lists it
+under your folder's name.
 
-**4. Create your account.** The first time, the page says **Create the owner account** where the
-sign-in form would be. The first account is the owner and the server's admin, and it needs no email
-confirmation and no mail server. After it, nobody else can sign up: you add other people yourself,
-under **Settings → Users** (section 4).
+**5. Open Tinkerex and create your account.** Go to <http://localhost> in your browser. The first
+time, the page says **Create the owner account** where the sign-in form would be. The first account
+is the owner and the server's admin, and it needs no email confirmation and no mail server. After
+it, nobody else can sign up: you add other people yourself, under **Settings → Users** (section 4).
 
-**5. Confirm your library folder.** Tinkerex shows the folder it was given and asks once. **Use this
+**6. Confirm your library folder.** Tinkerex shows the folder it was given and asks once. **Use this
 folder** takes all of it; **Choose a folder inside it** lets you pick one folder within it instead.
 The first scan starts when you confirm, and from then on new files appear within 15 minutes, or
 straight away with **Rescan library** on the Library page.
 
-**6. Take the tour, or skip it.** A short welcome asks whether you mostly organize files (laser,
+**7. Take the tour, or skip it.** A short welcome asks whether you mostly organize files (laser,
 CNC, electronics, documents) or 3D models, shows what Tinkerex does for that, and walks you through
 your first project and its first upload. **Skip for now** is on every step, and **Take the tour** on
 the Help page brings it back.
 
+### Open it from your other computers
+
+Every computer on a home network has a name ending in `.local`, and the others can reach it by that
+name. So any computer or phone on the same network (the same Wi-Fi or router) opens Tinkerex at
+**http://_name_.local**, where _name_ is the name of the computer Tinkerex runs on. Name that
+computer `tinkerex`, and the address is **http://tinkerex.local**.
+
+- **Mac:** Apple menu → **System Settings** → **General** → **Sharing**. **Local hostname**, at the
+  bottom, shows the name (such as `Sams-MacBook-Air.local`), and **Edit** changes it
+  ([Apple's guide](https://support.apple.com/guide/mac-help/mchlp2322/mac)).
+- **Windows:** **Settings** → **System** → **About** → **Rename this PC**, then restart
+  ([Microsoft's guide](https://support.microsoft.com/en-us/accounts-billing/manage/rename-your-windows-device)).
+  Windows lets other computers in only on a network it treats as private: under **Settings** →
+  **Network & internet**, open your Wi-Fi or Ethernet connection and choose **Private network**
+  ([Microsoft's guide](https://support.microsoft.com/en-us/windows/find-your-ip-address-f21a9bbc-c582-55cd-35e0-73431160a1b9)).
+  If Windows asks whether Docker Desktop may use your network, allow it.
+- **Linux** (with Docker Engine): nothing to do. Tinkerex announces **http://tinkerex.local**
+  itself, through the `local-name` service in the compose file; Docker Desktop for Linux runs
+  containers in a VM, as on a Mac, so there the computer's own name is the address. To announce
+  another name, put a line such as
+  `TINKEREX_LOCAL_NAME=workshop` in a file named `.env` beside the compose file (section 3) and run
+  `docker compose up -d --pull always` again.
+
+Two things keep it dependable:
+
+- **Keep that computer awake.** Asleep, it answers nobody. On a Mac, see
+  [Apple's guide to sleep settings](https://support.apple.com/guide/mac-help/mchle41a6ccd/mac); on
+  Windows, **Settings** → **System** → **Power** (**Power & battery** on a laptop) can keep it from
+  sleeping while it is plugged in.
+- **When a .local name does not open**, use the computer's address on your network instead, such
+  as `http://192.168.1.20`. Some phones (older Android ones especially) and some guest or office
+  networks cannot look up .local names. A Mac shows its address under **System Settings** →
+  **Network** → your connection → **Details…**; Windows under **Settings** → **Network & internet**
+  → **Properties** ([Microsoft's guide](https://support.microsoft.com/en-us/windows/find-your-ip-address-f21a9bbc-c582-55cd-35e0-73431160a1b9)).
+  The router can hand out a different address now and then; most routers can be told to keep it
+  (look for "DHCP reservation" in its settings).
+
+### Let your other computers add files
+
+Tinkerex shows whatever is in its folder, so the easy way to add files from another computer is to
+share that folder over your network with the file sharing your computer already has. The others then
+open it like any network folder and drag files in. Apple, Microsoft and Ubuntu each walk through it:
+
+- **Mac:** [Set up file sharing on Mac](https://support.apple.com/guide/mac-help/mh17131/mac). In
+  short: **System Settings** → **General** → **Sharing**, turn on **File Sharing**, click its ⓘ, add
+  the folder under **Shared Folders** and give your account **Read & Write**; for Windows computers,
+  also tick your account under **Options…** → **Windows File Sharing**. Other Macs connect with
+  Finder's **Go** → **Connect to Server** and `smb://tinkerex.local`, Windows computers with
+  `\\tinkerex.local` (the Mac's own name, if it is not `tinkerex`).
+- **Windows:** [File sharing over a network in Windows](https://support.microsoft.com/help/4092694).
+  In short: right-click the folder → **Properties** → **Sharing** → **Share…**, and add your
+  account with **Read/Write**. Other computers connect with `\\tinkerex\<folder>`, or
+  `smb://tinkerex.local/<folder>` from a Mac (the PC's own name, if it is not `tinkerex`). A
+  folder inside the WSL2 filesystem cannot be shared
+  this way; keep the library on the Windows drive.
+- **Linux:** [Set up Samba as a file server](https://documentation.ubuntu.com/server/how-to/samba/file-server/)
+  (Ubuntu's guide; other distributions work alike). Add `force user =` the folder's owner to the
+  share, so what other computers write stays editable by Tinkerex (`PUID`, section 3).
+
+What your other computers add appears in Tinkerex within 15 minutes, or at once with **Rescan
+library**, the same as for any other program writing to the folder; the `.DS_Store` and `._` files a
+Mac leaves behind are ignored. They reach the folder only while this computer is on and awake.
+
 ### If something goes wrong
 
+- **The terminal says `docker` is not found** (`command not found`, or "not recognized" on
+  Windows): Docker Desktop is not installed, or not running. Open it, wait until it says the engine
+  is running, open a new terminal window in your folder and try again.
+- **It says the port is already allocated, or already in use**: another program on this computer
+  answers on port 80, the one an address without a number uses. Download the file again from
+  <https://tinkerex.com/install/compose> with **Port** set to `8080`, replace the old one, and run
+  `docker compose up -d --pull always` again. The addresses become `http://localhost:8080` and
+  `http://tinkerex.local:8080`.
 - **The page doesn't load.** Give it another minute, then run `docker compose logs web` in the same
   folder. If the app stopped, its last lines say why, in one sentence: it refuses to start on a
   wrong setting rather than failing later.
@@ -155,7 +237,15 @@ lists every line with its default.
   nothing to set there. The app never changes your folder's ownership — it only probes it — with
   one exception: an empty folder owned by root (the one Docker itself creates on Linux for a
   missing bind-mount source) is made the app user's, so a fresh install works on the first start.
-- **`TINKEREX_PORT`** — the port on this machine, default `8080`.
+- **`TINKEREX_PORT`** — the port on this machine, default `80`, so the address needs no number.
+  When another program already uses 80, `8080`; the addresses then gain it
+  (`http://tinkerex.local:8080`).
+- **`TINKEREX_LOCAL_NAME`** (Linux) — the name the `local-name` service announces on your network,
+  default `tinkerex`, so `http://tinkerex.local`: one word of letters, digits and dashes. Two
+  Tinkerex servers on one network need different names; the second to start says so in its log
+  (`docker compose logs local-name`) and stays quiet rather than take the name. Under Docker
+  Desktop (Mac, Windows) the service cannot reach your network, so it logs that once and waits,
+  and the computer's own `.local` name is the address (section 2).
 - Accounts and mail are section 4; every other variable is in section 7.
 
 ### A network share instead of a folder
@@ -211,27 +301,6 @@ The password is in `docker-compose.yml` in plain text, and in Docker's record of
 (`docker volume inspect`), so keep the file to yourself (`chmod 600 docker-compose.yml` on a Mac or
 Linux). Docker masks it in its error messages.
 
-### Reaching the folder from your other computers
-
-No NAS is needed for that: share the library folder from the machine running Tinkerex, with the
-sharing its own system already has, and your other computers open it like any network folder.
-
-- **Mac** — System Settings → General → Sharing: turn on File Sharing, click its ⓘ, add the folder
-  under Shared Folders and give your account Read & Write. For Windows computers, also tick your
-  account under Options… → Windows File Sharing. Connect with Finder's Go → Connect to Server
-  (`smb://<the Mac's name or IP address>`), or `\\<name or IP>` from Windows.
-- **Windows** — right-click the folder → Properties → Sharing → Share…, and add your account with
-  Read/Write. Connect with `\\<the PC's name>\<folder>`, or `smb://<name>/<folder>` from a Mac. A
-  folder inside the WSL2 filesystem cannot be shared this way; keep the library on the Windows drive.
-- **Linux** — install Samba from your distribution and add a share with `path =` the folder,
-  `read only = no` and `force user =` the folder's owner, then `sudo smbpasswd -a <that user>` and
-  restart Samba. `force user` keeps what other computers write owned by the user the app runs as
-  (`PUID`, above), so the app can still edit it.
-
-What your other computers change appears in the app within 15 minutes, the same as for any other
-program writing to the folder, and the `.DS_Store` and `._` files a Mac leaves behind are ignored.
-They reach the files only while this machine is on and awake.
-
 ### Building from source instead of pulling
 
 With a clone of this repository and a sibling checkout of `chaim354/tinkerex-addons` at
@@ -250,6 +319,20 @@ there without x86 emulation — start the other three by name: `… up -d --buil
 the box generator and the bundle server build natively), for a machine without registry access,
 and for working on the app. In a clone the overlay binds `./library` (gitignored) to `/library`
 instead of the clone's own folder, so the repository itself is never indexed.
+
+### Apple-silicon Macs, Raspberry Pis and other arm64 machines
+
+Four images are pulled: the app (which the `local-name` service runs too), the two tools (a box
+generator and OpenSCAD) and the small server that holds the tool bundles. The app image is built for
+amd64 and arm64, so an Apple-silicon Mac or a Raspberry Pi-class box runs it natively; STEP, IGES,
+OBJ and the other mesh formats get a generic icon instead of a thumbnail on arm64 (F3D ships no
+Linux arm64 build; STL, SVG, DXF, LightBurn, PDF, images and Gerber all render). The three Tools
+images are published for amd64 only (OpenSCAD is an x86 AppImage; the other two are built that way
+today), and the compose file says so, so Docker Desktop on an Apple-silicon Mac pulls them and runs
+them under emulation. An arm64 Linux box without x86 emulation cannot start those three: the app
+comes up on its own and the gallery says its tools are unavailable, and building from source (above)
+gets the box generator and the bundle server back. The author runs this on a Mac and on Linux; the
+Windows path has not been run.
 
 ## 4. Mail and more accounts
 
@@ -380,10 +463,11 @@ ones marked *set by compose*; the rest come from `.env`.
 | `CLOUDFLARE_ONLY` | no | off | Set to `1` when Cloudflare proxies your domain and the reverse proxy in front of the app appends the connecting address to `X-Forwarded-For` (Kamal's kamal-proxy does): every request whose connection did not come from one of Cloudflare's published ranges (`config/cloudflare_ips.yml`) is answered 403, so nobody can reach the app around Cloudflare by asking your server's address directly. Behind a proxy that is not Cloudflare it refuses everything; with no proxy appending that address it protects nothing, because a request without the header is let through. |
 | `RAILS_MAX_THREADS` | no | 3 (Puma), 5 (database pool); **the compose file sets 16** | Puma's thread count and the SQLite connection pool. 3 starves once a tool call is proxied through the app; 16 is what the author runs. |
 | `SOLID_QUEUE_IN_PUMA` | no | **on** in production | Runs the background workers (scans, thumbnails, trash purge, project intake) inside the web container. `false`, `0` or `no` turns it off, for a split `bin/jobs` container. Outside production it is an opt-in, as it always was. |
-| **Compose only** (`docker-compose.yml` reads these; the app never sees them, except `LIBRARY_HOST_PATH`, passed through display-only, and `PUID`/`PGID`, which reach the entrypoint) | | | |
+| **Compose only** (`docker-compose.yml` reads these; the app never sees them, except `LIBRARY_HOST_PATH`, passed through display-only, and `PUID`/`PGID`, which reach the entrypoint; `TINKEREX_LOCAL_NAME` is read by the `local-name` service alone) | | | |
 | `LIBRARY_HOST_PATH` | no | the compose file's own folder (`.`) | The folder on the host bound to `/library`; a relative path is resolved against the compose file's directory. Also passed into the container display-only, so the Getting started panel and the Library folder page can name the folder ("the folder your docker-compose.yml is in", or the path as typed). Section 3. |
 | `PUID`, `PGID` | no | the library folder's owner, else `1000` | The user and group the app runs as inside the container, and so the owner of every file it writes into your folder (section 3). Both unset, the folder's owner when it is not root, otherwise `1000`; with `PUID` set alone, `PGID` is `1000`. An Unraid share gives `99`/`100`; Docker Desktop needs nothing. The container starts as root and drops to them; `--user` on the container skips that and runs as given. |
-| `TINKEREX_PORT` | no | `8080` | The host port the web app is published on. |
+| `TINKEREX_PORT` | no | `80` | The host port the web app is published on. `80` keeps the number out of the address; `8080` when something else holds 80. |
+| `TINKEREX_LOCAL_NAME` | no | `tinkerex` | The `.local` name the `local-name` service announces on a Linux host (`bin/local-name`), so the network opens `http://tinkerex.local`. One DNS label; a name another device already answers to is refused in the log. Under Docker Desktop the service cannot reach the network and only waits (section 2). |
 | `TINKEREX_IMAGE` | no | `ghcr.io/chaim354/tinkerex:latest` | The app image. `docker-compose.build.yml` builds `tinkerex:local` from the checkout instead. |
 | `TINKEREX_ADDONS_PATH` | build overlay | `../tinkerex-addons` | Path to a checkout of `chaim354/tinkerex-addons`, the build context for the addon bundle server in `docker-compose.build.yml`. |
 | `COMPOSE_FILE` | no | — | Docker's own: `COMPOSE_FILE=docker-compose.yml:docker-compose.build.yml` in `.env` saves typing `-f` on every command. |

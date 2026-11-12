@@ -21,8 +21,9 @@ module Tinkerex
   #             the prose that explains it and the commented example parsed back into YAML
   #
   # WHAT THE GENERATOR KNOWS BY HAND is only this: the app service is `web`, the library is the bind
-  # whose target is `/library`, the commented block that closes `volumes:` is the share example, and
-  # a Tool is reached through a Tools key. A file whose shape stops matching any of it RAISES, naming
+  # whose target is `/library`, the commented block that closes `volumes:` is the share example, a
+  # Tool is reached through a Tools key, and the COMPANIONS below run beside the app whatever is
+  # chosen. A file whose shape stops matching any of it RAISES, naming
   # the line, rather than guessing -- a service reached any other way, an end-of-line comment, a
   # comment under a scalar -- and test/lib/compose_template_test.rb reads the real file, so that
   # raise is a red build, never a visitor's wrong file.
@@ -34,6 +35,11 @@ module Tinkerex
 
     SOURCE = Rails.root.join("docker-compose.yml")
     APP = "web".freeze
+    # Services every install runs beside the app, which the Tools switch never removes: `local-name`
+    # announces tinkerex.local on a Linux host (lib/tinkerex/local_name.rb). Named here, because a
+    # service the app does not reach is otherwise refused -- the generator could not tell which way
+    # the switch should take it.
+    COMPANIONS = %w[local-name].freeze
     LIBRARY_TARGET = "/library".freeze
     # `bin/rails generate sidecar` inserts at these; they instruct a repo tool, not an installer.
     MARKERS = Tinkerex::Sidecars::MARKERS.values.filter_map { |file, text| text if file == :compose }.freeze
@@ -195,7 +201,7 @@ module Tinkerex
         [ key, host ] if key == ADDON_SOURCE_KEY || key == Maker::Addons::Services.env_key_for(host)
       end
       tools = reached.map(&:last).uniq
-      unknown = services.keys - [ APP ] - tools
+      unknown = services.keys - [ APP ] - COMPANIONS - tools
       if unknown.any?
         raise Error, "docker-compose.yml runs #{unknown.join(', ')}, which the app does not reach through a Tools key " \
                      "(<SERVICE>_SIDECAR_URL or #{ADDON_SOURCE_KEY}), so the generator cannot tell whether " \

@@ -1,21 +1,25 @@
-# Tinkerex with the Tools gallery: four containers, and THE FOLDER THIS FILE IS IN is the library.
+# Tinkerex with the Tools gallery, and THE FOLDER THIS FILE IS IN is the library.
 # Put the file in the folder that holds your files, or in an empty one, and in that folder:
 #
-#   docker compose up -d --pull always             pull and start; then http://localhost:8080
+#   docker compose up -d --pull always             pull and start; then http://localhost
 #   docker compose pull && docker compose up -d    update
 #
+# Your other computers and phones open http://<this computer's name>.local, and on a Linux machine
+# http://tinkerex.local too (the local-name service below); docs/INSTALL.md section 2 has both.
 # Whatever folder the file is in becomes the library, with a .trash/ inside it, so not Downloads.
 # Overrides go in an optional .env beside this file: LIBRARY_HOST_PATH to keep the file here and the
-# library elsewhere, PUID/PGID to run as someone other than the folder's owner, TINKEREX_PORT, and
-# the accounts/mail knobs (.env.example lists them; docs/INSTALL.md explains them). A network share
+# library elsewhere, PUID/PGID to run as someone other than the folder's owner, TINKEREX_PORT,
+# TINKEREX_LOCAL_NAME, and the accounts/mail knobs (.env.example lists them; docs/INSTALL.md explains them). A network share
 # instead of a folder needs no .env: see the commented `library` lines below.
 # docker-compose.build.yml rebuilds all four images from a clone instead of pulling them.
 
 services:
   web:
     image: ${TINKEREX_IMAGE:-ghcr.io/chaim354/tinkerex:latest}
+    # Port 80, so the address needs no number. When something else on this machine already uses
+    # it, Docker says the port is taken: TINKEREX_PORT=8080 in .env, and the address gains :8080.
     ports:
-      - "${TINKEREX_PORT:-8080}:80"
+      - "${TINKEREX_PORT:-80}:80"
     env_file:
       - path: .env
         required: false
@@ -50,6 +54,22 @@ services:
       timeout: 5s
       retries: 5
       start_period: 90s
+    restart: unless-stopped
+
+  # ANNOUNCES tinkerex.local ON YOUR NETWORK, so every computer and phone there opens
+  # http://tinkerex.local -- when this machine runs Linux. Docker Desktop (Mac, Windows) keeps
+  # containers off your network, so there this one says so in its log and waits, and the computer's
+  # own name is the address instead (docs/INSTALL.md section 2). It is the app image running
+  # bin/local-name on the host's network, which is how it hears the questions; it answers them and
+  # opens nothing else. TINKEREX_LOCAL_NAME in .env picks another name than tinkerex.
+  local-name:
+    image: ${TINKEREX_IMAGE:-ghcr.io/chaim354/tinkerex:latest}
+    entrypoint:
+      - /rails/bin/local-name
+    network_mode: host
+    user: "1000:1000"
+    environment:
+      TINKEREX_LOCAL_NAME: ${TINKEREX_LOCAL_NAME:-tinkerex}
     restart: unless-stopped
 
   # The Tools gallery. The two sidecars are GPL-licensed and run as their own processes, reached
