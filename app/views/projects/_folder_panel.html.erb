@@ -28,10 +28,16 @@
   takes every listed file except those beneath a Dir its #dirs_without_tiles names, and those are
   exactly the files no panel draws a tile for (a hidden panel outside the editor, the browser view,
   a repository nested as a closed section) — so this polls, and never builds a second ThumbnailMap.
+
+  THE COUNT ADDS WHAT FILE_CAP LEFT OUT (`subtree_hidden_count`, 2026-11-12), and so does "empty":
+  a folder the cap cut reads its real size, never "0 files · Empty folder" over files the scan
+  indexed (Maker::ProjectFolderListing's header has the live case). The "Showing X of Y" line is
+  for the tiles and the list only; the browser lists every file, so it needs none.
 %>
 <% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
-<% count = dir.repo? ? dir.subtree_file_count : dir.subtree_file_ids.count { |id| !@generated_ids.include?(id) } %>
-<% empty = visible.empty? && dir.children.empty? %>
+<% hidden = dir.subtree_hidden_count %>
+<% count = (dir.repo? ? dir.subtree_file_count : dir.subtree_file_ids.count { |id| !@generated_ids.include?(id) }) + hidden %>
+<% empty = count.zero? && dir.children.empty? %>
 <section class="panel folder-panel<%= " panel--quiet" if empty %>" id="<%= key %>">
   <div class="panel-head">
     <%# THE FOLDER'S OWN NAME IS THE DEFAULT, NOT THE TITLE (2026-09-09, the page editor): only this
@@ -99,6 +105,9 @@
         <% end %>
         <%= render partial: "file_tree_section", collection: dir.children, as: :dir,
                    locals: { view: } %>
+        <% if hidden.positive? %>
+          <p class="muted attachments-truncated">Showing <%= count - hidden %> of <%= count %> files. <%= link_to "Open the folder", files_path(folder: dir.node_id) %></p>
+        <% end %>
       <% end %>
     </div>
   <% end %>

@@ -146,8 +146,8 @@ module Maker
     # HIDDEN IS DECIDED BY ANCESTRY, walking up from a file to the project folder and no further
     # (`.depth_one_dir`), NEVER BY THE CAPPED LISTING. `permits?` refuses the capped listing as its
     # basis for the same reason. The Sets this replaced were built from the listing, which stops at
-    # FILE_CAP in name order across the whole folder. A picture in a hidden folder whose name sorted
-    # past the cap was in neither Set, so the hero (`find_by`) and an image block (`page_nodes`),
+    # FILE_CAP. A picture in a hidden folder whose name sorted past its folder's share of the cap
+    # was in neither Set, so the hero (`find_by`) and an image block (`page_nodes`),
     # which resolve nodes outside the listing, showed it as the page's largest image
     # (public_project_test.rb drives it). Backups are out because a visitor's page renders none: a
     # rescue copy is noise to everyone but the maker.

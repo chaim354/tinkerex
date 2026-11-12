@@ -10,6 +10,14 @@ import { Controller } from "@hotwired/stimulus"
 // settings panel, Size and Modified all come from the same render — so it sets `reload` and declares
 // its pending cell with `data-thumbs-pending`, and the whole page is fetched again once the answer
 // arrives. Grids set neither and behave exactly as they did before that mode existed.
+// ASKED IN BATCHES OF BATCH IDS, NEVER ALL AT ONCE (2026-11-12). Puma refuses a query string over
+// 10 KB with a 400 before the app sees it, and a node id is 39 bytes once comma-joined and encoded,
+// so one request for a panel of 272 tiles (10,609 bytes, measured) failed on every poll and none of
+// its thumbnails ever arrived. Sharing the page's 300-tile budget between folders
+// (Maker::ProjectFolderListing) is what lets one panel hold that many. 100 is also under the
+// endpoint's own `first(200)` bound, so no id in a batch goes unanswered.
+const BATCH = 100
+
 export default class extends Controller {
   static values = { url: String, reload: Boolean }
   static targets = ["cell"]
@@ -48,35 +56,35 @@ export default class extends Controller {
     this.tries += 1
 
     try {
-      const res = await fetch(`${this.urlValue}?ids=${encodeURIComponent(ids.join(","))}`, {
-        headers: { Accept: "application/json" },
-      })
-      if (res.ok) {
-        const data = await res.json()
-        for (const cell of this.cellTargets) {
-          const entry = data[cell.dataset.nodeId]
-          if (!entry) continue
-          if (entry.status === "ready" && entry.url) {
-            const declared = cell.dataset.thumbsPending === "true"
-            delete cell.dataset.thumbsPending
-            this.setImage(cell, entry.url)
-            // RELOAD MODE (stage 4, S4-3), for a surface whose poster is not a `.thumb` and whose
-            // OTHER content — the laser/CNC settings panel, Size, Modified — came from the same
-            // render. `setImage` above is a no-op there (no `.thumb` to fill), so the reload is
-            // what makes the answer visible. Only for a cell that DECLARED itself pending, so a
-            // grid never reloads: its cells are found by their spinner and behave exactly as
-            // before this mode existed.
-            if (declared && this.reloadValue) return this.reloadOnce()
-          }
-          // A terminal non-ready state (no permissive renderer for this file here, or a render
-          // error) resolves the spinner to a static icon — otherwise it would spin forever and
-          // keep the cell in the poll set. THE TWO ARE DIFFERENT ANSWERS AND THE TILE SAYS WHICH
-          // (F onboarding): they resolved identically, so a render that broke read as a file type
-          // with no preview. A failed one keeps its type icon and gains a mark and its own title.
-          else if (entry.status === "unsupported" || entry.status === "failed") {
-            delete cell.dataset.thumbsPending
-            this.setIcon(cell, { failed: entry.status === "failed" })
-          }
+      const batches = []
+      for (let i = 0; i < ids.length; i += BATCH) batches.push(ids.slice(i, i + BATCH))
+      const answers = await Promise.all(batches.map((batch) => this.fetchBatch(batch)))
+      // A batch that failed answers {} and its cells stay pending for the next poll, as one failed
+      // request always did; the batches that answered still land now.
+      const data = Object.assign({}, ...answers)
+      for (const cell of this.cellTargets) {
+        const entry = data[cell.dataset.nodeId]
+        if (!entry) continue
+        if (entry.status === "ready" && entry.url) {
+          const declared = cell.dataset.thumbsPending === "true"
+          delete cell.dataset.thumbsPending
+          this.setImage(cell, entry.url)
+          // RELOAD MODE (stage 4, S4-3), for a surface whose poster is not a `.thumb` and whose
+          // OTHER content — the laser/CNC settings panel, Size, Modified — came from the same
+          // render. `setImage` above is a no-op there (no `.thumb` to fill), so the reload is
+          // what makes the answer visible. Only for a cell that DECLARED itself pending, so a
+          // grid never reloads: its cells are found by their spinner and behave exactly as
+          // before this mode existed.
+          if (declared && this.reloadValue) return this.reloadOnce()
+        }
+        // A terminal non-ready state (no permissive renderer for this file here, or a render
+        // error) resolves the spinner to a static icon — otherwise it would spin forever and
+        // keep the cell in the poll set. THE TWO ARE DIFFERENT ANSWERS AND THE TILE SAYS WHICH
+        // (F onboarding): they resolved identically, so a render that broke read as a file type
+        // with no preview. A failed one keeps its type icon and gains a mark and its own title.
+        else if (entry.status === "unsupported" || entry.status === "failed") {
+          delete cell.dataset.thumbsPending
+          this.setIcon(cell, { failed: entry.status === "failed" })
         }
       }
     } catch (_e) {
@@ -84,6 +92,18 @@ export default class extends Controller {
     }
 
     this.timer = setTimeout(() => this.poll(), 2000)
+  }
+
+  // One request for one batch of ids: the endpoint's JSON, or {} when it did not answer.
+  async fetchBatch(ids) {
+    try {
+      const res = await fetch(`${this.urlValue}?ids=${encodeURIComponent(ids.join(","))}`, {
+        headers: { Accept: "application/json" },
+      })
+      return res.ok ? await res.json() : {}
+    } catch (_e) {
+      return {}
+    }
   }
 
   setImage(cell, url) {

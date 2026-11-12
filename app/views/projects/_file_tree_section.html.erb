@@ -40,8 +40,12 @@
   page-wide cookie, until the view became per panel (spec decision 6): an ivar cannot say which
   panel is asking.
 %>
+<%# WHAT FILE_CAP LEFT OUT IS COUNTED (2026-11-12): a repository's browser lists every file, so its
+    count is the real subtree; a plain section reads "(11 of 30)" when the cap drew 11 of its 30, and
+    the enclosing panel's "Showing X of Y" line links to the folder. %>
 <% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
-<% count = dir.repo? ? dir.subtree_file_count : visible.size %>
+<% count = dir.repo? ? dir.subtree_file_count + dir.subtree_hidden_count : visible.size %>
+<% count = "#{count} of #{count + dir.hidden_count}" if !dir.repo? && dir.hidden_count.positive? %>
 <section class="attachment-group file-tree-section">
   <%# `open` on everything but a repository — see the header. %>
   <details<%= " open" unless dir.repo? %>>

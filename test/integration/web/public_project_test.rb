@@ -471,8 +471,9 @@ module Web
     end
 
     # HIDDEN IS DECIDED BY ANCESTRY, NEVER BY THE CAPPED LISTING (F-S14-1). The listing stops at
-    # FILE_CAP in NAME order across the whole folder, so a picture in a hidden folder whose name
-    # sorts past the cap is not in it. The hero (`find_by`) and an image block (`page_nodes`)
+    # FILE_CAP, so a picture in a hidden folder whose name sorts past its folder's share of the cap
+    # is not in it. The fillers go in THAT folder: the cap is shared between folders (2026-11-12),
+    # so 300 of them anywhere else would leave the photos folder its whole share and the picture in. The hero (`find_by`) and an image block (`page_nodes`)
     # resolve nodes outside the listing, so a rule built from the listing never saw them: the hidden
     # folder's picture became the page's largest image. The audit traced this and this test drives
     # it. The rows are plain, with no bytes, because only the cap is under test, the same seeding
@@ -481,7 +482,7 @@ module Web
     test "a hidden folder's picture past FILE_CAP is neither the hero nor an image block, and still delivers" do
       Maker::ProjectFolderListing::FILE_CAP.times do |i|
         @user.nodes.create!(node_id: "cap-#{i}", name: format("cap-%03d.stl", i), kind: "file",
-                            parent_node_id: @f[:folder].node_id, size: 1, mtime: 1)
+                            parent_node_id: @f[:photos].node_id, size: 1, mtime: 1)
       end
       late = make_file!(@user, "z.jpg", @f[:photos], body: PublicFixture::PNG_BYTES)
       block = @project.blocks.create!(user: @user, kind: "image", node_id: late.node_id)
