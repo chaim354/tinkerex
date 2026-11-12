@@ -8,8 +8,19 @@ module Maker
   # nothing and answers `available? == false`. Liveness is answered by the LibraryTree, which holds
   # LIVE dirs only — no extra query.
   #
-  # THE WALK IS IN MEMORY OVER ONE PLUCK OF THE USER'S DIRS, then ONE files query and ONE count, so
-  # the cost is constant in the number of files and folders (page_query_budget_test.rb pins it).
+  # THE WALK IS IN MEMORY OVER ONE PLUCK OF THE USER'S DIRS, then ONE count per folder (a single
+  # GROUP BY) and ONE files query, so the cost is constant in the number of files and folders
+  # (page_query_budget_test.rb pins it).
+  #
+  # FILE_CAP IS SHARED BETWEEN FOLDERS, NEVER SPENT IN NAME ORDER ACROSS THE WHOLE FOLDER
+  # (2026-11-12). It was `ORDER BY name LIMIT 300` over every file under the folder, sorted into
+  # folders afterwards, so a folder whose files happened to sort late got none of the budget: on the
+  # live share deployment a 612-file project showed five of its seven folder panels as "0 files ·
+  # Empty folder" over folders holding 9, 14, 24 and 22 files, and the maker pressed Scan to find
+  # files that had been indexed all along. #allocate splits the budget at every level of the tree
+  # with `.share` (small folders whole, the rest evenly), and each Dir carries `hidden_count`, the
+  # files of its own the cap left out, so a panel counts what the folder really holds and says how
+  # many it shows.
   # Two rules shape the walk: a dir is skipped when it is dot-prefixed OR build output
   # (`Library::BuildOutput` — `node_modules`, `__pycache__`), the same display rules
   # Node.visible_entries applies to entries (never a scan skip — §14b); and a dir holding a `.git`
@@ -58,7 +69,16 @@ module Maker
     # marks a working tree: entered rather than stopped at, so its `files` and `children` are
     # exactly like any other folder's, plus the panel's link to its commit/history pages. `files`
     # are this dir's OWN direct files only, backups already diverted out (see `#backups`).
-    Dir = Data.define(:node_id, :name, :path, :repo?, :children, :files) do
+    # `hidden_count` is how many of this dir's OWN files FILE_CAP left out (0 for a dir built by
+    # hand, which is every caller but #build_dirs), so `files.size + hidden_count` is what the dir
+    # really holds, give or take the backups `files` diverts.
+    Dir = Data.define(:node_id, :name, :path, :repo?, :children, :files, :hidden_count) do
+      def initialize(hidden_count: 0, **fields) = super(hidden_count:, **fields)
+
+      # The files the cap left out anywhere in this subtree: what a panel adds to the files it drew to
+      # count the folder, and the "Showing X of Y" it prints when this is not zero.
+      def subtree_hidden_count = hidden_count + children.sum(&:subtree_hidden_count)
+
       # THE WHOLE SUBTREE, NOT THIS DIR'S OWN FILES — the two questions a REPOSITORY asks, and both
       # exist because a repo renders CLOSED with a browser inside it (2026-09-07) instead of a
       # section per subdirectory. In memory, over the tree this listing already built: no query, and
@@ -108,6 +128,9 @@ module Maker
       @repo_root_ids = Set.new
       @backups = []
       @dir_cap_hit = false
+      # parent node_id => the child dirs the walk entered, recorded by #collect_dirs: the tree
+      # #allocate divides the budget over, each dir appearing once even if `nodes` holds a cycle.
+      @walk_children = Hash.new { |h, k| h[k] = [] }
       dir_ids = @folder_id ? collect_dirs(@folder_id) : []
       # Kept for #recent_files, which asks the same subtree a second, differently ordered question.
       @dir_ids = dir_ids
@@ -117,19 +140,19 @@ module Maker
       # Commits, no History. Asked once here, in memory, of the same tree the walk reads.
       @root_repo = @folder_id ? working_tree?(@folder_id) : false
       @dir_ids_set = dir_ids.to_set
-      scope = dir_ids.empty? ? user.nodes.none : files_in(dir_ids)
-      @total = dir_ids.empty? ? 0 : scope.count
-      rows = dir_ids.empty? ? [] : scope.order(:name, :node_id).limit(@file_cap + 1).to_a
+      # Files per walked dir, one GROUP BY: the true counts every panel heading reads, and what
+      # #allocate divides FILE_CAP by.
+      @counts = dir_ids.empty? ? {} : files_in(dir_ids).group(:parent_node_id).count
+      @total = @counts.values.sum
+      rows = load_rows(allocate(dir_ids))
       # TRUNCATED READS TRUE ON EITHER CAP, not the file one alone: a folder can blow past DIR_CAP
       # with only a handful of files in each of its many subfolders and never come near FILE_CAP,
       # and that walk is exactly as incomplete as an over-long file list is. @dir_cap_hit is set by
       # collect_dirs, the only place that knows whether the walk stopped because it ran out of tree
       # or because it ran out of budget.
-      @truncated = rows.size > @file_cap || @dir_cap_hit
-      # THE CAP APPLIES TO THE WHOLE FOLDER, BEFORE THE ROWS ARE SORTED INTO THEIR DIRS — unchanged
-      # from before the tree existed: a folder past FILE_CAP can render a subfolder with only part
-      # of its files, exactly as the old flat list could render only part of the folder.
-      by_parent = rows.first(@file_cap).group_by(&:parent_node_id)
+      @truncated = rows.size < @total || @dir_cap_hit
+      by_parent = rows.group_by(&:parent_node_id)
+      @loaded = by_parent.transform_values(&:size)
       @loose = bucket(by_parent[@folder_id] || [], "")
       @tree_dirs = @folder_id ? build_dirs(@folder_id, by_parent, "") : []
     end
@@ -254,7 +277,65 @@ module Maker
       chain.present? && chain.include?(@folder_id)
     end
 
+    # Splits `budget` across buckets holding `counts` items, returning how many each gets, in the
+    # same order: the smallest buckets are filled whole and what is left is divided evenly among the
+    # rest, so one big bucket can never take a small one's share. The total handed out is
+    # min(budget, counts.sum), exactly. Ties go to the later bucket, by position.
+    def self.share(budget, counts)
+      out = Array.new(counts.size, 0)
+      left = budget
+      order = counts.each_index.sort_by { |i| [ counts[i], i ] }
+      order.each_with_index do |i, pos|
+        out[i] = [ counts[i], left / (order.size - pos) ].min
+        left -= out[i]
+      end
+      out
+    end
+
     private
+
+    # dir node_id => how many of its OWN files to load. The folder starts with FILE_CAP; at each
+    # dir, `.share` splits what the dir was given between its own files and each child's whole
+    # subtree, and every child passes its part on the same way. So every level is fair, not just the
+    # panels: a nested section is not starved by a sibling either. `dir_ids` is the walk's
+    # breadth-first order, parents before children, which is what lets one pass do it; the subtree
+    # sums run the same list backwards.
+    def allocate(dir_ids)
+      return {} if dir_ids.empty?
+
+      subtree = {}
+      dir_ids.reverse_each do |id|
+        subtree[id] = @counts.fetch(id, 0) + @walk_children[id].sum { |c| subtree.fetch(c.node_id, 0) }
+      end
+      grant = { dir_ids.first => @file_cap }
+      dir_ids.each_with_object({}) do |id, own|
+        kids = @walk_children[id].sort_by { |c| [ c.name.to_s, c.node_id ] }
+        parts = self.class.share(grant.delete(id) || 0, [ @counts.fetch(id, 0), *kids.map { |c| subtree.fetch(c.node_id, 0) } ])
+        own[id] = parts.first
+        kids.each_with_index { |c, i| grant[c.node_id] = parts[i + 1] }
+      end
+    end
+
+    # The rows #allocate chose: each dir's first `n` files by name. ONE query either way — a plain
+    # one when every dir is loaded whole (the ordinary, under-the-cap page), else ranked within each
+    # dir (ROW_NUMBER, which SQLite and Postgres both have) and cut per dir by a CASE over only the
+    # dirs that are cut, so the statement grows with the dirs the cap reached, never with the files.
+    def load_rows(own)
+      wanted = own.select { |_, n| n.positive? }
+      return [] if wanted.empty?
+
+      scope = files_in(wanted.keys)
+      cut = wanted.reject { |id, n| n >= @counts.fetch(id, 0) }
+      return scope.to_a if cut.empty?
+
+      ranked = scope.select("nodes.*, ROW_NUMBER() OVER (PARTITION BY nodes.parent_node_id " \
+                            "ORDER BY nodes.name, nodes.node_id) AS rank_in_dir")
+      table = Node.arel_table
+      limit = Arel::Nodes::Case.new(table[:parent_node_id])
+      cut.each { |id, n| limit.when(Arel::Nodes.build_quoted(id)).then(Arel::Nodes.build_quoted(n)) }
+      limit.else(table[:rank_in_dir])
+      Node.from(ranked, :nodes).where(table[:rank_in_dir].lteq(limit)).to_a
+    end
 
     def files_in(dir_ids)
       @user.nodes.present.where(kind: "file", parent_node_id: dir_ids).visible_entries(false)
@@ -297,6 +378,7 @@ module Maker
         Dir.new(node_id: d.node_id, name: d.name, path: @tree.path_for(d.node_id),
                 repo?: @repo_root_ids.include?(d.node_id),
                 files: bucket(by_parent[d.node_id] || [], child_path),
+                hidden_count: @counts.fetch(d.node_id, 0) - @loaded.fetch(d.node_id, 0),
                 children: build_dirs(d.node_id, by_parent, child_path))
       end
     end
@@ -328,6 +410,7 @@ module Maker
           next unless seen.add?(child.node_id)
           next if hidden_dir?(child.name)
           @repo_root_ids << child.node_id if working_tree?(child.node_id)
+          @walk_children[parent] << child
           out << child.node_id
           queue << child.node_id
         end

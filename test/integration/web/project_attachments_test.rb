@@ -361,6 +361,41 @@ module Web
                     text: "Open the folder"
     end
 
+    # THE LIVE CASE (2026-11-12): a 612-file project showed five of its seven folder panels as
+    # "0 files · Empty folder", because the cap went to the first 300 names across the whole folder
+    # and those folders' names sorted late. Here every "a…" file sorts before Accessories' one file.
+    test "a folder cut by the cap counts its real files and says so, and no other panel is starved" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      big = subfolder!(user, project, name: "Centerpieces", node_id: "d-big")
+      rings = subfolder!(user, project, name: "rings", node_id: "d-rings", parent: big.node_id)
+      late = subfolder!(user, project, name: "Accessories", node_id: "d-late")
+      now = Time.current
+      Node.insert_all([ [ "big", big ], [ "ring", rings ] ].flat_map do |prefix, parent|
+        300.times.map do |i|
+          { node_id: "#{prefix}-#{i}", name: format("a%03d.stl", i), kind: "file", user_id: user.id,
+            parent_node_id: parent.node_id, deleted: false, created_at: now, updated_at: now }
+        end
+      end)
+      folder_file!(user, project, name: "z-hook.stl", node_id: "n-hook", parent: late.node_id)
+
+      get project_path(project)
+      assert_response :success
+
+      assert_select "section.folder-panel[id=?]", "folder:d-late" do
+        assert_select ".panel-head .mono.muted", text: "1 file"
+        assert_select ".attachment-tile .grid-name", text: "z-hook.stl"
+        assert_select "p.muted", { text: "Empty folder.", count: 0 }
+      end
+      assert_select "section.folder-panel[id=?]", "folder:d-big" do
+        assert_select ".panel-head .mono.muted", text: "600 files"
+        assert_select ".attachments-truncated", text: /Showing 299 of 600 files\./
+        assert_select ".attachments-truncated a[href=?]", files_path(folder: "d-big"), text: "Open the folder"
+        assert_select ".file-tree-section details summary", text: /rings \(150 of 300\)/
+      end
+      assert_select ".attachments-panel .attachments-truncated", text: /Showing 300 of 601/
+    end
+
     # THE RECENT ROW IS NOT THE CAPPED LISTING (slice 6). Its newest file here is the LAST by name,
     # so past FILE_CAP: absent from every group, present in the row — and its thumbnail must
     # backfill on this render, which needs its id in the page's one ThumbnailMap union AHEAD of the

@@ -305,9 +305,23 @@
   origin read. **The Files panel's "Recently changed" row (slice 6) reads
   `ProjectFolderListing#recent_files`**: ONE query over the subtree `files_in` already scopes,
   newest `updated_at` first, `[]` when the folder is unavailable, and like the rest of the listing
-  it never mints and never files. It is deliberately **not** part of the capped, name-ordered
-  listing: a folder past `FILE_CAP` has its newest files somewhere beyond the cap, so a row taken
-  from the listing would show the newest of the first 300 names.
+  it never mints and never files. It is deliberately **not** part of the capped listing: a folder
+  past `FILE_CAP` has its newest files somewhere beyond the cap, so a row taken from the listing
+  would show the newest of the files the cap happened to keep.
+
+- **`FILE_CAP` (300) IS SHARED BETWEEN FOLDERS, NEVER SPENT IN NAME ORDER ACROSS THE WHOLE FOLDER,
+  AND A CUT FOLDER COUNTS WHAT IT REALLY HOLDS (2026-11-12).** `ORDER BY name LIMIT 300` over every
+  file under the folder gave a folder whose names sort late none of the budget: a 612-file project
+  on the live share deployment showed five of its seven panels as "0 files · Empty folder" over
+  folders holding up to 24 files, and the maker pressed Scan to find files indexed all along.
+  `ProjectFolderListing#allocate` splits the cap at EVERY level with `.share` (small folders whole,
+  the rest evenly), so neither a panel nor a nested section is starved by a sibling; one GROUP BY
+  counts every folder and ONE query loads the shares (`ROW_NUMBER` per folder, cut by a `CASE`
+  over only the folders the cap reached), so the cost stays constant in the folder count. Every
+  `Dir` carries `hidden_count`: a panel heading adds it, "empty" asks it, and a cut panel prints
+  "Showing X of Y files" with a link to the folder. Collapse it back to one name-ordered `LIMIT`
+  and both halves go silently wrong together, since a heading counted from the loaded rows agrees
+  with the tiles it under-counts.
 
 - **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
   refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns

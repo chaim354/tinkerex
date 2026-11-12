@@ -258,6 +258,111 @@ module Maker
       assert listing.truncated?
     end
 
+    # `count` files named format(pattern, i) straight into `parent`, in one insert.
+    def bulk_files(prefix, count, pattern, parent)
+      now = Time.current
+      Node.insert_all(count.times.map do |i|
+        { node_id: "#{prefix}-#{i}", name: format(pattern, i), kind: "file", user_id: @user.id,
+          parent_node_id: parent.node_id, size: 1, mtime: 1, deleted: false,
+          created_at: now, updated_at: now }
+      end)
+    end
+
+    test "share fills the small buckets whole and splits the rest evenly, handing out exactly the budget" do
+      assert_equal [ 9, 115, 14, 115, 24, 22, 1 ], ProjectFolderListing.share(300, [ 9, 312, 14, 229, 24, 22, 1 ]),
+                   "the live DDD project's seven folders: every small one whole, the two big ones half each"
+      assert_equal [ 0, 3, 5 ], ProjectFolderListing.share(10, [ 0, 3, 5 ]), "under the budget, everything"
+      assert_equal [ 0, 1, 1 ], ProjectFolderListing.share(2, [ 1, 1, 1 ]), "fewer than one each: ties go to the later bucket"
+      assert_equal [], ProjectFolderListing.share(300, [])
+
+      rng = Random.new(20261112)
+      200.times do
+        counts = Array.new(rng.rand(0..8)) { rng.rand(0..60) }
+        budget = rng.rand(0..120)
+        parts = ProjectFolderListing.share(budget, counts)
+
+        assert_equal [ budget, counts.sum ].min, parts.sum, "#{budget} over #{counts}: hands out the budget or everything"
+        assert parts.zip(counts).all? { |got, has| got.between?(0, has) }, "#{budget} over #{counts}: #{parts}"
+        cut = parts.zip(counts).reject { |got, has| got == has }.map(&:first)
+        assert cut.all? { |got| parts.zip(counts).all? { |other, has| other == has || (other - got).abs <= 1 } },
+               "#{budget} over #{counts}: the buckets it cuts get the same share, give or take one (#{parts})"
+        whole = parts.zip(counts).select { |got, has| got == has }.map(&:last)
+        assert whole.all? { |has| cut.all? { |got| has <= got + 1 } },
+               "#{budget} over #{counts}: no bucket filled whole is bigger than a cut one's share (#{parts})"
+      end
+    end
+
+    # THE LIVE CASE (2026-11-12): `ORDER BY name LIMIT 300` over the whole folder gave a folder whose
+    # files sort late NONE of the budget, and its panel read "0 files · Empty folder".
+    test "the cap is shared between folders, so one whose names sort late still shows its files" do
+      _projects, desk_lamp = desk_lamp_folder
+      big = dir("dir-big", "Centerpieces", desk_lamp.node_id)
+      late = dir("dir-late", "Accessories", desk_lamp.node_id)
+      bulk_files("big", 400, "a%03d.stl", big)
+      bulk_files("late", 3, "z%d.stl", late)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+      panels = listing.tree.index_by(&:name)
+
+      assert_equal %w[z0.stl z1.stl z2.stl], names_of(panels["Accessories"].files)
+      assert_equal 0, panels["Accessories"].hidden_count
+      assert_equal 297, panels["Centerpieces"].files.size
+      assert_equal 103, panels["Centerpieces"].hidden_count, "what the cap left out, so the panel can count 400"
+      assert_equal format("a%03d.stl", 296), names_of(panels["Centerpieces"].files).last,
+                   "a cut folder keeps its FIRST files by name"
+      assert_equal 403, listing.total
+      assert_equal Maker::ProjectFolderListing::FILE_CAP, listing.all_rows.size
+      assert listing.truncated?
+    end
+
+    test "every level shares the cap, so a nested section is not starved by its sibling either" do
+      _projects, desk_lamp = desk_lamp_folder
+      panel = dir("dir-panel", "Sidepieces", desk_lamp.node_id)
+      early = dir("dir-early", "a-parts", panel.node_id)
+      later = dir("dir-later", "z-parts", panel.node_id)
+      other = dir("dir-other", "other", desk_lamp.node_id)
+      bulk_files("early", 300, "a%03d.stl", early)
+      bulk_files("later", 2, "z%d.stl", later)
+      file("lic", "LICENSE", other.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+      sections = listing.tree.find { |d| d.name == "Sidepieces" }.children.index_by(&:name)
+
+      assert_equal [ "LICENSE" ], names_of(listing.tree.find { |d| d.name == "other" }.files)
+      assert_equal %w[z0.stl z1.stl], names_of(sections["z-parts"].files)
+      assert_equal [ 297, 3 ], [ sections["a-parts"].files.size, sections["a-parts"].hidden_count ]
+      assert_equal 3, listing.tree.find { |d| d.name == "Sidepieces" }.subtree_hidden_count
+    end
+
+    test "a folder the cap gives nothing still counts its files" do
+      _projects, desk_lamp = desk_lamp_folder
+      %w[a b c].each { |n| file("f-#{n}", "#{n}.stl", dir("dir-#{n}", n, desk_lamp.node_id).node_id) }
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id), file_cap: 2)
+      a = listing.tree.find { |d| d.name == "a" }
+
+      assert_equal [ [], 1 ], [ a.files, a.hidden_count ], "no tile, and still one file: never an empty folder"
+      assert_equal [ 1, 1 ], listing.tree.reject { |d| d.name == "a" }.map { |d| d.files.size }
+      assert listing.truncated?
+    end
+
+    test "a cut listing costs the same queries however many folders the cap cuts" do
+      queries = [ 2, 12 ].map do |folders|
+        root = dir("dir-root-#{folders}", "lamp-#{folders}", nil)
+        folders.times do |i|
+          sub = dir("dir-#{folders}-#{i}", "sub-#{i}", root.node_id)
+          bulk_files("q#{folders}-#{i}", 40, "f%02d.stl", sub)
+        end
+        project = project_with_folder(root.node_id, name: "Lamp #{folders}")
+        listing = nil
+        count = count_queries { listing = Maker::ProjectFolderListing.new(@user, project, file_cap: 20) }
+        assert listing.tree.all? { |d| d.hidden_count.positive? }, "every folder is cut at #{folders}"
+        count
+      end
+
+      assert_equal queries.first, queries.last
+    end
+
     test "no folder_node_id, or one naming a tombstoned dir, lists nothing and mints nothing" do
       dead = dir("dir-dead", "Dead", nil)
       dead.update!(deleted: true)
