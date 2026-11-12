@@ -74,7 +74,7 @@
       <fieldset class="panel compose-group">
         <legend>The app</legend>
         <div class="compose-pair">
-          <%= render "public/compose/text_field", name: "port", label: "Port", value: "8080", inputmode: "numeric", described_by: "compose-app-hint" %>
+          <%= render "public/compose/text_field", name: "port", label: "Port", value: "80", inputmode: "numeric", described_by: "compose-app-hint" %>
           <%= render "public/compose/text_field", name: "tag", label: "Image tag", value: "latest", described_by: "compose-app-hint" %>
         </div>
         <p class="compose-hint" id="compose-app-hint">The port on this machine the app answers on, and the app image's tag: <code>latest</code> is the newest release.</p>

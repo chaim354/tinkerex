@@ -8,30 +8,41 @@ inventory, and a Tools gallery of add-ons that save their output straight into t
 **Try it first:** the public demo at <https://tinkerex.com> signs you in with one click, with nothing
 to install.
 
-## Status
-
-It runs on real hardware, every day, for its author. It holds your files in a **folder you point it
-at** — a directory on the box, or a NAS share — as plain files you can edit with anything else, and
-the install below sets it up. It is open source under the Apache License 2.0, and the images are
-published on ghcr.io under `chaim354`.
-
 ## Quick start
 
-You need Docker: Docker Desktop on a Mac or Windows machine, or Docker Engine with the Compose
-plugin on Linux.
+You need a computer that stays on (a Mac, a Windows PC or a Linux machine) and about fifteen
+minutes. **[The install guide](docs/INSTALL.md#2-quick-start)** walks through each step in more
+detail.
 
-1. Download [`docker-compose.yml`](docker-compose.yml) into the folder that holds your files, or
-   into a new, empty folder. That folder becomes your library.
-2. In that folder, run `docker compose up -d --pull always`. The first start takes a few minutes;
-   `--pull always` fetches the newest images even if Docker kept older ones from an earlier try.
-3. Open <http://localhost:8080> and create your account. The first account is the owner and admin,
-   and it needs no email.
-4. Confirm the folder, or pick one inside it, then take the short welcome tour or skip it.
+1. **Install Docker Desktop**, the free program that runs Tinkerex
+   ([Mac](https://docs.docker.com/desktop/setup/install/mac-install/),
+   [Windows](https://docs.docker.com/desktop/setup/install/windows-install/)), and open it. On
+   Linux, Docker Engine with the Compose plugin.
+2. **Choose a folder for your files**: the one that holds them already, or a new, empty one. Not
+   your Downloads folder. Tinkerex shows what is in it and saves your uploads into it.
+3. **Download the setup file.** Open <https://tinkerex.com/install/compose>, press **Download**, and
+   move the `docker-compose.yml` it saves into your folder.
+4. **Start it.** Open a terminal in your folder. On a Mac, open Terminal, type `cd` and a space, drag
+   the folder onto the window and press Return. On Windows, click the folder's address bar, type
+   `powershell` and press Enter. Then paste this line and press Return:
 
-After the first account nobody else can sign up: the owner adds people under **Settings → Users**.
-To keep the compose file somewhere else, `LIBRARY_HOST_PATH=/path/to/files` in a `.env` beside it
-names the folder instead, and a network share on another computer works too. The full guide, with
-every setting you can change, is **[`docs/INSTALL.md`](docs/INSTALL.md)**.
+   ```sh
+   docker compose up -d --pull always
+   ```
+
+   The first start downloads for a few minutes.
+5. **Open <http://localhost>** and create your account. The first account is the owner, and it
+   needs no email. Nobody else can sign up; you add people under **Settings → Users**.
+
+**From your other computers and phones**, Tinkerex is at `http://<computer's name>.local`. Name the
+computer `tinkerex` and the address is **http://tinkerex.local**. On Linux, Tinkerex announces that
+name itself. [Where to find and change the name](docs/INSTALL.md#open-it-from-your-other-computers).
+
+**To add files from those computers**, share the folder with your computer's own file sharing. The
+others then drag files into it like any network folder: [Mac](https://support.apple.com/guide/mac-help/mh17131/mac),
+[Windows](https://support.microsoft.com/help/4092694),
+[Linux](https://documentation.ubuntu.com/server/how-to/samba/file-server/). The
+[install guide](docs/INSTALL.md#let-your-other-computers-add-files) has the short version of each.
 
 ## Where files come from
 

@@ -1,0 +1,11 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# docker-compose.yml's `local-name` service: announces TINKEREX_LOCAL_NAME (default tinkerex) as a
+# .local name on this machine's network, so other computers open http://tinkerex.local. Standard
+# library only, and never Rails. Why it works this way, and what it does under Docker Desktop:
+# lib/tinkerex/local_name.rb.
+require_relative "../lib/tinkerex/local_name"
+
+$stdout.sync = true
+Tinkerex::LocalName.new(ENV.fetch("TINKEREX_LOCAL_NAME", "tinkerex")).run

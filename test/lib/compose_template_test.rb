@@ -22,7 +22,7 @@ class ComposeTemplateTest < ActiveSupport::TestCase
   test "the tree is the file, with its ${VAR:-default} interpolations left for the browser to resolve" do
     t = template
     assert_equal YAML.safe_load(SOURCE.read), t.tree
-    assert_equal "${TINKEREX_PORT:-8080}:80", t.tree.dig("services", "web", "ports", 0)
+    assert_equal "${TINKEREX_PORT:-80}:80", t.tree.dig("services", "web", "ports", 0)
   end
 
   # NOTHING IS LOST: every comment line of the file lands in exactly one bucket. A comment the walk
@@ -67,6 +67,7 @@ class ComposeTemplateTest < ActiveSupport::TestCase
     sidecars = Tinkerex::Sidecars.new
     assert_equal (sidecars.names.map { sidecars.env_key(_1) } + %w[ADDON_SOURCE_URL]).sort, tools[:env].sort
     assert_equal %w[openscad_cache], tools[:volumes]
+    refute_includes tools[:services], "local-name", "the .local announcer is a companion: the Tools switch never removes it"
   end
 
   test "the network share is the commented library block, parsed back into the volume it describes" do

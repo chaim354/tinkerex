@@ -268,12 +268,17 @@ function inComment(text) {
   return text.replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, " ")
 }
 
+// Port 80 is the browser's own, so the address the header names is written without it.
+export function localUrl(port) {
+  return String(port) === "80" ? "http://localhost" : `http://localhost:${port}`
+}
+
 function header(c, { source, guide }) {
   const lines = [
     `# Tinkerex${c.tools ? " with the Tools gallery" : ""}${source ? `, made at ${inComment(source)}` : ""}.`,
     "# In the folder this file is in:",
     "#",
-    `#   docker compose up -d --pull always             pull and start; then http://localhost:${c.port}`,
+    `#   docker compose up -d --pull always             pull and start; then ${localUrl(c.port)}`,
     "#   docker compose pull && docker compose up -d    update",
     "#"
   ]

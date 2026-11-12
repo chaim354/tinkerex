@@ -8,7 +8,7 @@ require "yaml"
 # arm64 machine, and a profile hides the Tools gallery again. YAML-parsed, never grepped, so a
 # comment can neither satisfy nor trip them.
 class ComposeHygieneTest < ActiveSupport::TestCase
-  SERVICES = (%w[web addons] + Tinkerex::Sidecars.new.names).freeze
+  SERVICES = (%w[web local-name addons] + Tinkerex::Sidecars.new.names).freeze
 
   def compose(file) = YAML.safe_load(Rails.root.join(file).read, aliases: true)
 
@@ -40,7 +40,25 @@ class ComposeHygieneTest < ActiveSupport::TestCase
                  "the compose file's own folder is the library (J): '.' resolves against the file, not the shell's cwd"
     assert_equal "${LIBRARY_HOST_PATH:-}", env["LIBRARY_HOST_PATH"],
                  "passed through DISPLAY-ONLY: empty when unset, so the app can say 'the folder your docker-compose.yml is in'"
-    assert_equal [ "${TINKEREX_PORT:-8080}:80" ], web["ports"]
+    assert_equal [ "${TINKEREX_PORT:-80}:80" ], web["ports"],
+                 "port 80 so the address is http://tinkerex.local with no number (2026-11-12)"
+  end
+
+  # THE .local ANNOUNCER (lib/tinkerex/local_name.rb). Each line is what makes it work or keeps it
+  # harmless: the HOST'S network, or it never hears a question; the app's own image and tag, so it
+  # adds no download and moves with the app; the script as entrypoint, or the app's entrypoint
+  # prepares a database it has no use for; a non-root user; a default name, so it needs no .env.
+  test "local-name answers on the host's network from the app's own image, as a non-root user" do
+    services = compose("docker-compose.yml").fetch("services")
+    s = services.fetch("local-name")
+    assert_equal "host", s["network_mode"]
+    assert_equal services.dig("web", "image"), s["image"]
+    assert_equal [ "/rails/bin/local-name" ], s["entrypoint"]
+    assert Rails.root.join("bin/local-name").executable?, "bin/local-name must keep its executable bit"
+    assert_equal "1000:1000", s["user"]
+    assert_equal "${TINKEREX_LOCAL_NAME:-tinkerex}", s.dig("environment", "TINKEREX_LOCAL_NAME")
+    assert_equal "unless-stopped", s["restart"], "it waits rather than exits when it cannot announce, so this never loops"
+    assert_nil s["ports"], "host networking publishes nothing; a ports: line there is an error"
   end
 
   test "every Tools image is pinned to amd64 and the app image is not" do
@@ -77,13 +95,18 @@ class ComposeHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  # local-name runs web's image, so it takes web's :local tag and NO build of its own: a service
+  # naming a tag another one builds waits for that build and pulls nothing (measured, compose 5.5.0),
+  # where a second `build: .` builds the whole app twice.
   test "the build overlay restores a build for every service under a :local name" do
     services = compose("docker-compose.build.yml").fetch("services")
     assert_equal SERVICES.sort, services.keys.sort
-    services.each do |name, s|
+    services.except("local-name").each do |name, s|
       assert s["build"].present?, "#{name} must build in the overlay"
       assert_match(/:local\z/, s.fetch("image"), "#{name}'s built image must not shadow the ghcr tag")
     end
+    assert_equal({ "image" => services.dig("web", "image") }, services["local-name"],
+                 "local-name reuses web's built image and builds nothing itself")
     assert_equal [ "${LIBRARY_HOST_PATH:-./library}:/library" ], services.dig("web", "volumes"),
                  "in a clone '.' is the repository; the overlay puts the mount back to ./library " \
                  "(compose merges volumes by container path, so the storage volume survives)"

@@ -37,7 +37,7 @@ class ComposeGeneratorSystemTest < ApplicationSystemTestCase
   # The form's own defaults, as lib/compose_file.js receives them from compose_controller.js.
   DEFAULTS = {
     library: "folder", folderPath: "", shareServer: "", shareName: "", shareGuest: false, shareUser: "",
-    sharePassword: "", shareVersion: "3.0", puid: "", pgid: "", port: "8080", tag: "latest", tools: true,
+    sharePassword: "", shareVersion: "3.0", puid: "", pgid: "", port: "80", tag: "latest", tools: true,
     forceSsl: false, smtpAddress: "", appHost: "", smtpPort: "587", smtpUser: "", smtpPassword: "",
     smtpAuthentication: "plain", smtpStarttls: true, smtpDomain: "", mailFrom: ""
   }.freeze
