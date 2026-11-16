@@ -35,6 +35,21 @@ module Web
       assert_select ".result-group--inventory_item .result-row a[href=?]", inventory_item_path(item), text: "M3 bolt"
     end
 
+    # A MODEL THE MAKER REMOVED FROM THE CATALOG IS REMOVED HERE TOO. Search and the 3D models view
+    # both start from `catalogued`; this page did not, so a dismissed model stayed listed under its
+    # tag and counted in the heading, and "See all" led to a view that did not show it.
+    test "a dismissed model is not listed under its tag, nor counted" do
+      kept = @user.maker_models.create!(title: "Bracket", tag_list: "laser")
+      gone = @user.maker_models.create!(title: "Old bracket", tag_list: "laser", dismissed_at: Time.current)
+
+      get tag_path("laser")
+
+      assert_select ".result-group--model h2", text: "3D models 1"
+      assert_select ".page-subtitle", text: "1 3D model"
+      assert_select ".result-group--model .result-row a[href=?]", model_path(kept)
+      assert_select ".result-row a[href=?]", model_path(gone), count: 0
+    end
+
     test "a name is normalized: /tags/LASER finds laser" do
       project = @user.maker_projects.create!(name: "Desk Lamp", tag_list: "laser")
       get tag_path("LASER")

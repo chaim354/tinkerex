@@ -1,4 +1,4 @@
-<%# locals: (thumb:, ext_label:, url:, photo: false) %>
+<%# locals: (thumb:, ext_label:, url:, photo: false, name: nil) %>
 <%#
   Shared thumbnail box for a renderable file, used by both the list and grid views. The poll
   controller (thumbs_controller.js) finds `.thumb` inside a `.file-cell` and swaps the spinner for
@@ -20,15 +20,24 @@
   permission and expires. Building the URL here instead is what made a public cover keep answering
   after its project went private, so `url_for` is refused in this file by the Public seam guard's
   third arm (test/architecture_invariants_test.rb) — pass it in, never derive it.
+
+  `name` TELLS "NO PREVIEW WILL EVER EXIST" FROM "STILL COMING" WHEN `thumb` IS NIL. A file no
+  renderer claims never gets a preview row, so nil stands for both, and the pending ring is the
+  wrong answer for the first: nothing will ever replace it. Given the file's name, the nil arm asks
+  the registry (a pure lookup, no route and no query) and draws the terminal badge instead. A caller
+  that passes no name is one that already asked before rendering this (the Library's grid, list
+  and inspector) or only ever shows images, and gets the ring as before.
 %>
 <% failed = thumb&.failed? %>
+<% never = thumb.nil? && name.present? && Maker::Previews::Registry.for_filename(name).blank? %>
 <span class="thumb<%= " photo" if photo %><%= " thumb-failed" if failed %>" data-thumbs-target="thumb">
   <% if thumb&.showable? %>
     <img src="<%= url %>" alt="" loading="lazy">
-  <% elsif thumb.nil? || thumb.in_flight? %>
+  <% elsif !never && (thumb.nil? || thumb.in_flight?) %>
     <span class="thumb-spinner" aria-hidden="true"></span>
   <% else %>
-    <%# THE TERMINAL STATE: unsupported, failed, or a ready row whose asset is gone. It SAYS SO
+    <%# THE TERMINAL STATE: unsupported, failed, a ready row whose asset is gone, or a file nothing
+        renders at all. It SAYS SO
         rather than showing a bare badge — a cover card passes `ext_label: ""`, so this rendered an
         empty box that read as "still loading" next to a real spinner. `title` is what a hover
         reveals; the badge text stays the extension where there is one, because that is the more

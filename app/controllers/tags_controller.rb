@@ -11,7 +11,9 @@ class TagsController < ApplicationController
   # it read "3 things". "3D models" is the rail's word for that catalog, which "Models" was not.
   def show
     @tag = current_user.maker_tags.find_by!(name: params[:name].to_s.strip.downcase)
-    models = capped_group("3D models", :model, current_user.maker_models.tagged_with(@tag.name).order(:title),
+    # `catalogued`, AS SEARCH AND THE 3D MODELS VIEW START: a model the maker removed from the catalog
+    # is not listed under its tag either, and "See all" below lands on a view that agrees with the count.
+    models = capped_group("3D models", :model, current_user.maker_models.catalogued.tagged_with(@tag.name).order(:title),
                           files_models_path(tag: @tag.name), noun: "3D model")
     # A MODEL ROW NAMES ITS FOLDER, the search page's reason (FilesHelper#result_folders): one design
     # catalogued from three files is three rows titled alike. One pluck of the user's folders.

@@ -107,11 +107,10 @@ class ImporterTest < ApplicationSystemTestCase
     # shows here as a logged 404 (assert_no_console_errors below) — see the header's mutation note.
     refute_includes names, ".DS_Store"
 
-    # ROLES COME FROM THE SERVER, not from the browser. importer_controller.js has its own
-    # extension→role table (a third hand-copy, already drifted twice — the record), but only
-    # node_id and cover are POSTed and Maker::FileAttachment.role_for re-derives authoritatively.
-    # This pins that the persisted role is the server's answer, which is what makes the JS copy's
-    # drift harmless.
+    # ROLES COME FROM THE SERVER, not from the browser. importer_controller.js is handed the
+    # server's extension→role table for its summary and its choice of cover, but only node_id and
+    # cover are POSTed and Maker::FileAttachment.role_for re-derives authoritatively. This pins
+    # that the persisted role is the server's answer.
     roles = model.file_attachments.to_h { |a| [ nodes_by_id.fetch(a.node_id).name, a.role ] }
     assert_equal "model",        roles.fetch("dragon.stl")
     assert_equal "model",        roles.fetch("tail.stl")
@@ -158,6 +157,36 @@ class ImporterTest < ApplicationSystemTestCase
     knob = @user.nodes.find_by!(node_id: model.file_attachments.map(&:node_id), name: "knob.stl")
     assert_equal "parts", @user.nodes.find_by!(node_id: knob.parent_node_id).name
     assert_no_console_errors
+  ensure
+    zip&.close!
+  end
+
+  # THE IMPORTER CALLS A MODEL WHAT THE SERVER CALLS ONE. It kept its own five-extension list while
+  # Maker::FileAttachment::ROLE_BY_EXT grew to eighteen, so a bundle of .glb meshes summarised as
+  # "0 model files", and for a .glb beside an .stl it posted the .stl as the cover where the
+  # server's own rule (the first model) picks the .glb. The table now arrives from the server, in
+  # the page; the names sort the way the zip lists them, so the order cannot be what decides.
+  test "a mesh format the server files as a model is counted as one, and can be the cover" do
+    zip = Tempfile.new([ "meshes", ".zip" ])
+    zip.close
+    Zip::File.open(zip.path, create: true) do |z|
+      z.get_output_stream("a-ring.glb") { |io| io.write("glTF\x02\x00\x00\x00") }
+      z.get_output_stream("b-base.stl") { |io| io.write("solid base\nendsolid\n") }
+    end
+
+    visit new_model_path
+    fill_in "Title", with: "Ring stand"
+    attach_file(zip.path)
+    assert_selector "[data-importer-target='summary']", text: "2 model files · 0 images · 0 PDF"
+    find("[data-importer-target='submit']").click
+
+    model = nil
+    assert_eventually("the model was never created") do
+      model = @user.maker_models.find_by(title: "Ring stand")
+      model.present?
+    end
+    assert_eventually("not every bundle entry was attached") { model.file_attachments.reload.count == 2 }
+    assert_equal "a-ring.glb", @user.nodes.find_by!(node_id: model.reload.cover_node_id).name
   ensure
     zip&.close!
   end

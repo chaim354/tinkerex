@@ -1296,6 +1296,31 @@ class LogCliTest < ActiveSupport::TestCase
     stub&.shutdown
   end
 
+  # ...AND A NOTE GETS THE SAME ANSWER, WHEREVER ITS LOOKUP SITS. note resolves the issue INSIDE its
+  # phase, which is what lets an outage spool the comment (the 502 test below). It also made "the
+  # board answered and has no #99" look like an outage: the comment was spooled as a record nothing
+  # could ever file, under the words "Kaneo is unreachable", and `bin/log status` exited 4 until
+  # somebody deleted the file by hand. The answer now depends on what failed, not on where the
+  # lookup was written.
+  test "a note on a number the readable board does not carry spools nothing" do
+    stub = StubKaneo.new(routes: RESOLVED.merge(
+      "GET /task/tasks" => board({ "id" => "a", "number" => 10, "title" => "open one", "status" => "to-do" })
+    ))
+    env = { "KANEO_URL" => stub.url, "KANEO_TOKEN" => "k" }
+
+    _out, err, code = run_log("note", "99", "a correction", env:)
+
+    assert_equal 3, code, err
+    assert_match(/no issue #99/, err)
+    refute_match(/unreachable/i, err, "a tracker that answered was called unreachable")
+    assert_empty Dir.glob(File.join(@spool, "*.md")), "a note on a number no task carries was spooled"
+    assert_empty stub.requests.select { |r| r.method == "POST" }, "note wrote a comment to a task it never resolved"
+    _out, backlog, status = run_log("status", env:)
+    assert_equal 0, status, backlog
+  ensure
+    stub&.shutdown
+  end
+
   # --- unfiled records -------------------------------------------------------------------------
   #
   # EVERY WRITE NAMES ITS OWN UNFILED RECORD, THROUGH ONE HELPER. bin/log's `filing(what, payload)`

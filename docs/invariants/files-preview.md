@@ -72,8 +72,9 @@ Three consequences of the one table:
   filter chip that links and **silently does nothing**. `markdown` is the bound, at exactly 8.
 - The `role` column is **behavioural** — cover-image selection reads `image`/`model`, and
   `Models::AttachmentsController` dispatches `ExtractPdfMetadataJob` on `instructions`, so `pdf`
-  must stay `instructions`. A third copy in `importer_controller.js`'s `roleFor` has drifted; it is
-  browser-only and the server re-derives authoritatively.
+  must stay `instructions`. The importer reads the same table: `models/new` hands
+  `importer_controller.js` the whole of `ROLE_BY_EXT`, because its own copy had drifted and it
+  posts the cover it picks. The server still re-derives the stored role.
 - **STORED ROLES FOLLOW THE TABLE BY ONE RULE, NOT BY A MIGRATION PER WIDENING** (F-S33-1,
   2026-10-19). `role` is written with the row, so a row attached before `ROLE_BY_EXT` learned its
   extension says `other`. `Maker::FileAttachment.classify_unclassified!(user)` re-reads a user's
@@ -821,6 +822,13 @@ themselves.
 Collapsing them trades a hung spinner for a **wrong** one, which is worse because it looks correct.
 `thumbs_controller` also resolves stragglers to badges when polling gives up, so "forever" is not
 reachable even if the endpoint is wrong.
+
+**`files/_thumb` keeps them apart on a page with no poll, too.** Handed `thumb: nil` it cannot know
+which case it is, so a caller that has not already asked the registry passes `name:` and the
+partial asks: no renderer draws the terminal badge, a renderer draws the ring. The visitor's
+pages did neither once, and every published `.f3d`, `.xlsx` or `.hex` wore a pending ring that
+nothing would ever resolve. The Library's grid, list and inspector ask before they render it, and
+photo callers only ever show images, so they pass no name (pinned in `public_project_test.rb`).
 
 **NO PUBLIC SURFACE POLLS, BECAUSE THIS ENDPOINT IS SESSION-AUTHED** — so a visitor's poster is
 whatever is SHOWABLE at render time (`Maker::Preview#showable?`: the current build, or an older

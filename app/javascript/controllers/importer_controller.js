@@ -1,6 +1,6 @@
 import { Controller } from "@hotwired/stimulus"
 import { alertToast, failureReason, notDoneSentence, postJSON, uploadChunkFile, uploadPortFile } from "lib/chunk_upload"
-import { isZip, readZipBundle } from "lib/zip_bundle"
+import { extOf, isZip, readZipBundle } from "lib/zip_bundle"
 
 // Import a downloaded model bundle from ONE selection. Unzips any .zip in the browser through
 // lib/zip_bundle.js — the reader the top bar's Upload shares, so the two cannot disagree about what
@@ -14,21 +14,17 @@ import { isZip, readZipBundle } from "lib/zip_bundle"
 // STAYS, says what landed in the status line (a live region, set in connect() since the view renders
 // it bare), names what did not in an alert worded by lib/chunk_upload.js#notDoneSentence, and
 // offers the model as a link. A failure is never printed as `e.message`.
-const IMAGE_EXT = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "heic", "heif", "tif", "tiff"]
-const MODEL_EXT = ["stl", "3mf", "obj", "step", "stp"]
-const roleFor = (name) => {
-  const ext = name.split(".").pop().toLowerCase()
-  if (IMAGE_EXT.includes(ext)) return "image"
-  if (MODEL_EXT.includes(ext)) return "model"
-  if (ext === "pdf") return "instructions"
-  if (ext === "gcode" || ext === "gco") return "gcode"
-  if (ext === "zip") return "source_archive"
-  return "other"
-}
-
+//
+// WHAT A FILE IS COMES FROM THE SERVER'S TABLE, NEVER A LIST KEPT HERE. `roles` is
+// Maker::FileAttachment::ROLE_BY_EXT, put in the page by models/new, and `extOf` reads an
+// extension the way the server does. This file kept its own list once; it fell thirteen model
+// formats behind, counted a .glb as "other" and posted the wrong file as the cover.
 export default class extends Controller {
   static targets = ["input", "title", "sourceUrl", "summary", "submit", "status"]
-  static values  = { createUrl: String, beginUrl: String, finalizeUrl: String, portCreateUrl: String, portWritable: Boolean }
+  static values  = {
+    createUrl: String, beginUrl: String, finalizeUrl: String, portCreateUrl: String, portWritable: Boolean,
+    roles: Object
+  }
 
   // Files collected from the selection: { name, dir, blob, role }.
   files = []
@@ -40,14 +36,18 @@ export default class extends Controller {
     if (this.hasStatusTarget) this.statusTarget.setAttribute("aria-live", "polite")
   }
 
+  roleFor(name) {
+    return this.rolesValue[extOf(name)] || "other"
+  }
+
   async choose() {
     try {
       this.files = []
       for (const f of this.inputTarget.files) {
         if (isZip(f)) {
-          for (const entry of await readZipBundle(f)) this.files.push({ ...entry, role: roleFor(entry.name) })
+          for (const entry of await readZipBundle(f)) this.files.push({ ...entry, role: this.roleFor(entry.name) })
         } else {
-          this.files.push({ name: f.name, dir: "", blob: f, role: roleFor(f.name) })
+          this.files.push({ name: f.name, dir: "", blob: f, role: this.roleFor(f.name) })
         }
       }
 

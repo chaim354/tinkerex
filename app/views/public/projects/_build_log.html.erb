@@ -24,13 +24,15 @@
           <%= time_at(entry.logged_at, style: :date, class: "entry-time muted") %>
           <%# A div, not a p: Action Text emits block-level markup and a <p> cannot legally contain it. %>
           <div class="entry-body"><%= entry.body %></div>
-          <% photos = entry.file_attachments.select { |a| pub.page_nodes.key?(a.node_id) } %>
+          <%# `permitted_node`, NOT `page_nodes`: live is not enough. A photo the file route refuses
+              would be drawn here with its name and a link that answers 404 (Maker::PublicProject). %>
+          <% photos = entry.file_attachments.select { |a| pub.permitted_node(a.node_id) } %>
           <% if photos.any? %>
             <div class="entry-photos">
               <% photos.each do |att| %>
                 <%# Named by the file (UX audit I): the image inside carries `alt=""`. %>
                 <%= link_to pub.file_url_for(att.node_id), class: "photo-cell file-cell",
-                            aria: { label: pub.page_nodes[att.node_id].name } do %>
+                            aria: { label: pub.permitted_node(att.node_id).name } do %>
                   <%= render "files/thumb", thumb: pub.thumbs.thumb(att.node_id), ext_label: "IMG",
                              url: pub.preview_url_for(att.node_id) %>
                 <% end %>

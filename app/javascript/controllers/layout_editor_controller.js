@@ -84,7 +84,16 @@ export default class extends Controller {
                     "addMenu", "blockTemplate", "page", "coverName", "preview", "linkCard", "tabCount"]
   static values = {
     yamlUrl: String, parseUrl: String, panelUrl: String, previewUrl: String,
-    blockCap: { type: Number, default: 40 }, tabCap: { type: Number, default: 8 }
+    blockCap: { type: Number, default: 40 }, tabCap: { type: Number, default: 8 },
+    blockKinds: Array
+  }
+
+  // A SLOT'S `kind` IS NOT "THIS IS A BLOCK": a tab's slot carries one too (`tab`), exactly as
+  // Maker::LayoutDocument's header says of the document. Ask by name. The names are
+  // Maker::ProjectBlock::KINDS, handed over by projects/show beside the two caps, so the list is not
+  // written a second time here.
+  isBlock(slot) {
+    return this.blockKindsValue.includes(slot.dataset.kind)
   }
 
   connect() {
@@ -309,7 +318,9 @@ export default class extends Controller {
     // THE CAP IS NEVER THIS NUMBER'S ALONE TO KEEP: projects/_layout_bar renders these buttons
     // `disabled` at Maker::ProjectBlock::CAP, the document refuses a draft over it and Save refuses
     // again. This is the third lock, so a drift between the two spellings costs nothing.
-    if (this.slotTargets.filter((s) => s.dataset.kind).length >= this.blockCapValue) {
+    // BLOCKS ARE WHAT IT COUNTS. It counted every slot with a kind, so each tab took a block's
+    // place and the editor refused a block the server would have accepted.
+    if (this.slotTargets.filter((s) => this.isBlock(s)).length >= this.blockCapValue) {
       // SAID, NOT SWALLOWED (found in review): the bar's `disabled` reflects the SAVED count, so
       // blocks added within a session reach this lock with the buttons still live.
       this.addMenuTarget.removeAttribute("open")

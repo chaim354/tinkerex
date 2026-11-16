@@ -199,6 +199,7 @@
        data-layout-editor-panel-url-value="<%= layout_panel_project_path(@project) %>"
        data-layout-editor-preview-url-value="<%= preview_project_layout_path(@project) %>"
        data-layout-editor-block-cap-value="<%= Maker::ProjectBlock::CAP %>"
+       data-layout-editor-block-kinds-value="<%= Maker::ProjectBlock::KINDS.to_json %>"
        data-layout-editor-tab-cap-value="<%= Maker::ProjectKind::TAB_CAP %>">
     <%= render "projects/layout_bar" %>
     <%= render "projects/page_intro" %>

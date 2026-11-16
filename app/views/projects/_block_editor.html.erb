@@ -49,21 +49,8 @@
       <span class="block-link-host mono muted"><%= block&.url.present? ? link_host(block.url) : "" %></span>
     </a>
   <% when "image" %>
-    <div class="image-picker" role="group" aria-label="Pick an image from the project folder"
-         data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
-      <% if @folder_images.empty? %>
-        <p class="muted">No images in the project folder yet.</p>
-      <% end %>
-      <% @folder_images.each do |row| %>
-        <% ext = File.extname(row.node.name).delete(".").upcase.first(4) %>
-        <button type="button" class="image-pick<%= " active" if block&.node_id == row.node_id %>"
-                data-node-id="<%= row.node_id %>" data-action="layout-editor#pickImage" title="<%= row.node.name %>">
-          <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,
-                     url: preview_src(@page_thumbs.thumb(row.node_id)) %>
-          <span class="image-pick-name"><%= row.node.name %></span>
-        </button>
-      <% end %>
-    </div>
+    <%= render "projects/image_picker", label: "Pick an image from the project folder",
+               action: "layout-editor#pickImage", selected: block&.node_id %>
     <%# THE ONE PLACE A MISSING PICTURE IS SAID OUT LOUD. The read partial renders nothing at all
         for this block (projects/_block_panel's own header says why); here the maker can fix it, so
         here is where the sentence belongs. %>

@@ -108,6 +108,13 @@ module Log
     attr_accessor :unfiled   # nil when no write phase was open: there is nothing to file
   end
 
+  # THE TRACKER ANSWERED, AND IT HAS NO SUCH ISSUE. Not an Unreachable, and it must never become a
+  # subclass of one: `filing` attaches an unfiled record to every Unreachable raised inside it, and
+  # a record against a number the board does not carry can never be filed. As one class the two
+  # were told apart only by WHERE a lookup was written: `close` kept its lookup outside every phase
+  # and was right, `note` had it inside one and spooled a comment that sat in `status` for good.
+  class NoSuchIssue < StandardError; end
+
   class UsageError < StandardError; end
 
   def kaneo_url      = ENV.fetch("KANEO_URL", "http://kaneo.home")
@@ -295,11 +302,11 @@ module Log
   # record cites — `tinkerex#178`, and 21 such citations in app/ lib/ test/ config/ — has to be
   # resolved through the board before any addressed call can be made.
   #
-  # RAISES Unreachable, NOT UsageError. The number is well-formed — issue_number! already rejected a
-  # traversal attempt — so this is "the record does not have that", which is the same class of
-  # answer as a 404 from an issue endpoint and must spool nothing on a read.
+  # RAISES NoSuchIssue, NOT UsageError AND NOT Unreachable. The number is well-formed — issue_number!
+  # already rejected a traversal attempt — and the board was read, so this is "the record does not
+  # have that": nothing to spool, on a read or a write, whichever phase the caller is in.
   def task_for(number)
-    task_index[number.to_i] or raise Unreachable, "no issue ##{number} in #{project_slug}"
+    task_index[number.to_i] or raise NoSuchIssue, "no issue ##{number} in #{project_slug}"
   end
 
   def show(argv)
@@ -601,7 +608,7 @@ module Log
   # three.
   #
   # THE PER-NUMBER LOOKUP IS IN NEITHER. The board is cached by then, so a lookup that fails means a
-  # board that WAS read carries no such number — and a record for `close 99` could never be filed.
+  # board that WAS read carries no such number: NoSuchIssue, which no phase can turn into a record.
   def close(argv)
     numbers = argv.map { |a| issue_number!(a) }
     raise UsageError, "close needs at least one issue number" if numbers.empty?
@@ -718,9 +725,8 @@ module Log
   rescue Unreachable => e
     warn "bin/log: Kaneo is unreachable — #{e.message}"
 
-    # No `filing` phase was open when this failed: a read verb; setup's vocabulary read (re-running
-    # setup is its refile); or close looking up a number that a board it DID read does not carry.
-    # See Unreachable and close.
+    # No `filing` phase was open when this failed: a read verb, or setup's vocabulary read
+    # (re-running setup is its refile). See Unreachable.
     if e.unfiled.nil?
       warn "bin/log: nothing to file (no write was in flight)."
       return EXIT_UNREACHABLE
@@ -745,6 +751,13 @@ module Log
       warn JSON.pretty_generate(e.unfiled.payload)
     end
 
+    EXIT_UNREACHABLE
+  rescue NoSuchIssue => e
+    # BEFORE THE CATCH-ALL, or a missing issue would exit as a bug in this script. The code stays 3
+    # because callers already read it that way for `show` and `close` of an absent number; what
+    # changes is that no verb spools for it and nobody is told the tracker was unreachable.
+    warn "bin/log: #{e.message}"
+    warn "bin/log: Kaneo answered and has no such issue. Nothing was filed and nothing is waiting."
     EXIT_UNREACHABLE
   rescue StandardError => e
     # THE CATCH-ALL IS STRUCTURAL, NOT A CONVENIENCE. Enumerating transport exception classes never

@@ -57,6 +57,34 @@ class PageTabsTest < ApplicationSystemTestCase
     browser.action.move_by((tx - hx).round, (ty - hy - 40).round).move_by(0, 2).release.perform
   end
 
+  # A TAB IS NOT A BLOCK, AND THE BROWSER'S BLOCK LIMIT COUNTED IT AS ONE. A tab's slot carries
+  # data-kind="tab" and the editor counted every slot with a kind, so each tab took one of the forty
+  # block places: with one tab and thirty-nine blocks it refused a fortieth block that the server
+  # accepts (Maker::LayoutDocument counts block kinds by name, and says why). The second half is the
+  # other direction: the limit still holds at forty, tabs or no tabs.
+  test "a tab does not take up one of the page's block places, and the limit still holds" do
+    cap = Maker::ProjectBlock::CAP
+    (cap - 1).times { |i| @project.blocks.create!(user: @user, kind: "text", heading: "Block #{i}", body: "x") }
+    new_blocks = "div.panel-slot[data-kind='text'][data-key^='block:new-']"
+    add_text_block = lambda do
+      find("details.layout-add > summary").click
+      find("details.layout-add button[data-kind='text']").click
+    end
+
+    open_editor
+    click_on "Add tab"
+    assert_selector tab_slot
+    add_text_block.call
+
+    assert_selector new_blocks, count: 1
+    assert_no_text "the most it can hold"
+
+    add_text_block.call
+
+    assert_text "This page has #{cap} blocks, the most it can hold."
+    assert_selector new_blocks, count: 1
+  end
+
   test "Add tab lands an empty tab at the bottom; a panel dragged under it is in its group after Save" do
     # TASKS IS PUT LAST SO THE DRAG IS ONE STEP. Add tab lands the separator at the very bottom (just
     # above the pinned Publish until Publish became the edit area's Publishing tab, 2026-10-26), so

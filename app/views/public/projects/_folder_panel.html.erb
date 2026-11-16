@@ -55,7 +55,7 @@
             <%= link_to pub.view_url_for(row.node_id), class: "grid-card file-cell",
                         title: row.node.name do %>
               <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext,
-                         url: pub.preview_url_for(row.node_id) %>
+                         url: pub.preview_url_for(row.node_id), name: row.node.name %>
               <span class="grid-name"><%= row.node.name %></span>
             <% end %>
           <% end %>
@@ -79,7 +79,7 @@
                 <td class="col-thumb">
                   <span class="file-cell">
                     <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext,
-                               url: pub.preview_url_for(row.node_id) %>
+                               url: pub.preview_url_for(row.node_id), name: row.node.name %>
                   </span>
                 </td>
                 <td class="col-name"><%= link_to row.node.name, pub.view_url_for(row.node_id) %></td>

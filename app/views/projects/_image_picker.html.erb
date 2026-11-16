@@ -1,0 +1,36 @@
+<%# locals: (label:, action:, selected:, pick_class: nil) %>
+<%#
+  THE PROJECT FOLDER'S IMAGES AS BUTTONS, ONE PICKER FOR BOTH PLACES THAT PICK ONE: the page's cover
+  (projects/_page_intro) and a picture block (projects/_block_editor, which is also what the "add a
+  picture" template is cloned from). They were two copies of this loop, differing in a class, the
+  active test and the action, and both copies had left the same thing out.
+
+  EVERY BUTTON IS A THUMBNAIL POLL CELL (FilesHelper#thumb_cell_data). thumbs_controller.js polls
+  only its `cell` targets, and the ring files/_thumb draws turns only inside one. With the
+  controller mounted and no cell under it, a preview still rendering when the editor opened stayed a
+  still ring until the page was reloaded. The other pickers already carried the contract
+  (projects/attachments/new, projects/models/new).
+
+  `data-node-id` IS BOTH THE POLL'S ID AND WHAT A PICK READS (layout_editor_controller.js#pickCover,
+  #pickImage), so the two cannot name different files.
+
+  Locals: `label` (the group's accessible name), `action` (the layout-editor action a pick runs),
+  `selected` (the node id drawn active, or nil), `pick_class` (one more class on each button; the
+  cover's own). Reads @folder_images and @page_thumbs, as the two partials that render it do.
+%>
+<div class="image-picker" role="group" aria-label="<%= label %>"
+     data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+  <% if @folder_images.empty? %>
+    <p class="muted">No images in the project folder yet.</p>
+  <% end %>
+  <% @folder_images.each do |row| %>
+    <% ext = File.extname(row.node.name).delete(".").upcase.first(4) %>
+    <% thumb = @page_thumbs.thumb(row.node_id) %>
+    <%= tag.button type: "button", title: row.node.name,
+                   class: [ pick_class, "image-pick", ("active" if selected == row.node_id) ],
+                   data: thumb_cell_data(row.node_id, ext).merge(action: action) do %>
+      <%= render "files/thumb", thumb: thumb, ext_label: ext, url: preview_src(thumb) %>
+      <span class="image-pick-name"><%= row.node.name %></span>
+    <% end %>
+  <% end %>
+</div>

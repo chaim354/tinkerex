@@ -34,21 +34,8 @@
   <div class="page-intro-cover">
     <b>Cover</b>
     <div class="cover-current" data-layout-editor-target="coverName"><%= cover_node ? cover_node.name : (cover_id.blank? ? automatic : "No cover") %></div>
-    <div class="image-picker" role="group" aria-label="Pick a cover from the project folder"
-         data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
-      <% if @folder_images.empty? %>
-        <p class="muted">No images in the project folder yet.</p>
-      <% end %>
-      <% @folder_images.each do |row| %>
-        <% ext = File.extname(row.node.name).delete(".").upcase.first(4) %>
-        <button type="button" class="cover-pick image-pick<%= " active" if shown_id == row.node_id %>"
-                data-node-id="<%= row.node_id %>" data-action="layout-editor#pickCover" title="<%= row.node.name %>">
-          <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,
-                     url: preview_src(@page_thumbs.thumb(row.node_id)) %>
-          <span class="image-pick-name"><%= row.node.name %></span>
-        </button>
-      <% end %>
-    </div>
+    <%= render "projects/image_picker", label: "Pick a cover from the project folder",
+               action: "layout-editor#pickCover", selected: shown_id, pick_class: "cover-pick" %>
     <button type="button" class="linkbtn small" data-action="layout-editor#removeCover">Use automatic cover</button>
   </div>
   <%# PLAIN TEXT, AND ITS LINE BREAKS ARE CONTENT: Maker::LayoutDocument strips the description but

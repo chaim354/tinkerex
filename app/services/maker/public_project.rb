@@ -376,7 +376,10 @@ module Maker
       # photo, since hiding a panel there arranges the page rather than publishing it. An entry
       # photo is asked the same question as a folder image. One that lives outside the folder is
       # never under a hidden one, so it stays.
-      @photo_rows ||= Maker::ProjectPhotos.rows(listing:, entries:, page_nodes:).reject { |row| hidden?(row.node) }
+      # `permitted_page_nodes`, NOT `page_nodes`: an entry photo the file route refuses is not a
+      # photo this page shows (see #permitted_node).
+      @photo_rows ||= Maker::ProjectPhotos.rows(listing:, entries:, page_nodes: permitted_page_nodes)
+                                          .reject { |row| hidden?(row.node) }
     end
 
     # THE COVER, PERMITTED (stage 4, S4-5; story 5.7). `Maker::Project#cover_node_id` derives one
@@ -419,6 +422,22 @@ module Maker
               blocks.filter_map(&:node_id)
         ids.empty? ? {} : owner.nodes.present.where(node_id: ids.uniq).index_by(&:node_id)
       end
+    end
+
+    # A PAGE NODE THE PAGE MAY SERVE, OR NIL. `page_nodes` holds every LIVE node the page refers
+    # to, permitted or not, so whoever reads it holds a node object for a file that may be private
+    # and has to remember to ask `permits?` before using its name or linking it. The BOM and the
+    # releases panel ask. The build log and the photo list did not: "live" was enough for them, so
+    # an entry photo `permits?` refuses (a dot-file, or one beneath a `.git` folder) was drawn with
+    # its name and a link that the file route answered with 404. A reader that wants a node to SHOW
+    # takes it from here and cannot forget. `permits?` is still the only authority, and this costs
+    # no query of its own: it answers from `visible_page_ids` and the tree, which the page loads
+    # once. (#thumbs still asks only "live" for entry photos: a thumbnail row for a file the page
+    # never draws is reachable by nobody, and no test could tell the two apart.)
+    def permitted_node(node_id) = permitted_page_nodes[node_id]
+
+    def permitted_page_nodes
+      @permitted_page_nodes ||= page_nodes.select { |_id, node| permits?(node) }
     end
 
     # WHICH OF `page_nodes` ARE VISIBLE ENTRIES, IN ONE QUERY FOR THE WHOLE PAGE.
