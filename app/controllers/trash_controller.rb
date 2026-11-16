@@ -112,25 +112,55 @@ class TrashController < ApplicationController
 
   private
 
-  # WHERE A TRASHED ROW CAME FROM, AS THE ROW SHOWS IT. `path` is the folder's library path ("" for
-  # the library root) while that folder is live, and `deleted_parent` names the folder when it is in
-  # the trash too — the case whose restore is refused until the folder comes back first, so it is
-  # the one a maker most needs to see.
-  Origin = Data.define(:parent_node_id, :path, :deleted_parent)
+  # WHERE A TRASHED ROW CAME FROM, AND WHAT HAS TO COME BACK BEFORE IT CAN. `path` is the folder's
+  # library path ("" for the library root) while that folder's chain is live. `restore_first`
+  # answers "which folder must be restored first": nil for none, the folder's NAME, or :missing
+  # when the folder's row is gone altogether.
+  #
+  # ONE ANSWER, READ BY THE ROW AND BY THE REFUSAL. They used to work it out separately and
+  # disagreed: the refusal named the folder whose delete took the file, the row named the nearest
+  # one, so two levels down in a deleted folder the row sent the maker to a folder that was
+  # refused the same way. The row also said "in Trash too" of any folder it could not resolve, a
+  # folder removed outside the app included, which is not in the Trash list at all.
+  Origin = Data.define(:parent_node_id, :path, :restore_first)
 
-  # THREE QUERIES FOR THE WHOLE LIST: the rows' parents, one pluck of the live folders
-  # (Maker::LibraryTree, the same walk the Library's flat view uses), and the names of the parents
-  # that are not live. Never a walk per row. `current_user.nodes` is what every backend's `trashed`
-  # reads from, chunk_remote's mirror included, so the parent ids are there on all three.
+  # AT MOST FOUR QUERIES FOR THE WHOLE LIST, never a walk per row: the rows, one pluck of the live
+  # folders (Maker::LibraryTree, the walk the Library's flat view uses), the parents of the rows
+  # whose chain is broken, and the trash entries those rows and parents name. `current_user.nodes`
+  # is what every backend's `trashed` reads, chunk_remote's mirror included.
   def origins_for(entries)
-    parents = current_user.nodes.where(node_id: entries.map(&:node_id)).pluck(:node_id, :parent_node_id).to_h
+    listed = entries.to_set(&:node_id)
+    rows = current_user.nodes.where(node_id: listed.to_a).pluck(:node_id, :parent_node_id, :trash_root_node_id)
     tree = Maker::LibraryTree.new(current_user)
-    paths = parents.transform_values { |parent| tree.path_for(parent) }
-    gone = parents.select { |id, parent| parent && paths[id].nil? }.values.uniq
-    names = gone.any? ? current_user.nodes.where(node_id: gone).pluck(:node_id, :name).to_h : {}
-    parents.to_h do |id, parent|
-      [ id, Origin.new(parent_node_id: parent, path: paths[id], deleted_parent: (names[parent] if paths[id].nil?)) ]
+    paths = rows.to_h { |id, parent, _root| [ id, tree.path_for(parent) ] }
+    stuck = rows.select { |id, parent, _root| parent && paths[id].nil? }
+    parents = pluck_by_id(current_user.nodes, stuck.map { |_id, parent, _root| parent }, :name, :trash_root_node_id)
+    named = stuck.flat_map { |_id, parent, root| [ root, parents.dig(parent, 1) ] }
+    entries_in_trash = pluck_by_id(current_user.nodes.trash_entry_roots, named, :name)
+
+    rows.to_h do |id, parent, root|
+      first = restore_first(id, parent, root, parents, entries_in_trash, listed) if parent && paths[id].nil?
+      [ id, Origin.new(parent_node_id: parent, path: paths[id], restore_first: first) ]
     end
+  end
+
+  def pluck_by_id(scope, ids, *columns)
+    ids = ids.compact.uniq
+    ids.empty? ? {} : scope.where(node_id: ids).pluck(:node_id, *columns).to_h { |id, *rest| [ id, rest ] }
+  end
+
+  # THE FOLDER WHOSE DELETE TOOK THIS ROW, where the catalog records one: share and s3 write
+  # `trash_root_node_id` (FileLayer::TrashMembership). The row's own entry first, else its
+  # parent's, and only one STILL IN THE TRASH (Node.trash_entry_roots). Failing that, the parent
+  # itself, and only when the parent is a row of this very list: chunk_remote's mirror writes no
+  # entry and lists every tombstone, so it names the parent, which is what its server checks.
+  def restore_first(id, parent, own_entry, parents, entries_in_trash, listed)
+    name, parents_entry = parents[parent]
+    entry = [ own_entry, parents_entry ].compact.without(id).find { |root| entries_in_trash.key?(root) }
+    return entries_in_trash[entry].first if entry
+    return :missing if name.nil?
+
+    name if listed.include?(parent)
   end
 
   # "Restored NAME to FOLDER." — the folder it is in NOW, read from the catalog the undelete just
@@ -146,35 +176,16 @@ class TrashController < ApplicationController
 
   # THE ONE THING THAT MAKES restore_refusal_message HONEST RATHER THAN A GUESS: it does not
   # infer the orphan condition from e.message (see the rescue_from comment above for why that
-  # would be fragile), it RE-DERIVES it from this app's own catalog, mirroring
-  # Sync::Trash.parent_deleted? exactly — a blank parent_node_id means root-level, never an
-  # orphan; otherwise the parent must be MISSING or ITSELF tombstoned. Anything else (an unknown
-  # node, a live parent — the occupied-destination clobber lands here) falls through to the same
-  # flattened message every other UnsupportedOperation has always gotten, because naming a folder
-  # would be actively wrong advice for that case.
+  # would be fragile), it RE-DERIVES it from this app's own catalog, and from the SAME lookup the
+  # Trash page drew the row with, so the two cannot give different advice. Root-level, an unknown
+  # node, a live folder (the occupied-destination clobber lands here): `restore_first` is nil for
+  # all of them, and they get the same flattened message every other UnsupportedOperation has
+  # always gotten, because naming a folder would be actively wrong advice for those cases.
   def restore_refusal_message
-    node = current_user.nodes.find_by(node_id: params[:id])
-    return "Couldn't restore that item." if node&.parent_node_id.blank?
+    first = origins_for(FileLayer.current.trashed(current_user))[params[:id]]&.restore_first
+    return "Couldn't restore that item." if first.nil?
 
-    parent = current_user.nodes.find_by(node_id: node.parent_node_id)
-    return "Couldn't restore that item." unless parent.nil? || parent.deleted
-
-    folder = trashed_entry_root(node, parent) || parent
-    "That file's folder was deleted too. Restore #{folder ? folder.name.inspect : "the folder"} " \
+    "That file's folder was deleted too. Restore #{first == :missing ? "the folder" : first.inspect} " \
       "first, and its contents come back with it."
-  end
-
-  # THE FOLDER WHOSE DELETE TOOK THIS ROW, where the catalog records one — share and s3 write
-  # `trash_root_node_id` (FileLayer::TrashMembership); chunk_remote's mirror writes none and keeps the
-  # parent above. The row's own entry root first, else its parent's, and only one STILL IN THE TRASH —
-  # the column AND the trash shape, as TrashMembership.restorable! asks, since a live folder can still
-  # name itself after code from before the column revived it. Naming the parent instead sent the maker
-  # to a folder refused the same way, one level at a time up a nested delete.
-  def trashed_entry_root(node, parent)
-    [ node.trash_root_node_id, parent&.trash_root_node_id ].compact.without(node.node_id).each do |id|
-      root = current_user.nodes.find_by(node_id: id, trash_root_node_id: id, deleted: true, storage_path: nil)
-      return root if root
-    end
-    nil
   end
 end

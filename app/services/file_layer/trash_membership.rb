@@ -52,13 +52,12 @@ module FileLayer
         raise NotFound, "#{node.node_id.inspect} is not in the trash: it was removed outside the app, " \
                         "so there is nothing to restore"
       end
-      if root_id != node.node_id &&
-         user.nodes.exists?(node_id: root_id, trash_root_node_id: root_id, deleted: true, storage_path: nil)
+      if root_id != node.node_id && user.nodes.trash_entry_roots.exists?(node_id: root_id)
         raise UnsupportedOperation, "#{node.node_id.inspect}: its folder is in the trash too — restore the folder first"
       end
 
       parent = user.nodes.find_by(node_id: node.parent_node_id) if node.parent_node_id.present?
-      return unless parent&.trash_root_node_id.present? && parent.deleted? && parent.storage_path.nil?
+      return unless parent&.trash_tombstone?
 
       raise UnsupportedOperation, "#{node.node_id.inspect}: its folder is in the trash too — restore the folder first"
     end

@@ -57,6 +57,55 @@ module Web
       assert_match(/\Acatan \(in Trash too\)\z/, row_for(@readme_catan.node_id).at_css("td.col-folder").text.strip)
     end
 
+    # THE ROW AND THE REFUSAL GIVE THE SAME ADVICE. They answered "which folder must come back
+    # first" by two rules: the refusal names the folder whose delete took the file, the row named
+    # the nearest one. Two levels down in a deleted folder the row said `notes (in Trash too)`,
+    # restoring `notes` was refused as well, and only that second refusal named `catan`.
+    test "a row two levels down in a deleted folder names the folder the refusal names" do
+      notes = create_node!(@user, node_id: "d-notes", name: "notes", kind: "dir", parent_node_id: @catan.node_id)
+      deep = create_node!(@user, node_id: "n-deep", name: "x.stl", kind: "file", parent_node_id: notes.node_id)
+      FileLayer.current.delete(@user, node_id: @catan.node_id)
+
+      get trash_index_path
+      assert_equal "catan (in Trash too)", row_for(deep.node_id).at_css("td.col-folder").text.strip
+      assert_equal "catan (in Trash too)", row_for(notes.node_id).at_css("td.col-folder").text.strip
+
+      [ deep, notes ].each do |node|
+        post restore_trash_path(node.node_id)
+        assert_match(/Restore "catan" first/, flash[:alert], "the refusal for #{node.name}")
+      end
+    end
+
+    # "IN TRASH TOO" IS A CLAIM ABOUT THE TRASH LIST. A folder removed outside the app is tombstoned
+    # by the scan and is not in that list, so a file trashed from it earlier must not point the
+    # maker at a row that is not on the page.
+    test "a row whose folder was removed outside the app does not say the folder is in the Trash" do
+      FileLayer.current.delete(@user, node_id: @readme_lamp.node_id)
+      @lamp.update!(deleted: true) # a scan tombstone: the path stays, nothing names a trash entry
+
+      get trash_index_path
+
+      assert_nil row_for(@lamp.node_id), "the fixture is wrong: the folder is listed in the Trash"
+      assert_equal "—", row_for(@readme_lamp.node_id).at_css("td.col-folder").text.strip
+    end
+
+    # A LIVE FOLDER CAN STILL NAME ITSELF AS A TRASH ENTRY: code from before the column revived a
+    # row without clearing it. It is not in the trash, so nothing may send the maker to restore it.
+    # Here `catan` was trashed with its contents and then came back that way, while `notes` and the
+    # file under it stayed behind: the folder to restore first is `notes`.
+    test "a live folder that still names itself is never the folder to restore first" do
+      notes = create_node!(@user, node_id: "d-notes", name: "notes", kind: "dir", parent_node_id: @catan.node_id)
+      deep = create_node!(@user, node_id: "n-deep", name: "x.stl", kind: "file", parent_node_id: notes.node_id)
+      FileLayer.current.delete(@user, node_id: @catan.node_id)
+      @catan.reload.update!(deleted: false, storage_path: "Projects/catan")
+
+      get trash_index_path
+      assert_equal "notes (in Trash too)", row_for(deep.node_id).at_css("td.col-folder").text.strip
+
+      post restore_trash_path(deep.node_id)
+      assert_match(/Restore "notes" first/, flash[:alert])
+    end
+
     # RESTORE IS NEVER HOVER-ONLY: the cell opts out of the list's fine-pointer fade, and the button is
     # named for the row it restores.
     test "Restore is shown on every row and named for its file" do

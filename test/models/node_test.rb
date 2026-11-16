@@ -15,6 +15,26 @@ class NodeTest < ActiveSupport::TestCase
     @user.nodes.create!(node_id:, name:, kind: "file", mtime: 1, size: 1)
   end
 
+  # THE TRASH STATE HAS TWO NAMES AND ONE DEFINITION (CLAUDE.md §14a, "the two tombstone kinds").
+  # Three columns encode four states, and "still in the trash" is the column AND the trash shape
+  # together, never the column alone: a row revived by code from before the column is live and
+  # still names itself. The condition was written out three times in two files; these are its
+  # five row shapes against both names.
+  test "trash_tombstone? and trash_entry_roots tell the five row shapes apart" do
+    shapes = {
+      live:            { deleted: false, storage_path: "a" },
+      scan_tombstone:  { deleted: true,  storage_path: "b" },
+      trash_member:    { deleted: true,  storage_path: nil, trash_root_node_id: "n-root" },
+      trash_root:      { deleted: true,  storage_path: nil, trash_root_node_id: "n-trash_root" },
+      live_self_named: { deleted: false, storage_path: "e", trash_root_node_id: "n-live_self_named" }
+    }
+    rows = shapes.to_h { |shape, attrs| [ shape, @user.nodes.create!(node_id: "n-#{shape}", name: shape.to_s, kind: "dir", **attrs) ] }
+
+    assert_equal({ live: false, scan_tombstone: false, trash_member: true, trash_root: true, live_self_named: false },
+                 rows.transform_values(&:trash_tombstone?))
+    assert_equal [ "n-trash_root" ], @user.nodes.trash_entry_roots.pluck(:node_id)
+  end
+
   # UNCONDITIONAL, UNLIKE A DOT-FILE — a `.ptr` stub is never something a user has a reason to look
   # for, so it stays out of `visible_entries` on BOTH arms (`show_hidden` true and false), where a
   # dot-file is offered back by the toggle. Still in the catalog either way (a display rule, never
