@@ -53,8 +53,9 @@ module FileLayer
         # tree and leaves the cursor at the server's own head, which cannot be behind what survived
         # the prune.
         if gapped?(body)
-          full_resync(head_seq: body["head_seq"].to_i)
-          resynced = true
+          # false when another pull overtook the tree this one read (full_resync): nothing was
+          # re-read into the mirror, so this pull did not resync it.
+          resynced = full_resync(head_seq: body["head_seq"].to_i)
           # THE PRE-RESYNC PAGE IS DISCARDED, NEVER APPLIED. It was computed against a cursor the
           # server has just told us is worthless, and `apply_page` is also what feeds
           # @nudge_parents -- applying it would file stale arrivals (docs/invariants/
@@ -69,7 +70,7 @@ module FileLayer
           entries = body["changes"] || []
           break if entries.empty?
 
-          apply_page(entries)
+          applied += apply_page(entries)
 
           # THE CURSOR MUST STRICTLY ADVANCE, AND THIS GUARD WAS ADDED BECAUSE MUTATION-TESTING
           # HUNG RATHER THAN FAILED. Freezing the cursor turned this into an infinite loop: a FULL
@@ -82,7 +83,6 @@ module FileLayer
           raise FileLayer::FetchError,
                 "sync server changelog did not advance past seq #{before} -- refusing to loop" if cursor <= before
 
-          applied += entries.size
           # PAGE-AT-A-TIME, COMMITTING THE CURSOR AS WE GO. A single transaction around the whole
           # catch-up would make a 200k-entry first sync one lock; worse, an interruption at entry
           # 199k would discard all of it and start over. Each page is atomic, so a crash resumes
@@ -128,6 +128,30 @@ module FileLayer
 
       def cursor = @user.remote_sync_cursor
 
+      # THE CURSOR IS A HIGH-WATER MARK: "the highest sequence number the mirror reflects". It is
+      # only ever raised, and every transaction that applies anything starts by reading the
+      # COMMITTED value here, under the user's row lock, and bringing this pull's own User object
+      # up to it.
+      #
+      # WHY: nothing serializes a request's pull against the recurring job, or two requests of one
+      # user (`limits_concurrency` is job against job). Each pull holds its own User object and
+      # fetches outside any transaction, and a change entry carries the node's state AS OF THE
+      # FETCH. So a pull that fetched earlier and applied later wrote older rows over newer ones
+      # and then set the cursor to its own last entry, behind the mirror. With this, such a pull
+      # skips every entry at or below the committed cursor: any later change to a node has a
+      # later entry, so skipping by sequence is sound however the server serializes a payload.
+      #
+      # THE LOCK IS TAKEN FIRST, before any row is written, which is the order `User#next_seq!`'s
+      # rule asks for (CLAUDE.md §14e). On SQLite it is a no-op and is not needed: the transaction
+      # is IMMEDIATE, so page transactions are serialized already. It is never held across the
+      # network: the fetch happens outside. Ruby's `max`, never a database GREATEST (§14e again).
+      def adopt_committed_cursor
+        committed = @user.class.lock.where(id: @user.id).pick(:remote_sync_cursor).to_i
+        @user.remote_sync_cursor = committed
+        @user.clear_attribute_changes(%w[remote_sync_cursor])
+        committed
+      end
+
       # ONE PAGE-SIZED GET IS THE WHOLE REQUEST SHAPE. `limit: PAGE` is the server's own default
       # and is clamped to [1, 2000] there, so this asks for nothing unusual -- it is the same
       # request the Rust reference client makes, and its body carries the gap fields too.
@@ -156,6 +180,13 @@ module FileLayer
       # Re-reads /v1/tree, which returns only LIVE nodes, then marks anything local that the server
       # did not mention as deleted. Without that sweep a resync is additive and every file deleted
       # while we were behind stays visible forever -- the exact failure a resync exists to repair.
+      #
+      # -> true once the tree is applied; false when the mirror has overtaken it. The tree is read
+      # at `head_seq`. If another pull has taken the mirror past that meanwhile, this tree is OLDER
+      # than the mirror: its rows would be written over newer ones and the sweep would tombstone a
+      # node created since, and with a cursor that only moves forward no later pull would re-apply
+      # the entries that put either right. So every transaction here asks first, and an overtaken
+      # resync stops where it is; the caller carries on from the mirror's own cursor.
       def full_resync(head_seq:)
         seen = []
         after_id = 0
@@ -165,7 +196,9 @@ module FileLayer
           nodes = body["nodes"] || []
           break if nodes.empty?
 
-          @user.transaction do
+          overtaken = @user.transaction do
+            next true if adopt_committed_cursor > head_seq
+
             nodes.each do |n|
               # A TREE NODE CARRIES ITS CONTENT FLAT -- `version_id`, `size`, `manifest` beside its
               # name (tinkerex-sync's docs/sync-protocol.md §8.4), where a change entry nests
@@ -180,21 +213,34 @@ module FileLayer
               version = n["version_id"] ? n.slice("version_id", "size") : nil
               upsert(n, deleted: false, version:, manifest: n["manifest"])
             end
+            false
           end
+          return false if overtaken
+
           seen.concat(nodes.map { |n| n["node_id"] })
           after_id = body["next_after_id"].to_i
           break if after_id.zero?
         end
 
         @user.transaction do
+          next false if adopt_committed_cursor > head_seq
+
           @user.nodes.present.where.not(node_id: seen).update_all(deleted: true) if seen.any?
           @user.update_column(:remote_sync_cursor, head_seq)
+          true
         end
       end
 
+      # -> how many entries were applied: the ones above the committed cursor. The rest are already
+      # reflected in the mirror, so they are neither written, counted nor nudged for.
       def apply_page(entries)
+        applied = 0
         @user.transaction do
+          committed = adopt_committed_cursor
           entries.each do |entry|
+            next if entry["seq"].to_i <= committed
+
+            applied += 1
             node = entry["node"]
             if node
               # A CHANGE ENTRY CARRIES ITS CONTENT AT THE ENTRY LEVEL -- `version` and `manifest`
@@ -219,8 +265,9 @@ module FileLayer
               @user.nodes.where(node_id: entry["node_id"]).update_all(deleted: true)
             end
           end
-          @user.update_column(:remote_sync_cursor, entries.last["seq"].to_i)
+          @user.update_column(:remote_sync_cursor, [ committed, entries.last["seq"].to_i ].max)
         end
+        applied
       end
 
       # THE CONTENT ARRIVES AS TWO EXPLICIT ARGUMENTS, NEVER DUG OUT OF `payload`, because the two

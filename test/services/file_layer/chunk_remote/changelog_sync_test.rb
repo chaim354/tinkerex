@@ -296,6 +296,99 @@ module FileLayer
         assert_raises(FileLayer::FetchError) { ChangelogSync.new(@user, transport: replaying).call }
       end
 
+      # ── two pulls for one user ─────────────────────────────────────────────────────────────
+      #
+      # NOTHING SERIALIZES A REQUEST'S PULL AGAINST THE RECURRING JOB, or two requests of one user:
+      # `limits_concurrency` is job against job. Each pull holds its own User object, reads the
+      # cursor off it and fetches outside any transaction. A change entry carries the node's state
+      # AS OF THE FETCH, so a pull that fetched earlier and applied later wrote older rows over
+      # newer ones and then set the cursor to its own last entry, which is behind the mirror.
+      #
+      # Driven with the two User objects a job and a request really hold. `late` fetched when the
+      # server had one entry; `early` saw two and finished first.
+      test "a pull that fetched earlier and applies later neither undoes newer rows nor moves the cursor back" do
+        late = User.find(@user.id)
+        early = User.find(@user.id)
+        placed = entry(1, "n1", "a.stl", parent: "dirA", size: 1)
+        moved = entry(2, "n1", "renamed.stl", parent: "dirB", size: 1, op: "move")
+
+        ChangelogSync.new(early, transport: FakeTransport.new(pages: { 0 => [ placed, moved ] }, head_seq: 2)).call
+        result = ChangelogSync.new(late, transport: FakeTransport.new(pages: { 0 => [ placed ] }, head_seq: 1)).call
+
+        node = @user.nodes.find_by!(node_id: "n1")
+        assert_equal [ "renamed.stl", "dirB" ], [ node.name, node.parent_node_id ], "an older entry was written over a newer row"
+        assert_equal 2, @user.reload.remote_sync_cursor, "the cursor went backwards"
+        assert_equal 0, result.applied, "an entry the mirror already reflects was counted as applied"
+        assert_equal 2, result.cursor
+      end
+
+      # ...AND IT CARRIES ON FROM WHERE THE MIRROR IS, not from where its own object thought it was.
+      test "a pull holding a stale cursor asks for the next page from the mirror's own cursor" do
+        late = User.find(@user.id)
+        page = (1..ChangelogSync::PAGE).map { |i| entry(i, "n#{i}", "f#{i}.stl", size: 1) }
+        tail = entry(ChangelogSync::PAGE + 1, "tail", "tail.stl", size: 1)
+        sync(FakeTransport.new(pages: { 0 => page, ChangelogSync::PAGE => [ tail ] }, head_seq: ChangelogSync::PAGE + 1))
+
+        t = FakeTransport.new(pages: { 0 => page, ChangelogSync::PAGE + 1 => [] }, head_seq: ChangelogSync::PAGE + 1)
+        result = ChangelogSync.new(late, transport: t).call
+
+        assert_equal [ 0, ChangelogSync::PAGE + 1 ], t.asked.map { |_path, params| params[:since] }
+        assert_equal 0, result.applied
+        assert_equal ChangelogSync::PAGE + 1, @user.reload.remote_sync_cursor
+      end
+
+      # A STALE PULL IS NOT AN ARRIVAL. The nudge files what a pull LEARNED of, and a pull whose
+      # entries the mirror already reflects learned nothing: the pull that applied them nudged.
+      test "entries the mirror already reflects nudge nothing" do
+        @user.maker_projects.create!(name: "Lamp", folder_node_id: "proj-folder")
+        late = User.find(@user.id)
+        arrived = entry(1, "n1", "a.stl", parent: "proj-folder", size: 1)
+        sync(FakeTransport.new(pages: { 0 => [ arrived ] }, head_seq: 1))
+        clear_enqueued_jobs
+
+        ChangelogSync.new(late, transport: FakeTransport.new(pages: { 0 => [ arrived ] }, head_seq: 1)).call
+
+        assert_no_enqueued_jobs only: Maker::ProjectIntakeJob
+      end
+
+      # A RESYNC THAT THE MIRROR HAS OVERTAKEN STOPS. It re-applies a whole tree read at `head_seq`
+      # and then tombstones every local row that tree did not list. If another pull has taken the
+      # mirror past `head_seq` meanwhile, that tree is older than the mirror: its rows would be
+      # written over newer ones, a node created since would be swept as deleted, and with a cursor
+      # that only moves forward nothing would ever put either right.
+      test "a resync the mirror has already passed changes nothing" do
+        stale = User.find(@user.id)
+        stale.update_column(:remote_sync_cursor, 3) # below oldest_seq, so this object sees a gap
+        @user.nodes.create!(node_id: "old", name: "old.stl", kind: "file", parent_node_id: "dirA")
+        @user.nodes.create!(node_id: "new", name: "new.stl", kind: "file")
+        @user.update_column(:remote_sync_cursor, 12) # the mirror, taken there by another pull
+
+        tree = [ { "node_id" => "old", "parent_node_id" => "dirB", "name" => "old.stl", "kind" => "file", "mtime" => 1 } ]
+        t = FakeTransport.new(tree:, head_seq: 10, oldest_seq: 5)
+        result = ChangelogSync.new(stale, transport: t).call
+
+        assert_equal "dirA", @user.nodes.find_by!(node_id: "old").parent_node_id, "an older tree was written over the mirror"
+        assert_not @user.nodes.find_by!(node_id: "new").deleted, "a node the older tree did not list was swept"
+        assert_equal 12, @user.reload.remote_sync_cursor
+        assert_not result.resynced, "a resync that applied nothing was reported as one"
+        changes = t.asked.select { |path, _params| path == "/v1/changes" }.map { |_path, params| params[:since] }
+        assert_equal [ 3, 12 ], changes, "the pull did not carry on from the mirror's own cursor"
+      end
+
+      # THE LAST STEP ASKS TOO. A tree with nothing in it has no page to be overtaken on, and the
+      # closing transaction is where the cursor is written: to `head_seq`, which is behind.
+      test "a resync overtaken before its closing step does not move the cursor back" do
+        stale = User.find(@user.id)
+        stale.update_column(:remote_sync_cursor, 3)
+        @user.nodes.create!(node_id: "new", name: "new.stl", kind: "file")
+        @user.update_column(:remote_sync_cursor, 12)
+
+        ChangelogSync.new(stale, transport: FakeTransport.new(tree: [], head_seq: 10, oldest_seq: 5)).call
+
+        assert_equal 12, @user.reload.remote_sync_cursor
+        assert_not @user.nodes.find_by!(node_id: "new").deleted
+      end
+
       # ── the shape cannot drift away from the server's ─────────────────────────────────────────
       test "it applies REAL Sync::Changes output, so the wire shape cannot drift" do
         skip "needs the engine for a real changelog" unless defined?(Sync)
