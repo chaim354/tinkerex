@@ -41,8 +41,17 @@ module Maker
 
     scope :open, -> { where.not(status: "done") }
 
+    # `completed_at` IS DERIVED FROM `status`, HERE AND NOWHERE ELSE: a done task carries the moment
+    # it became done (kept through later saves, and kept as handed in by a caller that knows it),
+    # and any other status carries none. Every writer gets the pair right by setting the status
+    # alone. Four doors each spelled this themselves in two meanings (stamp once, stamp again), two
+    # bugs shipped from the copies, and a plain `update!(status: "done")` stamped nothing. Do not
+    # derive the stamp in a controller or a tool again; a row from before this rule mends itself the
+    # next time it is saved.
+    before_save { self.completed_at = (status == "done" ? completed_at || Time.current : nil) }
+
     def complete!
-      update!(status: "done", completed_at: Time.current)
+      update!(status: "done")
     end
 
     private

@@ -52,8 +52,8 @@ by the **id** a listing returns; a file or folder by its **library-relative path
 | `get_inventory_item(id)` | one item and its last 20 ledger rows |
 | `create_inventory_item(name, …)`, `update_inventory_item(id, …)` | items; the opening quantity posts to the ledger |
 | `adjust_inventory(id, delta, …)` | a signed stock change, with a reason and a project |
-| `get_bom(project, bom_id?)` | a BOM's lines, what is short, the estimated cost |
-| `add_bom_line(project, …)`, `update_bom_line(id, …)` | stock lines (by item) or free-text lines |
+| `get_bom(project, bom_id?)` | a BOM's lines, what is short, the estimated cost; the current BOM (the latest revision) unless `bom_id` names another |
+| `add_bom_line(project, …)`, `update_bom_line(id, …)` | stock lines (by item) or free-text lines; a new line joins the current BOM unless `bom_id` names another |
 | `list_suppliers`, `create_supplier(name, …)` | suppliers |
 | `list_locations`, `create_location(name, …)` | storage locations |
 | `list_folder(path?)` | a folder's entries, folders first, hidden files left out |

@@ -104,6 +104,80 @@ module Maker
       assert_not_nil task.completed_at
     end
 
+    # THE STAMP FOLLOWS THE STATUS FOR EVERY WRITER, because it is the model that keeps them in
+    # step. Four doors each spelled the rule themselves (the web, v1 twice, the MCP tools twice) in
+    # two meanings, and a plain `update!(status: "done")` from anywhere else stamped nothing, so
+    # "done, never completed" and "todo, completed last week" were both storable.
+    test "a status that becomes done is stamped, by a plain update" do
+      task = @user.maker_tasks.create!(title: "x")
+
+      task.update!(status: "done")
+
+      assert_not_nil task.reload.completed_at
+    end
+
+    test "a task created done is stamped" do
+      assert_not_nil @user.maker_tasks.create!(title: "x", status: "done").reload.completed_at
+    end
+
+    test "leaving done clears the stamp, whatever the next status" do
+      %w[todo doing].each do |status|
+        task = @user.maker_tasks.create!(title: "x", status: "done")
+
+        task.update!(status:)
+
+        assert_nil task.reload.completed_at, "still stamped after moving to #{status}"
+      end
+    end
+
+    # STAMPED ONCE. The setup is three days old so that a stamp taken again at the save would be
+    # out by days, not by a fraction of the same second (CLAUDE.md §15 on timestamps).
+    test "a done task keeps the moment it was completed through later saves" do
+      task = travel_to(3.days.ago) { @user.maker_tasks.create!(title: "x", status: "done") }
+      completed = task.reload.completed_at
+
+      task.update!(title: "renamed")
+      task.update!(status: "done")
+
+      assert_equal completed, task.reload.completed_at
+    end
+
+    test "a stamp handed in beside a status that is not done is not stored" do
+      task = @user.maker_tasks.create!(title: "x", status: "doing", completed_at: Time.current)
+      assert_nil task.reload.completed_at
+
+      task.update!(completed_at: Time.current)
+      assert_nil task.reload.completed_at
+    end
+
+    test "a stamp handed in beside done is the one kept" do
+      moment = 2.days.ago.change(usec: 0)
+
+      task = @user.maker_tasks.create!(title: "x", status: "done", completed_at: moment)
+
+      assert_equal moment, task.reload.completed_at
+    end
+
+    # A ROW WRITTEN BEFORE THE RULE EXISTED repairs itself the next time anything saves it.
+    test "a done row with no stamp gains one at its next save" do
+      task = @user.maker_tasks.create!(title: "x", status: "done")
+      task.update_column(:completed_at, nil)
+
+      task.reload.update!(title: "renamed")
+
+      assert_not_nil task.reload.completed_at
+    end
+
+    test "a refused save changes neither the status nor the stamp" do
+      task = @user.maker_tasks.create!(title: "x", status: "done")
+
+      assert_not task.update(status: "bogus")
+
+      task.reload
+      assert_equal "done", task.status
+      assert_not_nil task.completed_at
+    end
+
     private
 
     # Builds one row of `klass` owned by `owner`. A type added to `TASKABLE_OWNERS` with no arm here

@@ -21,7 +21,8 @@ module McpServer
       class GetBom < McpServer::Tool
         tool_name "get_bom"
         description "A project's bill of materials: every BOM it has, and the lines of one of them " \
-                    "(bom_id, else the first) -- each line's target (an inventory item with stock on " \
+                    "(bom_id, else the current one: the latest revision, which is the one the " \
+                    "project page shows) -- each line's target (an inventory item with stock on " \
                     "hand, a free-text part, or a design file), which stock lines are short, and the " \
                     "estimated cost."
         input_schema(
@@ -34,7 +35,8 @@ module McpServer
           p = project!(user, project)
           boms = p.boms.order(:id).to_a
           counts = Maker::BomLine.where(bom_id: boms.map(&:id)).group(:bom_id).count
-          bom = bom_id ? boms.find { |b| b.id == bom_id } : boms.first
+          # Maker::Project#current_bom, not an order of this tool's own: "the BOM" has one definition.
+          bom = bom_id ? boms.find { |b| b.id == bom_id } : p.current_bom
           raise NotFound, "No BOM with id #{bom_id} on project #{p.slug.inspect}." if bom_id && bom.nil?
 
           answer = { project: p.slug, boms: boms.map { |b| Render.bom(b, lines: counts.fetch(b.id, 0)) } }
@@ -55,7 +57,7 @@ module McpServer
 
       class AddBomLine < McpServer::Tool
         tool_name "add_bom_line"
-        description "Add a line to a project's BOM (its first, or bom_id). Exactly one of " \
+        description "Add a line to a project's BOM (its current one, or bom_id). Exactly one of " \
                     "inventory_item_id (a stock line, counted in the item's unit) or part_name (a " \
                     "free-text part). A project with no BOM gets one. quantity defaults to 1."
         input_schema(
@@ -73,7 +75,7 @@ module McpServer
               if bom_id
                 p.boms.find_by(id: bom_id) || raise(NotFound, "No BOM with id #{bom_id} on project #{p.slug.inspect}.")
               else
-                p.boms.order(:id).first || p.boms.create!(user: user)
+                p.current_bom || p.boms.create!(user: user)
               end
             line = bom.lines.create!(fields.merge(user: user))
             { bom_id: bom.id, line: Render.line(line) }

@@ -48,8 +48,7 @@ module McpServer
 
         def self.perform(user, project:, title:, notes: nil, status: nil)
           p = project!(user, project)
-          t = user.maker_tasks.create!(taskable: p, title: title, notes: notes, status: status || "todo",
-                                       completed_at: (Time.current if status == "done"))
+          t = user.maker_tasks.create!(taskable: p, title: title, notes: notes, status: status || "todo")
           { task: Render.task(t, project: p) }
         end
       end
@@ -71,14 +70,7 @@ module McpServer
 
         def self.perform(user, id:, title: nil, notes: nil, status: nil)
           t = task!(user, id)
-          attrs = { title:, notes:, status: }.compact
-          # V1::Maker::TasksController#update's rule, kept identical so the two doors agree.
-          if status == "done"
-            attrs[:completed_at] = t.completed_at || Time.current
-          elsif status
-            attrs[:completed_at] = nil
-          end
-          t.update!(attrs)
+          t.update!({ title:, notes:, status: }.compact)
           { task: Render.task(t) }
         end
       end

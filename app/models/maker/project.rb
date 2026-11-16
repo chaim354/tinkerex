@@ -139,6 +139,13 @@ module Maker
 
     before_validation :ensure_slug
     before_validation :mint_unlisted_token
+    # `archived_at` IS DERIVED FROM `status`, HERE AND NOWHERE ELSE: an archived project carries the
+    # moment it was archived (kept through later saves, and kept as handed in by a device that
+    # knows it), and any other status carries none. Two columns record one fact, and every reader
+    # asks `status`; the stamp is only ever shown. Each writer used to guard the pair itself and
+    # the v1 API guarded nothing, so both mismatches were storable. Do not derive the stamp in a
+    # controller or a tool again; a row from before this rule mends itself at its next save.
+    before_save { self.archived_at = (status == "archived" ? archived_at || Time.current : nil) }
 
     normalizes :license, with: ->(l) { l.to_s.strip.presence }
 
@@ -249,7 +256,7 @@ module Maker
     def visible_panels(folders: [], blocks: []) = panel_layout(folders:, blocks:).visible.reject { |k| k.start_with?(Maker::ProjectKind::TAB_PREFIX) }
 
     def archive!
-      update!(status: "archived", archived_at: Time.current)
+      update!(status: "archived")
     end
 
     # The inverse of archive!. "active" rather than the "planning" column default: a project you
@@ -257,7 +264,7 @@ module Maker
     # neither value — it reads status as archived-or-not (spec decision #1) — but the v1 API and
     # the desktop app still see the full vocabulary, so this has to name a real member of STATUSES.
     def unarchive!
-      update!(status: "active", archived_at: nil)
+      update!(status: "active")
     end
 
     # Return the project's library folder node, or NIL. Idempotent — Maker::LibraryFolder.ensure_path!

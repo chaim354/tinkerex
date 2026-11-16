@@ -62,6 +62,25 @@ module V1
         assert_equal "paused", body["status"]
       end
 
+      # v1 PERMITS `status` AND `archived_at` SEPARATELY, so a device could store either without the
+      # other. The model derives the stamp now: every pair this door stores agrees with itself, and
+      # a device that archives with its own moment keeps it.
+      test "status and archived_at are stored as a pair that agrees, whatever a device sends" do
+        post "/v1/maker/projects", params: { project: { name: "Rig" } }, as: :json, headers: auth(@token)
+        id = JSON.parse(response.body)["id"]
+        moment = "2026-01-02T03:04:05Z"
+        stamp_after = lambda do |attrs|
+          patch "/v1/maker/projects/#{id}", params: { project: attrs }, as: :json, headers: auth(@token)
+          assert_response :success
+          JSON.parse(response.body)["archived_at"]
+        end
+
+        assert_not_nil stamp_after.call(status: "archived"), "archived was stored with no stamp"
+        assert_nil stamp_after.call(status: "active", archived_at: moment), "active was stored with a stamp"
+        assert_nil stamp_after.call(archived_at: moment), "a stamp alone was stored on an active project"
+        assert_equal Time.utc(2026, 1, 2, 3, 4, 5), Time.zone.parse(stamp_after.call(status: "archived", archived_at: moment))
+      end
+
       test "rejects an invalid status with 422" do
         post "/v1/maker/projects", params: { project: { name: "X", status: "bogus" } },
              as: :json, headers: auth(@token)
