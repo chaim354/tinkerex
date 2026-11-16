@@ -64,8 +64,8 @@
      a second copy is what §14m rule 3 exists to stop. */
   .project-card-grid .card-cover { display: block; width: 100%; }
 
+  /* The chosen chip is drawn by components.css, from the `aria-current` its link carries. */
   .explore-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
-  .explore-chips .tag-chip.active { border-color: var(--fg); background: var(--fg); color: var(--surface); }
 
   /* COLUMN DROPS: Size is the least useful cell to a visitor on a phone, the thumbnail the next
      least; Name and Download survive at every width. READABILITY, NOT OVERFLOW SAFETY, and the

@@ -18,6 +18,27 @@ module WebHelpers
   #
   # Signs in through the form rather than via a Warden test helper on purpose: a system test that
   # bypasses the real session path can pass while login itself is broken.
+  # THE INK A SELECTED CONTROL IS FILLED WITH, AS THE BROWSER RESOLVES IT in the page's own theme:
+  # the `--fg` token painted on a throwaway element and read back, so it can be compared with a
+  # control's computed background (accent_spend_test.rb reads the accent the same way). A class or
+  # an attribute in the markup says what a control IS; only this says how it is DRAWN.
+  def ink_colour
+    page.evaluate_script(<<~JS)
+      (() => { const probe = document.createElement("i"); probe.style.background = "var(--fg)";
+               document.body.append(probe); const colour = getComputedStyle(probe).backgroundColor;
+               probe.remove(); return colour })()
+    JS
+  end
+
+  # The computed background of the first element matching `css`, with its transition finished.
+  def background_of(css)
+    find(css, match: :first)
+    page.evaluate_script(<<~JS, css)
+      (() => { const el = document.querySelector(arguments[0]); el.style.transition = "none";
+               return getComputedStyle(el).backgroundColor })()
+    JS
+  end
+
   def sign_in_as(email = "maker@example.com")
     user = User.create!(email:, password: PASSWORD, confirmed_at: Time.current)
     visit new_user_session_path

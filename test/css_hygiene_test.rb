@@ -114,6 +114,23 @@ class CssHygieneTest < ActiveSupport::TestCase
     end
   end
 
+  # THE PRESSED LOOK IS DRAWN ONCE, IN components.css, FROM WHAT THE CONTROL ANNOUNCES
+  # (`.btn[aria-pressed="true"]`). It was three declarations restated by each page that had a
+  # toggle, in that page's own sheet, which is how the Gerber viewer came to have toggles with no
+  # pressed look at all: nobody wrote its copy. A page sheet that styles a pressed selector is
+  # starting the next copy. Qualified or bare makes no difference here, which is why rule 3's
+  # check above (bare component selectors only) never saw these.
+  test "only components.css draws a pressed control" do
+    pressed = /\[aria-pressed/
+    drawn = rules(read("components.css")).flat_map { |sel, _| selectors_of(sel) }.grep(pressed)
+    assert_includes drawn, '.btn[aria-pressed="true"]', "components.css does not draw a pressed button"
+
+    (OURS - [ "components.css" ]).each do |sheet|
+      strays = rules(read(sheet)).flat_map { |sel, _| selectors_of(sel) }.grep(pressed)
+      assert_empty strays, "#{sheet} styles a pressed control #{strays.inspect}; that look is components.css's alone"
+    end
+  end
+
   test "the migrated sheets stay deleted" do
     DELETED.each { |name| refute SHEETS_DIR.join(name).exist?, "#{name} came back; its rules live under pages/ now" }
   end

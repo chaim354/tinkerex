@@ -32,6 +32,11 @@ landed it (§11).
    pre-2026-09 sheets defined `.btn` twice (blue, then grey) and the later file won, so `.btn`
    rendered grey everywhere and `.btn.primary` blue. Guard: `test/css_hygiene_test.rb`, which also
    refuses the three deleted sheets coming back and pins the layout's link order.
+   **A toggle button's pressed look is drawn once, by `.btn[aria-pressed="true"]`, from the state the
+   button announces.** A new toggle sets `aria-pressed` and writes no CSS; a class alone draws
+   nothing (the Gerber viewer's toggles set `active`, which no rule matched, until 2026-11-16). The
+   rule sits after `.btn:hover`, which has its specificity. The same guard refuses a pressed
+   selector in any other sheet, qualified or bare.
 
 ## Tokens and themes
 
