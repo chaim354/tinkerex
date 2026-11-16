@@ -962,8 +962,8 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
   its starting changelog cursor. The method's lock-ordering rule — take `FOR UPDATE` on the user
   row FIRST, before any FK insert takes `FOR KEY SHARE`, or two concurrent commits deadlock on
   the upgrade — governs the sync server's commit path and lives in **that repo's** CLAUDE.md now.
-  Its callers are all there. Do not reintroduce that rule, or a pooler boot guard for it,
-  here: nothing in this process takes the lock.
+  Its callers are all there. Do not reintroduce a pooler boot guard for it here. The two places
+  this process locks the user row (`Provisioning`, `ChangelogSync`) take the lock FIRST, as it asks.
   **A statement-mode pooler still breaks the sync server** — that constraint did not disappear,
   it relocated.
 
