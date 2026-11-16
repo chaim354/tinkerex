@@ -717,6 +717,17 @@ longer shows. **Spare rows to type into exist only where the sheet really ends**
 they would be the file's own hidden rows. `test/system/spreadsheet_test.rb` mutation-checks the log,
 the diff, the row identities and the history switch.
 
+**THE PAGE IS IN ONE PHASE, AND THE GRIDS TAKE NOTHING FROM THE MOMENT A SAVE LEAVES UNTIL THE FILE
+IS READ BACK** (`PHASES` in the controller: `loading`, `clean`, `dirty`, `saving`, `conflict`). A
+save carries the operations gathered when Save was pressed and then rebuilds the grids from the
+file, so an edit taken in between is in neither: it used to vanish under a status reading "Saved".
+The lock is jspreadsheet's own two runtime switches, `editable` and `allowInsertRow` (Enter on the
+last row adds one without asking the first), set on every grid, one first shown mid-save included.
+A save refused as stale stays locked with Reload on offer, since no retry from that page can
+succeed; any other refusal goes back to `dirty`, edits intact. **Do not add a flag beside the
+phase**: three flags once let the page be saving while editable, refused with Save lit, and failed
+with the row buttons lit. The same test file mutation-checks every cell of the table.
+
 **ROW OPERATIONS ONLY WHERE EVERY ROW-ADDRESSED THING IS ONE `Edit` MOVES**: cells, merges, the
 dimension, and every formula in the workbook that points at the sheet (`Maker::Xlsx::FormulaRefs`,
 Excel's grow/shrink/`#REF!` rules; a shared formula is written out longhand first). Everything else
