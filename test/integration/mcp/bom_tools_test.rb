@@ -14,14 +14,19 @@ module Mcp
       @bolts.reload
     end
 
-    test "get_bom answers the project's BOMs, the first one's lines, what is short and the cost" do
-      bom = @lamp.boms.create!(user: @user)
+    # "THE BOM" IS Maker::Project#current_bom, THE LATEST REVISION, FOR AN ASSISTANT AS FOR EVERY
+    # PAGE. These tools used to take the oldest by id instead, so on a project with two BOMs an
+    # assistant read the shortages and the cost of a BOM no page treats as current. The older one
+    # is created first here so that "first by id" and "latest revision" are different rows.
+    test "get_bom answers the project's BOMs, the current one's lines, what is short and the cost" do
+      old = @lamp.boms.create!(user: @user)
+      bom = @lamp.boms.create!(user: @user, name: "Rev B", revision: 2)
       stock = bom.lines.create!(user: @user, inventory_item: @bolts, quantity: 4, reference: "R1")
       text = bom.lines.create!(user: @user, part_name: "Lens", quantity: 1, notes: "acrylic")
-      @lamp.boms.create!(user: @user, name: "Rev B", revision: 2)
+      assert_equal bom, @lamp.current_bom
 
       out = mcp_structured(@token, "get_bom", { project: "lamp" })
-      assert_equal [ [ bom.id, 2 ], [ @lamp.boms.last.id, 0 ] ], out["boms"].map { |b| [ b["id"], b["lines"] ] }
+      assert_equal [ [ old.id, 0 ], [ bom.id, 2 ] ], out["boms"].map { |b| [ b["id"], b["lines"] ] }
       assert_equal bom.id, out.dig("bom", "id")
       lines = out.dig("bom", "lines")
       assert_equal [ stock.id, text.id ], lines.map { |l| l["id"] }
@@ -51,6 +56,20 @@ module Mcp
       assert_equal bom.id, out["bom_id"]
       assert_equal 2, bom.lines.count
       assert_equal 1.0, out.dig("line", "quantity")
+    end
+
+    # ...AND A LINE ADDED WITH NO bom_id LANDS WHERE THE MAKER WILL SEE IT. It used to go into the
+    # oldest BOM while the project page, the BOM page, a release and the README's table all showed
+    # the latest, so the assistant said "added" and the line appeared nowhere.
+    test "add_bom_line with no bom_id adds to the BOM the project page shows" do
+      old = @lamp.boms.create!(user: @user)
+      current = @lamp.boms.create!(user: @user, name: "Rev B", revision: 2)
+
+      out = mcp_structured(@token, "add_bom_line", { project: "lamp", part_name: "Lens" })
+
+      assert_equal current.id, out["bom_id"]
+      assert_equal [ "Lens" ], @lamp.current_bom.lines.map(&:part_name)
+      assert_empty old.lines
     end
 
     test "add_bom_line refuses a line with no target or two targets in the model's words" do
