@@ -18,6 +18,34 @@ import { Controller } from "@hotwired/stimulus"
 //
 // THE GRID DOES NOT EVALUATE FORMULAS (`parseFormulas: false`): it shows the values Excel stored,
 // and a typed `=…` stays text in the grid and is saved as a formula Excel calculates on open.
+
+// THE PAGE IS IN EXACTLY ONE PHASE, AND WHAT A PERSON CAN PRESS OR TYPE FOLLOWS FROM IT ALONE.
+// `enter` is the only thing that changes the phase or writes the status line, and `refresh` is the
+// only thing that turns the phase into buttons and locks. Do not add a flag beside it. Three flags
+// stood here once, and together they could say things that were never true of the page: saving
+// while the grid still took edits (typed after the request left, so not in it, then dropped when
+// the grid was rebuilt from the saved file, under a status reading "Saved"); refused as stale with
+// Save still lit and Reload overwritten by the next keystroke; a failed read-back with the row
+// buttons lit over grids no longer on the page.
+//
+//   save     Save can be pressed
+//   open     the grids take typing, pastes, fills and row operations
+//   unsaved  a grid holds an edit the file does not, so leaving asks first
+//
+// `saving` covers the request only. Once the file has taken the edits the page is `loading` while
+// it reads the file back: nothing can be lost by leaving, and nothing can be typed into grids that
+// are about to be replaced. A load that fails stays in `loading`, where `fail` puts the reason on
+// the page: every load starts there, and a failed one has nothing to press either. `conflict` is a
+// save refused because the file moved on, which no retry from this page can cure; a refusal of any
+// other kind goes back to `dirty`, edits intact.
+const PHASES = {
+  loading:  { save: false, open: false, unsaved: false },
+  clean:    { save: false, open: true,  unsaved: false },
+  dirty:    { save: true,  open: true,  unsaved: true },
+  saving:   { save: false, open: false, unsaved: true },
+  conflict: { save: false, open: false, unsaved: true }
+}
+
 const loading = new Map()
 // What CellFormat shows a number or a date as: a sign, a currency symbol, digits with thousands
 // commas, a fraction, an exponent, a percent; or an ISO date with an optional time.
@@ -65,9 +93,9 @@ export default class extends Controller {
     this.disconnected = false
     this.abort = new AbortController()
     this.active = 0
-    this.onBeforeUnload = (event) => { if (this.dirty) { event.preventDefault(); event.returnValue = "" } }
+    this.onBeforeUnload = (event) => { if (this.unsaved) { event.preventDefault(); event.returnValue = "" } }
     this.onBeforeVisit = (event) => {
-      if (this.dirty && !window.confirm("Leave without saving your changes to this workbook?")) event.preventDefault()
+      if (this.unsaved && !window.confirm("Leave without saving your changes to this workbook?")) event.preventDefault()
     }
     window.addEventListener("beforeunload", this.onBeforeUnload)
     document.addEventListener("turbo:before-visit", this.onBeforeVisit)
@@ -99,13 +127,43 @@ export default class extends Controller {
     this.destroyGrids()
     this.sheets = []
     this.log = []
-    this.dirty = false
     this.tabsTarget.replaceChildren()
     this.panesTarget.replaceChildren(this.hasLoadingTarget ? this.loadingTarget : this.loadingParagraph())
     this.noteTarget.hidden = true
     this.cellTarget.textContent = ""
-    this.setStatus("")
-    this.refreshButtons()
+    this.enter("loading")
+  }
+
+  get unsaved() { return PHASES[this.phase].unsaved }
+
+  enter(phase, message = "", isError = false) {
+    this.phase = phase
+    if (this.hasStatusTarget) {
+      this.statusTarget.textContent = message
+      this.statusTarget.classList.toggle("is-error", isError)
+      if (phase === "conflict") this.statusTarget.append(" ", this.reloadButton())
+    }
+    this.refresh()
+  }
+
+  // jspreadsheet asks `editable` at the moment of each keystroke, double-click, paste, cut, Delete
+  // and fill (read in the vendored bundle, not assumed), so turning it off here is the whole lock
+  // on a cell, and a grid first shown mid-save is locked by the same line when it reports loaded.
+  // Per-cell and per-column read-only are separate state and stay exactly as `mount` set them.
+  // `allowInsertRow` is a second switch for a second door: Enter on the last row adds one without
+  // asking `editable`, and insertRow itself asks only this.
+  refresh() {
+    const { save, open } = PHASES[this.phase]
+    for (const sheet of this.sheets) {
+      if (!sheet.instance) continue
+      sheet.instance.options.editable = open && this.editable(sheet)
+      sheet.instance.options.allowInsertRow = open && this.rowOps(sheet)
+    }
+    const sheet = this.sheets[this.active]
+    const rows = open && !!sheet?.instance && this.rowOps(sheet)
+    if (this.hasSaveTarget) this.saveTarget.disabled = !save
+    if (this.hasAddRowTarget) this.addRowTarget.disabled = !rows
+    if (this.hasDeleteRowTarget) this.deleteRowTarget.disabled = !rows
   }
 
   loadingParagraph() {
@@ -146,13 +204,11 @@ export default class extends Controller {
     }
     this.panesTarget.replaceChildren(p)
     this.tabsTarget.replaceChildren()
-    this.refreshButtons()
   }
 
   build(sheets) {
     this.destroyGrids()
     this.log = []
-    this.dirty = false
     this.sheets = sheets.map((sheet) => ({ ...sheet, pane: null, workbook: null, instance: null }))
     this.tabsTarget.replaceChildren(...this.sheets.map((sheet, i) => {
       const tab = document.createElement("button")
@@ -165,9 +221,8 @@ export default class extends Controller {
     }))
     this.panesTarget.replaceChildren()
     if (this.sheets.length === 0) return this.fail("This workbook has no sheets to show.")
+    this.enter("clean")
     this.show(Math.min(this.active, this.sheets.length - 1))
-    this.setStatus("")
-    this.refreshButtons()
   }
 
   show(index) {
@@ -178,7 +233,7 @@ export default class extends Controller {
     if (!sheet.pane) this.mount(sheet)
     this.describe(sheet)
     this.cellTarget.textContent = ""
-    this.refreshButtons()
+    this.refresh()
   }
 
   editable(sheet) { return this.hasSaveUrlValue && !!this.saveUrlValue && !sheet.read_only_reason }
@@ -261,7 +316,7 @@ export default class extends Controller {
           const [ y, x ] = key.split(",").map(Number)
           worksheet.setReadOnly(`${columnName(x)}${y + 1}`, true)
         }
-        this.refreshButtons()
+        this.refresh()
       }
     })
   }
@@ -305,7 +360,7 @@ export default class extends Controller {
   }
 
   menu(sheet, worksheet, y, section) {
-    if (!this.rowOps(sheet) || (section !== "cell" && section !== "row")) return false
+    if (!PHASES[this.phase].open || !this.rowOps(sheet) || (section !== "cell" && section !== "row")) return false
     const row = Number(y)
     return [
       { title: "Insert row above", onclick: () => worksheet.insertRow(1, row, true) },
@@ -329,7 +384,7 @@ export default class extends Controller {
 
   deleteSelected(sheet, fallback) {
     const [ first, last ] = sheet.selection || (fallback == null ? [] : [ fallback, fallback ])
-    if (first == null) return this.setStatus("Select a row to delete.")
+    if (first == null) return this.enter(this.phase, "Select a row to delete.")
     sheet.instance.deleteRow(first, last - first + 1)
   }
 
@@ -355,9 +410,7 @@ export default class extends Controller {
   }
 
   changed() {
-    this.dirty = true
-    this.setStatus("Unsaved changes")
-    this.refreshButtons()
+    this.enter("dirty", "Unsaved changes")
   }
 
   // Every row operation in the order it was made, then every cell whose value differs from what was
@@ -380,17 +433,12 @@ export default class extends Controller {
 
   async save() {
     const ops = this.operations()
-    if (ops.length === 0) {
-      this.dirty = false
-      this.setStatus("Nothing to save")
-      return this.refreshButtons()
-    }
+    if (ops.length === 0) return this.enter("clean", "Nothing to save")
 
-    this.saving = true
-    this.refreshButtons()
-    this.setStatus("Saving…")
+    this.enter("saving", "Saving…")
+    let response, body
     try {
-      const response = await fetch(this.saveUrlValue, {
+      response = await fetch(this.saveUrlValue, {
         method: "PATCH",
         credentials: "same-origin",
         headers: {
@@ -400,53 +448,35 @@ export default class extends Controller {
         },
         body: JSON.stringify({ base_token: this.token, ops })
       })
-      const body = await response.json().catch(() => ({}))
-      if (!response.ok) {
-        this.setStatus(body.error || `Not saved: the server refused it (HTTP ${response.status}).`, true)
-        if (response.status === 409) this.offerReload()
-        return
-      }
-      this.dirty = false
-      await this.load()
-      // Nothing here calculates a formula, so a total over an edited cell still shows the old
-      // result until Excel or LibreOffice opens the file (the save asks them to recalculate).
-      const formulas = this.sheets.some((sheet) => Object.keys(sheet.formulas || {}).length > 0)
-      if (!this.disconnected) this.setStatus(formulas ? "Saved. Formulas update when the file is next opened in Excel or LibreOffice." : "Saved")
+      body = await response.json().catch(() => ({}))
     } catch (error) {
-      this.setStatus("Not saved. Check your connection and try again.", true)
-    } finally {
-      this.saving = false
-      this.refreshButtons()
+      return this.enter("dirty", "Not saved. Check your connection and try again.", true)
     }
+    if (!response.ok) {
+      const refusal = body.error || `Not saved: the server refused it (HTTP ${response.status}).`
+      return this.enter(response.status === 409 ? "conflict" : "dirty", refusal, true)
+    }
+
+    this.enter("loading", "Saving…")
+    await this.load()
+    // Nothing here calculates a formula, so a total over an edited cell still shows the old
+    // result until Excel or LibreOffice opens the file (the save asks them to recalculate).
+    const formulas = this.sheets.some((sheet) => Object.keys(sheet.formulas || {}).length > 0)
+    if (!this.disconnected) this.enter(this.phase, formulas ? "Saved. Formulas update when the file is next opened in Excel or LibreOffice." : "Saved")
   }
 
   // A save refused because the file moved on cannot succeed on retry; reloading is the way forward,
   // and it throws the edits away, so it asks first.
-  offerReload() {
+  reloadButton() {
     const button = document.createElement("button")
     button.type = "button"
     button.className = "linkbtn"
     button.textContent = "Reload"
     button.addEventListener("click", () => {
       if (!window.confirm("Reload the workbook? Your unsaved changes will be lost.")) return
-      this.dirty = false
       this.rest()
       this.load()
     })
-    this.statusTarget.append(" ", button)
-  }
-
-  refreshButtons() {
-    const sheet = this.sheets?.[this.active]
-    if (this.hasSaveTarget) this.saveTarget.disabled = this.saving || !this.dirty
-    const rowOps = !!sheet?.instance && this.rowOps(sheet) && !this.saving
-    if (this.hasAddRowTarget) this.addRowTarget.disabled = !rowOps
-    if (this.hasDeleteRowTarget) this.deleteRowTarget.disabled = !rowOps
-  }
-
-  setStatus(text, isError = false) {
-    if (!this.hasStatusTarget) return
-    this.statusTarget.textContent = text
-    this.statusTarget.classList.toggle("is-error", isError)
+    return button
   }
 }
