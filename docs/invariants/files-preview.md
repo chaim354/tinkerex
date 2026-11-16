@@ -72,8 +72,9 @@ Three consequences of the one table:
   filter chip that links and **silently does nothing**. `markdown` is the bound, at exactly 8.
 - The `role` column is **behavioural** — cover-image selection reads `image`/`model`, and
   `Models::AttachmentsController` dispatches `ExtractPdfMetadataJob` on `instructions`, so `pdf`
-  must stay `instructions`. A third copy in `importer_controller.js`'s `roleFor` has drifted; it is
-  browser-only and the server re-derives authoritatively.
+  must stay `instructions`. The importer reads the same table: `models/new` hands
+  `importer_controller.js` the whole of `ROLE_BY_EXT`, because its own copy had drifted and it
+  posts the cover it picks. The server still re-derives the stored role.
 - **STORED ROLES FOLLOW THE TABLE BY ONE RULE, NOT BY A MIGRATION PER WIDENING** (F-S33-1,
   2026-10-19). `role` is written with the row, so a row attached before `ROLE_BY_EXT` learned its
   extension says `other`. `Maker::FileAttachment.classify_unclassified!(user)` re-reads a user's

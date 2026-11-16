@@ -203,8 +203,8 @@ module Maker
 
     # WHAT THE TOP BAR'S UPLOAD CALLS A MODEL when it decides whether a zip unpacks (2026-10-21,
     # lib/zip_unpack.js) — DERIVED, like IMAGE_EXTS above, so a model extension added to ROLE_BY_EXT
-    # makes a zip holding it unpack with no second edit. The importer's own five-entry MODEL_EXT
-    # (importer_controller.js) is display-only and is not this.
+    # makes a zip holding it unpack with no second edit. The importer (importer_controller.js) is
+    # handed the whole of ROLE_BY_EXT by its page, so it has no list of its own either.
     MODEL_EXTS = ROLE_BY_EXT.filter_map { |ext, role| ext if role == "model" }.freeze
 
     # WHAT A BROWSER CAN SHOW AS `<img>` BYTES — NOT THE `image` ROLE, and since 2026-09-08
