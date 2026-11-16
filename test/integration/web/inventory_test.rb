@@ -493,5 +493,19 @@ module Web
       assert_select "table.table.inventory-table tbody tr", 1
       assert_select "td.col-name a[href=?]", inventory_item_path(tagged)
     end
+
+    # A SEARCH INSIDE A TAG WAS A 500, reachable by searching and then pressing a tag chip, which
+    # carries the search along. `tagged_with` joins maker_tags, which has a `name` column of its
+    # own, and the search clause named the item's columns bare: "ambiguous column name: name".
+    test "a search inside a tag narrows by both, instead of raising" do
+      both = item!("M3 bolt", tag_list: "m3")
+      item!("M4 bolt", tag_list: "m4")
+      item!("M3 nut", tag_list: "m3")
+
+      get inventory_items_path(q: "bolt", tag: "m3")
+
+      assert_response :success
+      assert_equal [ inventory_item_path(both) ], css_select("td.col-name a").map { |a| a["href"] }
+    end
   end
 end

@@ -24,7 +24,11 @@ class InventoryItemsController < ApplicationController
     @q = params[:q].to_s.strip.first(QUERY_MAX)
     if @q.present?
       like = "%#{Maker::InventoryItem.sanitize_sql_like(@q.downcase)}%"
-      items = items.where("LOWER(name) LIKE ? ESCAPE '\\' OR LOWER(part_number) LIKE ? ESCAPE '\\'", like, like)
+      # THE COLUMNS ARE NAMED WITH THEIR TABLE, and it is not style: `tagged_with` below joins
+      # maker_tags, which has a `name` of its own, so a bare `name` made a search inside a tag an
+      # "ambiguous column name" 500.
+      items = items.where("LOWER(maker_inventory_items.name) LIKE ? ESCAPE '\\' OR " \
+                          "LOWER(maker_inventory_items.part_number) LIKE ? ESCAPE '\\'", like, like)
     end
     # `?tag=` (stage 2, S2-5): same tagged_with idiom as ModelsController/ProjectsController.
     @tag = params[:tag].presence

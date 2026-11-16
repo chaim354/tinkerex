@@ -295,6 +295,22 @@ module Web
       assert_select "a.project-card[href=?]", project_path(other), false
     end
 
+    # A SEARCH INSIDE A TAG WAS A 500. `tagged_with` joins maker_tags, which has a `name` column of
+    # its own, and the search clause named the project's column bare: "ambiguous column name: name".
+    # Each filter was tested alone, so nothing asked for both.
+    test "?q= and ?tag= together narrow by both, instead of raising" do
+      both = @user.maker_projects.create!(name: "Reading Lamp", tag_list: "laser")
+      name_only = @user.maker_projects.create!(name: "Floor Lamp", tag_list: "firmware")
+      tag_only = @user.maker_projects.create!(name: "Sign", tag_list: "laser")
+
+      get projects_path(q: "lamp", tag: "laser")
+
+      assert_response :success
+      assert_select "a.project-card[href=?]", project_path(both)
+      assert_select "a.project-card[href=?]", project_path(name_only), false
+      assert_select "a.project-card[href=?]", project_path(tag_only), false
+    end
+
     # --- On-demand panels (structural redesign §6, slice 6) ---------------------------------------
     #
     # AN EMPTY Build log, Tasks, BOM, Wiring, Releases, Sheets or Calculations IS ABSENT FROM THE NORMAL PAGE — not
