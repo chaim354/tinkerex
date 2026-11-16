@@ -60,10 +60,13 @@ sudo usermod -aG docker <kamal1|ubuntu>
 ## 2. Deploy
 
 First deploy to a fresh box uses `setup` (boots kamal-proxy + the app, runs db:prepare); after
-that, `deploy`.
+that, `deploy`. **The routine deploy is not written here:** the three Unraid destinations (the
+base, `-d share`, `-d s3`), their order, the build-once step and the checks after it are
+`.claude/commands/deploy.md`. This section keeps what only it holds: first-time setup and the OVH
+rules.
 
 ```sh
-cd /Users/charlesschwartz/Desktop/tinkerex   # the git tree must be committed/clean
+cd "$(git worktree list --porcelain | sed -n '1s/^worktree //p')"   # the main checkout; commit first, the build is a clone of HEAD
 bin/secrets-preflight --all                  # unlock 1Password if this reports EMPTY
 
 # Unraid (SeaweedFS):
@@ -158,12 +161,16 @@ wins, otherwise it reads 1Password. One definition, used by `.kamal/secrets*` an
 `[.kamal/secrets-common, .kamal/secrets.<destination>]` — so **`.kamal/secrets` is NOT read when
 `-d` is passed**; it is the *base* (chunk) destination's own file, not a shared one.
 
-| destination | files read | credential |
-|---|---|---|
-| base (chunk_remote, Unraid) | `secrets-common` + `secrets` | `SYNC_ADMIN_TOKEN` ← `tinkerex-sync-admin-token` (the sync accessory's own copy must match) |
-| `-d s3` | `secrets-common` + `secrets.s3` | `LIBRARY_S3_SECRET_ACCESS_KEY` ← SeaweedFS `seaweednew` |
-| `-d share` | `secrets-common` + `secrets.share` | none — a share container holds no storage credential |
-| `-d ovh` | `secrets-common` + `secrets.ovh` | `LIBRARY_S3_ACCESS_KEY_ID` + `LIBRARY_S3_SECRET_ACCESS_KEY` ← **Cloudflare R2**; `SYNC_ADMIN_TOKEN`; the origin certificate pair `OVH_ORIGIN_CERTIFICATE_PEM` + `OVH_ORIGIN_PRIVATE_KEY_PEM` ← `tinkerex-origin` |
+**Which keys a destination needs is printed, not listed here.** `bin/secrets-preflight --all`
+prints, for each destination, the files it reads and every key the deploy config requires, taken
+from Kamal and `Tinkerex::DeploySecrets`; a table kept by hand in this file had drifted from them
+(it said a share deployment needs no secret; it needs `SYNC_ADMIN_TOKEN` like every other). Two
+facts the preflight cannot print:
+
+- **`SYNC_ADMIN_TOKEN` is required by every destination**, because `accessories:` is never
+  overlaid (`docs/invariants/deploy-secrets.md`), and the app's copy and the sync accessory's must
+  resolve the same vault item.
+- **`LIBRARY_S3_SECRET_ACCESS_KEY` is one name for two credentials**, the next paragraph.
 
 `LIBRARY_S3_SECRET_ACCESS_KEY` names a **different credential** on Unraid (`-d s3`, SeaweedFS)
 than on OVH (R2). That is the whole reason these are per-destination files: `secrets-common`
@@ -207,19 +214,17 @@ desktop app to approve a read: the desktop integration re-locks on its own timeo
 authorization looks like `error initializing client: authorization timeout`.
 
 **The vault split is already done.** Every reference is `op://tinkerex/…`, a vault holding only
-this project's items (`ghcr.io`, `seaweednew`, `R2`, `OVHcloud`, `tinkerex-origin`). Two reasons it
-is not `Personal`:
+this project's items. Two reasons it is not `Personal`:
 
 - **A service account CANNOT be granted access to a Personal or Private vault** — 1Password's own
   CLI refuses it (`op service-account create --help`). Leaving the items in `Personal` makes the
   unattended path impossible, not merely untidy.
 - Anything that can run `op` on this machine — including a coding agent — can read every item in
-  whatever vault the references point at. A project vault bounds that to four items.
+  whatever vault the references point at. A project vault bounds that to this project's items.
 
 Service accounts **are** available on a personal (Individual/Families) plan; only the *Private
 vault* restriction applies. The published rate limits list "1Password and 1Password Families" as
-its own tier at 1,000 reads/day, which is far above what deploys use (a full
-`bin/secrets-preflight --all` costs ~8 reads).
+its own tier at 1,000 reads/day, which is far above what deploys use.
 
 To mint one (yours to do — the token is a bearer credential and is never committed):
 
@@ -329,11 +334,22 @@ new key before the old one can be retired). Out of scope here; nothing in this r
 
 ## 3. Verify
 
+**By host name, never by bare address.** Each Unraid deployment is routed by its `Host`
+(`config/deploy.yml`'s `proxy:` comment), and OVH answers its two public names over TLS behind
+Cloudflare, so a request to either box's address is a 404 from kamal-proxy whatever state the app
+is in (measured 2026-11-16: both; this section said 200 until then).
+
 ```sh
-curl -s -o /dev/null -w '%{http_code}\n' http://192.168.1.95/up    # Unraid → 200
-curl -s -o /dev/null -w '%{http_code}\n' http://15.204.216.249/up  # OVH → 200
-kamal app logs -f            # add -d ovh for the OVH box
+# Unraid: all three deployments, both names each → 200
+for h in chunk share s3; do for d in local home; do
+  curl -s -o /dev/null -w "$h.tinkerex.$d %{http_code}\n" -H "Host: $h.tinkerex.$d" http://192.168.1.95/up
+done; done
+curl -s -o /dev/null -w '%{http_code}\n' https://tinkerex.com/up   # OVH → 200
+kamal app logs -f            # add -d share, -d s3 or -d ovh for the others
 ```
+
+`.claude/commands/deploy.md` is the routine three-destination deploy with its full verification;
+this is the short form of its health step.
 
 ### The `.git` purge migration — automatic, but know it exists
 
@@ -381,7 +397,7 @@ goes wrong next.
 ## 4. Point clients at it
 
 **Desktop clients sync against the sync server, never against the maker app** (CLAUDE.md §2, §6;
-`http://192.168.1.95` is the maker app behind kamal-proxy, and it has not served the sync endpoints
+the maker app sits behind kamal-proxy on `192.168.1.95`, reached by host name, and it has not served the sync endpoints
 — `/v1/changes`, `/v1/commit`, `/v1/chunks/*`, … — since 2026-08-25; its remaining `/v1/*` is device
 login and the maker API). Since 2026-10-07 the `sync` accessory has a door for them: kamal-proxy routes
 `http://sync.tinkerex.local` (LAN, via `/etc/hosts`) and `http://sync.tinkerex.home` (Tailscale) to
@@ -826,7 +842,9 @@ across every surface, no error, no job, nothing to notice. Share's archive is ~3
 and 1326 blobs; there is nothing to be gained by splitting them.
 
 Not in the archive, and not missing: the **library bytes**. On share they live on the NAS
-(`//192.168.1.146/3D Printing`) and on chunk in SeaweedFS. What this backs up is the **catalog** —
+(`//192.168.1.146/3D Printing`), on s3 in the SeaweedFS bucket, and on the base (`chunk_remote`)
+deployment on the `sync` accessory's own volume (`STORAGE_BACKEND: local` in `config/deploy.yml`,
+which calls that volume "the library, not a cache"). What this backs up is the **catalog** —
 nodes, projects, models, attachments, tags, print log, users — which is the part that only exists
 here.
 
@@ -987,7 +1005,7 @@ survives redeploys.
   **the `Secure` flag on the session cookie**), plus an exclusion so kamal-proxy's plain-HTTP
   `/up` health check still passes (without it the check fails and the deploy rolls back).
 
-  **Leave `FORCE_SSL` unset on the Unraid backends.** They are reached by IP over plain HTTP on
+  **Leave `FORCE_SSL` unset on the Unraid backends.** They are reached by host name over plain HTTP on
   the LAN; with it set they would redirect every request to a URL nothing serves. That asymmetry
   is why this is an env gate rather than a line in `production.rb` — before this, neither setting
   was enabled anywhere, so the internet-facing host had no HSTS and its session cookie was sent
