@@ -104,8 +104,10 @@ module Projects
     # own panels alone, and what makes "a block is never deleted by its absence from pasted YAML"
     # true. But the editor posts EVERY slot it holds, so a block whose slot was deleted is absent
     # on purpose, and Save has to be able to see the difference. The POSTED document says which
-    # blocks the browser still holds; every other entry (a panel, a folder) is untouched, because
-    # only a block's absence carries that meaning.
+    # kinded entries the browser still holds: its blocks AND its tabs, since a tab's entry carries a
+    # `kind` too and a tab whose slot was deleted is absent on purpose in the same way
+    # (project_tabs_test.rb pins that). Every entry with no kind (a panel, a folder) is untouched,
+    # because for those absence carries no meaning.
     #
     # ONE FILTERED DRAFT FEEDS ALL THREE OUTPUTS — the rows, the column and the page — so the order
     # cannot name a block the rows no longer hold.
