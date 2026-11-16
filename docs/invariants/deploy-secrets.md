@@ -37,9 +37,13 @@
 - **NEVER `op read "$ref" 2>&1 >/dev/null`** — the redirection order LEAKS the value (`2>&1` points
   fd2 at the captured stdout *before* `>/dev/null` moves fd1). It printed a live ghcr PAT into a
   transcript and forced a rotation. `bin/secret` keeps the value on fd1 only.
-- **`kamal deploy` WARNS ON AN UNCOMMITTED TREE, IT DOES NOT REFUSE** (`say "Building with
-  uncommitted changes"`, yellow), and this repo sets no `builder: clone:` — so the image is built
-  from the **working tree** and whatever is half-finished in it ships. Check `git status` first.
+- **`kamal deploy` BUILDS FROM A CLONE OF `HEAD` AND LEAVES UNCOMMITTED WORK OUT, WITH A NOTICE
+  AND NO REFUSAL.** This repo sets no `builder.context`, which is what makes Kamal clone (2.12.0:
+  `Configuration::Builder#git_clone?`; `say "Building from a local git clone, so ignoring these
+  uncommitted changes"`, yellow, in `cli/build.rb`). So a fix you have not committed is NOT in the
+  image, and the deploy is green over the old code. Check `git status` first. (Read in the gem's
+  source; an earlier version of this bullet said the working tree ships, which is what a set
+  `context` would do.)
 
 - **AN ACCESSORY'S SECRETS ARE REQUIRED BY EVERY DESTINATION, BECAUSE `accessories:` IS NEVER
   OVERLAID.** A destination overlay (`deploy.<dest>.yml`) can override `env:`, `servers:` and the

@@ -16,18 +16,19 @@ one-word difference with real consequences.
 
 **Sync main first. This is the step that actually bites.** Merging a PR on GitHub does not move
 your local checkout, so the working copy is routinely one or more commits behind right after a
-merge, and `kamal` will happily build and ship whatever is on disk.
+merge, and `kamal` will happily build and ship whatever that checkout has committed.
 
 ```bash
-cd /Users/charlesschwartz/Desktop/tinkerex
+cd "$(git worktree list --porcelain | sed -n '1s/^worktree //p')"   # the main checkout, wherever it lives
 git checkout main && git pull --ff-only origin main
 git log --oneline -3
 ```
 
 Confirm the commits you intend to ship are in that log. Then:
 
-- `git status --short` must be **empty**. Kamal builds the working tree, not `HEAD` — uncommitted
-  edits ship silently. Stop if anything is dirty.
+- `git status --short` must be **empty**. Kamal builds from a **clone of `HEAD`**, not the working
+  tree (no `builder.context` is set), so an uncommitted edit is **left out of the image** behind one
+  yellow notice, and what ships is not what is on disk. Stop if anything is dirty.
 - Secrets. **Do not `export` anything** (CLAUDE.md §13). `.kamal/secrets*` resolve every credential
   through `bin/secret`, which reads 1Password itself. Run the preflight and read its output:
   ```bash

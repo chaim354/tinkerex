@@ -9,7 +9,9 @@ everything below. **Merging is the one thing that still needs an explicit go-ahe
 ## 1. Check you're clear to do this
 
 - `bin/log status` — if it exits 4, an earlier record was never filed. Deal with that first; a
-  close-out is a bad moment to discover a backlog.
+  close-out is a bad moment to discover a backlog. **If any `bin/log` call here exits 5, `bin/log`
+  itself is broken** (a bug, not an outage, and nothing was spooled): stop and report it. Exit 3 is
+  the one that means "unreachable, carry on and say so" (step 5).
 - `git branch --show-current` — if it is `main`, **stop**. Never commit or push to `main`.
   Report that the work needs a branch first.
 - `git status --short` — if nothing is modified, say so and stop.
