@@ -58,18 +58,25 @@ module Maker
       # `stylesheet: nil` PASSES NO `--stylesheet` FLAG AT ALL — it does not pass an empty one. An
       # empty stylesheet would be indistinguishable in the output today and is a different claim:
       # this is "resvg renders what the SVG says", not "we override it with nothing".
-      def to_png(svg, size: 512, stylesheet: STYLESHEET)
+      #
+      # `timeout:` (seconds) RUNS resvg UNDER A WALL-CLOCK LIMIT; nil, the default, runs it with
+      # none. A caller passes one when the SVG is something no cap has measured.
+      # Maker::Previews::Gerber does: a tracespace render is built from decompressed, user-supplied
+      # geometry. Every other caller hands over ONE file the job has already capped at
+      # MAX_PREVIEW_BYTES (or text it drew itself), and whether those get a limit waits on timings
+      # from a real library. Maker::Previews::Subprocess holds the argument and the mechanism.
+      def to_png(svg, size: 512, stylesheet: STYLESHEET, timeout: nil)
         Tempfile.create([ "resvg-in", ".svg" ]) do |fin|
           fin.binmode
           fin.write(svg.to_s.b)
           fin.flush
 
-          next rasterize(fin.path, size:, css_path: nil) if stylesheet.nil?
+          next rasterize(fin.path, size:, css_path: nil, timeout:) if stylesheet.nil?
 
           Tempfile.create([ "resvg-css", ".css" ]) do |fcss|
             fcss.write(stylesheet)
             fcss.flush
-            rasterize(fin.path, size:, css_path: fcss.path)
+            rasterize(fin.path, size:, css_path: fcss.path, timeout:)
           end
         end
       rescue Errno::ENOENT, Errno::EACCES => e
@@ -79,7 +86,7 @@ module Maker
       # ONE resvg INVOCATION. Split out of `to_png` when `stylesheet:` arrived so the two arms
       # share the argv, the success check and the output cleanup — the alternative (a conditional
       # inside the css Tempfile block) creates a temp file the flagless arm never names.
-      def rasterize(in_path, size:, css_path:)
+      def rasterize(in_path, size:, css_path:, timeout:)
         out_path = "#{in_path}.png"
         # --background Palette::PAPER: render onto an OPAQUE white canvas rather than transparent.
         # The browser MULTIPLIES every thumbnail onto a themed card (`Maker::Previews::Palette`), so
@@ -96,7 +103,10 @@ module Maker
         argv.push("--stylesheet", css_path) if css_path
         argv.push(in_path, out_path)
 
-        _stdout, stderr, status = Open3.capture3(*argv)
+        _stdout, stderr, status =
+          if timeout then Subprocess.capture(*argv, timeout:, error: RasterizeError, name: "resvg")
+          else Open3.capture3(*argv)
+          end
         unless status.success? && File.exist?(out_path) && File.size?(out_path)
           raise RasterizeError, "resvg failed (#{status.exitstatus}): #{stderr.to_s[0, 300]}"
         end

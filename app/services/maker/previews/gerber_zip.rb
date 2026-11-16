@@ -47,9 +47,11 @@ module Maker
 
       def payload_revision(_kind) = THUMBNAIL_REVISION
 
+      # Rasterised through the layer renderer's own door (Gerber.rasterize): no hairline stylesheet,
+      # and under the pipeline's limit, which a board needs more than a layer does.
       def render(bytes, size: 512)
         svg = svg_for(bytes)
-        png = Maker::Previews::SvgRasterizer.to_png(svg, size:, stylesheet: nil)
+        png = Maker::Previews::Gerber.rasterize(svg, size:)
         { bytes: png.b, content_type: "image/png", width: size, height: size }
       end
 

@@ -10,6 +10,7 @@
 # placeholder for a file node (deliberately — most fixtures never read the bytes back), which
 # tracespace would receive as an unparseable layer. test/support/kicad_fixture.rb is the same
 # shape for the same reason and this deliberately mirrors it.
+require "tmpdir"
 require "zip"
 
 module GerberFixture
@@ -53,6 +54,36 @@ module GerberFixture
     X10.0Y10.0
     M30
   DRILL
+
+  # A GERBER RENDER WHOSE RASTERISER NEVER EXITS, for the two renderer suites. BOTH PROGRAMS ARE
+  # SHELL SCRIPTS, through NODE_BIN and RESVG_BIN, so the case runs on a box with neither: a "node"
+  # that prints one small SVG at once, and a "resvg" that sleeps for twenty seconds against the
+  # one-second limit this sets. Yields a block that times the call it is given, because the elapsed
+  # time is the assertion (an unbounded resvg raises too, twenty seconds later).
+  #
+  # THE SLEEP IS NOT `exec`ed, for gerber_test.rb's reason: sh may leave `sleep` as a child, which is
+  # the grandchild the runner kills the process GROUP for.
+  def with_a_rasteriser_that_never_exits
+    saved = %w[NODE_BIN RESVG_BIN GERBER_RENDER_TIMEOUT].to_h { |key| [ key, ENV[key] ] }
+    Dir.mktmpdir do |dir|
+      node = File.join(dir, "node-that-draws")
+      File.write(node, %(#!/bin/sh\nprintf '%s' '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect width="1" height="1"/></svg>'\n))
+      resvg = File.join(dir, "resvg-that-sleeps")
+      File.write(resvg, "#!/bin/sh\nsleep 20\n")
+      File.chmod(0o755, node, resvg)
+      ENV.update("NODE_BIN" => node, "RESVG_BIN" => resvg, "GERBER_RENDER_TIMEOUT" => "1")
+      Maker::Previews::SvgRasterizer.reset_bin!
+
+      yield lambda { |&render|
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        error = assert_raises(Maker::Previews::SvgRasterizer::RasterizeError, &render)
+        [ error, Process.clock_gettime(Process::CLOCK_MONOTONIC) - started ]
+      }
+    end
+  ensure
+    saved.each { |key, value| value.nil? ? ENV.delete(key) : ENV[key] = value }
+    Maker::Previews::SvgRasterizer.reset_bin!
+  end
 
   # A GERBER JOB FILE naming a subset of the layers beside it. `FilesAttributes[].Path` is the only
   # key `Maker::GerberSets` reads; the rest is what a real KiCad export writes around it, kept so

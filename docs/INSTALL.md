@@ -503,7 +503,7 @@ ones marked *set by compose*; the rest come from `.env`.
 | **Renderers** (the image provides all of these; only an install outside the image sets them) | | | |
 | `F3D_BIN` | no | `/opt/f3d/bin/f3d` in the image | F3D, for OBJ, STEP, IGES, BREP and the mesh formats. Absent on arm64, where those files get a generic icon. |
 | `PDFIUM_BIN`, `RESVG_BIN`, `STL_THUMBNAILER_BIN`, `VIPSTHUMBNAIL_BIN`, `NODE_BIN` | no | the binary's own name, on `PATH` | PDF pages, SVG/DXF/LightBurn, STL, images, and Node for the Gerber renderer. |
-| `GERBER_RENDER_TIMEOUT` | no | `60` | Seconds allowed for one Gerber render. |
+| `GERBER_RENDER_TIMEOUT` | no | `60` | Seconds allowed for each of a Gerber render's two steps: drawing the layers, then rasterising them. |
 | **Do not set** | | | |
 | `ENABLE_TEST_SIGNUP` | never | off | Opens an unauthenticated endpoint that creates confirmed accounts. It exists for the author's test boxes and prints a warning on every boot where it is on. |
 | `RAILS_MASTER_KEY` | never (section 8) | — | |
