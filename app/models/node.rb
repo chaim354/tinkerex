@@ -9,6 +9,21 @@ class Node < ApplicationRecord
 
   scope :present, -> { where(deleted: false) }
 
+  # "STILL IN THE TRASH", NAMED ONCE (CLAUDE.md §14a, "the two tombstone kinds"; this names their
+  # states and collapses nothing). `deleted`, `storage_path` and `trash_root_node_id` together say
+  # whether a row is live, a SCAN tombstone (path kept, no entry), a member of a trash entry, or
+  # the entry's root. It is the column AND the trash shape, never the column alone: code from
+  # before the column revived a row without clearing it, so a LIVE folder can still name itself,
+  # and a file sent to restore that folder first would be refused for good. The condition was
+  # written out three times in two files, and the fix for the live self-named folder had to find
+  # all three. On chunk_remote the column is always NULL, so both answer false or empty there.
+  scope :trash_entry_roots, -> {
+    where(deleted: true, storage_path: nil).where(arel_table[:trash_root_node_id].eq(arel_table[:node_id]))
+  }
+
+  # A trash tombstone: a member of an entry, or its root.
+  def trash_tombstone? = deleted? && storage_path.nil? && trash_root_node_id.present?
+
   # THE `.git` MARKER IS INDEXED ON PURPOSE AND DISPLAYED NEVER. Library::RepoMetadata explains
   # why it is kept: it is the evidence that a directory IS a working tree, which is what
   # Maker::AttachToProject's :in_working_tree reads to stop the intake sweep filing a repo's root

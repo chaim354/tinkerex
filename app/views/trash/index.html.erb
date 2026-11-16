@@ -63,8 +63,8 @@
           <td class="muted col-folder">
             <% if origin.nil? %>
               —
-            <% elsif origin.deleted_parent %>
-              <%= origin.deleted_parent %> (in Trash too)
+            <% elsif origin.restore_first.is_a?(String) %>
+              <%= origin.restore_first %> (in Trash too)
             <% elsif origin.path.nil? %>
               —
             <% else %>
