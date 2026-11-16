@@ -50,7 +50,7 @@
         <% else %>
           <%= link_to pub.view_url_for(node.node_id), class: "block-thumb" do %>
             <%= render "files/thumb", thumb: pub.thumbs.thumb(node.node_id), ext_label: ext,
-                       url: pub.preview_url_for(node.node_id) %>
+                       url: pub.preview_url_for(node.node_id), name: node.name %>
           <% end %>
         <% end %>
         <% if block.caption.present? %><figcaption class="muted"><%= block.caption %></figcaption><% end %>

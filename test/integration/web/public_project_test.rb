@@ -211,6 +211,38 @@ module Web
       assert_select ".readme-panel [src^='/files/'], .readme-panel [href^='/files/']", 0
     end
 
+    # "NO PREVIEW WILL EVER EXIST" IS NOT "STILL COMING", AND A VISITOR'S PAGE SAID THE SECOND FOR
+    # BOTH. A file no renderer claims never gets a preview row, so files/_thumb was handed nil for it
+    # and drew the pending ring: beside every published .f3d, .xlsx or .hex, for good, on a page
+    # with no poll to resolve it. The partial is now told the file's name and asks the registry.
+    # The .stl beside it has a renderer and no row yet, and must go on saying "still coming".
+    test "a published file nothing can render says so, and one still rendering shows the ring" do
+      make_file!(@user, "case.f3d", @f[:models])
+      hex = make_file!(@user, "boot.hex", @f[:firmware])
+      make_file!(@user, "pinout.xlsx", @f[:folder])
+      @project.blocks.create!(user: @user, kind: "image", node_id: hex.node_id)
+
+      get path
+
+      # A folder drawn as tiles, a folder drawn as a list, the root files table and a picture block:
+      # the four call sites that name their file.
+      assert_select "a.file-cell[title=?] .thumb-icon[title=?]", "case.f3d", "Preview not supported", text: "F3D"
+      assert_select "a.file-cell[title=?] .thumb-spinner", "case.f3d", count: 0
+      [ [ "boot.hex", "HEX" ], [ "pinout.xlsx", "XLSX" ] ].each do |name, badge|
+        row = css_select("table.public-files tr").find { |tr| tr.text.include?(name) }
+        assert row, "#{name} is not in a files table on the page"
+        assert_equal [ badge ], row.css(".thumb-icon[title=\"Preview not supported\"]").map { |icon| icon.text.strip }
+        assert_empty row.css(".thumb-spinner"), "#{name} still shows the pending ring"
+      end
+      assert_select ".block-thumb .thumb-icon[title=?]", "Preview not supported", text: "HEX"
+      assert_select ".block-thumb .thumb-spinner", count: 0
+      assert_select "a.file-cell[title=?] .thumb-spinner", "base.stl", count: 1
+      assert_select "a.file-cell[title=?] .thumb-icon", "base.stl", count: 0
+      # A CALLER THAT NAMES NO FILE KEEPS THE RING: the entry photo, which is always an image.
+      assert_select ".entry-photos .photo-cell .thumb-spinner", count: 1
+      assert_select ".entry-photos .photo-cell .thumb-icon", count: 0
+    end
+
     # HIDDEN MEANS UNREAD ON THE VISITOR'S PAGE TOO: the README's bytes are a port read — a WAN one on
     # chunk_remote — and nothing reads them for a panel the maker hid: not the partial (never
     # rendered), not the thumbnail union (gated on the panel's visibility). Counted on the ROOT README's

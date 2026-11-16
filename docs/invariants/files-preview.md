@@ -812,6 +812,13 @@ Collapsing them trades a hung spinner for a **wrong** one, which is worse becaus
 `thumbs_controller` also resolves stragglers to badges when polling gives up, so "forever" is not
 reachable even if the endpoint is wrong.
 
+**`files/_thumb` keeps them apart on a page with no poll, too.** Handed `thumb: nil` it cannot know
+which case it is, so a caller that has not already asked the registry passes `name:` and the
+partial asks: no renderer draws the terminal badge, a renderer draws the ring. The visitor's
+pages did neither once, and every published `.f3d`, `.xlsx` or `.hex` wore a pending ring that
+nothing would ever resolve. The Library's grid, list and inspector ask before they render it, and
+photo callers only ever show images, so they pass no name (pinned in `public_project_test.rb`).
+
 **NO PUBLIC SURFACE POLLS, BECAUSE THIS ENDPOINT IS SESSION-AUTHED** — so a visitor's poster is
 whatever is SHOWABLE at render time (`Maker::Preview#showable?`: the current build, or an older
 build's picture of this content while it rebuilds), and every public page says so honestly: those
