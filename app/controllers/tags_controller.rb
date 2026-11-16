@@ -16,8 +16,12 @@ class TagsController < ApplicationController
     models = capped_group("3D models", :model, current_user.maker_models.catalogued.tagged_with(@tag.name).order(:title),
                           files_models_path(tag: @tag.name), noun: "3D model")
     # A MODEL ROW NAMES ITS FOLDER, the search page's reason (FilesHelper#result_folders): one design
-    # catalogued from three files is three rows titled alike. One pluck of the user's folders.
-    models[:folders] = helpers.result_folders(models[:records], tree: Maker::LibraryTree.new(current_user), &:folder_node_id) if models[:records].any?
+    # catalogued from three files is three rows titled alike. Where a model sits is
+    # Maker::Model.placements' answer, as on its card. One pluck of the user's folders.
+    if models[:records].any?
+      tree = Maker::LibraryTree.new(current_user)
+      models[:folders] = helpers.result_folders(Maker::Model.placements(current_user, models[:records], tree:), tree:)
+    end
     @groups = [
       capped_group("Projects", :project, current_user.maker_projects.tagged_with(@tag.name).order(:name),
                    projects_path(tag: @tag.name), noun: "project"),

@@ -35,7 +35,7 @@ class SearchController < ApplicationController
     # WHERE EACH ONE IS (UX audit D11, 2026-11-02): three "tetra.stl" rows could not be told apart.
     # #folders_for is the rendered rows' folder paths off ONE pluck of the user's folders.
     if (group = add_group("Files", :file, files.order(:name), files_path(q: @q)))
-      group[:folders] = folders_for(group[:records]) { |node| node.parent_node_id }
+      group[:folders] = folders_for(group[:records].to_h { |node| [ node.id, node.parent_node_id ] })
     end
 
     # Folders: the DIRECTORY rows the Files group deliberately excludes, as their own kind. This is
@@ -59,7 +59,7 @@ class SearchController < ApplicationController
     # No "See all": the Files index has no folder-only listing to send a remainder to. A folder row
     # says what it sits in, for the reason a file row does: every project has its own `laser/`.
     if (group = add_group("Folders", :folder, folders.order(:name), nil))
-      group[:folders] = folders_for(group[:records]) { |node| node.parent_node_id }
+      group[:folders] = folders_for(group[:records].to_h { |node| [ node.id, node.parent_node_id ] })
     end
 
     # Projects: name OR description. Archived projects are the user's own and are not excluded
@@ -73,10 +73,12 @@ class SearchController < ApplicationController
     # Models: title only. `catalogued` excludes a dismissed auto model, the same filter the
     # 3D models view (Files::ModelsController) itself applies.
     # "3D models", THE RAIL'S WORD for this catalog (UX audit D11) — "Models" was this page's alone.
-    # A model row names its folder too: one design catalogued from three files is three rows.
+    # A model row names its folder too: one design catalogued from three files is three rows. WHERE
+    # a model sits is Maker::Model.placements' answer, the one its card on the 3D models view gives;
+    # `folder_node_id` alone named nothing for a one-file model, which is exactly that case.
     models = current_user.maker_models.catalogued.where("LOWER(title) LIKE ? ESCAPE '\\'", like)
     if (group = add_group("3D models", :model, models.order(:title), files_models_path(q: @q)))
-      group[:folders] = folders_for(group[:records]) { |model| model.folder_node_id }
+      group[:folders] = folders_for(Maker::Model.placements(current_user, group[:records], tree: library_tree))
     end
 
     # Notes: the note BODY, which is the one thing a maker writes that this app keeps and could not
@@ -133,14 +135,13 @@ class SearchController < ApplicationController
 
   private
 
-  # The folder each RENDERED row sits in (FilesHelper#result_folders, which TagsController asks too).
-  # ONE LibraryTree for the whole page, so three groups cost one pluck of the user's folders between
-  # them — page_query_budget_test.rb's search case grows every kind and asserts the page stays
-  # constant.
-  def folders_for(records, &folder_of)
-    @library_tree ||= Maker::LibraryTree.new(current_user)
-    helpers.result_folders(records, tree: @library_tree, &folder_of)
-  end
+  # The folder each RENDERED row sits in, from `{ record id => folder id }` (FilesHelper#result_folders,
+  # which TagsController asks too). ONE LibraryTree for the whole page, so three groups cost one
+  # pluck of the user's folders between them — page_query_budget_test.rb's search case grows every
+  # kind and asserts the page stays constant.
+  def folders_for(folder_ids) = helpers.result_folders(folder_ids, tree: library_tree)
+
+  def library_tree = @library_tree ||= Maker::LibraryTree.new(current_user)
 
   # Skips a kind entirely when it has no matches, so the view never renders an empty
   # `.result-group--<kind>` shell. `total` (not `records.size`) is what "See all N" reads --

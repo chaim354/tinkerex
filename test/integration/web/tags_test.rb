@@ -35,6 +35,30 @@ module Web
       assert_select ".result-group--inventory_item .result-row a[href=?]", inventory_item_path(item), text: "M3 bolt"
     end
 
+    # A MODEL ROW NAMES ITS FOLDER, A ONE-FILE MODEL'S TOO (Maker::Model.placements). This page read
+    # `folder_node_id` alone, which a one-file model does not have: the rows the folder exists to
+    # tell apart (one design catalogued from three files) were the ones that named nothing. Bare
+    # catalog rows, no port, as search_folders_test.rb.
+    test "a model row names the folder it sits in, a one-file model's too" do
+      @user.nodes.create!(node_id: "d-models", name: "Models", kind: "dir")
+      @user.nodes.create!(node_id: "d-kit", name: "kit", kind: "dir", parent_node_id: "d-models")
+      kit = @user.maker_models.create!(title: "Kit", folder_node_id: "d-kit", tag_list: "laser")
+      @user.nodes.create!(node_id: "n-clip", name: "clip.stl", kind: "file", parent_node_id: "d-models")
+      clip = @user.maker_models.create!(title: "Clip", origin: "auto", auto_node_id: "n-clip", tag_list: "laser")
+      bare = @user.maker_models.create!(title: "Bare", tag_list: "laser")
+
+      get tag_path("laser")
+      assert_response :success
+      path = lambda do |model|
+        row = css_select(".result-group--model .result-row").find { |li| li.at_css("a[href='#{model_path(model)}']") }
+        refute_nil row, "no row links #{model.title}"
+        row.at_css(".result-path")&.text
+      end
+      assert_equal "Models/kit", path.call(kit)
+      assert_equal "Models", path.call(clip)
+      assert_nil path.call(bare), "a model with nothing to place it by must not claim the root"
+    end
+
     # A MODEL THE MAKER REMOVED FROM THE CATALOG IS REMOVED HERE TOO. Search and the 3D models view
     # both start from `catalogued`; this page did not, so a dismissed model stayed listed under its
     # tag and counted in the heading, and "See all" led to a view that did not show it.

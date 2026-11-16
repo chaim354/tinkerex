@@ -94,31 +94,63 @@ module Maker
       self[:cover_node_id].presence || derived_cover_node_id
     end
 
+    # WHICH FOLDER EACH MODEL SITS IN: `{ model.id => dir node_id }`. A nil VALUE is the library
+    # root; a model that cannot be placed has NO ENTRY, so a caller tells the two apart by the key.
+    # THE ONE DEFINITION. The 3D models view's project groups (Maker::ModelProjects) and its cards
+    # (card_facts below), the Add-model picker, search and a tag's page all read it. It was three
+    # rules until 2026-11-16: the groups read this one, the card read `folder_node_id` and then the
+    # first LIVE mesh, and search read `folder_node_id` alone, so a heading, a card and a result row
+    # could each say something different about one model.
+    #
+    # A model's KEY is `auto_node_id` for a sweep-made model (a FOLDER for a folder model, the FILE
+    # for a one-file model: Maker::ModelIntake), else an import's `folder_node_id`, else its first
+    # file. A key that is a live folder is the place. Any other key is placed in the folder that
+    # holds it, read from `nodes` UNSCOPED, so a key in the trash keeps the folder that held it
+    # until Maker::AttachmentReaper clears the model's rows. model_placements_test.rb pins that.
+    #
+    # CONSTANT IN QUERIES, WHATEVER THE CALLER LOADED: one pluck for the keys that are not folders,
+    # and one read of the files of the models with neither key when the caller has not loaded them
+    # (search and a tag's page have not). The preloader reads nothing for a record whose files are
+    # loaded already, and nothing for an empty list. `tree` is the caller's Maker::LibraryTree.
+    def self.placements(user, models, tree:)
+      keyless = models.select { |m| m.auto_node_id.nil? && m.folder_node_id.nil? }
+      ActiveRecord::Associations::Preloader.new(records: keyless, associations: :file_attachments).call
+
+      keys = models.to_h { |m| [ m.id, m.auto_node_id || m.folder_node_id || m.file_attachments.first&.node_id ] }.compact
+      held = keys.values.uniq.reject { |id| tree.dir?(id) }
+      holders = held.empty? ? {} : user.nodes.where(node_id: held).pluck(:node_id, :parent_node_id).to_h
+      keys.each_with_object({}) do |(id, key), places|
+        if tree.dir?(key) then places[id] = key
+        elsif holders.key?(key) then places[id] = holders[key]
+        end
+      end
+    end
+
     # WHAT TELLS ONE CARD FROM ANOTHER ON THE 3D MODELS VIEW (UX audit 2026-11-01, E1): the formats
     # of the model's own meshes and the folder it sits in. The sweep makes one model per file on a
     # shelf (docs/invariants/model-intake.md), so `tetra.stl`, `tetra.obj` and `tetra.off` side by
-    # side are three models titled "tetra", and the cards were identical. `folder` is the model's own
-    # folder when it has one, else its first mesh's folder; "" is the library root, and nil means the
-    # chain could not be resolved (a tombstoned ancestor), which the card leaves out.
+    # side are three models titled "tetra", and the cards were identical. `folder` is the path of
+    # the model's place (`placements` above): "" is the library root, and nil means the model has
+    # no place or its chain could not be resolved (a tombstoned ancestor), which the card leaves out.
     #
-    # CONSTANT IN QUERIES, whatever the number of models: one pluck of the meshes' names and parents,
-    # and Maker::LibraryTree's one pluck of the dirs (path_for is its in-memory walk, the one ancestry
-    # definition). Reads the LOADED :file_attachments, as `hollow?` and the cover do.
+    # CONSTANT IN QUERIES, whatever the number of models: one pluck of the live meshes' names, and
+    # what `placements` and Maker::LibraryTree cost. A caller that also groups the models
+    # (Files::ModelsController#index) hands in the `tree` and the `places` it already built, so the
+    # page reads each once. Reads the LOADED :file_attachments, as `hollow?` and the cover do.
     CardFacts = Data.define(:extensions, :folder)
 
-    def self.card_facts(user, models)
+    def self.card_facts(user, models, tree: nil, places: nil)
       return {} if models.empty?
 
       meshes = models.to_h { |m| [ m.id, m.file_attachments.select { |a| a.role == "model" }.map(&:node_id) ] }
       ids = meshes.values.flatten.uniq
-      nodes = ids.empty? ? {} : user.nodes.present.where(node_id: ids).pluck(:node_id, :name, :parent_node_id)
-                                    .to_h { |id, name, parent| [ id, [ name, parent ] ] }
-      tree = Maker::LibraryTree.new(user)
+      names = ids.empty? ? {} : user.nodes.present.where(node_id: ids).pluck(:node_id, :name).to_h
+      tree ||= Maker::LibraryTree.new(user)
+      places ||= placements(user, models, tree:)
       models.to_h do |m|
-        live = meshes[m.id].filter_map { |id| nodes[id] }
-        extensions = live.map { |name, _| File.extname(name).delete(".").upcase }.reject(&:empty?).uniq.sort
-        dir = m.folder_node_id.presence || (live.first.last if live.any?)
-        folder = tree.path_for(dir) if m.folder_node_id.present? || live.any?
+        extensions = meshes[m.id].filter_map { |id| names[id] }
+                                 .map { |name| File.extname(name).delete(".").upcase }.reject(&:empty?).uniq.sort
+        folder = tree.path_for(places[m.id]) if places.key?(m.id)
         [ m.id, CardFacts.new(extensions:, folder:) ]
       end
     end

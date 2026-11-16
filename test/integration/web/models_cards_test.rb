@@ -67,6 +67,48 @@ module Web
       assert_select ".model-card[href=?] .model-facts-folder", model_path(model), text: "Models/bracket"
     end
 
+    # THE CARD AND ITS GROUP HEADING READ ONE PLACE (Maker::Model.placements). An import with no
+    # folder is placed by its first file. The card used to read its first MESH instead, so this kit
+    # sat under "Lamp" while its card said "elsewhere".
+    test "an import with no folder names the folder its project group is under" do
+      dir("d-lamp", "lamp")
+      dir("d-other", "elsewhere")
+      @user.maker_projects.create!(name: "Lamp").update_column(:folder_node_id, "d-lamp")
+      kit = @user.maker_models.create!(title: "Kit", origin: "import")
+      @user.nodes.create!(node_id: "n-pic", name: "pic.jpg", kind: "file", parent_node_id: "d-lamp", mtime: 1, size: 1)
+      @user.nodes.create!(node_id: "n-mesh", name: "part.stl", kind: "file", parent_node_id: "d-other", mtime: 1, size: 1)
+      kit.file_attachments.create!(user: @user, node_id: "n-pic", role: "image", position: 0)
+      kit.file_attachments.create!(user: @user, node_id: "n-mesh", role: "model", position: 1)
+
+      get files_models_path
+      assert_response :success
+      group = css_select(".models-group").find { |s| s.at_css("h2.group-head a")&.text == "Lamp" }
+      refute_nil group, "premise: the kit is grouped under the project its first file is in"
+      assert_equal "STL lamp", group.at_css(".model-card[href='#{model_path(kit)}'] .model-facts").text.squish
+    end
+
+    # A MODEL WHOSE FILE IS IN THE TRASH KEEPS THE FOLDER THAT HELD IT until its rows are reaped (the
+    # chosen reading, model_placements_test.rb). The group heading always placed it there; the card
+    # read live files only and said nothing.
+    test "a model whose file is in the trash still names the folder that held it" do
+      dir("d-shapes", "shapes")
+      model = one_file_model("cube.stl", "d-shapes")
+      @user.nodes.find_by!(node_id: "n-cube-stl").update!(deleted: true)
+
+      get files_models_path
+      assert_select ".model-card[href=?] .model-facts-folder", model_path(model), text: "shapes"
+    end
+
+    # NO PLACE IS NOT THE LIBRARY ROOT. An import with no folder and no file has nothing to place it
+    # by, and its card names no folder; "Library" there would put it at the top of the library.
+    test "a model with nothing to place it by names no folder" do
+      bare = @user.maker_models.create!(title: "Dragon", origin: "import")
+
+      get files_models_path
+      assert_select ".model-card[href=?]", model_path(bare)
+      assert_select ".model-card[href=?] .model-facts", model_path(bare), count: 0
+    end
+
     test "the primary is Add model, with both routes" do
       get files_models_path
       assert_select ".page-head details.menu > summary.btn.primary", text: "Add model ▾"

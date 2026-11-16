@@ -57,6 +57,21 @@ module Web
       assert_nil path_under(:model, model_path(loose)), "a model with no folder must not claim the root"
     end
 
+    # A ONE-FILE MODEL NAMES ITS FOLDER TOO (Maker::Model.placements). Search read `folder_node_id`
+    # alone, which a one-file model does not have, so the rows this line exists to tell apart (one
+    # design catalogued from three files) were exactly the ones that named nothing.
+    test "a one-file model names the folder its file is in, and one at the top names the Library" do
+      @user.nodes.create!(node_id: "n-a", name: "widget.stl", kind: "file", parent_node_id: "d-catan")
+      a = @user.maker_models.create!(title: "widget", origin: "auto", auto_node_id: "n-a")
+      @user.nodes.create!(node_id: "n-b", name: "widget.obj", kind: "file")
+      b = @user.maker_models.create!(title: "widget twin", origin: "auto", auto_node_id: "n-b")
+
+      get search_path(q: "widget")
+      assert_equal "Projects/catan", path_under(:model, model_path(a)).text
+      assert_equal files_path(folder: "d-catan"), path_under(:model, model_path(a))["href"]
+      assert_equal "Library", path_under(:model, model_path(b)).text
+    end
+
     # A BROKEN CHAIN NAMES NOTHING: Maker::LibraryTree#path_for answers nil for a row whose folder is
     # gone, and saying "Library" there would put the file at the root.
     test "a file whose folder is gone names no folder" do

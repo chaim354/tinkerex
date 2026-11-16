@@ -180,6 +180,21 @@
   projects keep their group, on the claim rule above. Constant in queries, pinned with models nested
   in project folders by `page_query_budget_test.rb`; `model_projects_test.rb` and
   `models_by_project_test.rb` carry the rest, each mutation-checked.
+- **WHERE A MODEL SITS IS `Maker::Model.placements`, AND IT IS THE ONE ANSWER (2026-11-16).** The
+  project groups above, a card's folder line (`card_facts`), the Add-model picker, search's model
+  rows and a tag's page all read it. It was three rules until then: the groups' key walk, the
+  card's `folder_node_id` and then its first LIVE mesh, and search's `folder_node_id` alone. One
+  model could sit under a project's heading, name another folder on its card and name none in
+  search. The key is `auto_node_id`, else `folder_node_id`, else the first file; a key that is a
+  live folder is the place, and any other key is placed in the folder that holds it. **A nil VALUE
+  is the library root and a model with no place has NO ENTRY**, which is how a card tells "Library"
+  from nothing. **The holder is read from `nodes` UNSCOPED, on purpose**: a key in the trash keeps
+  the folder that held it until `Maker::AttachmentReaper` clears the model's rows, so the heading
+  and the card agree for that window, and `.present` there would move such a model to "Not in a
+  project". The 3D models view builds one tree and one set of placements and hands both to the
+  groups and the cards; `page_query_budget_test.rb` counts each pluck. The function reads the files
+  of a model with neither key itself, once for all of them, so a caller need not load them. Pinned
+  by `model_placements_test.rb`.
 - **THE CATALOG'S SHELVES ARE NOT A SETTING ANY MORE, AND NOTHING ON THE 3D MODELS VIEW POINTS AT
   ONE (2026-10-20).** They were a Settings rule at `/settings/shelves` from slice 5 (and at
   `/models/shelves` from 2026-09-10 until then) until they became `Maker::ModelIntake::SHELVES`.

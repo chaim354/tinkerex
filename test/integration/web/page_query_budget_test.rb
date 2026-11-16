@@ -852,6 +852,44 @@ module Web
                               "files/models#index")
     end
 
+    # ONE FOLDER TREE FOR THE PAGE. The project groups and the cards' facts each built their own
+    # Maker::LibraryTree, so the page plucked every folder row twice; both now read the tree and the
+    # placements Files::ModelsController#index builds once. The statement counted is the tree's own
+    # pluck (its select list), and 1 is exact on purpose: a second tree makes it 2, and a tree whose
+    # pluck stopped matching this pattern makes it 0, which fails rather than passing over nothing.
+    test "files/models#index plucks the folders once" do
+      project = @user.maker_projects.create!(name: "Lamp")
+      folder = @user.nodes.create!(node_id: "tree-p", name: "lamp", kind: "dir", size: 0, mtime: 1_700_000_000_000_000_000)
+      project.update_column(:folder_node_id, folder.node_id)
+      model = @user.maker_models.create!(title: "Shade", origin: "auto", auto_node_id: "tree-m")
+      node!("tree-m", "shade.stl").update_column(:parent_node_id, folder.node_id)
+      model.file_attachments.create!(user: @user, node_id: "tree-m", role: "model")
+
+      get files_models_path
+      assert_response :success
+      statements = []
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") { |*, payload| statements << payload[:sql] }
+      get files_models_path
+      ActiveSupport::Notifications.unsubscribe(sub)
+
+      assert_select ".models-group h2.group-head a", text: "Lamp"
+      assert_select ".model-card .model-facts-folder", text: "lamp"
+      tree = /SELECT "nodes"\."node_id", "nodes"\."parent_node_id", "nodes"\."name" FROM "nodes"/
+      plucks = statements.grep(tree)
+      assert_equal 1, plucks.size, "the page built #{plucks.size} folder trees; the groups and the cards share one"
+      # AND WHERE THE MODELS SIT IS WORKED OUT ONCE: the placements' own pluck, by its select list.
+      placed = statements.grep(/SELECT "nodes"\."node_id", "nodes"\."parent_node_id" FROM "nodes"/)
+      assert_equal 1, placed.size, "the models were placed #{placed.size} times; the groups and the cards share one answer"
+
+      # A PAGE WITH NO MODEL ON IT PLACES NOTHING, so a filter that matches nothing reads no folder.
+      statements.clear
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") { |*, payload| statements << payload[:sql] }
+      get files_models_path(q: "no such model")
+      ActiveSupport::Notifications.unsubscribe(sub)
+      assert_select "p.empty", text: /No models match/
+      assert_empty statements.grep(tree), "an empty page plucked the folders"
+    end
+
     test "models#show does not grow with attachments or print runs" do
       model = @user.maker_models.create!(title: "Shown", slug: "shown")
       add = lambda do |prefix, count|
