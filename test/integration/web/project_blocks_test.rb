@@ -126,6 +126,24 @@ module Web
       end
     end
 
+    # A PICKER'S THUMBNAILS ARE POLLED LIKE ANY OTHER, AND THE POLL ONLY SEES CELLS. Both pickers
+    # mounted the thumbs controller and neither marked a button as one of its cells, so a preview
+    # still rendering when the editor opened stayed a ring until the page was reloaded (and a still
+    # one: the ring turns only inside a cell). The three places the picker is drawn are the cover
+    # card, an existing picture block, and the template a new picture block is cloned from.
+    test "every image picker button is a thumbnail poll cell" do
+      image = block!(kind: "image", node_id: @side.node_id)
+
+      get edit_layout_project_path(@project)
+
+      cell = "[data-thumbs-target=cell][data-node-id=?][data-ext=PNG]"
+      assert_select "div.page-intro .image-picker[data-controller=thumbs] button.cover-pick#{cell}", @front.node_id, 1
+      assert_select "div.panel-slot[data-key=?] .image-picker[data-controller=thumbs] button.image-pick#{cell}",
+                    bkey(image), @front.node_id, 1
+      assert_select "template[data-kind=image] .image-picker[data-controller=thumbs] button.image-pick#{cell}",
+                    @front.node_id, 1
+    end
+
     test "Add block is disabled at the cap" do
       Maker::ProjectBlock::CAP.times { |i| block!(kind: "text", body: "b#{i}") }
       get edit_layout_project_path(@project)
