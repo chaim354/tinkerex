@@ -773,9 +773,10 @@ class ProjectsController < ApplicationController
     attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
                                             :visibility, :license, :autofile, :kind)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
-    # ARCHIVING IS A BUTTON, NOT A FORM VALUE (stage 4, S4-6). #archive! also stamps archived_at,
-    # and the form's own select never offers `archived` — so a hand-posted one would set the column
-    # WITHOUT the timestamp, leaving a row in the archived list that #unarchive cannot reason about.
+    # ARCHIVING IS A BUTTON, NOT A FORM VALUE (stage 4, S4-6). The form's own select never offers
+    # `archived`, and #destroy is the door that archives, with the sentence that says what that
+    # did; a hand-posted value would archive from the edit form and say only "saved". (The stamp is
+    # no longer the reason: Maker::Project derives archived_at from the status for every writer.)
     # Stripped rather than un-permitted, because the other four values are legitimate.
     attrs.delete(:status) if attrs[:status] == "archived"
     attrs

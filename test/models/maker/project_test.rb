@@ -86,6 +86,80 @@ module Maker
       assert_nil project.archived_at
     end
 
+    # THE STAMP FOLLOWS THE STATUS FOR EVERY WRITER, because it is the model that keeps them in
+    # step. Two columns record one fact, and each writer guarded the pair itself: #archive!, the
+    # MCP tool's own copy, the web's stripped param and hidden select. The v1 API guarded nothing,
+    # so "archived, never archived" and "active, archived last week" were both storable.
+    test "a status that becomes archived is stamped, by a plain update" do
+      project = @user.maker_projects.create!(name: "x")
+
+      project.update!(status: "archived")
+
+      assert_not_nil project.reload.archived_at
+    end
+
+    test "a project created archived is stamped" do
+      assert_not_nil @user.maker_projects.create!(name: "x", status: "archived").reload.archived_at
+    end
+
+    test "leaving archived clears the stamp, whatever the next status" do
+      (Maker::Project::STATUSES - %w[archived]).each do |status|
+        project = @user.maker_projects.create!(name: "x #{status}", status: "archived")
+
+        project.update!(status:)
+
+        assert_nil project.reload.archived_at, "still stamped after moving to #{status}"
+      end
+    end
+
+    # STAMPED ONCE. The setup is three days old so that a stamp taken again at the save would be
+    # out by days, not by a fraction of the same second (CLAUDE.md §15 on timestamps).
+    test "an archived project keeps the moment it was archived through later saves" do
+      project = travel_to(3.days.ago) { @user.maker_projects.create!(name: "x", status: "archived") }
+      archived = project.reload.archived_at
+
+      project.update!(description: "shelved")
+      project.archive!
+
+      assert_equal archived, project.reload.archived_at
+    end
+
+    test "a stamp handed in beside a status that is not archived is not stored" do
+      project = @user.maker_projects.create!(name: "x", status: "active", archived_at: Time.current)
+      assert_nil project.reload.archived_at
+
+      project.update!(archived_at: Time.current)
+      assert_nil project.reload.archived_at
+    end
+
+    test "a stamp handed in beside archived is the one kept" do
+      moment = 2.days.ago.change(usec: 0)
+
+      project = @user.maker_projects.create!(name: "x", status: "archived", archived_at: moment)
+
+      assert_equal moment, project.reload.archived_at
+    end
+
+    # A ROW WRITTEN BEFORE THE RULE EXISTED repairs itself the next time anything saves it.
+    test "an archived row with no stamp gains one at its next save" do
+      project = @user.maker_projects.create!(name: "x", status: "archived")
+      project.update_column(:archived_at, nil)
+
+      project.reload.update!(description: "shelved")
+
+      assert_not_nil project.reload.archived_at
+    end
+
+    test "a refused save changes neither the status nor the archive stamp" do
+      project = @user.maker_projects.create!(name: "x", status: "archived")
+
+      assert_not project.update(status: "bogus")
+
+      project.reload
+      assert_equal "archived", project.status
+      assert_not_nil project.archived_at
+    end
+
     test "slugify normalizes a folder name" do
       assert_equal "desk-lamp", Maker::Project.slugify("Desk Lamp")
       assert_equal "desk-lamp", Maker::Project.slugify("  Desk--Lamp!  ")

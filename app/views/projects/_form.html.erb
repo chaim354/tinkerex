@@ -34,8 +34,8 @@
     forever, with "done" unreachable from the web at all. The v1 API and the desktop app have
     always seen the full vocabulary, so this exposes what the column already holds.
 
-    `archived` IS NOT AN OPTION, and it must not become one. Archiving is a button that also stamps
-    archived_at; a select value would set the column without the timestamp. On an archived project
+    `archived` IS NOT AN OPTION, and it must not become one. Archiving is a button with its own
+    door and its own sentence about what it did, not a value of this select. On an archived project
     the whole field is omitted rather than rendered with nothing selected — a browser then picks the
     first option, and saving any other field would silently unarchive the project. See
     ProjectsController#project_params, which drops the value even if one is hand-posted.

@@ -123,10 +123,8 @@ module McpServer
 
         def self.perform(user, slug:, name: nil, description: nil, status: nil, kind: nil)
           p = project!(user, slug)
-          p.assign_attributes({ name:, description:, kind:, status: }.compact)
-          # Maker::Project#archive! / #unarchive! in one save: the stamp follows the status.
-          p.archived_at = (status == "archived" ? (p.archived_at || Time.current) : nil) if status
-          p.save!
+          # The stamp follows the status inside the model (Maker::Project's before_save).
+          p.update!({ name:, description:, kind:, status: }.compact)
           Render.project(p, tree: Maker::LibraryTree.new(user))
                 .merge(description: p.description, archived_at: Render.time(p.archived_at))
         end
