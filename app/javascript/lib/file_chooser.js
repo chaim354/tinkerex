@@ -80,7 +80,8 @@ export class FileChooser {
     // Normalized here, once: lower-cased and dot-prefixed, so a caller may write "svg" or ".SVG".
     // An empty or absent list means no filtering at all.
     this.extensions = normalizeExtensions(extensions)
-    this.cache = {}       // parentId ("" = root) -> entries array
+    this.cache = {}       // parentId ("" = root) -> a promise of its entries (childrenOf)
+    this.renders = 0      // the newest render's number; an older one must not reach the page
     this.trail = []       // folders descended into (root implicit); each { id, name }
     this.selection = null // { nodeId, kind, path } or null
   }
@@ -197,38 +198,58 @@ export class FileChooser {
   }
 
   // ---- data ----------------------------------------------------------------
-  async childrenOf(parentId) {
+  // -> a promise of the folder's entries, or of null when its listing could not be loaded.
+  //
+  // THE CACHE HOLDS THE PROMISE, NOT THE ANSWER, so two renders asking about one folder share one
+  // request. A LISTING THAT FAILED IS FORGOTTEN: it used to be stored as `[]`, which is an empty
+  // folder, so one dropped request made a folder read "Empty folder" until the chooser closed.
+  childrenOf(parentId) {
     const key = parentId || ""
-    if (this.cache[key]) return this.cache[key]
+    this.cache[key] ||= this.load(parentId).then((entries) => {
+      if (entries === null) delete this.cache[key]
+      return entries
+    })
+    return this.cache[key]
+  }
+
+  async load(parentId) {
     const url = new URL(this.childrenUrl, window.location.origin)
     if (parentId) url.searchParams.set("parent", parentId)
     if (this.mode === "file" || this.mode === "browse") url.searchParams.set("files", "1")
-    let entries = []
     try {
       const res = await fetch(url, { headers: { Accept: "application/json" } })
-      if (res.ok) entries = (await res.json()).entries || []
-    } catch (_e) { /* transient; show an empty column */ }
-    this.cache[key] = entries
-    return entries
+      return res.ok ? (await res.json()).entries || [] : null
+    } catch (_e) {
+      return null
+    }
   }
 
   // ---- render --------------------------------------------------------------
+  // ONLY THE NEWEST RENDER DRAWS. Every click starts one, none of them is awaited, and each waits
+  // on a listing per column. Nothing used to tell an older render that a newer one had begun, so
+  // when a slow listing finally answered, the old render carried on and appended its column after
+  // the new render's: the contents of a folder no longer selected, as a third column. `mine` is
+  // this render's number and `trail` the path it was started for; after every await it checks
+  // that it is still the newest before it touches the page.
   async render() {
     if (!this.host) return
+    const mine = ++this.renders
+    const trail = [ ...this.trail ]
     this.colsEl.innerHTML = ""
     // `rootId` IS null FOR EVERY MODAL CALLER, so this is the library root exactly as before; an
     // inline browse mount passes the repository's own dir node and the first column lists that.
-    const levels = [ { id: this.rootId, name: this.rootLabel }, ...this.trail ]
+    const levels = [ { id: this.rootId, name: this.rootLabel }, ...trail ]
     for (let k = 0; k < levels.length; k++) {
       const entries = await this.childrenOf(levels[k].id)
-      // Awaiting inside the loop means the chooser can be closed (or unmounted) mid-render;
-      // without this the next append throws on a null colsEl and the promise never settles.
-      if (!this.host) return
-      const descendedId = this.trail[k] ? this.trail[k].id : null // folder opened FROM this column
+      // Awaiting inside the loop means the chooser can be closed (or unmounted) mid-render, or a
+      // newer render can have started; without the first check the next append throws on a null
+      // colsEl and the promise never settles.
+      if (!this.host || mine !== this.renders) return
+      const descendedId = trail[k] ? trail[k].id : null // folder opened FROM this column
       this.colsEl.appendChild(this.columnEl(entries, k, descendedId))
     }
     this.colsEl.scrollLeft = this.colsEl.scrollWidth
-    this.crumbsEl.textContent = [ this.rootLabel, ...this.trail.map((f) => f.name) ].join("  ›  ")
+    this.crumbsEl.textContent = [ this.rootLabel, ...trail.map((f) => f.name) ].join("  ›  ")
     // BACK IS OFFERED ONLY WHERE BACK CAN GO. `back()` returns early at `trail.length === 0`, so at
     // the top level the control was rendered live, focusable and styled as available, and did
     // nothing when clicked - the "looks available, is absent" shape §14d records for an
@@ -261,14 +282,16 @@ export class FileChooser {
     return entries.filter((e) => e.kind === "dir" || this.extensions.some((ext) => endsWithExt(e.name, ext)))
   }
 
+  // `allEntries` IS null WHEN THE LISTING COULD NOT BE LOADED, which is not an empty folder and
+  // does not say it is one. Opening the folder again asks again (childrenOf forgets a failure).
   columnEl(allEntries, depth, descendedId) {
-    const entries = this.visible(allEntries)
+    const entries = this.visible(allEntries || [])
     const col = document.createElement("div")
     col.className = "filechooser-col"
     if (entries.length === 0) {
       const empty = document.createElement("div")
       empty.className = "filechooser-empty"
-      empty.textContent = "Empty folder"
+      empty.textContent = allEntries === null ? "Could not load this folder. Open it again to retry." : "Empty folder"
       col.appendChild(empty)
     }
     for (const entry of entries) {

@@ -68,6 +68,39 @@ class FileChooserTest < ApplicationSystemTestCase
 
   def cover_input = find("input[name='project[cover_node_id]']", visible: false)
 
+  # THE NETWORK MISBEHAVING FOR ONE FOLDER'S LISTING, AND NOTHING ELSE. Matched on the `parent`
+  # the chooser asks /library/children about, so every other listing goes straight through.
+  def hold_children_of(node_id)
+    page.execute_script(<<~JS, node_id)
+      const parent = arguments[0]
+      const real = window.fetch.bind(window)
+      window.__heldListings = []
+      window.fetch = async (url, options) => {
+        if (new URL(url, location.origin).searchParams.get("parent") === parent) {
+          await new Promise((go) => window.__heldListings.push(go))
+        }
+        return real(url, options)
+      }
+    JS
+  end
+
+  def release_children = page.execute_script("window.__heldListings.splice(0).forEach((go) => go())")
+
+  def fail_children_of_once(node_id)
+    page.execute_script(<<~JS, node_id)
+      const parent = arguments[0]
+      const real = window.fetch.bind(window)
+      let pending = true
+      window.fetch = async (url, options) => {
+        if (pending && new URL(url, location.origin).searchParams.get("parent") === parent) {
+          pending = false
+          return new Response("{}", { status: 503, headers: { "Content-Type": "application/json" } })
+        }
+        return real(url, options)
+      }
+    JS
+  end
+
   test "the trigger opens a modal, a file can be found by descending, and the form carries it" do
     open_form
     assert_text "Choose automatically", count: 1
@@ -231,6 +264,54 @@ class FileChooserTest < ApplicationSystemTestCase
     assert_equal @file.node_id, cover_input.value,
                  "the label and the submitted node_id must still name the same file"
     assert_no_console_errors
+  end
+
+  # ONE RENDER AT A TIME REACHES THE PAGE. A click starts a render that awaits each column's
+  # listing, and nothing told an older render that a newer one had begun: click a folder whose
+  # listing is slow, then another, and when the slow answer landed the first render carried on and
+  # appended ITS column after the second render's. Two columns turned into three, the last one the
+  # contents of a folder that is no longer selected. The slow network is the held request; the
+  # chooser, the endpoint and the catalog are the real ones.
+  test "a folder clicked while another is still loading shows only its own columns" do
+    slow = Maker::LibraryFolder.ensure_path!(@user, [ "Archive" ])
+    @user.nodes.create!(node_id: SecureRandom.uuid, name: "old-part.stl", kind: "file", parent_node_id: slow.node_id)
+    open_form
+    find(".folder-field-btn").click
+    within(".filechooser-cols") { assert_text "Archive" }
+    hold_children_of(slow.node_id)
+
+    find(".filechooser-row", text: "Archive").click
+    find(".filechooser-row", text: "Projects").click
+    within(".filechooser-cols") { assert_text "harbor" }
+    release_children
+
+    assert_no_text "old-part.stl"
+    assert_selector ".filechooser-col", count: 2
+    assert_equal [ "Projects" ], all(".filechooser-row.sel").map(&:text)
+    assert_no_console_errors
+  end
+
+  # A LISTING THAT FAILED IS NOT AN EMPTY FOLDER, AND IS NOT REMEMBERED AS ONE. A dropped request
+  # was cached as `[]`, so the folder read "Empty folder" until the chooser was closed, however
+  # often it was opened. It now says the listing could not be loaded and asks again next time.
+  test "a folder whose listing failed says so and loads when it is opened again" do
+    open_form
+    find(".folder-field-btn").click
+    find(".filechooser-row", text: "Projects").click
+    within(".filechooser-cols") { assert_text "harbor" }
+    harbor = @user.nodes.find_by!(name: "harbor", kind: "dir")
+    fail_children_of_once(harbor.node_id)
+
+    find(".filechooser-row", text: "harbor").click
+
+    assert_selector ".filechooser-col", count: 3
+    within(all(".filechooser-col").last) do
+      assert_text "Could not load this folder"
+      assert_no_text "Empty folder"
+    end
+    find(".filechooser-back").click
+    find(".filechooser-row", text: "harbor").click
+    within(".filechooser-cols") { assert_text "beacon.stl" }
   end
 
   test "Escape closes the modal without committing a selection" do
