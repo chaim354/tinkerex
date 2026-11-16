@@ -111,6 +111,23 @@ module Maker
       assert pub.permits?(@f[:deep_file])
     end
 
+    # `page_nodes` IS EVERY LIVE NODE THE PAGE REFERS TO, PERMITTED OR NOT. `permitted_node` is the
+    # same lookup with `permits?` already asked, so a caller cannot hold a node the page may not
+    # serve. A dot-named entry photo is the case that tells the two apart: attached, live, refused.
+    test "permitted_node answers a page node only when the page may serve it, and the photo list follows" do
+      hidden = create_node!(@user, node_id: SecureRandom.uuid, name: ".bench.png", kind: "file",
+                            mtime: 1, size: PNG_BYTES.bytesize)
+      @f[:entry].file_attachments.create!(user: @user, node_id: hidden.node_id, role: "image", position: 1)
+      page = pub
+
+      assert page.page_nodes.key?(hidden.node_id), "the fixture is not a page node at all"
+      assert_not page.permits?(hidden)
+      assert_nil page.permitted_node(hidden.node_id)
+      assert_equal @f[:entry_photo].node_id, page.permitted_node(@f[:entry_photo].node_id).node_id
+      assert_not_includes page.photo_rows.map(&:node_id), hidden.node_id
+      assert_includes page.photo_rows.map(&:node_id), @f[:entry_photo].node_id
+    end
+
     test "a file attached to a build-log entry is permitted even outside the folder" do
       node = @f[:entry_photo]
       assert_nil node.parent_node_id, "the fixture's entry photo must sit outside the folder"

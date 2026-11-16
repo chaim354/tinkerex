@@ -243,6 +243,29 @@ module Web
       assert_select ".entry-photos .photo-cell .thumb-icon", count: 0
     end
 
+    # WHAT THE FILE ROUTE REFUSES, THE PAGE DOES NOT DRAW. `permits?` is the one answer to "is this
+    # file public", and an entry photo is permitted by its attachment unless the listing hides its
+    # name (a dot-file) or it sits beneath a `.git` folder. The build log asked only whether the
+    # node was live, so such a photo was drawn with its name and a link, and the link answered 404:
+    # a private file's name published on a public page. The first request is the precondition, so
+    # the test cannot pass by the fixture having stopped being refused.
+    test "an entry photo the file route refuses is not drawn, named or linked on the page" do
+      hidden = create_node!(@user, node_id: SecureRandom.uuid, name: ".bench.png", kind: "file",
+                            mtime: 1, size: PNG_BYTES.bytesize)
+      @root.join(hidden.storage_path).binwrite(PNG_BYTES)
+      @f[:entry].file_attachments.create!(user: @user, node_id: hidden.node_id, role: "image", position: 1)
+
+      get public_file_path("ada", @project.slug, hidden.node_id)
+      assert_response :not_found
+
+      get path
+
+      assert_response :success
+      refute_includes response.body, ".bench.png", "the refused photo's name is on the public page"
+      refute_includes response.body, hidden.node_id, "the refused photo is linked from the public page"
+      assert_select ".entry-photos .photo-cell[aria-label=?]", "shot.png", 1
+    end
+
     # HIDDEN MEANS UNREAD ON THE VISITOR'S PAGE TOO: the README's bytes are a port read — a WAN one on
     # chunk_remote — and nothing reads them for a panel the maker hid: not the partial (never
     # rendered), not the thumbnail union (gated on the panel's visibility). Counted on the ROOT README's
