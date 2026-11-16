@@ -39,7 +39,7 @@ module Mcp
       assert @user.maker_tasks.find(out.dig("task", "id")).completed_at.present?
     end
 
-    test "update_task changes the given fields and follows the v1 completed_at rule" do
+    test "update_task changes the given fields, and the stamp follows the status" do
       task = @user.maker_tasks.create!(taskable: @lamp, title: "Cut")
       out = mcp_structured(@token, "update_task", { id: task.id, status: "done" })
       assert_equal "done", out.dig("task", "status")

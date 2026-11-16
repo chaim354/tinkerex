@@ -12,21 +12,13 @@ module V1
       end
 
       def create
-        task = current_user.maker_tasks.new(task_params)
-        task.completed_at ||= Time.current if task.status == "done"
-        task.save!
+        task = current_user.maker_tasks.create!(task_params)
         render json: task_json(task), status: :created
       end
 
       def update
         task = current_user.maker_tasks.find(params[:id])
-        attrs = task_params.to_h
-        if attrs["status"] == "done"
-          attrs["completed_at"] = Time.current if task.completed_at.nil?
-        elsif attrs["status"].present?
-          attrs["completed_at"] = nil
-        end
-        task.update!(attrs)
+        task.update!(task_params)
         render json: task_json(task)
       end
 

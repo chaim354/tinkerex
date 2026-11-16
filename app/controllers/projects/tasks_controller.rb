@@ -29,10 +29,10 @@ module Projects
       end
     end
 
-    # ONE VALIDATED WRITE, with the completed_at stamp derived IN MEMORY from the same params it is
-    # persisted with — so the refusal is total and the invalid pair is unrepresentable rather than
-    # merely unlikely. This was three APIs in one action (`complete!` bang, `update` silent-false,
-    # `update_column` no-validation) and both branches were wrong:
+    # ONE VALIDATED WRITE, AND THE STATUS IS ALL IT SETS: `Maker::Task` derives `completed_at` from
+    # it in the same save, so a refusal is total and the pair cannot disagree. This was three APIs
+    # in one action (`complete!` bang, `update` silent-false, `update_column` no-validation) and
+    # both branches were wrong:
     #
     #   the else branch decided from the PARAMS, not the record, so a write the model REFUSED still
     #     ran `update_column(:completed_at, nil)` — persisting `status="done", completed_at=NULL`,
@@ -42,16 +42,9 @@ module Projects
     #
     # Both were invisible to a green suite: every existing status test sends a VALID status, so
     # `update` always succeeded and the guard never ran for the reason it exists (§14e).
-    # `Time.current`, not v1's `completed_at ||=`, reproduces `Maker::Task#complete!` exactly — this
-    # is not a fourth spelling of the derivation rule.
     def update
       task  = project_task!(params[:id])
       attrs = task_params.to_h
-      case attrs["status"]
-      when nil, ""  then nil                                   # no status change: leave the stamp alone
-      when "done"   then attrs["completed_at"] = Time.current
-      else               attrs["completed_at"] = nil           # out of done: drop the stale stamp
-      end
       if task.update(attrs)
         # THE NOTICE SAYS WHAT THE BUTTON DID (2026-11-02, the UX audit's B7): an update used to set
         # none, so a status change was told by the row moving and a rename by nothing at all.
