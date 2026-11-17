@@ -48,6 +48,20 @@ module Maker
         assert_equal 512, result[:height]
       end
 
+      # THE BOARD'S RASTERISE IS BOUNDED AS THE LAYER'S IS (gerber_test.rb), and it is pinned here as
+      # well because this renderer has its own `render`: a zip that reached the rasteriser by a call
+      # of its own, with no limit, would leave that test green. The board is the case that matters
+      # most, since a zip is where the decompressed geometry budget comes from.
+      test "a rasteriser that never exits is killed when it draws a board" do
+        with_a_rasteriser_that_never_exits do |timed|
+          error, elapsed = timed.call { Maker::Previews::GerberZip.render(fusion_zip) }
+
+          assert_operator elapsed, :<, 5,
+                          "the rasterise took #{elapsed.round(1)}s against a 1s limit: it was not bounded"
+          assert_equal "resvg timed out after 1s", error.message
+        end
+      end
+
       # THE COMMITTED FIXTURE IS THE SAME ARCHIVE, and asserting that here is what lets
       # renderer_contract_test.rb use the file on disk while every case in this suite builds one in
       # memory. Not byte-equality: rubyzip stamps a DOS timestamp, which is why the fixture is

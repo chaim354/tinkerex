@@ -192,6 +192,23 @@ module Maker
         end
       end
 
+      # THE RASTERISER IS BOUNDED TOO WHEN IT DRAWS A GERBER. node's output is an SVG built from the
+      # same decompressed, user-supplied geometry node was bounded for, and it is not a file the job
+      # capped, so resvg runs under the pipeline's limit on this path. It ran with none: a resvg
+      # that hung held its worker until it exited by itself.
+      #
+      # THE CLOCK IS ASSERTED FIRST, for the reason the node case above gives: an unbounded resvg
+      # raises too, twenty seconds later ("resvg failed"), and that must not read as bounded.
+      test "a rasteriser that never exits is killed when it draws a layer" do
+        with_a_rasteriser_that_never_exits do |timed|
+          error, elapsed = timed.call { Maker::Previews::Gerber.render(MINIMAL_GERBER, ext: "gtl") }
+
+          assert_operator elapsed, :<, 5,
+                          "the rasterise took #{elapsed.round(1)}s against a 1s limit: it was not bounded"
+          assert_equal "resvg timed out after 1s", error.message
+        end
+      end
+
       # A MALFORMED TIMEOUT IS THE DEFAULT, NOT ZERO. `to_i` answers 0 for "60s" or "sixty", and a
       # 0 s bound is not "unbounded" — `join(0)` returns at once, so every Gerber on that deployment
       # would time out over one typo in an env var.

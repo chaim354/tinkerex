@@ -1,4 +1,5 @@
 require "test_helper"
+require "tmpdir"
 
 module Maker
   module Previews
@@ -44,6 +45,37 @@ module Maker
         assert_raises(Maker::Previews::SvgRasterizer::RasterizeError) do
           Maker::Previews::SvgRasterizer.to_png("not an svg at all", size: 64)
         end
+      end
+
+      # A CALLER MAY GIVE A LIMIT (`timeout:`), and resvg then runs under it. Maker::Previews::Gerber
+      # does, because what it hands over is built from decompressed geometry no cap has measured;
+      # every other caller hands over one file the job has already bounded and passes none.
+      #
+      # A SHELL SCRIPT THROUGH RESVG_BIN, so this runs on a box with no resvg. THE CLOCK IS ASSERTED
+      # FIRST: with the limit ignored the script is waited out and a RasterizeError still comes,
+      # twenty seconds later ("resvg failed"), which must not read as bounded.
+      test "a resvg that never exits is killed when the caller gave a limit" do
+        original = ENV["RESVG_BIN"]
+        Dir.mktmpdir do |dir|
+          script = File.join(dir, "resvg-that-sleeps")
+          File.write(script, "#!/bin/sh\nsleep 20\n")
+          File.chmod(0o755, script)
+          ENV["RESVG_BIN"] = script
+          Maker::Previews::SvgRasterizer.reset_bin!
+
+          started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          error = assert_raises(Maker::Previews::SvgRasterizer::RasterizeError) do
+            Maker::Previews::SvgRasterizer.to_png(SQUARE, size: 64, timeout: 1)
+          end
+          elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+          assert_operator elapsed, :<, 5,
+                          "the rasterise took #{elapsed.round(1)}s against a 1s limit: it was not bounded"
+          assert_equal "resvg timed out after 1s", error.message
+        end
+      ensure
+        original.nil? ? ENV.delete("RESVG_BIN") : ENV["RESVG_BIN"] = original
+        Maker::Previews::SvgRasterizer.reset_bin!
       end
 
       test "a missing binary makes available? false and to_png raise RasterizeError" do

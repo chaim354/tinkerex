@@ -397,13 +397,22 @@ OOM-killed. So each member is also READ under a cap against a running total — 
 refused before it is written when it comes back longer than the budget. Neither check replaces the
 other.
 
-**THE NODE SUBPROCESS IS THE ONE RENDERER HERE WITH A WALL-CLOCK BOUND** (`GERBER_RENDER_TIMEOUT`,
-default 60 s; `Maker::Previews::Gerber.run_node` kills and raises `RenderError`). Its siblings are
-each handed ONE file the job has already capped; this one's runtime is driven by decompressed,
-user-supplied geometry, and the 104 s probe above held a Solid Queue worker for its whole duration.
-`popen3` with stdout and stderr drained in their own threads, never a single-threaded read: a
-board's SVG is several MB, so one reader deadlocks on the pipe and the timeout then fires on a
-render that was working.
+**BOTH STEPS OF A GERBER RENDER RUN UNDER A WALL-CLOCK LIMIT, AND NO OTHER RENDERER DOES**
+(`GERBER_RENDER_TIMEOUT`, default 60 s, for each step; `Maker::Previews::Subprocess` kills the
+process group and raises the caller's error, `RenderError` from node and `RasterizeError` from
+resvg). The other renderers are each handed ONE file the job has already capped. This pipeline's
+runtime is driven by decompressed, user-supplied geometry at both steps: node plots it, and resvg
+is then handed node's OUTPUT, an SVG built from that geometry, which is not a file any cap
+measured. So `SvgRasterizer.to_png` takes a `timeout:`, and `Gerber.rasterize`, the one door both
+Gerber renderers reach it through, passes the limit. **Until 2026-11-16 only node was bounded**, and
+this paragraph gave "one capped file" as the reason its siblings needed no limit: true of every
+caller of the rasteriser but this one. The 104 s probe above held a Solid Queue worker for its
+whole duration, and the workers serve every queue. `popen3` with stdout and stderr drained in their
+own threads, never a single-threaded read: a board's SVG is several MB, so one reader deadlocks on
+the pipe and the timeout then fires on a render that was working. Whether resvg on a maker's own
+SVG, pdfium, f3d and stl-thumbnailer get a limit is undecided, and waits on timings of the largest
+real files in a live library; a limit that is too tight turns a slow, correct render into a
+`failed` row.
 
 **THE HAIRLINE STYLESHEET IS NOT APPLIED, AND THAT IS WHY `SvgRasterizer.to_png` GREW A
 `stylesheet:` KWARG.** `STYLESHEET` exists for sources that draw in hairlines (a LightBurn file, a
