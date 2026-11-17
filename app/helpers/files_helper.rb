@@ -110,19 +110,16 @@ module FilesHelper
   end
 
   # WHERE EACH RESULT ROW SITS, for shared/_result_group (UX audit D11, 2026-11-02): `{ record_id =>
-  # [folder_id, path] }` over the rows that will RENDER, with the folder id read off each record by
-  # the caller's block (a node's parent, a model's folder). The path is "" for the library root, and
-  # a row whose folder is unknown or whose chain is broken gets NO key — Maker::LibraryTree#path_for
-  # answers nil there, and the row then names nothing rather than claim the root. A non-node with no
-  # folder at all (a model imported with none) is the same absence. `tree` is the caller's, one per
-  # request, so every group on a page shares one pluck.
-  def result_folders(records, tree:)
-    records.each_with_object({}) do |record, out|
-      folder_id = yield(record)
-      next if folder_id.nil? && !record.is_a?(Node)
-
+  # [folder_id, path] }` from the caller's `{ record_id => folder_id }` over the rows that will
+  # RENDER (a node's parent; a model's place, which is Maker::Model.placements' own shape). A nil
+  # folder id is the library root and its path is "". A row with NO ENTRY has no folder to name (a
+  # model with nothing to place it by), and a row whose chain is broken gets none either:
+  # Maker::LibraryTree#path_for answers nil there, and the row then names nothing rather than claim
+  # the root. `tree` is the caller's, one per request, so every group on a page shares one pluck.
+  def result_folders(folder_ids, tree:)
+    folder_ids.each_with_object({}) do |(record_id, folder_id), out|
       path = tree.path_for(folder_id)
-      out[record.id] = [ folder_id, path ] unless path.nil?
+      out[record_id] = [ folder_id, path ] unless path.nil?
     end
   end
 

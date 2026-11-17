@@ -75,8 +75,8 @@
     <code>models/</code> folder becomes a model on the next scan, or
     <%= link_to "import a Printables zip", new_model_path %>.</p>
 <% else %>
-  <%# THE CARDS' FACTS LINE (E1): Files::ModelsController#index's @card_facts, two queries whatever the
-      number of models (Maker::Model.card_facts). %>
+  <%# THE CARDS' FACTS LINE (E1): Files::ModelsController#index's @card_facts, the same number of
+      queries whatever the number of models (Maker::Model.card_facts). %>
   <% facts = @card_facts %>
   <% headed = @groups.any?(&:project) %>
   <div class="models-groups" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">

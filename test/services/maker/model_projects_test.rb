@@ -82,6 +82,16 @@ module Maker
       assert_equal [ [ "catan", %w[pip] ], [ "Lamp", %w[kit] ] ], group
     end
 
+    # A KEY IN THE TRASH KEEPS ITS PLACE (Maker::Model.placements' chosen reading), so the model
+    # stays under its project until Maker::AttachmentReaper clears its rows, as it always did here.
+    test "a model whose file is in the trash stays under its project" do
+      file("n-robber", "robber.stl", "d-catan-models")
+      auto_model("robber", "n-robber")
+      @user.nodes.find_by!(node_id: "n-robber").update!(deleted: true)
+
+      assert_equal [ [ "catan", %w[robber] ] ], group
+    end
+
     test "the nearest project folder wins when one project's folder sits inside another's" do
       inner = project("Shade kit", "d-lamp-models")
       file("n-shade", "shade.stl", "d-shade")

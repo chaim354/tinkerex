@@ -44,13 +44,20 @@ module Files
       # the ALREADY-LOADED :file_attachments include -- a `where.missing` would be a second query and
       # would disagree with what the cards render.
       @models.reject!(&:hollow?)
+      # WHERE EACH MODEL SITS, READ ONCE (Maker::Model.placements): the group a card is under and the
+      # folder the card names are the same answer, and the page plucks the folders once. A page with
+      # no model on it (a filter that matches nothing) places nothing and reads no folder at all.
+      if @models.any?
+        tree = Maker::LibraryTree.new(current_user)
+        places = Maker::Model.placements(current_user, @models, tree:)
+      end
       # GROUPED BY PROJECT (Maker::ModelProjects), AFTER every filter and the sort: an empty group never
       # renders, and the chosen sort holds inside each one.
-      @groups = Maker::ModelProjects.group(current_user, @models)
+      @groups = Maker::ModelProjects.group(current_user, @models, tree:, places:)
       @covers = Maker::Previews::ThumbnailMap.for(current_user, @models.map(&:cover_node_id))
-      # EACH CARD'S EXTENSIONS AND FOLDER (UX audit E1): two queries whatever the number of models,
+      # EACH CARD'S EXTENSIONS AND FOLDER (UX audit E1): one more query whatever the number of models,
       # read here rather than from the view so the page's queries are the controller's to count.
-      @card_facts = Maker::Model.card_facts(current_user, @models)
+      @card_facts = Maker::Model.card_facts(current_user, @models, tree:, places:)
       @all_tags = current_user.maker_tags.order(:name).pluck(:name)
       @status = @filters[:status]
     end
