@@ -216,6 +216,9 @@ export class FileChooser {
     const url = new URL(this.childrenUrl, window.location.origin)
     if (parentId) url.searchParams.set("parent", parentId)
     if (this.mode === "file" || this.mode === "browse") url.searchParams.set("files", "1")
+    // BROWSE ASKS FOR EACH ROW'S RIGHT-CLICK MENU TOO (2026-11-16; see #wire). The picking modes
+    // never do: their rows are choices in a modal, not files on a page.
+    if (this.mode === "browse") url.searchParams.set("menu", "1")
     try {
       const res = await fetch(url, { headers: { Accept: "application/json" } })
       return res.ok ? (await res.json()).entries || [] : null
@@ -311,6 +314,7 @@ export class FileChooser {
         // expects of a file link, none of which a `div` with a listener can offer. Its one action
         // is fileopen's (rowEl), which leaves every one of those to the browser.
         if (!isFile) row.addEventListener("click", () => this.descend(depth, entry))
+        this.wire(row, entry.menu)
       } else {
         row.addEventListener("click", () => (isFile ? this.pickFile(depth, entry) : this.descend(depth, entry)))
       }
@@ -342,6 +346,27 @@ export class FileChooser {
       link.dataset.action = "click->fileopen#click"
     }
     return link
+  }
+
+  // A BROWSED ROW'S RIGHT-CLICK MENU (2026-11-16). The tiles and list rows of the same page are
+  // rendered by the server with FilesHelper#file_menu_data in their `data-` attributes, and
+  // filemenu_controller.js builds the menu from those and nothing else. A row here is built in the
+  // browser, so it carried none of them and a right-click raised the browser's own menu. The
+  // listing now hands each entry that same hash (LibraryBrowseController#row_menus) and this sets
+  // it on the row.
+  //
+  // EVERY PAIR IS SET AS IT ARRIVES, so this module learns no route and no entry: the server
+  // decides what a row offers, exactly as `fileUrlTemplate` leaves the file page's address to it.
+  //
+  // `action` IS ADDED TO THE ROW'S OWN, NEVER WRITTEN OVER IT. A file row already carries
+  // fileopen's click (rowEl), and replacing it would trade "a click opens the file" for the menu.
+  // Stimulus binds the result when the row is inserted, to the `filemenu` controller the host
+  // sits under (projects/_folder_panel); with none above it the attributes are inert.
+  wire(row, data) {
+    for (const [ name, value ] of Object.entries(data || {})) {
+      if (name === "action") row.dataset.action = [ row.dataset.action, value ].filter(Boolean).join(" ")
+      else row.setAttribute(`data-${name}`, value)
+    }
   }
 
   // ---- navigation ----------------------------------------------------------

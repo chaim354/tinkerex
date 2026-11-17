@@ -125,6 +125,22 @@ module Web
                    css_select("[data-addon-open-url]").sole["data-addon-open-label"]
     end
 
+    # THE BROWSER VIEW'S ROWS ARE A MENU SURFACE TOO (2026-11-16), and the one whose cells the
+    # server does not render: lib/file_chooser.js builds them from /library/children, so the pair
+    # rides that answer (LibraryBrowseController#children, `menu=1`) under the attribute names the
+    # module sets on the row. A browsed folder lists a generated file like any other, which is why
+    # its row must offer the way back to the generator that the file's tile does.
+    test "the browser view's listing offers it, to the file an addon made and to no other" do
+      get library_children_path(files: 1, menu: 1)
+      assert_response :success
+      menus = JSON.parse(response.body)["entries"].to_h { |e| [ e["node_id"], e["menu"] || {} ] }
+
+      assert_equal expected_url, menus.dig(@from_addon.node_id, "addon-open-url")
+      assert_equal "Edit in Box Generator", menus.dig(@from_addon.node_id, "addon-open-label")
+      assert_equal [ @from_addon.node_id ], menus.select { |_, menu| menu.key?("addon-open-url") }.keys
+      assert_equal [ @from_addon.node_id ], menus.select { |_, menu| menu.key?("addon-open-label") }.keys
+    end
+
     # THE FOURTH SURFACE IS NOT A MENU ATTRIBUTE — a visible button in the page actions, plus a meta
     # row naming the saved item and the revision the file came out of.
     test "the file page offers a button and names the saved item and its revision" do
@@ -182,6 +198,9 @@ module Web
       get file_path(@plain.node_id)
       assert_response :success
       get project_path(@user.maker_projects.create!(name: "Empty"))
+      assert_response :success
+      # The browser view asks for a listing on every column it opens, so the same rule binds it.
+      get library_children_path(files: 1, menu: 1)
       assert_response :success
       assert_equal 0, @source.fetches,
                    "a library with no addon output fetched addon manifests #{@source.fetches} time(s)"

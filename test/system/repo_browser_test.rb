@@ -109,7 +109,9 @@ class RepoBrowserTest < ApplicationSystemTestCase
       assert_equal "a", link.tag_name
       # AND IT OPTS INTO fileopen (2026-10-21) like every server-rendered file link. Asserted here
       # because template_hygiene_test.rb's sweep reads server HTML and never sees a JS-built row.
-      assert_equal "click->fileopen#click", link["data-action"]
+      # The menu's door sits BESIDE it since 2026-11-16: the listing's own action is added to the
+      # row's, never written over it, which is what keeps this click opening the file.
+      assert_equal %w[click->fileopen#click contextmenu->filemenu#open], link["data-action"].split.sort
       link.click
     end
     assert_current_path file_path(@led.node_id)
@@ -193,6 +195,123 @@ class RepoBrowserTest < ApplicationSystemTestCase
     visit project_path(@project)
     within(panel_for(models)) { assert_selector ".filechooser--inline .filechooser-col", count: 1 }
     assert_equal "browser", @project.reload.panels.dig("views", "folder:#{models.node_id}")
+    assert_no_console_errors
+  end
+
+  # A ROW ANSWERS A RIGHT-CLICK WITH THE FILE MENU (2026-11-16, the owner's report: "right clicking
+  # doesn't work in browser mode"). The tiles and the list rows of this page have carried the menu
+  # since it shipped. A browsed row is built in the browser from /library/children and carried
+  # nothing, so a right-click there raised the browser's own menu: measured before the fix, the row's
+  # `data-action` was `click->fileopen#click` alone and `.file-menu` never appeared.
+  #
+  # ONLY A BROWSER CAN SEE THIS. library_browse_test.rb proves the listing carries the payload; it
+  # cannot prove a row wears it, that Stimulus binds an action on an element inserted after connect,
+  # or that the menu the panel's `filemenu` controller builds from it is the one a tile gets.
+  def local(href) = href.sub(%r{\Ahttps?://[^/]+}, "")
+
+  def menu_entries = all(".file-menu [role='menuitem']").map(&:text)
+
+  test "a file row answers a right-click with the file menu a tile gets" do
+    open_firmware
+    main = @user.nodes.find_by!(name: "main.c")
+
+    within(panel_for(@firmware)) { find(".filechooser-row.is-file", text: "main.c").right_click }
+
+    # APPENDED TO <body>, so it is asked of the page and not of the panel.
+    assert_selector ".file-menu[role='menu'][aria-label='Actions for main.c']"
+    assert_equal [ "Add note", "Open", "Details", "Download", "Delete" ], menu_entries
+    assert_equal file_path(main.node_id), local(find(".file-menu a", text: "Open")[:href])
+    assert_equal files_path(folder: @firmware.node_id, selected: main.node_id),
+                 local(find(".file-menu a", text: "Details")[:href])
+    assert_equal blob_file_path(main.node_id, download: 1), local(find(".file-menu a", text: "Download")[:href])
+
+    # DELETE ASKS THE FILE'S OWN QUESTION AND IS AIMED AT THE FILE. Dismissed, not accepted: these
+    # are bare rows (the header says why), and a delete through the port is a different answer on
+    # each backend. The url is read off the row, which is where the controller reads it.
+    question = dismiss_confirm { find(".file-menu button", text: "Delete").click }
+    assert_equal "Delete main.c?", question
+    row = within(panel_for(@firmware)) { find(".filechooser-row.is-file", text: "main.c") }
+    assert_equal file_path(main.node_id), row["data-delete-url"]
+    assert @user.nodes.present.exists?(node_id: main.node_id), "a dismissed delete deleted"
+    assert_no_console_errors
+  end
+
+  # A WRITE, END TO END, through the one entry that needs no port: the note is posted to the url
+  # the row carried, and the page comes back with the browser mounted again.
+  test "Add note from a browsed row saves the note" do
+    open_firmware
+    main = @user.nodes.find_by!(name: "main.c")
+
+    within(panel_for(@firmware)) { find(".filechooser-row.is-file", text: "main.c").right_click }
+    find(".file-menu button", text: "Add note").click
+    find(".note-popover textarea").set("reflash before the show")
+    find(".note-popover [data-role='save']").click
+
+    # THE CONTROLLER RELOADS THE PAGE ONCE THE NOTE IS IN, so the popover leaving is the signal that
+    # the post answered; the columns are back because the reloaded panel mounted its browser again.
+    assert_no_selector ".note-popover"
+    within(panel_for(@firmware)) { assert_selector ".filechooser-row", text: "main.c" }
+    bodies = @user.maker_notes.where(node_id: main.node_id).map { |note| note.body.to_plain_text }
+    assert_equal [ "reflash before the show" ], bodies
+    assert_no_console_errors
+  end
+
+  # A FOLDER'S MENU IS DELETE ALONE, as it is on the Library's own folder rows, and a plain click
+  # still descends: the menu's action is added beside the row's listener, not in place of it.
+  test "a folder row's menu is Delete alone, and a click still opens the folder" do
+    open_firmware
+
+    within(panel_for(@firmware)) { find(".filechooser-row", text: "src").right_click }
+    assert_equal [ "Delete" ], menu_entries
+    question = dismiss_confirm { find(".file-menu button", text: "Delete").click }
+    assert_equal "Delete the folder src and everything in it?", question
+    assert @user.nodes.present.exists?(node_id: @src.node_id), "a dismissed delete deleted"
+
+    within(panel_for(@firmware)) do
+      find(".filechooser-row", text: "src").click
+      assert_selector ".filechooser--inline .filechooser-col", count: 2
+      # A row in a column opened later is wired the same way: every listing carries the payload.
+      find(".filechooser-row.is-file", text: "led.c").right_click
+    end
+    assert_selector ".file-menu[aria-label='Actions for led.c']"
+    assert_equal files_path(folder: @src.node_id, selected: @led.node_id),
+                 local(find(".file-menu a", text: "Details")[:href])
+    assert_no_console_errors
+  end
+
+  # THE KEYBOARD'S DOOR (Shift+F10) is the panel's delegated listener, which finds a row by the
+  # action it carries; Escape hands focus back to the row, which is a real link.
+  test "the menu opens from the keyboard on a focused row" do
+    open_firmware
+    row = within(panel_for(@firmware)) { find(".filechooser-row.is-file", text: "main.c") }
+    page.execute_script("arguments[0].focus()", row)
+
+    page.send_keys([ :shift, :f10 ])
+    assert_selector ".file-menu[role='menu'][aria-label='Actions for main.c']"
+    assert_equal "Add note", page.evaluate_script("document.activeElement.textContent")
+
+    page.send_keys(:escape)
+    assert_no_selector ".file-menu"
+    assert page.evaluate_script("document.activeElement === arguments[0]", row), "focus did not return to the row"
+    assert_no_console_errors
+  end
+
+  # THE NESTED HOST TOO. A repository below depth one mounts its browser inside its parent panel's
+  # section, which sits under that panel's `filemenu` controller like everything else in it.
+  test "a row in a nested repository's browser answers a right-click" do
+    tools = dir!("tools", @folder.node_id)
+    nested = dir!("bootloader", tools.node_id)
+    dir!(Library::RepoMetadata::DIR_NAME, nested.node_id)
+    boot = file!("boot.c", nested.node_id)
+
+    visit project_path(@project)
+    within(panel_for(tools)) do
+      find("summary", text: /bootloader/i).click
+      find(".filechooser-row.is-file", text: "boot.c").right_click
+    end
+
+    assert_selector ".file-menu[aria-label='Actions for boot.c']"
+    assert_equal file_path(boot.node_id), local(find(".file-menu a", text: "Open")[:href])
     assert_no_console_errors
   end
 

@@ -132,6 +132,109 @@ module Web
       assert_redirected_to new_user_session_path
     end
 
+    # --- the browser view's right-click menu (`menu=1`) -----------------------------------------
+    #
+    # A BROWSED ROW IS BUILT IN THE BROWSER (lib/file_chooser.js, browse mode), so its right-click
+    # menu has nowhere to come from but this answer. Until 2026-11-16 it came from nowhere: the
+    # project page's tiles and list rows carried the menu and a row in the browser view carried
+    # nothing, so a right-click there raised the browser's own menu. With `menu=1` each entry
+    # carries FilesHelper#file_menu_data or #folder_menu_data, spelled as the attribute names the
+    # module sets on the row verbatim. filemenu_controller.js then reads a browsed row exactly as
+    # it reads a tile, and no URL is assembled in JavaScript.
+    #
+    # THE LIBRARY'S OWN ROW IS THE WITNESS for every value: the two are one helper's answer, and a
+    # payload spelled out a second time in the controller is one free to lose an entry or reword a
+    # question with nothing going red.
+    def menu_of(id, **params)
+      get library_children_path(files: 1, menu: 1, **params)
+      assert_response :success
+      entry = json["entries"].find { |e| e["node_id"] == id }
+      refute_nil entry, "the listing has no entry for #{id}"
+      assert entry.key?("menu"), "the entry for #{entry["name"]} carries no menu"
+      entry["menu"]
+    end
+
+    test "menu=1 hands a file the menu the Library's own row carries" do
+      menu = menu_of(@readme, parent: @projects)
+
+      assert_equal %w[action delete-confirm delete-url details-url download-url node-name note-url], menu.keys.sort
+      assert_equal "contextmenu->filemenu#open", menu["action"]
+      assert_equal file_notes_path(@readme), menu["note-url"]
+      assert_equal blob_file_path(@readme, download: 1), menu["download-url"]
+      assert_equal file_path(@readme), menu["delete-url"]
+      assert_equal files_path(folder: @projects, selected: @readme), menu["details-url"]
+      assert_equal "readme.txt", menu["node-name"]
+
+      get files_path(folder: @projects, view: "list")
+      row = css_select("[data-note-url='#{file_notes_path(@readme)}']").first
+      refute_nil row, "the Library rendered no row for the file to compare with"
+      (menu.keys - %w[action]).each { |key| assert_equal row["data-#{key}"], menu[key], "data-#{key}" }
+      assert_includes row["data-action"].split, menu["action"]
+    end
+
+    # A ROOT FILE HAS NO FOLDER TO NAME, and `files_path` drops the nil rather than writing
+    # `folder=`: the Library's own root rows link the same way.
+    test "menu=1 gives a root file a details url with no folder" do
+      assert_equal files_path(selected: @root_stl), menu_of(@root_stl)["details-url"]
+    end
+
+    # DELETE ALONE, as on the Library's folder rows (file_menu_wiring_test.rb): a folder has no
+    # notes, no bytes and no addon origin, and a blanket file menu would hand it a dead Download.
+    test "menu=1 hands a folder Delete alone, asking the folder's own question" do
+      menu = menu_of(@v2, parent: @projects)
+
+      assert_equal({ "action" => "contextmenu->filemenu#open", "node-name" => "v2",
+                     "delete-url" => file_path(@v2),
+                     "delete-confirm" => "Delete the folder v2 and everything in it?" }, menu)
+
+      get files_path(folder: @projects, view: "list")
+      row = css_select("a.dir[data-delete-url='#{file_path(@v2)}']").first
+      refute_nil row, "the Library rendered no folder row to compare with"
+      assert_equal row["data-delete-confirm"], menu["delete-confirm"]
+    end
+
+    # THE CHOOSER'S ANSWER IS UNCHANGED. Its two picking modes (the form field's modal and an
+    # addon's `ctx.chooseFolder` / `ctx.chooseFile`) never send `menu`, and what they get back is
+    # the three keys it has always been.
+    test "without menu=1 an entry is the three keys the chooser has always read" do
+      get library_children_path(parent: @projects, files: 1)
+      assert_response :success
+      refute_empty json["entries"]
+      json["entries"].each { |entry| assert_equal %w[kind name node_id], entry.keys.sort }
+
+      get library_children_path(parent: @projects, files: 1, menu: 0)
+      json["entries"].each { |entry| assert_equal %w[kind name node_id], entry.keys.sort }
+    end
+
+    # CONSTANT IN THE NUMBER OF ROWS. The addon-origin lookup is the one query the menu adds, and
+    # it takes every file id at once (AddonOrigins#addon_origins_for); a lookup per row would be a
+    # query per file on a listing that can hold hundreds. Constancy, never a literal (CLAUDE.md
+    # §14e): the count differs by backend.
+    test "the menu costs the same queries for one file as for many" do
+      folder = node("parts", "dir", nil)
+      node("a.stl", "file", folder)
+      url = library_children_path(parent: folder, files: 1, menu: 1)
+      get url
+      one = count_queries { get url }
+
+      8.times { |i| node("part-#{i}.stl", "file", folder) }
+      many = count_queries { get url }
+
+      assert_equal 9, json["entries"].size
+      assert_equal one, many, "the menu's queries grew with the listing (#{one} for 1 file, #{many} for 9)"
+    end
+
+    def count_queries
+      n = 0
+      sub = ActiveSupport::Notifications.subscribe("sql.active_record") do |_, _, _, _, payload|
+        n += 1 unless payload[:name].in?([ "SCHEMA", "TRANSACTION" ]) || payload[:sql].start_with?("PRAGMA")
+      end
+      yield
+      n
+    ensure
+      ActiveSupport::Notifications.unsubscribe(sub)
+    end
+
     # create_folder goes through Maker::LibraryFolder, which on share/s3 calls the real port mkdir
     # (a real Aws::S3::Client against a fake bucket on the s3 CI leg; a shared tmpdir on share). The
     # controller logic here is backend-agnostic and the port's cross-backend mkdir is covered by
