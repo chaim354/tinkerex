@@ -54,7 +54,9 @@
 %>
 <% view = @panel_layout.view_for("attachments") %>
 <%# `id="attachments"`: the view toggle below redirects to this panel's anchor, and a dead anchor
-    is worse than no panel (Maker::ProjectKind's own argument for ALWAYS; found in review). %>
+    is worse than no panel (Maker::ProjectKind's own argument for ALWAYS; found in review).
+    IT IS ALSO WHAT A VIEW SWITCH REPLACES (2026-11-16): the stream ProjectsController#show answers
+    a press with targets this section by its layout key, so the id and the key must stay one. %>
 <section class="panel attachments-panel" id="attachments">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "attachments") %></h2>
@@ -75,21 +77,11 @@
         <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn" %>
       <% end %>
       <%# Tiles / List, FOR THIS PANEL (2026-09-08, folder panels). The same view-toggle component
-          the Files page uses (components.css), but the choice is a WRITE now — it persists on the
-          project row under this panel's key — so these are button_to forms, not links, and the
-          door redirects back to this panel's anchor. projects/_folder_panel.html.erb carries the
-          same markup over all three of Maker::Project::VIEWS; see its header for why Files omits
-          `browser`. %>
-      <%# `aria-pressed` CARRIES THE STATE THE `active` CLASS DRAWS (2026-11-02, the UX audit's I):
-          a screen reader heard three plain buttons and no way to tell which view was on, where the
-          calculator's toggles have always said. %>
-      <div class="view-toggle" role="group" aria-label="View">
-        <% Maker::ProjectKind.offered_views("attachments").each do |value| %>
-          <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
-                        params: { view: { "attachments" => value } },
-                        class: "toggle#{' active' if view == value}", "aria-pressed": (view == value).to_s %>
-        <% end %>
-      </div>
+          the Files page uses (components.css), but the choice is a WRITE here, persisted on the
+          project row under this panel's key: projects/_view_toggle, which a folder panel renders
+          over all three of Maker::Project::VIEWS. projects/_folder_panel's header says why Files
+          omits `browser`. %>
+      <%= render "projects/view_toggle", key: "attachments", view: view, label: "View" %>
       <%# "Look at my library NOW", instead of waiting on library_scan's 15 minutes (share/s3) or
           remote_changelog_pull's 2 (chunk_remote). It scans the LIBRARY, not this folder — a scan
           cannot be aimed at a subfolder (Library::Reconciler compares against the whole catalog), so
