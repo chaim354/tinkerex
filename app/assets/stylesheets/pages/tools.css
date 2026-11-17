@@ -22,11 +22,10 @@
   .calculator-card-actions, .tools-home .tool-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
   /* A card's permission line already draws the rule above it, so the actions under it do not. */
   .tools-home .addon-card-foot + .tool-card-actions { margin-top: 0; padding-top: 0; border-top: 0; }
-  /* THE PIN TOGGLE (tools/home/_pin_toggle). Pressed is drawn in ink, the way every toggle and
-     selected chip is (selection is ink, design-system.md rule 13), and its word changes with it.
-     A phone has no sidebar to pin to, so the control goes with the rail. */
+  /* THE PIN TOGGLE (tools/home/_pin_toggle). Pressed is drawn in ink by components.css's one
+     pressed rule, the way every toggle button is, and its word changes with it. A phone has no
+     sidebar to pin to, so the control goes with the rail. */
   .tools-home .tool-pin-form { position: relative; z-index: 1; margin: 0; }
-  .tools-home .tool-pin[aria-pressed="true"] { border-color: var(--fg); background: var(--fg); color: var(--surface); }
   /* An addon card's action row holds only the toggle, so it goes too; the calculator's keeps Open. */
   @media (max-width: 719px) { .tools-home .tool-pin-form, .tools-home .tool-card-actions { display: none; } }
   /* The shortcut, drawn the way the top bar draws its ⌘K (shell.css .topbar-kbd). */

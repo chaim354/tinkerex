@@ -349,7 +349,13 @@ export default class extends Controller {
       }
     }
     if (this.hasSideTarget) {
-      this.sideTargets.forEach((b) => b.classList.toggle("active", b.dataset.gerberSide === this.side))
+      // `aria-pressed` IS WHAT DRAWS THE SIDE THAT IS UP (components.css's one pressed rule) and
+      // what says it to a screen reader, as on the layer toggles. The class alone did neither.
+      this.sideTargets.forEach((b) => {
+        const up = b.dataset.gerberSide === this.side
+        b.classList.toggle("active", up)
+        b.setAttribute("aria-pressed", String(up))
+      })
     }
   }
 

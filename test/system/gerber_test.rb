@@ -232,6 +232,35 @@ class GerberTest < ApplicationSystemTestCase
   # copper, bottom copper, an outline and a drill; the Top view draws two paths (the copper and
   # the outline) and one circle (the drill, in the mask), so hiding top copper takes the path
   # count from 2 to 1. Measured against the vendored bundle, not assumed.
+  # WHAT IS UP IS DRAWN UP. The layer toggles and the Top/Bottom pair set an `active` class that no
+  # stylesheet matched, so the bar never showed which layers or which side were showing. The
+  # pressed look is drawn once now, in components.css, from `aria-pressed`. The layer toggles
+  # already announced it; the side pair did not, so it could not have been drawn from it either.
+  # The backgrounds are the browser's own, because the markup said "active" the whole time.
+  test "the bar draws which layers and which side are showing" do
+    node = write_gerber_zip!
+    visit file_path(node.node_id)
+    # AS THE SERVER RENDERS THE PAIR, before the viewer has drawn anything: Top up, and saying so.
+    assert_selector ".gerber-sides .btn[data-gerber-side='top'][aria-pressed='true']", visible: :all
+    assert_selector ".gerber-sides .btn[data-gerber-side='bottom'][aria-pressed='false']", visible: :all
+    click_button "View board"
+    assert_selector ".gerber-viewer[data-gerber-state='ready']"
+    ink = ink_colour
+    layer = ->(state) { ".gerber-tools .btn[data-gerber-layer-id][aria-pressed='#{state}']" }
+    side = ->(name, state) { ".gerber-sides .btn[data-gerber-side='#{name}'][aria-pressed='#{state}']" }
+
+    assert_equal ink, background_of(layer.call(true)), "a layer that is showing is not drawn pressed"
+    find(".gerber-tools .btn", exact_text: "top copper").click
+    assert_not_equal ink, background_of(layer.call(false)), "a hidden layer is still drawn pressed"
+
+    assert_equal ink, background_of(side.call("top", true))
+    assert_not_equal ink, background_of(side.call("bottom", false))
+    click_button "Bottom"
+    assert_equal ink, background_of(side.call("bottom", true))
+    assert_not_equal ink, background_of(side.call("top", false))
+    assert_no_console_errors
+  end
+
   test "a layer toggle hides that layer, and the view survives it" do
     node = write_gerber_zip!
 

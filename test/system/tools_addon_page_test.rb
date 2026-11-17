@@ -76,6 +76,10 @@ class ToolsAddonPageTest < ApplicationSystemTestCase
 
     assert_selector ".flash", text: "Pinned Widget Kit to the sidebar."
     assert_selector "aside.rail a.rail-tool-pin", text: "Widget Kit"
+    # PINNED IS DRAWN IN INK, beside its word (design-system.md rule 13), by the one pressed rule in
+    # components.css; a tool that is not pinned is not.
+    assert_equal ink_colour, background_of("button.tool-pin[aria-pressed=true]")
+    assert_not_equal ink_colour, background_of("button.tool-pin[aria-pressed=false]")
     card = find(".addon-card", text: "Widget Kit")
     card.find("button.tool-pin[aria-pressed=true]", text: "Pinned to sidebar").click
 

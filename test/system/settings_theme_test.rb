@@ -15,6 +15,25 @@ class SettingsThemeTest < ApplicationSystemTestCase
     @user = sign_in_as("settings-theme@example.com")
   end
 
+  # THE PRESSED THEME IS INK, AND ONLY IT (design-system.md rule 13: selection is ink). The fill
+  # comes from the one `.btn[aria-pressed="true"]` rule in components.css; it used to be this
+  # page's own copy of those three declarations.
+  test "the chosen theme's button is drawn pressed, and the others are not" do
+    visit settings_path
+    ink = ink_colour
+
+    assert_equal ink, background_of(".theme-choice .theme-option[aria-pressed='true']")
+    assert_not_equal ink, background_of(".theme-choice .theme-option[aria-pressed='false']")
+    # UNDER THE POINTER TOO. `.btn:hover` has the pressed rule's specificity and a pale fill, and
+    # the pressed text is pale: the later rule wins, so the pressed one has to be the later.
+    find(".theme-choice .theme-option[aria-pressed='true']").hover
+    assert_equal ink, background_of(".theme-choice .theme-option[aria-pressed='true']")
+
+    find(".theme-choice button[data-theme-theme-param='dark']").click
+    assert_selector ".theme-choice button[data-theme-theme-param='dark'][aria-pressed='true']"
+    assert_equal ink_colour, background_of(".theme-choice .theme-option[aria-pressed='true']")
+  end
+
   test "choosing a theme writes html[data-theme] and the cookie immediately, and the rail agrees after a reload" do
     visit settings_path
     theme = -> { page.evaluate_script("document.documentElement.dataset.theme") }
