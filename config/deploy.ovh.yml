@@ -21,6 +21,9 @@
 # (kamal does not read .kamal/secrets under `-d`). No exports needed; verify with
 #   bin/secrets-preflight ovh
 
+# Port 22 on this address is closed to the internet (2026-11-17): SSH answers only over Tailscale.
+# The control machine's ~/.ssh/config maps this address to the box's Tailscale address, and Kamal
+# reads that file, so Tailscale must be on to deploy (docs/guides/DEPLOY.md §1).
 servers:
   web:
     - 15.204.216.249
