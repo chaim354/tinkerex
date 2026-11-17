@@ -982,6 +982,14 @@ selected file: a Turbo Frame body rendered **without the layout**, built from `f
   whole exclusion list. `template_hygiene_test.rb`'s fileopen sweep
   goes red on any other file-page link in `pages` that lacks it; never widen its two exclusions. It
   reads server HTML, so the repo browser's JS-built rows are pinned in `repo_browser_test.rb`.
+  **A browsed row's right-click menu rides the listing (2026-11-16).** The server renders no cell
+  there, so `GET /library/children?menu=1` hands each entry `file_menu_data` or `folder_menu_data`
+  (`LibraryBrowseController#row_menus`), spelled as attribute names with every nil dropped, and
+  `lib/file_chooser.js#wire` sets each pair on the row. Three things not to undo: the payload is
+  the helper's, never a second hash written in the controller or a URL assembled in the module;
+  `action` is appended to the row's own, never written over it, or a click stops opening the file;
+  and only browse mode asks, so the chooser's picking modes still get three keys per entry.
+  Until then a right-click in the browser view raised the browser's own menu.
 
 **`PHOTO_EXTS` is a DISPLAY subset of the image role, not a second vocabulary.** `jpg jpeg heic heif`
 — what a camera writes — get `.thumb.photo` (cropped to fill, on `--photo-stage`); PNG, GIF, WebP,

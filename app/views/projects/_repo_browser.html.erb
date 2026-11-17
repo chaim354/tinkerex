@@ -10,6 +10,11 @@
   THE FILE LINK IS A TEMPLATE THE SERVER WRITES HERE, so the module never learns a route: it
   substitutes the node id into `__ID__` and knows nothing else about where a file page lives.
 
+  A ROW'S RIGHT-CLICK MENU IS THE ENCLOSING PANEL'S (2026-11-16). Both hosts render this inside
+  projects/_folder_panel's `thumbs filemenu` div, and each row carries the menu's attributes from
+  the listing (LibraryBrowseController#row_menus), so the one controller that answers a tile
+  answers a browsed row. A host outside a `filemenu` controller would get rows with no menu.
+
   Local: dir (Maker::ProjectFolderListing::Dir), a repo? dir.
 %>
 <div class="repo-browser"

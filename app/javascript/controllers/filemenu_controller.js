@@ -15,6 +15,11 @@ import { Controller } from "@hotwired/stimulus"
 // shape wrong, and a surface that does not want an entry simply omits the attribute rather than
 // needing a flag.
 //
+// ONE SURFACE'S CELLS ARE NOT IN THE SERVER'S HTML: the project page's browser view builds its rows
+// in the browser (lib/file_chooser.js). They carry the same attributes all the same, because the
+// listing they are built from hands each row that hash and the module sets it on the row
+// (2026-11-16). Nothing here tells such a row from a tile.
+//
 // WHICH MEANS EVERY ENTRY IS INDEPENDENTLY OPTIONAL, and since 2026-09-10 that is load-bearing
 // rather than incidental: a FOLDER's cell carries the delete url alone.
 //

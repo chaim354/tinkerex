@@ -4,10 +4,16 @@
 # creates folders through the one cross-backend seam, Maker::LibraryFolder. No bytes flow through
 # here — metadata reads and dir-node creates only (§15).
 class LibraryBrowseController < ApplicationController
-  # GET /library/children?parent=<node_id>&files=0|1 -> one folder's children as JSON:
+  include AddonOrigins
+
+  # GET /library/children?parent=<node_id>&files=0|1&menu=0|1 -> one folder's children as JSON:
   #   { parent: <id|null>, crumbs: [{node_id,name}…], entries: [{node_id,name,kind}…] }
   # A blank/foreign/stale `parent` resolves to the library root (never another user's tree) — the
   # same guard FilesController#current_folder uses. Folders always; files only when files=1.
+  #
+  # `menu=1` ADDS EACH ENTRY'S RIGHT-CLICK MENU (2026-11-16), under a `menu` key: see #row_menus.
+  # Only the project page's browser view sends it. The two picking modes get the three keys above
+  # and nothing else, as they always have.
   #
   # `visible_entries` — THE SAME SCOPE THE FILES PAGE HIDES BY, and it is the one door that used
   # not to ask. `.git` (the working-tree marker Node keeps indexed and never renders), `*.ptr`
@@ -22,8 +28,12 @@ class LibraryBrowseController < ApplicationController
     parent  = resolve_dir(params[:parent])
     scope   = current_user.nodes.present.visible_entries.where(parent_node_id: parent&.node_id)
     scope   = scope.where(kind: "dir") unless params[:files] == "1"
-    entries = scope.to_a.sort_by { |n| [ n.dir? ? 0 : 1, n.name.downcase ] }
-                   .map { |n| { node_id: n.node_id, name: n.name, kind: n.kind } }
+    nodes   = scope.to_a.sort_by { |n| [ n.dir? ? 0 : 1, n.name.downcase ] }
+    menus   = params[:menu] == "1" ? row_menus(nodes) : {}
+    entries = nodes.map do |n|
+      entry = { node_id: n.node_id, name: n.name, kind: n.kind }
+      menus.key?(n.node_id) ? entry.merge(menu: menus[n.node_id]) : entry
+    end
     render json: { parent: parent&.node_id, crumbs: crumbs(parent), entries: entries }
   end
 
@@ -92,6 +102,27 @@ class LibraryBrowseController < ApplicationController
   end
 
   private
+
+  # EACH ROW'S RIGHT-CLICK MENU, FOR THE ONE SURFACE WHOSE ROWS THE SERVER DOES NOT RENDER
+  # (2026-11-16). The project page's browser view (lib/file_chooser.js, browse mode) builds its rows
+  # in the browser from this answer, so until now they carried no menu and a right-click raised the
+  # browser's own. The payload is FilesHelper#file_menu_data and #folder_menu_data, the hashes the
+  # Library's rows and a project's tiles are rendered with, so filemenu_controller.js reads a
+  # browsed row exactly as it reads a tile and still assembles no URL itself.
+  #
+  # SPELLED AS ATTRIBUTE NAMES, WITH NO NIL. The module sets `data-<key>` for each pair and knows
+  # none of the keys, which is the hash staying the whole menu (FilesHelper's own rule). A nil would
+  # arrive as an attribute holding "null", and a present attribute is an entry.
+  #
+  # ONE ORIGIN LOOKUP FOR THE LISTING, never one per row: library_browse_test.rb pins that the
+  # queries do not grow with the folder. A folder has no origin, so only the file ids are asked.
+  def row_menus(nodes)
+    origins = addon_origins_for(nodes.reject(&:dir?).map(&:node_id))
+    nodes.to_h do |n|
+      data = n.dir? ? helpers.folder_menu_data(n.node_id, n.name) : helpers.file_menu_data(n, origins[n.node_id])
+      [ n.node_id, data.compact.transform_keys { |key| key.to_s.dasherize } ]
+    end
+  end
 
   def resolve_dir(id)
     id.present? ? current_user.nodes.present.find_by(node_id: id, kind: "dir") : nil
