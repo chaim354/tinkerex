@@ -9,7 +9,7 @@ Docker build, no repo checkout, and no source transfer to either server.
 
 | | Unraid (home LAN) | OVH (prod-like test) |
 |---|---|---|
-| Host | `kamal1@192.168.1.95` | `ubuntu@15.204.216.249` |
+| Host | `kamal1@192.168.1.95` | `ubuntu@15.204.216.249` — SSH over Tailscale only (§1) |
 | Kamal config | `config/deploy.yml` (default) | `+ config/deploy.ovh.yml` overlay (`-d ovh`) |
 | S3 library storage (`-d s3` / OVH) | SeaweedFS `192.168.1.2:8333` — the `miniweeed` container, pinned on `br0` since tinkerex#85 (`.8` is Redis now) | Cloudflare R2 |
 | Deploy command | `kamal deploy` | `kamal deploy -d ovh` |
@@ -34,6 +34,18 @@ Docker build, no repo checkout, and no source transfer to either server.
 - **Kamal** — `kamal version` (2.11+).
 - **SSH key access** to both servers as the deploy user (`kamal1@…`, `ubuntu@…`). Test:
   `ssh kamal1@192.168.1.95 true && ssh ubuntu@15.204.216.249 true`.
+- **The OVH box takes SSH only over Tailscale** (since 2026-11-17; its public port 22 is closed).
+  Every command in this file still names `15.204.216.249`, because the Mac's `~/.ssh/config` maps
+  that address to the box's Tailscale address, and Kamal reads that file too:
+  ```
+  Host 15.204.216.249 ovh-vps
+    HostName <the box's Tailscale address: tailscale status | grep ovh-vps>
+    User ubuntu
+  ```
+  So **Tailscale must be on before anything touches OVH.** With it off, the failure is
+  `connect to host 100.x.x.x port 22: Operation timed out`. A new control machine needs this block
+  before its first OVH deploy. If Tailscale on the box is down, `ubuntu` has no password, so the OVH
+  web console cannot log in: recover through OVH's rescue mode.
 - **Secrets — no exports needed.** `.kamal/secrets*` resolve them from 1Password via `bin/secret`.
   Check before deploying (this is the only reliable check — see below):
   ```sh
@@ -335,9 +347,13 @@ new key before the old one can be retired). Out of scope here; nothing in this r
 ## 3. Verify
 
 **By host name, never by bare address.** Each Unraid deployment is routed by its `Host`
-(`config/deploy.yml`'s `proxy:` comment), and OVH answers its two public names over TLS behind
-Cloudflare, so a request to either box's address is a 404 from kamal-proxy whatever state the app
-is in (measured 2026-11-16: both; this section said 200 until then).
+(`config/deploy.yml`'s `proxy:` comment), so a request to the box's address is a 404 from
+kamal-proxy whatever state the app is in (measured 2026-11-16; this section said 200 until then).
+OVH answers its two public names over TLS behind Cloudflare, and since 2026-11-17 its ports 80 and
+443 drop every packet that does not come from Cloudflare, so a request to its address never reaches
+kamal-proxy: it **times out** (`000`). Probe OVH through Cloudflare, as below. Run on the box itself,
+the same request answers 403: that is the app's own Cloudflare-only check refusing a local caller, and
+it proves the app is up, not that it is broken.
 
 ```sh
 # Unraid: all three deployments, both names each → 200
