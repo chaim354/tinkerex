@@ -493,5 +493,101 @@ module Web
       assert_select "table.table.inventory-table tbody tr", 1
       assert_select "td.col-name a[href=?]", inventory_item_path(tagged)
     end
+
+    # A SEARCH INSIDE A TAG WAS A 500, reachable by searching and then pressing a tag chip, which
+    # carries the search along. `tagged_with` joins maker_tags, which has a `name` column of its
+    # own, and the search clause named the item's columns bare: "ambiguous column name: name".
+    test "a search inside a tag narrows by both, instead of raising" do
+      both = item!("M3 bolt", tag_list: "m3")
+      item!("M4 bolt", tag_list: "m4")
+      item!("M3 nut", tag_list: "m3")
+
+      get inventory_items_path(q: "bolt", tag: "m3")
+
+      assert_response :success
+      assert_equal [ inventory_item_path(both) ], css_select("td.col-name a").map { |a| a["href"] }
+    end
+
+    # ONE FILTER STATE, AND EVERY CONTROL STATES ONLY ITS DIFFERENCE FROM IT. The chips, the
+    # toolbar's form and the sort headers each rebuilt the parameter set by hand, with their own
+    # exclusions, and they disagreed. Re-sorting from a column header kept the category and the
+    # tag. Searching, or re-sorting from the select, dropped both without a word: the form's hidden
+    # fields carried the supplier and the location and nothing else. The form submits what its
+    # fields hold, so its fields are what is asserted.
+    def toolbar_fields
+      form = css_select("form.inventory-toolbar").first
+      form.css("input[name], select[name]").to_h do |field|
+        value = field.name == "select" ? field.at_css("option[selected]")&.[]("value") : field["value"]
+        [ field["name"], value ]
+      end
+    end
+
+    def header_query(text)
+      link = css_select("th a").find { |a| a.text.include?(text) }
+      Rack::Utils.parse_query(URI(link["href"]).query)
+    end
+
+    test "searching or re-sorting from the toolbar keeps every filter the page is showing" do
+      supplier = @user.maker_suppliers.create!(name: "McMaster")
+      item!("M3 bolt", category: "Fasteners", tag_list: "m3", supplier:)
+
+      get inventory_items_path(q: "bolt", category: "Fasteners", tag: "m3", supplier: supplier.id, sort: "quantity", dir: "desc")
+
+      assert_equal({ "q" => "bolt", "category" => "Fasteners", "tag" => "m3", "supplier" => supplier.id.to_s,
+                     "sort" => "quantity", "dir" => "desc" }, toolbar_fields)
+      # The select and a column header are two ways to do one thing, and they keep the same filters.
+      assert_equal toolbar_fields.except("sort", "dir"), header_query("Name").except("sort", "dir")
+
+      get inventory_items_path(low: 1, tag: "m3")
+      assert_equal "1", toolbar_fields["low"]
+      assert_equal "m3", toolbar_fields["tag"]
+    end
+
+    # A PLAIN VISIT STAMPS NOTHING ON THE FORM: a hidden field is a filter the page is showing.
+    test "an unfiltered inventory's toolbar carries no filter of its own" do
+      item!("M3 bolt")
+      get inventory_items_path
+      assert_equal({ "q" => "", "sort" => "name" }, toolbar_fields)
+    end
+
+    # "All" IS THE RESET, SO IT IS LIT EXACTLY WHEN THERE IS NOTHING TO RESET. It counted the
+    # category, low stock, the supplier and the location and forgot the tag, so with only a tag set
+    # two chips were lit at once.
+    test "All is lit only while no filter is set" do
+      item!("M3 bolt", category: "Fasteners", tag_list: "m3")
+
+      get inventory_items_path
+      assert_equal [ "All" ], css_select("a.filter.chip.active").map(&:text)
+
+      get inventory_items_path(tag: "m3")
+      assert_equal [ "m3" ], css_select("a.filter.chip.active").map(&:text)
+
+      get inventory_items_path(category: "Fasteners", tag: "m3")
+      assert_equal %w[Fasteners m3], css_select("a.filter.chip.active").map(&:text)
+      assert_select "a.filter.chip[href=?]", inventory_items_path, text: "All"
+    end
+
+    # WHAT EACH CHIP CHANGES, AND ONLY THAT. A category and low stock replace each other, as this
+    # row has always had them; a tag, a supplier and a location compose with everything; the
+    # search and the sort ride along on all of them.
+    test "each chip changes its own filter and carries the rest" do
+      supplier = @user.maker_suppliers.create!(name: "McMaster")
+      item!("M3 bolt", category: "Fasteners", tag_list: "m3", supplier:)
+      item!("Resistor", category: "Electronics", tag_list: "smd", supplier:)
+      rest = { q: "o", sort: "updated", dir: "desc", supplier: supplier.id }
+
+      get inventory_items_path(category: "Fasteners", tag: "m3", **rest)
+
+      chip = ->(text) { css_select("a.filter.chip").find { |a| a.text.start_with?(text) }["href"] }
+      assert_equal inventory_items_path(category: "Electronics", tag: "m3", **rest), chip.call("Electronics")
+      assert_equal inventory_items_path(low: 1, tag: "m3", **rest), chip.call("Low stock")
+      assert_equal inventory_items_path(category: "Fasteners", tag: "smd", **rest), chip.call("smd")
+      assert_equal inventory_items_path(category: "Fasteners", tag: "m3", **rest.except(:supplier)), chip.call("Supplier:")
+      assert_equal inventory_items_path(rest.slice(:q, :sort, :dir)), chip.call("All")
+
+      get inventory_items_path(low: 1, tag: "m3", **rest)
+      assert_equal inventory_items_path(category: "Fasteners", tag: "m3", **rest), chip.call("Fasteners"),
+                   "choosing a category kept low stock, which it replaces"
+    end
   end
 end

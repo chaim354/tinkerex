@@ -70,7 +70,10 @@ class ProjectsController < ApplicationController
     scope = scope.tagged_with(@tag) if @tag
     scope = scope.where(kind: @kind) if @kind
     if @q
-      scope = scope.where("LOWER(name) LIKE ? ESCAPE '\\'", "%#{Maker::Project.sanitize_sql_like(@q.downcase)}%")
+      # `maker_projects.name`, NOT A BARE `name`: `tagged_with` above joins maker_tags, which has a
+      # `name` too, so `?q=` with `?tag=` was an "ambiguous column name" 500.
+      scope = scope.where("LOWER(maker_projects.name) LIKE ? ESCAPE '\\'",
+                          "%#{Maker::Project.sanitize_sql_like(@q.downcase)}%")
     end
     # `?sort=` (UI-cohesion slice 4): this page was the one list page with NO sort at all, always
     # ordered by `updated_at: :desc`. Same `SORTS.fetch` idiom as ModelsController, including the
