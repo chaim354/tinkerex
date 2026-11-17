@@ -14,6 +14,8 @@ module Projects
   # ONE PATCH, TWO SHAPES. `view[<key>]=<view>` is the toggle in a panel's head and saves at once;
   # `layout=<draft JSON>` is the editor's Save and writes the whole arrangement in one update. The
   # chooser's `move` and `panels[order][]` shapes retired with the chooser itself (spec §2).
+  # A toggle pressed on the page is answered IN PLACE since 2026-11-16: this door redirects, as it
+  # always has, and #in_place says where to.
   #
   # SAVE WRITES CONTENT NOW, NOT ONLY AN ARRANGEMENT (2026-09-09, content blocks; spec §5, §6):
   # `maker_project_blocks` rows, the project's description and its cover ride the same document, in
@@ -180,10 +182,41 @@ module Projects
     # click is about one panel, and the layout's other choices are none of its business.
     def update_view
       key, view = view_pair
-      @project.update!(panels: stored.merge("views" => stored_views.merge(key => view))) if key
       # A refused pair redirects to the page with no anchor: `key` is the only thing that could
       # name one, and echoing an unvalidated key into the url is what this branch exists to refuse.
-      redirect_to key ? project_path(@project, anchor: key) : project_path(@project)
+      return redirect_to(project_path(@project)) unless key
+
+      # BEFORE THE WRITE, because #in_place asks which view the panel HAD.
+      back = project_path(@project, **in_place(key, view), anchor: key)
+      @project.update!(panels: stored.merge("views" => stored_views.merge(key => view)))
+      redirect_to back
+    end
+
+    # WHERE A PRESS MADE ON THE PAGE GOES BACK TO (2026-11-16, the owner's report: "there shouldn't
+    # be a whole page reload to switch one panel's mode"). The page's own buttons send `in_place`
+    # (projects/_view_toggle), and the redirect then NAMES THE PANEL: ProjectsController#show
+    # answers Turbo with a stream replacing that one section, where the plain redirect made Turbo
+    # visit the page again and redraw every panel. A browser with no JavaScript follows the same
+    # redirect to the whole page and lands on the anchor, exactly as before.
+    #
+    # THIS DOOR STILL RENDERS NOTHING. A panel needs everything ProjectsController#show loads (the
+    # listing, the thumbnails, the repository cards), so the redirect is what keeps that in one
+    # place. A second copy of those loads here is how a panel would come back different from the
+    # page's own.
+    #
+    # `files` SAYS A SECOND PANEL CHANGED. The Files panel's "Recently changed" row leaves out a
+    # browsed folder's files (ProjectsController#dirs_without_tiles), so a panel going into or out
+    # of the browser changes that row too and the page redraws both. A switch between tiles and
+    # list changes nothing outside its own panel. The view it had is the LAYOUT's answer, never the
+    # stored one: a repository with nothing stored opens in the browser.
+    #
+    # THE EDITOR'S COPY OF THE BUTTONS SENDS NO `in_place` and keeps the plain redirect: its slots
+    # hold a draft view, and a stream replacing the panel under one would leave the two disagreeing.
+    def in_place(key, view)
+      return {} unless params[:in_place] == "1"
+
+      browsed = (current_layout.view_for(key) == "browser") != (view == "browser")
+      browsed ? { panel: key, files: "1" } : { panel: key }
     end
 
     def view_pair

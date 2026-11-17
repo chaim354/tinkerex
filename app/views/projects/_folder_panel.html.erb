@@ -38,6 +38,9 @@
 <% hidden = dir.subtree_hidden_count %>
 <% count = (dir.repo? ? dir.subtree_file_count : dir.subtree_file_ids.count { |id| !@generated_ids.include?(id) }) + hidden %>
 <% empty = count.zero? && dir.children.empty? %>
+<%# THE ID IS THE LAYOUT KEY, AND A VIEW SWITCH REPLACES THE SECTION BY IT (2026-11-16): the stream
+    ProjectsController#show answers a press with targets `key`. An id that drifted from the key
+    would leave the buttons saving the view and the page not changing, with no error anywhere. %>
 <section class="panel folder-panel<%= " panel--quiet" if empty %>" id="<%= key %>">
   <div class="panel-head">
     <%# THE FOLDER'S OWN NAME IS THE DEFAULT, NOT THE TITLE (2026-09-09, the page editor): only this
@@ -55,21 +58,12 @@
         <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn" %>
         <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn" %>
       <% end %>
-      <%# THREE BUTTONS, NOT LINKS, because this is a WRITE: the choice is persisted on the project
-          row (Projects::PanelsController#update's `view` branch), not remembered in a cookie. Each
-          posts `view[<key>]=<value>` and the door redirects back to this panel's own anchor.
-          A SECOND COPY OF THIS MARKUP LIVES IN projects/_attachments.html.erb, offering two of the
-          three: Files has no browser to mount (there is no Dir for the folder's own root unless it
-          is a working tree), and a control that does nothing is worse than one that is absent.
-          `aria-pressed` says which is on to a screen reader, the way the `active` class draws it
-          (2026-11-02, the UX audit's §I). %>
-      <div class="view-toggle" role="group" aria-label="View of <%= dir.name %>">
-        <% Maker::ProjectKind.offered_views(key).each do |value| %>
-          <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
-                        params: { view: { key => value } },
-                        class: "toggle#{' active' if view == value}", "aria-pressed": (view == value).to_s %>
-        <% end %>
-      </div>
+      <%# THIS PANEL'S VIEW BUTTONS, all three of Maker::Project::VIEWS (projects/_view_toggle, which
+          says why they are buttons and how a press replaces this section alone). The Files panel
+          renders the same partial and is offered two: it has no browser to mount, because there is
+          no Dir for the folder's own root unless it is a working tree, and a control that does
+          nothing is worse than one that is absent. %>
+      <%= render "projects/view_toggle", key: key, view: view, label: "View of #{dir.name}" %>
     </div>
   </div>
   <%= panel_intro(@panel_layout, key) %>

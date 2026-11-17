@@ -201,6 +201,11 @@ class ProjectsController < ApplicationController
 
       @panel_layout = @panel_layout.with(views: @panel_layout.views.merge(@panel_key => wanted))
     end
+    # ONE PANEL, FOR THE VIEW ITS OWN BUTTONS JUST SAVED (2026-11-16; #switched_panel). The view is
+    # read from the row like every other, so the layout stands as it is; this only decides that the
+    # render at the bottom is that panel's section in a stream instead of the page. Set here, with
+    # the editor's own `panel` above it, because projects/_view_toggle reads it.
+    @switched_panel = switched_panel
 
     # THE FILES PANEL'S "RECENTLY CHANGED" ROW (structural redesign §6, slice 6): the 8 newest files
     # under the folder, ONE query, and [] with no query when the folder is unavailable. AFTER THE
@@ -522,8 +527,13 @@ class ProjectsController < ApplicationController
       # reads this, and computes it itself where nothing set it.
       @hidden_rows = Maker::ProjectHiddenRows.for(project: @project, layout: @panel_layout, sheets: @sheets)
     end
-    # `layout/panel` renders the one body and stops; the whole page is the default render.
-    render partial: "projects/panel_body", locals: { key: @panel_key, extra: {} }, layout: false if @panel_key
+    # `layout/panel` renders the one body and stops, and a view switch made on the page renders that
+    # panel's section as a stream (#switched_panel_streams); the whole page is the default render.
+    if @panel_key
+      render partial: "projects/panel_body", locals: { key: @panel_key, extra: {} }, layout: false
+    elsif @switched_panel
+      render turbo_stream: switched_panel_streams
+    end
   end
 
   # GET /projects/:id/preview — what a visitor sees, at any visibility, for the owner (story 5.1).
@@ -730,6 +740,48 @@ class ProjectsController < ApplicationController
       dropped = (!@editing && !@panel_layout.visible?(key)) || @panel_layout.view_for(key) == "browser"
       dropped ? [ dir ] : collect_repo_dirs(dir.children)
     end
+  end
+
+  # THE PANEL A VIEW BUTTON ON THE PAGE JUST SWITCHED, or nil for the whole page (2026-11-16, the
+  # owner's report: "there shouldn't be a whole page reload to switch one panel's mode").
+  # Projects::PanelsController#in_place redirects such a press here with `panel=<key>`, and Turbo
+  # follows a form's redirect with the form's own Accept header, which names the stream type.
+  #
+  # THREE THINGS MUST ALL HOLD, and failing any of them is the page, never an error:
+  #   * THE REQUEST TAKES A STREAM. A browser with no JavaScript follows the same redirect and must
+  #     get the page it has always got.
+  #   * THE KEY IS ONE THIS PAGE CAN SWITCH: in the layout, visible, and offering views. Turbo sends
+  #     that Accept header on EVERY form's redirect to this page, so `panel` alone decides, and a
+  #     stream naming a section the page does not hold would change nothing with no error anywhere.
+  #     A hidden panel's files were never loaded either (#dirs_without_tiles).
+  #   * NOT THE EDITOR, whose own `panel` means a draft's view and answers a bare body. That body
+  #     must not come back with a button marked for focus (projects/_view_toggle reads this).
+  #
+  # THE KEY THAT REACHES `render` IS THE LAYOUT'S OWN ELEMENT, never the parameter's string, for
+  # the reason the editor's branch in #show gives: `find` over the VISIBLE keys answers both
+  # questions at once. Anything that is not one of those strings (no parameter at all, an array,
+  # a hash) equals none of them and is the page.
+  def switched_panel
+    return if @editing || !request.accepts.include?(Mime[:turbo_stream])
+
+    key = @panel_layout.visible.find { |k| k == params[:panel] }
+    key if key && Maker::ProjectKind.offered_views(key).any?
+  end
+
+  # THE SECTION THAT WAS SWITCHED, replaced by its id, which is its layout key
+  # (projects/_folder_panel, projects/_attachments). Everything else in the document stays the
+  # element it was: another panel's browser keeps the folder it was in, an open section stays open,
+  # the window does not move.
+  #
+  # THE FILES PANEL COMES TOO WHEN THE DOOR SAYS IT CHANGED (`files=1`,
+  # Projects::PanelsController#in_place): its "Recently changed" row is built from
+  # #dirs_without_tiles, which a folder going into or out of the browser alters. AFTER the switched
+  # panel, because Turbo hands the focus to the first marked element in the streams and that is
+  # the pressed button (projects/_view_toggle).
+  def switched_panel_streams
+    keys = [ @switched_panel ]
+    keys << "attachments" if params[:files] == "1" && @panel_layout.folder?(@switched_panel)
+    keys.map { |key| turbo_stream.replace(key, partial: "projects/panel_body", locals: { key: key, extra: {} }) }
   end
 
   # [[dir name, dir node_id, [tag names]]] for the release composer's picker (stage 3, S3-5), over

@@ -256,6 +256,27 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     is a `details.composer` in its `.panel-head`, opened by "Add…", its submit naming the thing and
     never `primary` (the accent is the top bar's Upload).
 
+**A PANEL'S VIEW BUTTONS SWITCH IT IN PLACE, AND THE DOOR STILL RENDERS NOTHING (2026-11-16).** A
+press on the page posts `in_place` (`projects/_view_toggle`). `Projects::PanelsController#in_place`
+then redirects to the page NAMING THE PANEL, and `ProjectsController#show` answers a request that
+takes Turbo Streams with a `replace` of that panel's section, whose id is its layout key. Turbo
+follows a form's redirect with the form's own Accept header, so one section is replaced and the
+rest of the document stays the elements it was: another panel's browser keeps the folder it was in,
+an open section stays open, the window does not move. The plain redirect it replaces made Turbo
+visit the page again and redraw every panel. Five things not to undo. **The door never renders a
+panel**: a panel needs everything `#show` loads, and a second copy of those loads is how a panel
+would come back different from the page's own. **`panel` decides, never the Accept header alone**:
+Turbo sends the stream type on EVERY form's redirect to this page. **A key the page cannot switch
+gets the page** (unknown, hidden, a panel with no views, the editor), because a stream naming a
+section the page does not hold changes nothing and says nothing. **A folder going into or out of
+the browser redraws the Files panel too** (`files=1`): its Recently changed row leaves out a browsed
+folder's files (`#dirs_without_tiles`). The switched panel's stream comes first, so its pressed
+button, the only one marked `autofocus`, takes the focus; a page load marks none. **The editor's
+copy of the buttons sends no `in_place`**: its slots hold a draft view, and a stream replacing the
+panel under one would leave the two disagreeing. With no JavaScript the same form lands on the page
+at the panel's anchor. `project_panels_test.rb` pins the wire; `test/system/panel_view_switch_test.rb`
+pins what the page does with it.
+
 ## The front door
 
 15. **Signed out, `/` has two answers and demo mode picks; signed in it is Recent.** On the public

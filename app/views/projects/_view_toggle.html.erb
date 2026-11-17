@@ -1,0 +1,38 @@
+<%#
+  A PANEL'S OWN VIEW BUTTONS: Tiles / List for Files, and Browser too for a folder panel
+  (Maker::ProjectKind.offered_views, which the door validates against, so the buttons and the door
+  cannot disagree about what a panel offers). One partial for both panels since 2026-11-16; it was
+  the same markup written out in projects/_folder_panel and projects/_attachments.
+
+  BUTTONS, NOT LINKS, because this is a WRITE: the choice is persisted on the project row
+  (Projects::PanelsController#update's `view` branch), not remembered in a cookie. Each posts
+  `view[<key>]=<value>`.
+
+  `aria-pressed` CARRIES THE STATE THE `active` CLASS DRAWS (2026-11-02, the UX audit's I): a screen
+  reader heard plain buttons and no way to tell which view was on.
+
+  THE SWITCH HAPPENS IN PLACE (2026-11-16, at the owner's report). `in_place` asks the door to
+  redirect to the page NAMING THIS PANEL, and ProjectsController#show answers Turbo with a stream
+  that replaces this panel's section and nothing else. Without it the door redirects to the page,
+  which redraws every panel, sends every browser on it back to its top folder and moves the window.
+  With no JavaScript the same form still lands on the page, at the panel's anchor.
+
+  NOT IN THE EDITOR. Its slots carry a DRAFT view beside the panel, and a stream that replaced the
+  panel under it would leave the two disagreeing. There a press keeps the answer it always had.
+
+  `autofocus` IS SET ONLY IN THE ANSWER TO A PRESS (@switched_panel, set by that stream render): the
+  button that was pressed is replaced with the rest of its section, and Turbo hands the focus to the
+  marked one once the stream is in. A page load must mark none, or every visit would pull the
+  keyboard and the window to a view button (project_panels_test.rb pins both).
+
+  Locals: key (the panel's layout key), view (its current view), label (the group's accessible name).
+%>
+<div class="view-toggle" role="group" aria-label="<%= label %>">
+  <% Maker::ProjectKind.offered_views(key).each do |value| %>
+    <% on = view == value %>
+    <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
+                  params: { view: { key => value }, in_place: ("1" unless @editing) }.compact,
+                  class: "toggle#{' active' if on}", "aria-pressed": on.to_s,
+                  autofocus: (on && @switched_panel == key) %>
+  <% end %>
+</div>

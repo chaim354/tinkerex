@@ -98,6 +98,179 @@ module Web
       assert_response :redirect
     end
 
+    # --- the switch, in place -------------------------------------------------------------------
+    #
+    # A PANEL'S VIEW SWITCHES WITHOUT REDRAWING THE PAGE (2026-11-16, the owner's report: "there
+    # shouldn't be a whole page reload to switch one panel's mode"). The door still writes and
+    # redirects, as every write on this page does. What changed is where it redirects a toggle that
+    # says `in_place`: to the page, naming the panel, and the page answers a browser that takes
+    # Turbo Streams with that panel alone. Turbo follows the redirect with the form's own Accept
+    # header, so the stream reaches the page that pressed the button and replaces one section.
+    #
+    # THESE PIN THE WIRE. Whether a browser then leaves the rest of the page alone is
+    # test/system/panel_view_switch_test.rb's to say.
+    #
+    # WHAT TURBO SENDS when it follows a form's redirect: the stream type first, then HTML.
+    TURBO = { "Accept" => "text/vnd.turbo-stream.html, text/html, application/xhtml+xml" }.freeze
+
+    def streams = css_select("turbo-stream").map { |s| [ s["action"], s["target"] ] }
+
+    def streamed(target)
+      Nokogiri::HTML5.fragment(css_select("turbo-stream[target='#{target}'] template").first.inner_html)
+    end
+
+    test "the page's own toggles ask for the switch in place, and the editor's do not" do
+      seed_folders!
+
+      get project_path(@project)
+      forms = css_select(".panel-head .view-toggle form")
+      assert_equal 8, forms.size, "Files offers two views and each of the two folders three"
+      forms.each do |form|
+        assert_equal [ "1" ], form.css("input[name='in_place']").map { |input| input["value"] }, form.to_s.first(160)
+      end
+
+      # THE EDITOR'S COPY OF THE SAME BUTTONS KEEPS ITS OLD ANSWER: a stream would replace a panel
+      # inside the editor while the draft beside it still held the view it had.
+      get edit_layout_project_path(@project)
+      assert_response :success
+      assert_equal 8, css_select(".panel-head .view-toggle form").size
+      assert_select ".view-toggle input[name='in_place']", 0
+    end
+
+    test "asked in place, the door sends the browser back for that panel" do
+      models, = seed_folders!
+
+      patch project_panels_path(@project), params: { view: { models => "list" }, in_place: "1" }
+      assert_redirected_to project_path(@project, panel: models, anchor: models)
+      assert_equal "list", @project.reload.panels.dig("views", models)
+
+      patch project_panels_path(@project), params: { view: { "attachments" => "list" }, in_place: "1" }
+      assert_redirected_to project_path(@project, panel: "attachments", anchor: "attachments")
+
+      # A REFUSED PAIR NAMES NO PANEL, in place or not: the key is what could have named one.
+      patch project_panels_path(@project), params: { view: { models => "sideways" }, in_place: "1" }
+      assert_redirected_to project_path(@project)
+      patch project_panels_path(@project), params: { view: { "../../etc/passwd" => "tiles" }, in_place: "1" }
+      assert_redirected_to project_path(@project)
+    end
+
+    # THE FILES PANEL'S "RECENTLY CHANGED" ROW LEAVES OUT A BROWSED FOLDER'S FILES
+    # (ProjectsController#dirs_without_tiles), so a folder going into or out of the browser changes
+    # a second panel. The door says so, and only then: a switch between tiles and list changes
+    # nothing outside its own panel.
+    test "a folder switched into or out of the browser asks for the Files panel too" do
+      models, firmware = seed_folders!
+
+      patch project_panels_path(@project), params: { view: { models => "browser" }, in_place: "1" }
+      assert_redirected_to project_path(@project, panel: models, files: "1", anchor: models)
+
+      patch project_panels_path(@project), params: { view: { models => "list" }, in_place: "1" }
+      assert_redirected_to project_path(@project, panel: models, files: "1", anchor: models)
+
+      patch project_panels_path(@project), params: { view: { models => "tiles" }, in_place: "1" }
+      assert_redirected_to project_path(@project, panel: models, anchor: models)
+
+      # THE VIEW IT HAD IS THE LAYOUT'S ANSWER, NOT THE STORED ONE: a repository with nothing stored
+      # opens in the browser (Maker::ProjectKind.default_view), so its first switch leaves it.
+      assert_nil @project.reload.panels.dig("views", firmware)
+      patch project_panels_path(@project), params: { view: { firmware => "tiles" }, in_place: "1" }
+      assert_redirected_to project_path(@project, panel: firmware, files: "1", anchor: firmware)
+
+      patch project_panels_path(@project), params: { view: { firmware => "tiles" }, in_place: "1" }
+      assert_redirected_to project_path(@project, panel: firmware, anchor: firmware)
+    end
+
+    test "asked as a stream, the page answers with that panel alone and marks its pressed button for focus" do
+      models, = seed_folders!
+      @project.update!(panels: { "views" => { models => "list" } })
+
+      get project_path(@project, panel: models), headers: TURBO
+      assert_response :success
+      assert_equal "text/vnd.turbo-stream.html", response.media_type
+      assert_equal [ [ "replace", models ] ], streams
+
+      panel = streamed(models)
+      assert_equal 1, panel.css("section.folder-panel[id='#{models}']").size, "the stream must carry the section it replaces"
+      assert_equal [ "base.stl" ], panel.css("table.project-files td.col-name").map { |cell| cell.text.strip }
+      pressed = panel.css(".view-toggle button[aria-pressed='true']")
+      assert_equal [ "List" ], pressed.map { |button| button.text.strip }
+      assert pressed.first.key?("autofocus"), "the pressed button must take the focus the old one held"
+      assert_equal 1, panel.css("[autofocus]").size
+      # It still asks in place, or the second press would redraw the page.
+      assert_equal 3, panel.css(".view-toggle input[name='in_place']").size
+    end
+
+    test "with files=1 the stream carries the Files panel after the panel that was switched" do
+      models, = seed_folders!
+      @project.update!(panels: { "views" => { models => "browser" } })
+
+      get project_path(@project, panel: models, files: "1"), headers: TURBO
+      assert_response :success
+      assert_equal [ [ "replace", models ], [ "replace", "attachments" ] ], streams
+      assert_equal 1, streamed(models).css(".repo-browser").size
+      files = streamed("attachments")
+      assert_equal 1, files.css("section.attachments-panel#attachments").size
+      # ONE FOCUS, and it is the pressed button's: Turbo focuses the first it finds in the streams.
+      assert_empty files.css("[autofocus]")
+      assert_equal 1, streamed(models).css("[autofocus]").size
+
+      # The Files panel's own switch never names itself twice.
+      get project_path(@project, panel: "attachments", files: "1"), headers: TURBO
+      assert_equal [ [ "replace", "attachments" ] ], streams
+    end
+
+    # THE SAME ADDRESS IS THE PAGE TO A BROWSER THAT TAKES NO STREAMS: a form posted with no
+    # JavaScript follows the door's redirect here, and lands on the panel's anchor as it always did.
+    test "asked as html, the address is the whole page" do
+      models, = seed_folders!
+
+      get project_path(@project, panel: models)
+      assert_response :success
+      assert_equal "text/html", response.media_type
+      assert_select "turbo-stream", 0
+      assert_select "div.project-panels > div.panel-slot > section.panel", minimum: 3
+      assert_select "section.folder-panel[id=?]", models, 1
+    end
+
+    # A STREAM IS ANSWERED ONLY FOR A PANEL THAT HAS A VIEW TO SWITCH. Turbo sends the stream Accept
+    # on EVERY form's redirect, so a key this page cannot switch must get the page: a stream naming
+    # nothing would leave the browser on a page that silently did not change.
+    test "a key with no view to switch, or none this project has, gets the page" do
+      models, firmware = seed_folders!
+      @project.tasks.create!(user: @user, title: "Print base")
+      # A PANEL THE MAKER HID is not on the page to be replaced, and its files were not loaded.
+      @project.update!(panels: { "hidden" => [ firmware ] })
+
+      [ "tasks", firmware, "folder:not-a-folder", "../../etc/passwd", "" ].each do |key|
+        get project_path(@project, panel: key), headers: TURBO
+        assert_response :success, key
+        assert_equal "text/html", response.media_type, key
+        assert_select "turbo-stream", 0
+      end
+
+      get project_path(@project), headers: TURBO
+      assert_equal "text/html", response.media_type, "a redirect to the plain page is still the page"
+      get project_path(@project, panel: [ models ]), headers: TURBO
+      assert_equal "text/html", response.media_type, "a key that is not a String names nothing"
+
+      # AND THE EDITOR'S OWN `panel` IS UNTOUCHED: it answers one bare body, never a stream, and
+      # marks no button for focus, which in the editor would pull the keyboard out of the strip.
+      get layout_panel_project_path(@project, panel: models, view: "list"), headers: TURBO
+      assert_response :success
+      assert_select "turbo-stream", 0
+      assert_select "section.folder-panel[id=?] table.project-files", models, 1
+      assert_select "[autofocus]", 0
+    end
+
+    # A PAGE LOAD MARKS NOTHING FOR FOCUS: `autofocus` in a page pulls the keyboard, and the window,
+    # to a view button on every visit.
+    test "the page itself marks no view button for focus" do
+      seed_folders!
+
+      get project_path(@project)
+      assert_select "[autofocus]", 0
+    end
+
     # --- reset ----------------------------------------------------------------------------------
 
     test "Reset removes the override rather than writing the preset into the row" do
