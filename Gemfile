@@ -73,7 +73,7 @@ gem "aws-sdk-s3", require: false
 # The official SDK, Apache-2.0 (§9); its one runtime dependency, json_schemer, is MIT. Only the
 # JSON-RPC server half is used: the HTTP door is this app's own controller, so the gem's Rack
 # transport (and its sessions, SSE streams and allowed-hosts check) is never loaded.
-gem "mcp", "~> 1.9"
+gem "mcp", "~> 1.10"
 
 # libgit2 bindings, for editing and committing in a repository the maker brought
 # (Maker::Git::LocalRepo).
