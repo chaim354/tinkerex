@@ -325,5 +325,19 @@ module Maker
                      "MARKDOWN_EXTS is a display subset of the document role, never a second vocabulary"
       end
     end
+
+    # AN HTML FILE PAGE RUNS IT (2026-11-19, embedded files) — the same display-subset shape, of the
+    # code role. `.htm` is refused because it has no role, and giving it one would move files.
+    test "an HTML file is an html code file, and nothing else is" do
+      assert Maker::FileAttachment.html?("walnut-pc-case.html")
+      assert Maker::FileAttachment.html?("INDEX.HTML")
+      refute Maker::FileAttachment.html?("old.htm"), "htm has no role, so it stays a plain download"
+      refute Maker::FileAttachment.html?("style.css")
+      refute Maker::FileAttachment.html?(nil)
+      Maker::FileAttachment::HTML_EXTS.each do |ext|
+        assert_equal "code", Maker::FileAttachment::ROLE_BY_EXT[ext],
+                     "HTML_EXTS is a display subset of the code role, never a second vocabulary"
+      end
+    end
   end
 end

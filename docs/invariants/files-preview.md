@@ -808,6 +808,64 @@ wraps the file page's viewer chain in a Rendered / Source toggle (`.view-toggle`
   toggle, and pressing Rendered reloads the page. The model page's pane and a visitor's file page
   keep the source view alone.
 
+## An HTML file RUNS — in the sandbox door, never at this app's origin
+
+**`.html` OPENS ON A RENDERED VIEW TOO (2026-11-19, embedded files; spec
+`docs/superpowers/specs/2026-11-19-embedded-files-design.md`)**: `files/_html_view` wraps the chain in
+the Markdown page's Rendered / Source toggle (same controller), and Rendered is `files/viewers/_html` —
+the page itself in a frame served by `SandboxController` (`GET /sandbox/:token/*path`). Eight rules:
+
+- **NEVER `allow-same-origin`, in the header or on the `<iframe>`.** User HTML at this origin is stored
+  XSS — the reason `FileDelivery::SAFE_INLINE_TYPES` refuses `text/html`. The door's ENFORCING
+  `Content-Security-Policy: sandbox …` gives the document an OPAQUE origin even when its URL is opened
+  in a tab; the frame's `sandbox` attribute is the same string (`Maker::HtmlSandbox::PERMISSIONS`).
+  Granting that one token hands the page the session and every door. Pinned by `sandbox_test.rb`,
+  `file_embed_test.rb` and, in a real browser, `embedded_files_test.rb` (the probe reads
+  `parent:blocked cookie:blocked origin:null`); all three go red on the mutation.
+- **ENFORCING, NEVER REPORT-ONLY.** Browsers ignore `sandbox` in a report-only policy, and the app's
+  own policy is report-only. Rails' CSP middleware skips a response that already carries a policy;
+  `content_security_policy false` keeps the app's off the door's 404s and 304s (and its nonce, which
+  reads the session).
+- **THE TOKEN IS THE CREDENTIAL, NEVER THE SESSION.** An opaque-origin document's requests carry no
+  `SameSite=Lax` cookie, so a cookie-checked door serves the page and refuses everything it loads.
+  `Maker::HtmlSandbox` signs owner + HTML node (+ project, on a visitor's page) under its own purpose,
+  URL-safe (a path segment), 12 hours, minted per render. `Referrer-Policy: no-referrer` keeps it off
+  the CDNs. The door skips forgery protection: GET only, no session, and Rails' cross-origin-JS check
+  would 422 the page's own `<script src="app.js">`.
+- **A PATH RESOLVES IN THE HTML FILE'S FOLDER AND BELOW, BY PARENT EDGE AND NAME** — never a
+  `storage_path` (chunk_remote has none), never above. An empty, `..` or dot-led segment is REFUSED,
+  never normalised; the dot rule is what keeps `.git`, `.trash` and dot-files out.
+- **A PUBLIC TOKEN RE-ASKS THE PROJECT ON EVERY REQUEST** — still published, and `permits?` for the
+  page AND each file it loads. The case that reaches `resolve`'s own check is an HTML file the project
+  holds by ATTACHMENT from outside its folder: the page is public, its neighbours are not.
+- **BYTES THROUGH THE PORT'S `read` ON EVERY BACKEND, GATED ON THE CATALOG'S SIZE** (32 MB) before the
+  read — a scoped departure from §15: s3's delivery is a redirect, which can carry no sandbox header,
+  and a relative URL would resolve against the bucket key. The content token is the ETag.
+- **`.html` ONLY, A DISPLAY SUBSET OF `code`** (`HTML_EXTS`, MARKDOWN_EXTS' shape). `.htm` has no
+  role, and giving it one MOVES files on the NAS.
+- **SOURCE IS THE SAME CHAIN, MOUNTED HIDDEN**, by the same editability rule (`editable_here?`): an
+  `.html` outside a working tree is the read-only viewer.
+
+## A File block frames a file's preview area, never a second viewer
+
+A project page's `file` block (`Maker::ProjectBlock`, `shared/_file_embed`) shows an HTML file's
+sandbox frame directly, and ANY other file as a same-origin `<iframe>` of `/files/:id/embed` (a
+visitor's: `/u/:handle/:slug/files/:id/embed`) — `#show`'s preview area alone in `layouts/embed`.
+Four rules:
+
+- **THE EMBED IS THE FILE PAGE'S OWN AREA, asked the same way** (`viewer_state_for`, `editable_here?`,
+  `Maker::MarkdownFile`, `html_frame_url_for`; the visitor's twin is `public/files/_viewer`, the chain
+  `public/files/view` renders). A block never renders a viewer of its own, so a workbook saves and a
+  note edits there exactly as on the page, and the project page pays no stat or read per block.
+- **`<base target="_top">` AND `data-turbo="false"`** on the embed layout: a link in the frame leaves
+  it. Turbo Drive reads an anchor's own `target`, not the base's, and would visit INSIDE the frame.
+- **A MISSING FILE ANSWERS IN THE FRAME** (`files/embed_gone`, 404) — the class-level `rescue_from`
+  would draw the whole Library inside a block (`#inspector`'s rule).
+- **THE BLOCK'S NODE FOLLOWS THE IMAGE BLOCK'S RULES**: out of `@page_nodes`, nothing rendered when it
+  is not live; on a visitor's page `pub.block_file_node` (live, permitted, not hidden). The editor
+  names it by node id, the layout text by `ProjectFolderListing#folder_file_paths`' path; a file
+  outside the folder is a note on an existing block and an error on a new one, as an image is.
+
 ## `/files/thumbnails` MUST answer for a node with no row
 
 This was `next unless p`, which **omits the key** — and `thumbs_controller`'s `if (!entry) continue`

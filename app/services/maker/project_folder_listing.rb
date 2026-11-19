@@ -253,6 +253,18 @@ module Maker
       @path_index ||= all_rows.index_by { |row| "#{path_for(row.node)}/#{row.node.name}" }.transform_values(&:node_id)
     end
 
+    # node_id => path RELATIVE TO THE PROJECT FOLDER, for every file this listing holds strictly
+    # inside it (2026-11-19, embedded files): what a File block may name — by node id in the editor's
+    # draft, by this path in the layout text — and what its picker lists. Off `path_index`, never
+    # rebuilt, for the reason `Projects::LayoutScoped#folder_images` gives. A linked file elsewhere in
+    # the library has no path under the folder, so it is left out rather than named by a full path
+    # the text could not round-trip. Sorted by path, which is the picker's order.
+    def folder_file_paths
+      prefix = "#{path}/"
+      @folder_file_paths ||= path_index.filter_map { |full, id| [ id, full.delete_prefix(prefix) ] if full.start_with?(prefix) }
+                                       .sort_by { |_id, rel| rel.downcase }.to_h
+    end
+
     # The node's full library path — NOT scoped to this folder, unlike `Row#section`. Used for the
     # Linked group's Section column: those rows live anywhere in the user's library, and the tree
     # already indexes every live dir the user owns, so this costs no extra query.

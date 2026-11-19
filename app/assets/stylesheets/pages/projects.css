@@ -478,4 +478,14 @@
   .danger-zone-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
   .danger-zone-actions form { margin: 0; }
   .danger-zone-actions p { margin: 0; font-size: 12px; }
+
+  /* --- A File block (2026-11-19, embedded files; shared/_file_embed). The heading opens the file's
+     page. A same-origin frame of the file's preview area, at a fixed height the maker can drag taller
+     (`resize` on the box, the frame filling it); an HTML file's own frame is `.preview-html`'s. --- */
+  .block-file-heading { margin: 0 0 10px; }
+  .block-file-heading a { color: inherit; }
+  .embed-frame { height: 32rem; min-height: 240px; resize: vertical; overflow: hidden;
+                 border: 1px solid var(--line); border-radius: 6px; }
+  .embed-frame-view { display: block; width: 100%; height: 100%; border: 0; }
+  .block-panel .preview-html { height: 70vh; }
 }

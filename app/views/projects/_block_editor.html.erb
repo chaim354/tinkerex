@@ -60,5 +60,25 @@
     <label class="field"><span>Caption</span>
       <input type="text" maxlength="<%= Maker::ProjectBlock::LINE_MAX %>" value="<%= block&.caption %>"
              placeholder="Optional" data-field="caption" data-action="input->layout-editor#field"></label>
+  <% when "file" %>
+    <%# ANY FILE IN THE PROJECT FOLDER, BY ITS PATH THERE (2026-11-19, embedded files). A <select>, not
+        the image picker's thumbnails: a folder of firmware, sheets and notes is a list of names, and the
+        path is what tells `docs/notes.md` from `firmware/notes.md`. The option's value is the node id
+        the draft carries; @folder_files is Maker::ProjectFolderListing#folder_file_paths, the same map
+        the layout text names a file block's file by. %>
+    <label class="field"><span>File</span>
+      <select data-field="file" data-action="change->layout-editor#field">
+        <option value="">Choose a file from the project folder…</option>
+        <% @folder_files.each do |node_id, path| %>
+          <option value="<%= node_id %>"<%= " selected" if block&.node_id == node_id %>><%= path %></option>
+        <% end %>
+      </select></label>
+    <% if block&.node_id.present? && !@folder_files.key?(block.node_id) %>
+      <p class="muted block-missing">This block's file is not in the project folder any more; pick another.</p>
+    <% end %>
+    <label class="field"><span>Heading</span>
+      <input type="text" maxlength="<%= Maker::ProjectBlock::HEADING_MAX %>" value="<%= block&.heading %>"
+             placeholder="Optional; the file's name otherwise" data-field="heading"
+             data-action="input->layout-editor#field"></label>
   <% end %>
 </form>

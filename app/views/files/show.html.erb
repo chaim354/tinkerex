@@ -153,10 +153,14 @@
       save records a pending git edit.
 
       A MARKDOWN FILE WRAPS IT (UX audit D8): files/_markdown_view puts a Rendered view beside it and
-      this viewer behind a Source toggle; for every other file it yields the viewer untouched. %>
-  <%= render layout: "files/markdown_view", locals: { markdown: @markdown } do %>
-    <%= render "files/viewer", viewer: @viewer, editable: @editable, save: true,
-               poster_download: false, in_repo: @repo_root.present? %>
+      this viewer behind a Source toggle; for every other file it yields the viewer untouched. AN HTML
+      FILE WRAPS IT THE SAME WAY (2026-11-19, embedded files): files/_html_view's Rendered pane is the
+      page itself, running in the sandboxed frame. The two are exclusive by extension. %>
+  <%= render layout: "files/html_view", locals: { name: @node.name, frame_url: @html_frame_url } do %>
+    <%= render layout: "files/markdown_view", locals: { markdown: @markdown } do %>
+      <%= render "files/viewer", viewer: @viewer, editable: @editable, save: true,
+                 poster_download: false, in_repo: @repo_root.present? %>
+    <% end %>
   <% end %>
   </div>
 </div>

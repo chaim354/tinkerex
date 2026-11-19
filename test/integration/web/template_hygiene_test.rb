@@ -98,8 +98,13 @@ module Web
     # and only in demo mode (config/routes.rb), and this sweep is a signed-in session in which `/` is
     # Recent. Its rendered output is checked by LandingTest#"demo mode on, / is the landing: …", which
     # asserts its body carries neither ERB delimiter.
+    #
+    # `files/embed_gone.html.erb` (2026-11-19, embedded files) is inspector_gone's twin: a File
+    # block's frame answering 404 for a file that is no longer live. Its body is checked by
+    # FileEmbedTest#"a missing file answers in the frame, not a redirect" for both ERB delimiters.
     UNSWEPT_TEMPLATES = %w[
       repo_commits/show.html.erb repo_histories/show.html.erb files/inspector_gone.html.erb
+      files/embed_gone.html.erb
       landings/show.html.erb
       projects/composer_page.html.erb
       settings/devices/connected.html.erb
@@ -293,6 +298,12 @@ module Web
       @project.blocks.create!(user: @user, kind: "link", heading: "Printables page",
                               url: "https://www.printables.com/model/1", line: "Sliced files.")
       @project.blocks.create!(user: @user, kind: "image", node_id: photo, caption: "Side on.")
+      # 2026-11-19, EMBEDDED FILES: an HTML file and two FILE blocks — one on it, which renders the
+      # sandbox frame (shared/_file_embed → files/viewers/_html) on both detail pages, and one on the
+      # workbook, which renders the embed frame. The pages below sweep the frames' own documents.
+      file!("n-html", "viewer.html", parent_node_id: folder.node_id)
+      @project.blocks.create!(user: @user, kind: "file", node_id: "n-html")
+      @project.blocks.create!(user: @user, kind: "file", node_id: "n-xlsx", heading: "Cut list")
       @sheet = @project.sheets.create!(user: @user, name: "Cut list", position: 0,
                                        data: Maker::Sheet.blank_data)
       # FOLDERLESS ON PURPOSE. Every model renders its own page since 2026-10-21 (`/models/:id` no
@@ -553,6 +564,11 @@ module Web
         "file detail (gerber)" => file_path("n-pcb-0"),
         "file detail (other)" => file_path("n-other"),
         "file detail (spreadsheet)" => file_path("n-xlsx"),
+        # 2026-11-19, embedded files: an HTML file's page (files/_html_view, files/viewers/_html), the
+        # bare preview area a File block frames (files/embed, layouts/embed); its missing-file
+        # answer is UNSWEPT_TEMPLATES' (a 404; FileEmbedTest checks its body).
+        "file detail (html)" => file_path("n-html"),
+        "file embed" => embed_file_path("n-xlsx"),
         # Structural redesign slice 3: the Library's inspector frame, a fragment swept like a page
         # so a comment leak in it would show. `n-stl` is attached to @project and renderable, so
         # the frame reaches the attach chips and the thumbnail cell. Its 404 sibling,
@@ -676,6 +692,8 @@ module Web
         # are, by the two `@project.file_attachments.create!` rows in setup.
         "public file (3d)" => public_file_view_path(@user.handle, @project.slug, "n-stl"),
         "public file (measure)" => public_file_view_path(@user.handle, @project.slug, "n-bak"),
+        # 2026-11-19, embedded files: the visitor's bare preview area a File block frames.
+        "public file embed" => public_file_embed_path(@user.handle, @project.slug, "n-xlsx"),
         "explore" => public_explore_path,
         # The tag chip's own destination, which is the filtered branch of the same page — its
         # "All" chip renders only when a filter is on.

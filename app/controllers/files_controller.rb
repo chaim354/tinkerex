@@ -620,7 +620,7 @@ class FilesController < ApplicationController
     # project README door already made (docs/invariants/git-editing.md, "The Markdown exception").
     # `@repo_root` still decides whether a save records a pending git edit, and still does so BY
     # BEING NIL inside Maker::TextSave, so nothing here branches.
-    @editable  = @kind == :text && editable?(@node) && editable_without_history?(@node, @repo_root)
+    @editable  = editable_here?(@node, @kind, @repo_root)
     # THE WAY INTO THE COMMIT BOX. Without these two the box is reachable only by typing its URL --
     # which is exactly what shipped on 2026-08-28 and was found by a person using the app, not by
     # the suite: every test navigates straight to repo_commit_path, so nothing was ever asked
@@ -671,6 +671,7 @@ class FilesController < ApplicationController
     if @kind == :text && @info&.content_token && Maker::FileAttachment.markdown?(@node.name)
       @markdown = Maker::MarkdownFile.for(user: current_user, node: @node, size: @info.size, tree:)
     end
+    @html_frame_url = html_frame_url_for(@node, @info)
     # THE BREADCRUMB'S FOLDER CHAIN (structural redesign §5.3): the same `folder_crumbs` walk #index
     # makes — one find_by per ancestor, so it grows with DEPTH, never with the folder's size. Also
     # what lets ShellHelper#sidebar_current light a pinned ancestor on a file page. A file at the
@@ -681,6 +682,33 @@ class FilesController < ApplicationController
     # The top bar's Upload and New create beside this file (FolderDestination) — quietly: the
     # workspace's one action is the file, not an upload.
     use_folder_destination(parent&.node_id, path: @crumbs.map(&:name).join("/"))
+  end
+
+  # GET /files/:id/embed — #show's PREVIEW AREA ALONE, in the bare `embed` layout (2026-11-19, embedded
+  # files): what a project page's File block frames. The same five answers #show gives the area — the
+  # viewer, the editability rule, the git root that decides whether a save records a pending edit, the
+  # Markdown file's rendered view and an HTML file's sandbox frame — asked the same way, so a file
+  # cannot be editable on its page and read-only in its block, or the other way round. Nothing else of
+  # #show: no notes, links, history or attach control, which is the file page's, one click away.
+  #
+  # A FRAME, SO A MISSING FILE ANSWERS IN THE FRAME (#inspector's rule): the class-level rescue_from
+  # redirects to the Library, which would draw the whole Files page inside the project's block.
+  def embed
+    @node = current_user.nodes.present.find_by(node_id: params[:id], kind: "file")
+    return render("embed_gone", layout: "embed", status: :not_found) unless @node
+
+    @viewer = viewer_state_for(@node)
+    @info = @viewer.info
+    @repo_root = Library::WorkingTree.new(current_user).root_for(@node)
+    @editable = editable_here?(@node, @viewer.kind, @repo_root)
+    if @viewer.kind == :text && @info&.content_token && Maker::FileAttachment.markdown?(@node.name)
+      @markdown = Maker::MarkdownFile.for(user: current_user, node: @node, size: @info.size,
+                                          tree: Maker::LibraryTree.new(current_user))
+    end
+    @html_frame_url = html_frame_url_for(@node, @info)
+    render layout: "embed"
+  rescue FileLayer::NotFound
+    render "embed_gone", layout: "embed", status: :not_found
   end
 
   # GET /files/:id/inspector — the Library's right-hand panel for ONE selected file (structural
@@ -1887,6 +1915,22 @@ class FilesController < ApplicationController
   # asks "is losing the previous contents of this acceptable", which only the maker's own prose is.
   # An extensionless text file is read-only outside a repo for the same reason.
   EDITABLE_WITHOUT_HISTORY = %w[.md .txt].freeze
+
+  # THE ONE EDITABILITY ANSWER, for #show and #embed alike: a text viewer, under the size cap, and
+  # either inside a working tree or one of the two prose extensions.
+  def editable_here?(node, kind, repo_root)
+    kind == :text && editable?(node) && editable_without_history?(node, repo_root)
+  end
+
+  # THE SANDBOX DOOR'S URL FOR AN HTML FILE THAT HAS CONTENT, nil for anything else (2026-11-19,
+  # embedded files; Maker::HtmlSandbox). A fresh token per render, so an open page outlives it only
+  # by Maker::HtmlSandbox::TTL. The file's own NAME is the path, which is what makes the page's
+  # relative links resolve inside its folder.
+  def html_frame_url_for(node, info)
+    return nil unless info&.content_token && Maker::FileAttachment.html?(node.name)
+
+    sandbox_path(Maker::HtmlSandbox.token_for(owner: current_user, node:), node.name)
+  end
 
   def editable_without_history?(node, repo_root)
     return true if repo_root.present?

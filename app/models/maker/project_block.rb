@@ -14,7 +14,10 @@ module Maker
   class ProjectBlock < ApplicationRecord
     self.table_name = "maker_project_blocks"
 
-    KINDS = %w[text link image].freeze
+    # `file` (2026-11-19, embedded files): any file from the project folder, shown INLINE through its
+    # own viewer — the file page's preview area in a frame, or an HTML file running in the sandbox
+    # (projects/_block_panel). An `image` block stays its own kind: a figure with a caption, not a viewer.
+    KINDS = %w[text link image file].freeze
     HEADING_MAX = 80
     LINE_MAX = 200
     BODY_MAX = 20 * 1024
@@ -58,6 +61,8 @@ module Maker
         errors.add(:heading, "is required for a link") if heading.blank?
       when "image"
         errors.add(:node_id, "is required for an image") if node_id.blank?
+      when "file"
+        errors.add(:node_id, "is required for a file block") if node_id.blank?
       end
     end
 

@@ -175,6 +175,7 @@ export default class extends Controller {
       if (d.kind === "text") { e.heading = d.heading || ""; e.body = d.body || "" }
       if (d.kind === "link") { e.url = d.url || ""; e.title = d.linkTitle || ""; e.line = d.line || "" }
       if (d.kind === "image") { e.file = d.file || ""; e.caption = d.caption || "" }
+      if (d.kind === "file") { e.file = d.file || ""; e.heading = d.heading || "" }
       return e
     }
     if (d.view) e.view = d.view
@@ -386,6 +387,7 @@ export default class extends Controller {
     switch (d.kind) {
       case "link": return d.linkTitle?.trim() ? `Delete the link${quoted(d.linkTitle)}?` : "Delete this link?"
       case "image": return "Delete this image block? The picture stays in the project folder."
+      case "file": return "Delete this file block? The file stays in the project folder."
       default: return d.heading?.trim() ? `Delete the text block${quoted(d.heading)}?` : "Delete this text block?"
     }
   }
@@ -395,6 +397,8 @@ export default class extends Controller {
     const slot = this.slotOf(event)
     slot.dataset[event.currentTarget.dataset.field] = event.currentTarget.value
     if (slot.dataset.kind === "link") this.drawLinkCard(slot)
+    // A FILE BLOCK'S PICK, like #pickImage below: the "not in the folder any more" line stops being true.
+    if (event.currentTarget.dataset.field === "file") slot.querySelector(".block-missing")?.remove()
     this.changed()
   }
 
@@ -706,6 +710,8 @@ export default class extends Controller {
         return null
       case "image":
         return d.file ? null : "an image block needs a picture from the project folder"
+      case "file":
+        return d.file ? null : "a file block needs a file from the project folder"
       default:
         return null
     }

@@ -1,0 +1,14 @@
+<% content_for :title, "#{@node.name} — Tinkerex" %>
+<%# FILES/SHOW'S PREVIEW AREA AND NOTHING ELSE (2026-11-19, embedded files; FilesController#embed), for
+    a project page's File block. The same two wrappers in the same order and the same viewer chain with
+    the same locals, so the block and the file page cannot disagree about what a file shows or whether
+    it can be edited. `poster_download: true` (the default) because there is no page head here to
+    offer Download. %>
+<div class="preview embed-preview">
+  <%= render layout: "files/html_view", locals: { name: @node.name, frame_url: @html_frame_url } do %>
+    <%= render layout: "files/markdown_view", locals: { markdown: @markdown } do %>
+      <%= render "files/viewer", viewer: @viewer, editable: @editable, save: true,
+                 in_repo: @repo_root.present? %>
+    <% end %>
+  <% end %>
+</div>

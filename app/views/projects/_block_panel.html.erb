@@ -16,8 +16,10 @@
   Locals: key (the layout key, which is the section's id so the page head can anchor at it),
   block (a Maker::ProjectBlock).
 %>
-<% node = block.kind == "image" ? @page_nodes[block.node_id] : nil %>
-<% unless block.kind == "image" && node.nil? %>
+<%# A FILE BLOCK FOLLOWS THE IMAGE BLOCK'S RULE (2026-11-19, embedded files): its node comes out of the
+    same @page_nodes union, and a file that is not live renders no section at all. %>
+<% node = %w[image file].include?(block.kind) ? @page_nodes[block.node_id] : nil %>
+<% unless %w[image file].include?(block.kind) && node.nil? %>
   <section class="panel block-panel block--<%= block.kind %>" id="<%= key %>">
     <% case block.kind %>
     <% when "text" %>
@@ -59,6 +61,10 @@
         <% end %>
         <% if block.caption.present? %><figcaption class="muted"><%= block.caption %></figcaption><% end %>
       </figure>
+    <% when "file" %>
+      <%= render "shared/file_embed", name: node.name, heading: block.heading, open_url: file_path(node.node_id),
+                 frame_url: file_block_frame_url(node), embed_url: embed_file_path(node.node_id),
+                 open_data: file_open_data %>
     <% end %>
   </section>
 <% end %>

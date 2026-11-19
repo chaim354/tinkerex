@@ -261,4 +261,9 @@
     main.container { padding: 12px 12px 72px; }
     .page-head h1 { font-size: 18px; }
   }
+
+  /* --- The bare layout a File block frames (layouts/embed; 2026-11-19, embedded files): no rail, no
+     top bar, just the file's preview area on the page's own ground, edge to edge. --- */
+  body.embed-body { margin: 0; background: var(--bg); }
+  main.embed-main { padding: 12px; }
 }

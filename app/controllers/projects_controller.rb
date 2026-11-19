@@ -425,9 +425,12 @@ class ProjectsController < ApplicationController
     # and the page intro's cover picker both draw the FOLDER'S images as thumbnails. They need no
     # union term: they are exactly the folder half of @photo_rows, which the union already holds.
     @folder_images = @editing ? @listing.all_rows.select { |row| row.role == "image" } : []
+    # A FILE BLOCK'S PICKER (2026-11-19, embedded files): every file in the folder by its path there,
+    # the same map the layout text names one by. In memory over @listing, so it costs no query.
+    @folder_files = @editing ? @listing.folder_file_paths : {}
     # AN IMAGE BLOCK'S PICTURE, ONLY WHERE IT IS LIVE: `@page_nodes` has already answered that, and
     # a dead id here would spend a slot in the backfill budget for a block that renders nothing.
-    block_thumb_ids = @blocks.filter_map(&:node_id).select { |id| @page_nodes.key?(id) }
+    block_thumb_ids = @blocks.select { |b| b.kind == "image" }.filter_map(&:node_id).select { |id| @page_nodes.key?(id) }
     # THE RECENT ROW'S TILES ARE TILES TOO, and they are not all in `tile_ids`: a recent file can sit
     # past FILE_CAP, and a tile this map never backfilled spins for its 41 polls. Usually they ARE
     # already there — ThumbnailMap and AddonOrigin both take a union, so a duplicate costs nothing.

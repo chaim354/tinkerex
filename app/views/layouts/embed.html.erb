@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<%# A FILE'S PREVIEW AREA ON ITS OWN, FOR A PROJECT PAGE'S FILE BLOCK TO FRAME (2026-11-19, embedded
+    files; FilesController#embed, Public::FilesController#embed). Same-origin and same head as every
+    page — `layouts/head`, so the stylesheets, the importmap and the shared head elements are the
+    application layout's own (css_hygiene_test.rb pins the order there, and this inherits it) — and
+    the theme from the same cookie, so the frame matches the page around it (design-system.md rule 7:
+    rendered into the first byte, no script).
+
+    NO SHELL: no rail, top bar, flash or tab bar. A frame showing one file has nothing to navigate.
+
+    `<base target="_top">` SENDS EVERY LINK OUT OF THE FRAME — a rendered Markdown link, a poster's
+    Download — so following one leaves the project page for the file, rather than opening a second
+    app inside a block. `data-turbo="false"` is what makes that hold: Turbo Drive would otherwise
+    take the click and visit INSIDE the frame, since it reads an anchor's own `target`, not the
+    base's. The editor and the workbook grid save by fetch, which neither touches. %>
+<html lang="en" data-theme="<%= ui_theme %>">
+  <head>
+    <%= render "layouts/head" %>
+    <base target="_top">
+  </head>
+  <body class="embed-body" data-turbo="false">
+    <main id="main" class="embed-main">
+      <%= yield %>
+    </main>
+  </body>
+</html>

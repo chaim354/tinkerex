@@ -9,7 +9,16 @@ module ProjectsHelper
   # the heading is the only thing telling two text blocks apart in a strip's aria label. A HELPER
   # rather than a controller method because BOTH sides need it: ProjectsController#show builds
   # @panel_labels from it, and projects/_block_templates labels a slot whose key names no row.
-  BLOCK_LABELS = { "text" => "Text block", "link" => "Link", "image" => "Image" }.freeze
+  BLOCK_LABELS = { "text" => "Text block", "link" => "Link", "image" => "Image", "file" => "File" }.freeze
+
+  # A FILE BLOCK'S SANDBOX FRAME ON THE MAKER'S OWN PAGE (2026-11-19, embedded files): the sandbox
+  # door's URL under an owner token for an HTML file, nil for any other file (which frames
+  # FilesController#embed instead). A fresh token per render, like the file page's.
+  def file_block_frame_url(node)
+    return nil unless Maker::FileAttachment.html?(node.name)
+
+    sandbox_path(Maker::HtmlSandbox.token_for(owner: current_user, node:), node.name)
+  end
 
   def block_label(block)
     name = BLOCK_LABELS.fetch(block.kind, "Block")

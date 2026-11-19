@@ -39,29 +39,17 @@ module Public
     end
 
     def view
-      @pub = public_project!
-      @node = @pub.deliverable!(params[:id])
-      owner = @pub.owner
-      @info = FileLayer.current.stat(owner, node_id: @node.node_id)
-      # WHICH VIEWER, AND THE BOARD IF THIS IS ONE: FilePreview#viewer_for, the ONE answer the
-      # maker's page asks too (F-S10-2), in the OWNER's name — only the URL builder is public.
-      # `layer_url_for` answers nil for a node this project does not permit, and every Gerber arm
-      # drops a nil, so a board renders without a layer the byte route would refuse rather than
-      # linking a visitor at a 404. For the zip's OWN entry it asks the `permits?` `deliverable!`
-      # just answered: one more query on a zip's page, constant, and the price of one builder.
-      @kind, @gerber_layers, @gerber_single =
-        viewer_for(user: owner, node: @node, url: ->(n) { @pub.layer_url_for(n) })
-      # ONE MAP FOR ONE NODE, not the project page's: `Maker::PublicProject#thumbs` covers everything
-      # that page paints, entry photos and image blocks out of `page_nodes` included, and loading
-      # `page_nodes` here would pull the build log, the BOM and every release onto a page that shows
-      # one file. `.for` backfills, which is what makes a poster appear on a file nobody has opened
-      # before — the same write-on-GET the public project page already does.
-      @thumbnail = Maker::Previews::ThumbnailMap.for(owner, [ @node.node_id ]).thumb(@node.node_id)
-      # A ZIP'S LISTING (in `viewer_for`) AND A 3MF's MANIFEST ARE EACH ONE BOUNDED PORT READ in the
-      # OWNER's name, judged on the catalog's `size` column BEFORE any read and cached by content
-      # token, nil included. That bound is what makes them safe on a route a stranger can issue.
-      @viewer_manifest = Maker::ThreeMfManifest.for(user: owner, node: @node)
-      enqueue_geometry(owner) if @kind == :measure
+      load_view_state
+    end
+
+    # GET /u/:handle/:slug/files/:id/embed — #view's PREVIEW AREA ALONE, in the bare `embed` layout
+    # (2026-11-19, embedded files): what a published project's File block frames. The same state, the
+    # same permission and the same chain (public/files/_viewer), so the block shows a visitor exactly
+    # what the file's public page shows and nothing it would refuse. An unpermitted or missing file is
+    # the same 404 #view answers, as a frame of nothing rather than a redirect.
+    def embed
+      load_view_state
+      render layout: "embed"
     end
 
     # GET /u/:handle/:slug/files/:id/preview/:kind — a file's DERIVED ASSET: its thumbnail, or the
@@ -160,6 +148,36 @@ module Public
     end
 
     private
+
+    # EVERYTHING #view AND #embed SHOW, asked once in one place.
+    def load_view_state
+      @pub = public_project!
+      @node = @pub.deliverable!(params[:id])
+      owner = @pub.owner
+      @info = FileLayer.current.stat(owner, node_id: @node.node_id)
+      # WHICH VIEWER, AND THE BOARD IF THIS IS ONE: FilePreview#viewer_for, the ONE answer the
+      # maker's page asks too (F-S10-2), in the OWNER's name — only the URL builder is public.
+      # `layer_url_for` answers nil for a node this project does not permit, and every Gerber arm
+      # drops a nil, so a board renders without a layer the byte route would refuse rather than
+      # linking a visitor at a 404. For the zip's OWN entry it asks the `permits?` `deliverable!`
+      # just answered: one more query on a zip's page, constant, and the price of one builder.
+      @kind, @gerber_layers, @gerber_single =
+        viewer_for(user: owner, node: @node, url: ->(n) { @pub.layer_url_for(n) })
+      # ONE MAP FOR ONE NODE, not the project page's: `Maker::PublicProject#thumbs` covers everything
+      # that page paints, entry photos and image blocks out of `page_nodes` included, and loading
+      # `page_nodes` here would pull the build log, the BOM and every release onto a page that shows
+      # one file. `.for` backfills, which is what makes a poster appear on a file nobody has opened
+      # before — the same write-on-GET the public project page already does.
+      @thumbnail = Maker::Previews::ThumbnailMap.for(owner, [ @node.node_id ]).thumb(@node.node_id)
+      # A ZIP'S LISTING (in `viewer_for`) AND A 3MF's MANIFEST ARE EACH ONE BOUNDED PORT READ in the
+      # OWNER's name, judged on the catalog's `size` column BEFORE any read and cached by content
+      # token, nil included. That bound is what makes them safe on a route a stranger can issue.
+      @viewer_manifest = Maker::ThreeMfManifest.for(user: owner, node: @node)
+      enqueue_geometry(owner) if @kind == :measure
+      # AN HTML FILE RUNS IN THE SANDBOXED FRAME, under a token naming this PROJECT, so the door
+      # re-asks `permits?` for the page and every file it loads (Maker::HtmlSandbox).
+      @html_frame_url = @pub.sandbox_url_for(@node) if @info&.content_token && Maker::FileAttachment.html?(@node.name)
+    end
 
     # ONE JOB PER (node, content token, renderer build), plus at most one per STALLED_AFTER window
     # for a row whose job was lost — and `retry_failed: false` is what makes that true rather than
