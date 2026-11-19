@@ -37,6 +37,7 @@ module Library
                                      kind: "derived_from")
       @user.maker_pins.create!(node_id: @dir.node_id)
       @user.maker_pins.create!(node_id: @scratch.node_id)
+      Maker::StackExclusion.pull_out!(@user, @file.node_id)
       @note = @user.maker_notes.create!(node_id: @file.node_id, body: "print at 0.2 mm")
       @folder_note = @user.maker_notes.create!(node_id: @dir.node_id, body: "the lamp lives here")
       @trashed_project = @user.maker_projects.create!(name: "Shelf", folder_node_id: @trashed_dir.node_id)
@@ -79,6 +80,7 @@ module Library
       assert_equal 0, @user.maker_file_attachments.count, "maker_file_attachments"
       assert_equal 0, @user.maker_file_links.count, "maker_file_links"
       assert_equal [ @dir.node_id ], @user.maker_pins.pluck(:node_id), "maker_pins: the scratch folder's went"
+      assert_equal 0, @user.maker_stack_exclusions.count, "maker_stack_exclusions"
       assert_equal [ @folder_note.id ], @user.maker_notes.pluck(:id), "maker_notes: the file's went"
       assert_not ActionText::RichText.exists?(record_type: "Maker::Note", record_id: @note.id),
                  "a note's rich text goes with it"

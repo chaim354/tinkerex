@@ -80,7 +80,7 @@ module SchemaMap
     { "label" => "Files ↔ maker", "group" => "maker",
       "tables" => %w[maker_file_attachments maker_previews maker_notes maker_addon_files
                      maker_addon_states maker_addon_state_revisions maker_repo_edits
-                     maker_file_links] },
+                     maker_file_links maker_stack_exclusions] },
     { "label" => "Library", "group" => "maker",
       "tables" => %w[maker_items maker_collection_items maker_collections maker_taggings
                      maker_tags maker_tasks maker_pins] },
@@ -174,6 +174,9 @@ module SchemaMap
     # softness `maker_file_links` and `maker_notes` rely on.
     [ "maker_project_blocks.node_id",       "nodes.node_id",      "app", "pictures" ],
     [ "maker_pins.node_id",                 "nodes.node_id",      "app", "pins" ],
+    # A FILE PULLED OUT OF ITS VERSION STACK (shop-manual spec §9). Soft like every arrow into
+    # `nodes`: a tombstoned file keeps its row through the grace window (Maker::StackExclusion).
+    [ "maker_stack_exclusions.node_id",     "nodes.node_id",      "app", "pulled out of a stack" ],
     # --- maker layer internals ----------------------------------------------------
     [ "maker_boms.project_id",                        "maker_projects.id",        "app", "BOM for" ],
     [ "maker_bom_lines.bom_id",                       "maker_boms.id",            "app", "line of" ],
