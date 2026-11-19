@@ -118,7 +118,7 @@ module Web
     test "the app icon and the manifest agree with the page" do
       svg = Rails.public_path.join("icon.svg").read
       assert_no_match(/circle|fill="red"/, svg)
-      assert_includes svg, 'fill="#1b1c19"'
+      assert_includes svg, 'fill="#0f1113"'
       png = Rails.public_path.join("icon.png").binread
       assert_equal [ 512, 512 ], png[16, 8].unpack("NN"), "icon.png is not the 512px icon the manifest names"
 

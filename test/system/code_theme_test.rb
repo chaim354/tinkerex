@@ -13,8 +13,8 @@ require "application_system_test_case"
 # (the light base-theme variant's #f5f5f5 literal, which is what an unscoped rule exists to beat in
 # Graphite), and the `return` KEYWORD (the highlight style — the ground alone cannot see it).
 class CodeThemeTest < ApplicationSystemTestCase
-  PAPER = { ground: "rgb(252, 251, 248)",   # --surface  #fcfbf8
-            gutter: "rgb(235, 232, 225)",   # --raised   #ebe8e1
+  PAPER = { ground: "rgb(255, 255, 255)",   # --surface  #ffffff
+            gutter: "rgb(244, 244, 241)",   # --raised   #f4f4f1
             keyword: "rgb(154, 52, 18)" }.freeze  # --code-keyword #9a3412
   GRAPHITE = { ground: "rgb(27, 28, 25)",   # --surface  #1b1c19
                gutter: "rgb(37, 38, 34)",   # --raised   #252622

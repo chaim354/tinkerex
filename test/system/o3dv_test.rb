@@ -175,7 +175,7 @@ class O3dvTest < ApplicationSystemTestCase
     token = page.evaluate_script("getComputedStyle(document.documentElement).getPropertyValue('--model-material').trim()")
     assert_equal "#7f7b73", token, "the token this test reads must be the palette's material"
     assert_equal [ "7f7b73" ], mesh_materials.map { _1["hex"] }.uniq, "an uncoloured STL wears --model-material"
-    assert_equal [ 235, 232, 225 ], page.evaluate_script(STAGE_PIXEL_JS), "Paper's --raised before the switch"
+    assert_equal [ 244, 244, 241 ], page.evaluate_script(STAGE_PIXEL_JS), "Paper's --raised before the switch"
 
     page.execute_script("document.documentElement.dataset.theme = 'dark'")
     wait_until(message: "the open viewer never repainted for Graphite") { page.evaluate_script(STAGE_PIXEL_JS) == [ 37, 38, 34 ] }

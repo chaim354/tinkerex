@@ -106,7 +106,7 @@ module Web
     test "the theme comes from the cookie and defaults to light" do
       get files_path
       assert_select "html[data-theme='light']"
-      assert_select "meta[name='theme-color'][content='#f4f2ed']"
+      assert_select "meta[name='theme-color'][content='#ffffff']"
       assert_select "meta[name='color-scheme'][content='light']"
 
       cookies[:theme] = "dark"
@@ -118,7 +118,7 @@ module Web
       cookies[:theme] = "system"
       get files_path
       assert_select "html[data-theme='system']"
-      assert_select "meta[name='theme-color'][content='#f4f2ed']"
+      assert_select "meta[name='theme-color'][content='#ffffff']"
       assert_select "meta[name='color-scheme'][content='light dark']"
 
       cookies[:theme] = "purple"
@@ -264,7 +264,7 @@ module Web
       css = response.body
       # Material Symbols is KiCanvas's icon font, same-origin since bin/build-kicanvas stopped it
       # calling Google (kicanvas_test.rb asserts the viewer page then raises no CSP violation).
-      %w[ibm-plex-sans ibm-plex-sans-italic ibm-plex-mono-400 ibm-plex-mono-500
+      %w[libre-franklin libre-franklin-italic courier-prime-400 courier-prime-700
          material-symbols-outlined].each do |name|
         font = css[%r{/assets/#{name}-[0-9a-f]{8,}\.woff2}]
         assert font, "application.css does not reference a fingerprinted #{name}.woff2"

@@ -53,7 +53,7 @@
   .rail-link[aria-current="page"]::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
   .rail-icon { width: 16px; height: 16px; flex: 0 0 auto; }
 
-  /* The places sidebar's groups (structural redesign, slice 2). A group head is a LABEL: Plex Sans,
+  /* The places sidebar's groups (structural redesign, slice 2). A group head is a LABEL: the UI face,
      uppercase (cohesion decision 4). Project links carry no icon and sit indented under their head;
      a pin carries the folder glyph. The foot nav takes the auto margin that pushes it and the
      account foot to the bottom. */
