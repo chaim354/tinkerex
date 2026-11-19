@@ -712,11 +712,6 @@ class ProjectsController < ApplicationController
   # `view[<key>]` branch and read through Layout#view_for). `?view=` on this action is inert, and
   # the cookie is simply never read again — nothing has to clear it.
 
-  # Every repo? Dir anywhere in the tree, at any depth — mirrors
-  # Maker::ProjectFolderListing#flatten_dirs (private there, and rightly so: that walk is the
-  # LISTING's business, this one is the CARD's). @listing.repos already flattens the same set, but
-  # throws away #files/#children into a bare node_id/name/path Repo struct; Maker::RepoCard needs
-  # the full Dir to find a README among a repo's own root files.
   # VERSION STACKS ON THIS PAGE (Shop manual spec §9): ONE Maker::VersionStacks result over every
   # file a STACKING panel draws as a tile or a row, and one query for it (the pull-outs; the rows are
   # the listing's own). A panel stacks unless its switch is off (Layout#stacked?); a panel or a
@@ -758,6 +753,11 @@ class ProjectsController < ApplicationController
     [ dir.node_id ] + dir.children.reject { |child| skipped.include?(child.node_id) }.flat_map { |child| stacking_dirs(child, skipped) }
   end
 
+  # Every repo? Dir anywhere in the tree, at any depth — mirrors
+  # Maker::ProjectFolderListing#flatten_dirs (private there, and rightly so: that walk is the
+  # LISTING's business, this one is the CARD's). @listing.repos already flattens the same set, but
+  # throws away #files/#children into a bare node_id/name/path Repo struct; Maker::RepoCard needs
+  # the full Dir to find a README among a repo's own root files.
   def collect_repo_dirs(dirs)
     dirs.flat_map { |d| (d.repo? ? [ d ] : []) + collect_repo_dirs(d.children) }
   end
