@@ -25,8 +25,8 @@ class ShellTest < ApplicationSystemTestCase
   # weight 800 over a 3px ink underline, its neighbours 500 with none; the column's caps head in the
   # mono face at 12px; a 28px row, and the current one 800 with a 6px accent square before it. Read as
   # COMPUTED style, because the cascade decides it. Mutation-checked (2026-11-19): the lit place's
-  # `border-bottom-color: var(--fg)` dropped reddens the underline; `.column-row[aria-current]::before`
-  # without its background reddens the square.
+  # `border-bottom-color: var(--fg)` dropped reddens it as "lit" => ["800", "3px", false];
+  # `.column-row[aria-current]::before` without its background as "square" => ["6px", false].
   test "the strip and the column draw what the screens draw" do
     visit files_path
     drawn = page.evaluate_script(<<~JS)
@@ -56,7 +56,8 @@ class ShellTest < ApplicationSystemTestCase
   # THE WORDMARK IS A T IN AN ACCENT DISC, THEN THE NAME, ON EVERY SURFACE THAT DRAWS ONE: the strip,
   # the sign-in card, the visitor's header and the landing. The letter is drawn by `.brand-mark::after`
   # so no page's markup changed; this reads it back. Demo mode on, because only there is `/` the
-  # landing. Mutation-checked (2026-11-19): `.brand-mark::after` deleted reddens every surface.
+  # landing. Mutation-checked (2026-11-19): `.brand-mark::after` deleted reddens every surface, each
+  # reading "letter" => "none".
   test "the wordmark draws its T and its name everywhere it appears" do
     prior_demo = ENV["DEMO_ACCOUNT_EMAIL"]
     seen = { "strip" => wordmark("header.strip") }
@@ -172,8 +173,9 @@ class ShellTest < ApplicationSystemTestCase
   # WIDTH AT 375PX (spec §10): the strip, the column's sheet and the tab bar each stay inside the page,
   # on every section's column, measured against the CLIENT width (CI's Linux Chrome draws a 15px
   # scrollbar). The full sweep below measures the page itself on every page. Mutation-checked
-  # (2026-11-19): the ≤719px block keeping the four places in the strip reddens the strip arm on every
-  # page; the sheet's `min(300px, …)` widened to 400px reddens the sheet arm.
+  # (2026-11-19): the ≤719px block keeping the four places in the strip reddens the strip arm ("/: the
+  # strip runs past the screen", right 569 of a 360px client); the sheet's `min(300px, …)` widened to
+  # 400px reddens the sheet arm ("/: the open sheet runs past the screen", 400 of 360).
   test "at 375px the strip, the open column sheet and the tab bar stay on the screen" do
     @user.maker_projects.create!(name: "Desk Lamp")
     @user.maker_inventory_items.create!(name: "M3 bolt")

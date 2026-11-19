@@ -18,8 +18,9 @@ require "application_system_test_case"
 #      red at the chooser — an input-targeted click never reaches upload_pick_controller.js.
 #   2. shell.css hiding all of `.topbar-upload` instead of its button: the chunk-flow test red, the
 #      progress text an upload started from the menu writes has nowhere to show.
+#   (1 reddens at "expected to find css .filechooser-overlay".)
 #   3. Dropping `.strip-search` from the ≤719px block's display:none: the first test red, the box
-#      pushing the account button off a 375px screen.
+#      still drawn at 375px ("expected to find non-visible css header.strip form.strip-search").
 class PhoneStripSystemTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!

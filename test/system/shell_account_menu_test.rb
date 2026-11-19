@@ -10,12 +10,13 @@ require "application_system_test_case"
 # a WebDriver window narrower than 500px).
 #
 # MUTATION-CHECKED (2026-11-19; each reverted, and the file re-run green after):
-#   1. Deleting `.strip-account .menu-list { left: 12px; right: 12px; min-width: 0; }` from the ≤719px
-#      block (shell.css): the first test red, the menu hanging off its button's right edge and off the
-#      left of a 375px screen.
+#   1. The account menu taken out of the ≤719px block's static-details and gutter rules and anchored
+#      at its button's LEFT edge instead (`.strip-account .menu-list { left: 0; right: auto; }`): the
+#      first test red, "the menu runs off the right of the screen" (right 556 of a 360px client).
 #   2. Deleting `data-controller="menu"` from the account details (layouts/_strip): the keyboard test
 #      red, Escape no longer closes the menu.
-#   3. `.tabbar { display: flex }` dropped from the ≤719px block: the tab bar test red, no bar on a phone.
+#   3. `display: flex` dropped from the ≤719px block's `.tabbar`: the tab bar test red, its places read
+#      as [] where ["Library", "Projects", "Tools", "Inventory"] was expected.
 class ShellAccountMenuTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!

@@ -79,7 +79,7 @@ class TopbarUploadSystemTest < ApplicationSystemTestCase
   # Tab order of the open menu, focusable, and Enter and Space each open the picker (counted as the
   # click the input receives, for the reason this file's header gives).
   # Mutation-checked (2026-11-19): `upload-forward#open` taken off the menu item (layouts/_strip_add)
-  # reddens this on the first count; a `<label>` in the button's place reddens the tab-stop pair.
+  # reddens this on the first count ("Enter on Upload did not open the file picker").
   test "on a folder, Add's Upload is a tab stop that Enter and Space open" do
     visit files_path(folder: @cad.node_id)
     count_picks!
