@@ -469,7 +469,7 @@ class ProjectsController < ApplicationController
     # entry to — so an origin resolved for one would be work nothing reads. That is why the photo
     # rows join the thumbnail union above and not this one.
     @addon_origins = addon_origins_for((recent_ids + tile_ids).uniq)
-    @tasks = @project.tasks.order(:position, :created_at).to_a
+    @tasks = @project.tasks.in_panel_order.to_a
     @sheets = @project.sheets.to_a
     # THE README, RENDERED (2026-11-05, live regions; spec §5) — after @page_thumbs, which its pictures
     # read, and after @tasks, which its `tasks` region reads. The context carries what this page loaded;

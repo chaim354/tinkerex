@@ -41,6 +41,69 @@ module Maker
 
     scope :open, -> { where.not(status: "done") }
 
+    # THE ORDER THE TASKS PANEL SHOWS, STATED ONCE. projects/_tasks groups a project's tasks by
+    # STATUSES (Todo, then Doing, then Done) and keeps this order inside each group. `id` is the
+    # tie-break: two tasks on one position with one `created_at` (a v1 or MCP create sends no
+    # position, so every such task sits at 0) otherwise come back in whatever order the adapter
+    # likes, and SQLite and Postgres need not agree. `.next_steps_for` ranks in exactly this order,
+    # so a project's next step is the first open task its panel draws.
+    PANEL_ORDER = %i[position created_at id].freeze
+    scope :in_panel_order, -> { order(*PANEL_ORDER) }
+
+    # A project's tasks, for a SET of projects. `user_id` rides along beside the owner pair: the
+    # validation below already keeps a task's user and its project's user equal, and saying it again
+    # here costs nothing and uses the (user_id, taskable_type, taskable_id) index as written.
+    scope :for_projects, lambda { |projects|
+      where(user_id: projects.map(&:user_id).uniq, taskable_type: "Maker::Project",
+            taskable_id: projects.map(&:id))
+    }
+
+    # "1 of 4 done" beside a project's next step.
+    Progress = Data.define(:done, :total)
+
+    # THE NEXT STEP OF EACH PROJECT IN ONE QUERY: { project_id => the first open task its panel
+    # shows }. A project with no tasks, or whose tasks are all done, is an ABSENT key, never nil
+    # (Maker::Task.progress_for tells those two apart). Whatever projects the caller passes are
+    # answered; which ones a screen shows is the screen's choice (Maker::Project.open for Home).
+    #
+    # "FIRST" IS THE PANEL'S ORDER: Todo above Doing, then PANEL_ORDER. So a task in progress is
+    # the next step only once no Todo is left above it, exactly as the panel lists them.
+    #
+    # ONE STATEMENT, NOT ONE PER PROJECT: ROW_NUMBER over each project's open tasks, keeping rank 1.
+    # SQLite has had window functions since 3.25 and Postgres since 8.4; Maker::ProjectFolderListing
+    # ranks the same way. The rank's CASE is built from STATUSES, so the group order cannot drift
+    # from the panel's loop over the same constant. Constancy in N is pinned by
+    # test/models/maker/task_next_steps_test.rb.
+    def self.next_steps_for(projects)
+      projects = projects.to_a
+      return {} if projects.empty?
+
+      ranked = for_projects(projects).open
+        .select("maker_tasks.*, ROW_NUMBER() OVER (PARTITION BY maker_tasks.taskable_id " \
+                "ORDER BY #{panel_rank_sql}) AS step_rank")
+      from(ranked, :maker_tasks).where(arel_table[:step_rank].eq(1)).index_by(&:taskable_id)
+    end
+
+    # { project_id => Progress(done:, total:) } for the same set, in ONE grouped query. A project
+    # with no tasks at all is an absent key; one whose tasks are all done reads total of total.
+    # "Done" is the one status `open` leaves out, so the two scopes cannot disagree about a task.
+    def self.progress_for(projects)
+      projects = projects.to_a
+      return {} if projects.empty?
+
+      for_projects(projects).group(:taskable_id)
+        .pluck(:taskable_id, Arel.sql("COUNT(*)"),
+               Arel.sql("SUM(CASE WHEN maker_tasks.status = 'done' THEN 1 ELSE 0 END)"))
+        .to_h { |id, total, done| [ id, Progress.new(done: done.to_i, total: total.to_i) ] }
+    end
+
+    # The panel's order as SQL: the status group's place in STATUSES, then PANEL_ORDER's columns.
+    def self.panel_rank_sql
+      whens = STATUSES.each_with_index.map { |s, i| sanitize_sql_array([ "WHEN ? THEN ?", s, i ]) }
+      [ "CASE maker_tasks.status #{whens.join(" ")} END", *PANEL_ORDER.map { |c| "maker_tasks.#{c}" } ].join(", ")
+    end
+    private_class_method :panel_rank_sql
+
     # `completed_at` IS DERIVED FROM `status`, HERE AND NOWHERE ELSE: a done task carries the moment
     # it became done (kept through later saves, and kept as handed in by a caller that knows it),
     # and any other status carries none. Every writer gets the pair right by setting the status

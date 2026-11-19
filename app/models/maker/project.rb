@@ -162,6 +162,15 @@ module Maker
 
     scope :by_status, ->(s) { where(status: s) if s.present? }
     scope :active, -> { where(status: "active") }
+    # OPEN IS EVERY PROJECT STILL BEING WORKED ON: not done and not archived, so planning, active
+    # and paused. `active` above is the one status of that name, which is not the same question:
+    # most projects never leave `planning` (the column default), and an `active`-only list reads
+    # empty for them. Done is out because its build has consumed its stock, so its BOM reads short
+    # for ever; archived is out because the Projects index already sets it aside. What Home's next
+    # steps and Maker::ToBuy read; the redesign's Projects page calls the same set "Active".
+    CLOSED_STATUSES = %w[done archived].freeze
+    OPEN_STATUSES = (STATUSES - CLOSED_STATUSES).freeze
+    scope :open, -> { where(status: OPEN_STATUSES) }
     # What User#handle_locked? reads: anything with a public URL to break.
     scope :published,       -> { where.not(visibility: "private") }
     scope :publicly_listed, -> { where(visibility: "public") }
@@ -225,7 +234,7 @@ module Maker
     # Projects::BomsController#show) calls this rather than repeating the ORDER clause, so "latest
     # revision" has one definition (stage 2, S2-4).
     def current_bom
-      boms.order(revision: :desc, id: :desc).first
+      boms.latest_first.first
     end
 
     # THE PAGE'S LAYOUT: this kind's preset with this project's own overrides on top (stage 4,

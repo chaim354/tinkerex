@@ -194,7 +194,7 @@ module Maker
       )
     end
 
-    def tasks = @tasks ||= project.tasks.order(:position, :created_at).to_a
+    def tasks = @tasks ||= project.tasks.in_panel_order.to_a
 
     # The README's own ROW, or nil — the same row `#readme` renders, asked for as a row so the
     # bundle manifest can name it (`readme_path`) without rendering anything. `Maker::Readme.row_in`

@@ -105,6 +105,57 @@ module Maker
       assert_equal 0, queries
     end
 
+    # #short_by_item asks #short's question once per ITEM, of the summed quantity: two lines of 2
+    # against 3 on hand are fine line by line and 1 short together.
+    test "short_by_item sums each item's lines and keeps only the items short of the sum" do
+      shared = item!
+      Maker::InventoryTransaction.apply!(item: shared, user: @user, delta: 3, reason: "initial")
+      enough = item!
+      Maker::InventoryTransaction.apply!(item: enough, user: @user, delta: 5, reason: "initial")
+      first = @bom.lines.create!(user: @user, inventory_item_id: shared.id, quantity: 2)
+      @bom.lines.create!(user: @user, inventory_item_id: enough.id, quantity: 5)
+      second = @bom.lines.create!(user: @user, inventory_item_id: shared.id, quantity: 2)
+      @bom.lines.create!(user: @user, part_name: "Bolt", quantity: 9)
+      @bom.lines.create!(user: @user, node_id: "node-4", quantity: 9)
+
+      rollup = Maker::BomRollup.new(load_lines)
+
+      assert_empty rollup.short # each line alone fits in 3
+      shorts = rollup.short_by_item
+      assert_equal 1, shorts.size
+      s = shorts.first
+      assert_equal shared.id, s.item.id
+      assert_equal 4, s.needed
+      assert_equal 3, s.on_hand
+      assert_equal 1, s.short
+      assert_equal [ first.id, second.id ], s.lines.map(&:id)
+    end
+
+    test "short_by_item reports every item short reports, at or above its shortfall" do
+      a = item!
+      b = item!
+      Maker::InventoryTransaction.apply!(item: b, user: @user, delta: 1, reason: "initial")
+      @bom.lines.create!(user: @user, inventory_item_id: a.id, quantity: 1)
+      @bom.lines.create!(user: @user, inventory_item_id: b.id, quantity: 2)
+      @bom.lines.create!(user: @user, inventory_item_id: b.id, quantity: 2)
+
+      rollup = Maker::BomRollup.new(load_lines)
+
+      assert_equal rollup.short.map { |s| s.line.inventory_item_id }.uniq, rollup.short_by_item.map { |s| s.item.id }
+      assert_equal [ 1, 3 ], rollup.short_by_item.map(&:short)
+    end
+
+    test "short_by_item leaves out a dangling item and issues no query" do
+      gone = item!
+      line = @bom.lines.create!(user: @user, inventory_item_id: gone.id, quantity: 2)
+      line.update_columns(inventory_item_id: 999_999)
+
+      rollup = Maker::BomRollup.new(load_lines)
+
+      assert_equal 0, count_queries { rollup.short_by_item }
+      assert_equal [], rollup.short_by_item
+    end
+
     private
 
     def load_lines
