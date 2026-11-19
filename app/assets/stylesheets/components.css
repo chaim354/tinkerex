@@ -242,7 +242,7 @@
      note is the mono 13px fact at the head's right ("5 things", "4 of 5"). The pages that number
      their sections (Home, Inventory, an item, Tools, Search, Settings) count them in the order
      they render, so a number is a place on the page and never a stored thing. */
-  .panel-num { margin-right: 8px; font-family: var(--font-mono); font-weight: 700; }
+  .panel-num { margin-right: 12px; font-family: var(--font-mono); font-weight: 700; }
   .panel-note { color: var(--fg-muted); font: 400 13px/1.4 var(--font-mono); }
   /* A PAGE OF NUMBERED SECTIONS IN TWO COLUMNS (the screens' Home, Search, Tools, Settings and an
      inventory item): two stacks that wrap to one below about 920px of page, each section stacked
@@ -281,11 +281,23 @@
   .panel-slot--hidden .panel-slot-body { opacity: .45; }
   .panel-slot--hidden .panel-strip, .panel-slot--hidden .panel-strip + .panel-slot-body { border-style: dashed; border-color: var(--fg-muted); }
   .panel-slot--ghost { opacity: .35; }
-  /* THE EDITING BAR: a raised band ruled in ink, its Save the page's one ink primary. */
+  /* THE EDITING BAR IS AN INK BAND (the Shop manual's project-editor screen; slice 5, 2026-11-19): the
+     page colour on ink, a caps label, the sentence, then the controls OUTLINED IN THE PAGE COLOUR and
+     Save layout FILLED WITH IT — the inverse of the page's primary, and still the editor's one primary.
+     accent_spend_test.rb counts a fill that contrasts its GROUND, ink on the page or the page colour
+     on ink, so the band cannot hide a second primary nor lose this one. A menu that opens from the
+     band (Add block) is a surface of its own and keeps the page's colours. */
   .layout-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
-                padding: 10px 12px; margin: 0 0 12px; border: 2px solid var(--line-strong); border-radius: 0; background: var(--raised); }
-  .layout-bar-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13.5px; }
-  .layout-bar-noscript { color: var(--danger); }
+                padding: 12px 16px; margin: 0 0 16px; border: 0; border-radius: 0; background: var(--fg); color: var(--bg); }
+  .layout-bar-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 13.5px; }
+  .layout-bar-text > b { font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .layout-bar-text .muted, .layout-bar .layout-add-cap.layout-tab-cap { color: var(--bg); }
+  .layout-bar .btn { border-color: var(--bg); background: transparent; color: var(--bg); }
+  .layout-bar .btn:hover, .layout-bar details.menu[open] > summary { background: color-mix(in srgb, var(--bg) 16%, var(--fg)); }
+  .layout-bar .btn.primary, .layout-bar input[type="submit"].primary { border-color: var(--bg); background: var(--bg); color: var(--fg); }
+  .layout-bar .btn.primary:hover, .layout-bar input[type="submit"].primary:hover { background: color-mix(in srgb, var(--bg) 84%, var(--fg)); }
+  .layout-bar .linkbtn { color: var(--bg); }
+  .layout-bar-noscript { color: var(--bg); font-weight: 700; }
   .layout-bar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .layout-bar-actions form { display: contents; }
   .layout-editor--drawer { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }

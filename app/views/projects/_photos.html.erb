@@ -11,10 +11,11 @@
   ones and never builds a second ThumbnailMap.
 %>
 <% if @photo_rows.any? %>
-  <section class="panel photos-panel">
+  <%# `project-photos` IS THE CONTENTS COLUMN'S ANCHOR (ProjectsHelper::SECTION_ANCHORS, 2026-11-19). %>
+  <section class="panel photos-panel" id="project-photos">
     <div class="panel-head">
       <h2><%= panel_title(@panel_layout, "photos") %></h2>
-      <span class="mono muted"><%= pluralize(@photo_rows.size, "photo") %></span>
+      <%= section_note("photos", @photo_rows.size, pluralize(@photo_rows.size, "photo")) %>
     </div>
     <%= panel_intro(@panel_layout, "photos") %>
     <div class="project-photos" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">

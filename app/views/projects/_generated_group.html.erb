@@ -21,10 +21,10 @@
   cross-cutting group renders in. Required since 2026-09-08: the page-wide `@view` cookie retired
   when the view became per panel (spec decision 6).
 %>
-<section class="attachment-group generated-group">
+<section class="attachment-group generated-group plate">
   <details open>
-    <summary class="attachment-group-head">
-      Generated <span class="muted">(<%= @generated.size %>)</span>
+    <summary class="attachment-group-head plate-head">
+      Generated <span class="plate-count">(<%= @generated.size %>)</span>
     </summary>
     <%# THE LISTING'S OWN ROW, NOT @page_nodes — @generated is scoped to @listing.node_ids, so
         @listing.row_for already carries this node's real Row, section and all, with no second

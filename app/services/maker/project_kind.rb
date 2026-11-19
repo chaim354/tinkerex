@@ -39,7 +39,8 @@ module Maker
   #     dropped the same way), then to .default_view: the browser for a working tree, tiles for
   #     every other folder and for every fixed key — which is today's page exactly (decision 6).
   #   * `widths`, `titles` AND `intros` ARE PER PANEL TOO (2026-09-09, the page editor): a width in
-  #     WIDTHS, else the default that used to be a stylesheet rule (#default_width); plain one-line
+  #     WIDTHS, else the default (#default_width: half, but the README and a panel holding a
+  #     repository; it was a stylesheet rule once, and Files went half in 2026-11); plain one-line
   #     text under TITLE_MAX / INTRO_MAX, else dropped. Same totality, same reason.
   #   * A BLOCK (`block:<key>`) IS THE THIRD KIND OF KEY (2026-09-09, content blocks): the caller
   #     supplies `blocks:` as [key, kind] pairs the way it supplies `folders:`; an unnamed block
@@ -253,10 +254,16 @@ module Maker
     # `shelf_views` AND `shelf_groups` ARE THE FOLDERS' SHELVES (2026-10-20), keyed by folder key:
     # a shelf's default view (only values in Maker::Project::VIEWS) and its group's name. Neither is
     # the maker's choice on this project, so neither is in `views` — #view_for asks `views` first.
+    #
+    # `root_repo` IS WHETHER THE PROJECT'S FOLDER IS ITSELF A WORKING TREE (2026-11-19,
+    # Maker::ProjectFolderListing#root_repo?), so Files — which holds that repository's card — keeps
+    # the full width a repository needs (#width_for). False for a caller holding no listing.
     Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids, :block_kinds,
-                         :shelf_views, :shelf_groups) do
-      # SHELVES ARE OPTIONAL (2026-10-20): a caller with no shelves passes none.
-      def initialize(shelf_views: {}, shelf_groups: {}, **rest) = super(shelf_views:, shelf_groups:, **rest)
+                         :shelf_views, :shelf_groups, :root_repo) do
+      # SHELVES ARE OPTIONAL (2026-10-20): a caller with no shelves passes none. So is the root's
+      # repository (2026-11-19): a caller with no listing knows of none.
+      def initialize(shelf_views: {}, shelf_groups: {}, root_repo: false, **rest) =
+        super(shelf_views:, shelf_groups:, root_repo:, **rest)
 
       def visible = order - hidden
       # `to_s` like `folder?` and `view_for` below, so a Symbol asks the same question a String does.
@@ -306,8 +313,17 @@ module Maker
       # THE WIDTH IS DATA, NOT A STYLESHEET RULE (2026-09-09): pages/projects.css used to name
       # `.attachments-panel, .photos-panel, .folder-panel` as the panels that span both columns.
       # Both pages now render `panel--<width>` from this answer, so a layout can carry a width and
-      # be shared as YAML, and every existing project renders exactly as it did.
-      def width_for(key) = widths[key.to_s] || ProjectKind.default_width(key, block_kind: block_kinds[key.to_s])
+      # be shared as YAML. (Those three went half with the Shop manual, 2026-11-19: .default_width.)
+      # THE DEFAULT ASKS WHETHER THE PANEL HOLDS A REPOSITORY (2026-11-19): a working-tree folder
+      # panel, or Files while the project's folder is one, stays full (.default_width says why).
+      def width_for(key) = widths[key.to_s] || ProjectKind.default_width(key, block_kind: block_kinds[key.to_s], repo: holds_repo?(key))
+
+      # DOES THIS PANEL HOLD A REPOSITORY? A folder key asks `repo_ids` — the same `folder?` guard
+      # #view_for keeps, so a fixed key is never asked about node ids — and Files asks `root_repo`.
+      def holds_repo?(key)
+        k = key.to_s
+        folder?(k) ? repo_ids.include?(folder_id(k)) : (k == "attachments" && root_repo)
+      end
 
       # THE CALLER SUPPLIES THE DEFAULT because only the caller knows it: PANEL_LABELS for a fixed
       # key, the folder's own name for a folder key — this struct holds node ids, never names.
@@ -369,20 +385,26 @@ module Maker
     WIDTHS = %w[full half].freeze
     TITLE_MAX = 60
     INTRO_MAX = 200
-    # Today's page, written down: Files and Photos spanned both columns by a stylesheet rule that
-    # also named `.folder-panel`; a folder panel holds a tile grid, nested sections or the browser,
-    # and half a column is where the browser stops being usable. A README is a document, and half a
-    # column is where a table in it stops being readable.
-    FULL_BY_DEFAULT = %w[readme attachments photos].freeze
+    # EVERY PANEL IS HALF A COLUMN BY DEFAULT, FILES INCLUDED (the Shop manual, 2026-11-19; its spec
+    # §3, §8's slice 5 and proposal 4): Files, Photos and the folder panels pack two abreast as the
+    # screens draw them, where until then a stylesheet rule (and then this method) spanned all three.
+    # Two things stay full. A README is a document, and half a column is where a table in it stops
+    # being readable. And A PANEL STAYS FULL WHILE IT HOLDS A REPOSITORY (spec §4's gap, settled for
+    # slice 5): its card and the Finder browser are where half a column stops being usable. That is a
+    # folder panel whose node is a working tree, and Files while the project's folder is itself one —
+    # `repo:`, which only the Layout can answer (#width_for). A STORED WIDTH STILL WINS over every
+    # default here, and a layout Save writes every panel's width (Maker::LayoutDocument#column), so
+    # only projects whose layout was never saved re-flow.
+    FULL_BY_DEFAULT = %w[readme].freeze
 
-    def self.default_width(key, block_kind: nil)
+    def self.default_width(key, block_kind: nil, repo: false)
       k = key.to_s
       # A TAB HAS NO WIDTH AT ALL, and nil is the honest answer rather than "full": the separator is
       # not a grid cell, so a caller that renders `panel--#{width_for(key)}` must not get a class.
       return nil if k.start_with?(TAB_PREFIX)
       return BLOCK_DEFAULT_WIDTHS.fetch(block_kind.to_s, "full") if k.start_with?(BLOCK_PREFIX)
 
-      k.start_with?(FOLDER_PREFIX) || FULL_BY_DEFAULT.include?(k) ? "full" : "half"
+      repo || FULL_BY_DEFAULT.include?(k) ? "full" : "half"
     end
 
     # THE MAKER'S ANSWER WINS, INCLUDING "nothing hidden" — which is why the test below is `key?`
@@ -400,7 +422,7 @@ module Maker
     # AN UNKNOWN KIND FALLS BACK TO `other`'s PRESET rather than raising: `kind` is validated on the
     # way in, but a row written before a kind was retired, or by a future version, must still
     # render a page.
-    def self.layout_for(kind:, overrides:, folders: [], blocks: [])
+    def self.layout_for(kind:, overrides:, folders: [], blocks: [], root_repo: false)
       preset = PRESETS.fetch(kind.to_s, PRESETS.fetch(DEFAULT))
       over = overrides.is_a?(Hash) ? overrides : {}
       folder_keys = Array(folders).map { |id, _repo| folder_key(id) }
@@ -431,7 +453,7 @@ module Maker
                  widths: stored_widths(over["widths"], panel_vocabulary),
                  titles: stored_text(over["titles"], vocabulary, TITLE_MAX),
                  intros: stored_text(over["intros"], panel_vocabulary, INTRO_MAX),
-                 repo_ids:, block_kinds:, shelf_views:, shelf_groups:)
+                 repo_ids:, block_kinds:, shelf_views:, shelf_groups:, root_repo: root_repo == true)
     end
 
     # THE PANELS THIS KIND'S PRESET HIDES AND THE MAKER HAS NOT ANSWERED (2026-11-02, the UX audit's

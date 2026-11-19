@@ -1,0 +1,45 @@
+<%#
+  A PROJECT'S OWN LEFT COLUMN (the Shop manual, slice 5; its spec §7: "on a project, its contents,
+  then the projects"), supplied by projects/show through `content_for :column` in place of the
+  section's default (layouts/column/_projects).
+
+  CONTENTS: Overview — the head, `#overview`, and the one lit row on this page
+  (ShellHelper#projects_current answers `[:project_overview, id]` here) — then every section the page
+  drew, in the page's order, each with the number its head carries and the count its head's note
+  gave. Both come from the render that just happened: @page_sections is what the slots numbered
+  (ProjectsHelper#section_number!) and @section_counts what the heads recorded
+  (ProjectsHelper#section_note), so the column issues no query and cannot disagree with the page. A
+  zero is not shown: an empty panel's head shows none either. Each row links to the panel's own
+  element (ProjectsHelper#section_anchor), which tabs_controller.js follows into a closed tab; below
+  960px, where this column is a sheet, following one closes the sheet over the page it points into.
+
+  PROJECTS: the eight the section's default lists (ShellHelper#sidebar_projects, ONE query, the
+  default's own), then All projects and New project. This project's own row is marked as this one
+  (`column-row--this`) and never lit: the lit row is Overview, and a column lights at most one
+  (design-system.md rule 8).
+%>
+<div class="column-group project-contents">
+  <h2 class="column-head">Contents</h2>
+  <%= link_to "#overview", class: "column-row column-row--section", "aria-current": row_aria([ :project_overview, @project.id ]),
+              data: { action: "click->shell#closeColumn" } do %>
+    <span class="column-row-num" aria-hidden="true"></span>
+    <span class="column-row-name">Overview</span>
+  <% end %>
+  <% Array(@page_sections).each_with_index do |key, i| %>
+    <% count = @section_counts&.[](key) %>
+    <%= link_to "##{section_anchor(key)}", class: "column-row column-row--section", data: { action: "click->shell#closeColumn" } do %>
+      <span class="column-row-num"><%= i + 1 %></span>
+      <span class="column-row-name"><%= section_label(key) %></span>
+      <% if count.to_i.positive? %><span class="column-row-note"><%= count %></span><% end %>
+    <% end %>
+  <% end %>
+</div>
+<div class="column-group">
+  <h2 class="column-head">Projects</h2>
+  <% sidebar_projects.each do |project| %>
+    <%= column_row project.name, project_path(project), key: [ :project, project.id ],
+                   class: ("column-row--this" if project.id == @project.id) %>
+  <% end %>
+  <%= column_row "All projects", projects_path, key: [ :all_projects ] %>
+  <%= column_row "New project", new_project_path, key: [ :new_project ] %>
+</div>

@@ -25,7 +25,7 @@ class PageTabsTest < ApplicationSystemTestCase
 
   def open_editor
     visit edit_layout_project_path(@project)
-    assert_selector ".layout-bar", text: "Editing page layout"
+    assert_selector ".layout-bar", text: /Editing page layout/i
   end
 
   # The viewport centre of the first match, as a pair of floats. `getBoundingClientRect` rather than

@@ -46,29 +46,56 @@
   .project-name { font-size: 13px; font-weight: 600; text-align: center; overflow-wrap: anywhere; }
   .archived-note { margin: 24px 0 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 12px; }
 
-  /* --- Show: head, stats, panels --- */
-  .project-head { align-items: flex-start; }
-  /* THE ACTIONS KEEP TO THE RIGHT EVEN WHEN THE HEAD WRAPS (2026-10-26, the edit area). "+ Add panel"
-     is the last of them since the ⋯ menu went behind Edit, and its list hangs from the summary's RIGHT
-     edge (components.css `.menu-list`): wrapped to the left of a 375px page, the list started 61px off
-     the page (shell_test.rb measured it). `margin-left: auto` puts a wrapped row at the right, where
-     the ⋯ menu used to push it. */
-  .project-head .head-actions { margin-left: auto; }
-  /* THE HUB'S HEAD (structural redesign §6, slice 6): the cover, then a text column holding the
-     PROJECT eyebrow on its own line and the name, badges and links wrapping after it. Two boxes side
-     by side — never wrapping, so the cover stays beside the name at 375px — and `min-width: 0` on
-     both, so a long name wraps inside the column instead of widening the page. */
-  .project-head .page-title { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
-  .project-head-text { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
-  .project-head-text .eyebrow { flex-basis: 100%; font: 600 11px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
-  .project-head-text h1 { min-width: 0; overflow-wrap: anywhere; }
+  /* --- Show: the head (the Shop manual, slice 5; its spec §5 and §7). The title, the lead, then the
+     state and the buttons on one line; beside it on a wide screen the cover as Fig. 1, then "At a
+     glance". THE HEAD KEEPS ITS TWO SLOTS (template_hygiene_test.rb): `.page-title` is
+     `display: contents` here, so its children and `.head-actions` share `.page-head`'s wrapping row
+     — the state chip that closes `.page-title` sits on the buttons' line without a third slot. The
+     cover and the facts are the head's neighbours in `.project-top`, three columns from 1200px, the
+     facts under the head and the cover from 720px, everything stacked on a phone. --- */
+  .project-top { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 28px 40px; margin: 0 0 40px; }
+  .project-top > .page-head { margin: 0; }
+  @media (min-width: 720px) {
+    .project-top { grid-template-columns: minmax(0, 1fr) minmax(190px, 240px); }
+    .project-top:has(> .project-hero) { grid-template-columns: minmax(0, 1fr) auto; }
+    .project-top:has(> .project-hero) > .project-glance { grid-column: 1 / -1; max-width: 480px; }
+  }
+  @media (min-width: 1200px) {
+    .project-top:has(> .project-hero) { grid-template-columns: minmax(0, 1fr) auto minmax(190px, 240px); }
+    .project-top:has(> .project-hero) > .project-glance { grid-column: auto; max-width: none; }
+  }
+  .project-head { flex-direction: row; flex-wrap: wrap; align-items: center; gap: 14px 8px; }
+  .project-head .page-title { display: contents; }
+  .project-head h1, .project-head .page-lead, .project-head .tag-chips { flex: 0 0 100%; min-width: 0; }
+  /* 60px on a project (spec §5), stepping down with the window as every page title does. */
+  .project-head h1 { font-size: clamp(36px, 2.6vw + 23px, 60px); line-height: .95; }
+  .project-head .page-lead { max-width: 34em; }
+  /* The description is plain text whose line breaks are content, here and on the visitor's page. */
   .project-description { white-space: pre-wrap; margin: 0 0 12px; max-width: 72ch; font-size: 14px; line-height: 1.55; }
-  .project-stats { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0 0 20px; font: 12px/1.5 var(--font-mono); color: var(--fg-muted); }
-  .project-stats b { color: var(--fg); font-weight: 500; }
+  .project-head .project-description { margin: 0; font-size: 17px; line-height: 1.45; }
+  /* THE STATE AS THE SCREENS DRAW IT: the outlined chip at a button's height, beside the buttons. */
+  .project-state { display: inline-flex; flex-wrap: wrap; gap: 8px; }
+  .project-state .badge { height: 32px; padding: 0 12px; border-width: 1.5px; font-size: 12px; letter-spacing: .08em; }
+  .project-head .open-folder { margin-left: 6px; font-weight: 600; }
+  /* "+ ADD PANEL" KEEPS TO THE RIGHT OF ITS LINE (2026-10-26): its list hangs from the summary's RIGHT
+     edge (components.css `.menu-list`), and wrapped to the left of a 375px page the list started
+     61px off the page (shell_test.rb measured it). */
+  @media (max-width: 719px) { .project-head .add-panel { margin-left: auto; } }
+  /* AT A GLANCE: `dl.meta`'s fact rows, one pair per row at every width (the component pairs them
+     from 900px, which a 240px column cannot hold), under a caps label. */
+  .project-glance { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+  .project-glance-head { margin: 0; font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
+  .project-glance dl.meta { grid-template-columns: max-content minmax(0, 1fr); margin: 0; }
+  .project-glance dl.meta dd:nth-of-type(odd) { padding-right: 0; }
+  .project-glance dl.meta dd a { color: var(--fg); }
+  /* THE PROJECT'S OWN LEFT COLUMN (projects/_contents): a section's number is shell.css's
+     `.column-row-num`, the slot Home, Help and the wizard number their rows with; this project's own
+     row in the list below is marked as this one at 800 but never lit (one lit row per column,
+     design-system.md rule 8). Qualified by the column, whose rows shell.css draws. */
+  .column .column-row--this { font-weight: 800; }
   /* "Also in this project" (2026-11-02, the UX audit's C1): the hidden panels that hold rows, one
-     line under the stats, which then gives up its bottom margin to it. */
-  .project-stats:has(+ .project-also) { margin-bottom: 4px; }
-  .project-also { margin: 0 0 20px; font-size: 12px; }
+     line under the head. */
+  .project-also { margin: -24px 0 32px; font-size: 13px; }
   /* --- The hero (stage 4, S4-1): the cover on the project's own page. An image cover is the
      picture, capped like the model page's; any other cover is its thumbnail in a poll cell. --- */
   .project-hero { display: flex; flex-direction: column; gap: 6px; margin: 0 0 20px; }
@@ -81,20 +108,21 @@
   .project-hero-thumb { display: block; width: min(100%, 480px); }
   .project-hero-thumb .thumb { width: 100%; height: 240px; }
   .project-hero-name { font-size: 12px; }
-  /* THE COVER IN THE HEAD (slice 6). The hero partial is unchanged; it is placed and sized here. A
-     photo sits on `--photo-stage`, cropped to fill (design-system.md rule 5: a user's photo is not a
-     render); a poll cell keeps its `.thumb`'s own card, where a render is multiplied (rule 5), and
-     is stretched to the same square. The name below the picture is the old full-width
-     hero's caption, and the head already says what the picture is of. */
-  .project-head .project-hero { flex: none; width: 96px; height: 96px; margin: 0; gap: 0; overflow: hidden;
-                                background: var(--photo-stage); border-radius: var(--radius-control); }
-  .project-head .project-hero > a { display: block; width: 100%; height: 100%; }
-  .project-head .project-hero-img { width: 100%; height: 100%; max-height: none; object-fit: cover;
-                                    border: 0; border-radius: 0; background: var(--photo-stage); }
-  .project-head .project-hero-thumb .thumb { width: 100%; height: 100%; }
-  .project-head .project-hero-name { display: none; }
-  @media (max-width: 719px) { .project-head .project-hero { width: 64px; height: 64px; } }
-  /* --- Photos (stage 4, S4-1): the public gallery's grid, on the private page, full width. --- */
+  /* THE COVER AS FIG. 1 (the Shop manual, slice 5): the picture in a hairline frame with its caption
+     beside it, as the screens draw it. A photo sits on `--photo-stage`, whole (design-system.md rule
+     5: a user's photo is not a render); a poll cell keeps its `.thumb`'s own card, where a render is
+     multiplied. Qualified by `.project-top` so the visitor's page keeps its own hero above. */
+  .project-top > .project-hero { flex-direction: row; flex-wrap: wrap; align-items: flex-end; gap: 10px 16px; margin: 0; min-width: 0; }
+  .project-hero-frame { display: block; max-width: 100%; padding: 12px; border: 1px solid var(--line); background: var(--photo-stage); }
+  .project-top .project-hero-img { width: auto; max-width: 220px; height: auto; max-height: 240px; object-fit: contain;
+                                   border: 0; border-radius: 0; background: none; }
+  .project-top .project-hero-thumb { width: 220px; max-width: 100%; }
+  .project-top .project-hero-thumb .thumb { height: 200px; padding: 12px; }
+  .project-hero-caption { display: flex; flex-direction: column; gap: 6px; min-width: 0; max-width: 150px; padding-bottom: 4px; }
+  .project-hero-fig { font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .project-hero-caption .project-hero-name { font-size: 12.5px; overflow-wrap: anywhere; }
+  /* --- Photos (stage 4, S4-1): the public gallery's grid, on the private page (half a column since
+     the Shop manual, 2026-11-19). --- */
   .project-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 10px; }
   .project-photos .thumb { width: 100%; height: 110px; }
   /* `min-width: 0` ON THE ITEMS IS AN OVERFLOW FIX, NOT TIDINESS. A grid item's automatic minimum
@@ -106,7 +134,7 @@
      this reason, and nothing lower in the chain is the lever — probed on the live page, only the
      grid item's own min-width moves it). Zeroing it hands the overflow to `.cm-scroller`, which has
      its own `overflow-x: auto` and is where a long line belongs. */
-  .project-panels { display: grid; grid-template-columns: 1fr; gap: 16px; }
+  .project-panels { --panel-gap: 40px; display: grid; grid-template-columns: 1fr; gap: var(--panel-gap); }
   /* THE GRID ITEM IS THE SLOT (2026-09-09, the page editor): projects/_panel_slot wraps every panel
      in `div.panel-slot.panel--<width>`, and the width is the LAYOUT's answer (Maker::ProjectKind
      ::Layout#width_for) rather than this sheet naming three panel classes. `.panel` stays in the
@@ -116,23 +144,43 @@
      above its panels, on one column and two. It is `.group-head`, the component, qualified by its
      place in the grid; masonry_controller.js spans it like any other child. */
   .project-panels > .shelf-group-head { grid-column: 1 / -1; margin: 8px 0 0; }
+  /* THE EDITOR'S BOXES SIT CLOSER (the screen draws 16px between them); masonry_controller.js reads
+     `--panel-gap` for its spans, so the two cannot disagree. */
+  .project-panels.layout-editing { --panel-gap: 16px; }
   @media (min-width: 900px) {
     .project-panels { grid-template-columns: 1fr 1fr; }
     .project-panels > .panel-slot.panel--full { grid-column: 1 / -1; }
     /* NO GAPS (2026-09-09, content blocks; spec §7). masonry_controller.js adds `.masonry` and
-       gives every child a row span of its measured height plus the gap, so a short half-width
+       gives every child a row span of its measured height plus `--panel-gap`, so a short half-width
        panel's neighbour below starts right under it instead of waiting for the tall column.
        THREE DECLARATIONS AND NOTHING ELSE, and each is load-bearing: one-pixel rows are the unit
        the spans count in; the row gap goes to zero because the spans already include it; and
        `align-items: start` is what stops a child stretching to fill its span — without it the
        stretched height would feed the next measurement and every panel would grow without end.
        The rule lives INSIDE the breakpoint, so below it the controller clears the class and the
-       grid is exactly today's single column. */
+       grid is a single column. */
     .project-panels.masonry { grid-auto-rows: 1px; row-gap: 0; align-items: start; }
   }
 
+  /* --- A SECTION HEAD (the Shop manual, slice 5; its spec §5): the panel's number in mono before
+     the title, the title pushing everything else to the right, a mono note there ("3 entries").
+     THE NUMBER IS THE SLOT'S (`--section`, projects/_panel_slot), drawn here before the head's
+     h2, because a view switch replaces the panel and must not take its number with it. A slot with
+     no number (the editor, the visitor's page, a block with no heading) draws none. --- */
+  .project-panels > .panel-slot[data-section] > .panel > .panel-head > h2::before,
+  .project-panels > .panel-slot[data-section] > .panel > h2::before {
+    content: var(--section, none); margin-right: 12px; font-family: var(--font-mono); font-weight: 700; letter-spacing: 0;
+  }
+  .project-panels .panel-head > h2 { margin-right: auto; }
+  /* WHERE A FOLDER PANEL IS (its path, linked) is a second line under the head's first, so the
+     title, the note and the view buttons keep one line in half a column. */
+  .project-panels .folder-panel > .panel-head > .panel-path { flex-basis: 100%; order: 1; margin: 0; }
+  .project-panels .panel-head { align-items: baseline; row-gap: 8px; }
+  .project-panels .panel-head > .panel-note { font: 400 13px/1.2 var(--font-mono); white-space: nowrap; }
+
   /* --- Folder panels (2026-09-08): one per depth-one subfolder of the project's folder, each with
-     its own view. Full width by default — Maker::ProjectKind.default_width, since the page editor.
+     its own view. Half a column by default, full while it is a repository (Maker::ProjectKind
+     .default_width; the Shop manual, 2026-11-19).
 
      THE VIEW TOGGLE IS THREE `button_to` FORMS, NOT LINKS, because choosing a view is a WRITE now.
      Two consequences the component sheet cannot know about: each button arrives wrapped in its own
@@ -153,16 +201,29 @@
      yet." on one line, so its sentence needs the same reset. */
   .models-panel.panel--quiet > p { margin: 0; }
 
-  /* --- Files panel: 96px tiles, Detach in the corner on hover --- */
+  /* --- Files and folder panels (the Shop manual, slice 5; its spec §6): every tile is a FIGURE
+     (`.plate-figure`, projects/_file_tile: the 118px frame, the name at 600, a mono fact), a panel's
+     own files sit in a bare grid under its section head, and each GROUP — Recently changed, Loose,
+     Generated, Backups, Linked — is a PLATE, the 2px ink box under a caps head. Detach still sits in
+     the corner on hover. --- */
   .attachments-panel .panel-path { font-size: 12px; margin-left: 8px; }
   /* "Recently changed" (slice 6): the newest files anywhere under the folder, above the root's own
      groups, in the same tile grid. The heading is a caption, smaller than a group's summary. */
   .recent-files { margin: 0 0 16px; }
-  .recent-files-head { margin: 0 0 8px; font: 600 11px/16px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
-  .attachments-grid, .entry-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px; }
-  .attachment-tile { position: relative; display: flex; flex-direction: column; gap: 4px; }
-  .attachment-tile .thumb { width: 100%; height: 96px; }
-  .attachment-tile .grid-name { font-size: 12px; }
+  /* The plate's head holds the h3, so the h3 takes the head's caps face rather than its own. */
+  .recent-files-head { margin: 0; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+  .entry-photos { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 12px; }
+  .attachments-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 14px 4px; }
+  /* INSIDE A PLATE the grid takes the plate's own inset (components.css `.plate-grid`'s padding). */
+  .plate > .attachments-grid, .plate > details > .attachments-grid,
+  .plate > details > .table, .plate > details > .project-files { margin: 8px 6px 12px 12px; }
+  .plate > details > .table, .plate > details > .project-files { width: calc(100% - 24px); }
+  .attachment-tile .thumb { width: 100%; }
+  .attachment-tile .grid-name { font-size: 13.5px; }
+  /* A FIGURE'S WORDS SIT FLUSH LEFT UNDER ITS FRAME AND END IN AN ELLIPSIS: `.file-cell` centres its
+     children, which left a long name as wide as itself and spilling past the frame, so the card is
+     stretched back to the figure's width (the title carries the whole name). */
+  .attachment-tile .grid-card { gap: 2px; align-items: stretch; min-width: 0; }
   /* A Linked tile's corner holds TWO controls (Detach, Move into project) since S2-2, stacked and
      right-aligned so they cover as little of the thumbnail as two labels can. On a no-pointer
      device the corner is always visible, and two stacked buttons over a 96px thumb hid it
@@ -178,9 +239,20 @@
   .entry-photo .thumb { width: 100%; height: 80px; }
   .attachment-group { margin-bottom: 16px; }
   .attachment-group:last-child { margin-bottom: 0; }
+  /* A PLATE THAT OPENS: its summary is the plate's caps head, which draws no disclosure triangle (a
+     flex summary loses Chrome's marker), so a mark says open or closed in its place. A closed plate
+     is its head alone, so the head's own rule would double the box's: it goes. */
+  .plate > details > summary.plate-head { list-style: none; cursor: pointer; }
+  .plate > details > summary.plate-head::-webkit-details-marker { display: none; }
+  .plate > details > summary.plate-head::before { content: "+"; width: 1ch; }
+  .plate > details[open] > summary.plate-head::before { content: "\2212"; }
+  .plate > details:not([open]) > summary.plate-head { border-bottom: 0; }
   /* A <summary>, so it carries the disclosure triangle and is focusable/clickable for free.
      `list-style` is left alone deliberately — the marker IS the affordance that says "this opens". */
-  .attachment-group details[open] > .attachment-group-head { margin-bottom: 8px; }
+  .attachment-group:not(.plate) details[open] > .attachment-group-head { margin-bottom: 8px; }
+  /* A NESTED SUBFOLDER'S SECTION (projects/_file_tree_section) is not a plate: a box inside a box
+     inside a panel says nothing a caps label does not. */
+  .file-tree-section > details > .attachment-group-head { font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
   .attachments-missing { font-size: 12px; margin: 4px 0 0; }
   .photo-attach { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 6px; font-size: 12px; }
 
@@ -190,7 +262,7 @@
      components.css selector (design-system rule 3), not a redeclaration. --- */
   .file-tree-section .file-tree-section { margin-left: 18px; border-left: 1px solid var(--line); padding-left: 14px; }
   .attachment-group-head .badge { margin: 0 2px 0 8px; }
-  .attachment-group-head .linkbtn.small { margin-left: 8px; font-size: 11px; }
+  .attachment-group-head .linkbtn.small { margin-left: 8px; font-size: 11px; letter-spacing: 0; text-transform: none; }
   .loose-note { font-size: 12px; margin: -8px 0 16px; }
   /* A row's one-line fact about itself (projects/_attachment_group's `notes`: "design/x.svg already
      exists — rename one to file it"), under the tile's name or the list row's. */
@@ -210,6 +282,13 @@
      components.css until that second caller exists. --- */
   .repo-card { display: flex; flex-direction: column; gap: 10px; margin: 0 0 12px; padding: 10px 12px;
                border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+  /* THE MAKER'S CARD IS A PLATE (projects/_repo_card, 2026-11-19): the 2px ink box and its caps head
+     "Repository · <name>", the latest commit under it. The visitor's card keeps the box above. */
+  .repo-card.plate { gap: 0; padding: 0; border: 2px solid var(--line-strong); border-radius: 0; margin: 0 0 16px; }
+  .repo-card.plate > .repo-facts { padding: 12px; font-size: 13.5px; }
+  .repo-card.plate > .readme, .repo-card.plate > .readme-note { margin: 0 12px 12px; }
+  .repo-card.plate .repo-facts .mono { font-weight: 700; }
+  .repo-card.plate .repo-summary { font-size: 15px; font-weight: 700; }
   .repo-facts { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12px; }
   .repo-facts .mono { font-family: var(--font-mono); }
   .repo-summary { font-weight: 500; }
@@ -251,19 +330,24 @@
   @media (max-width: 719px) { .project-files .col-section, .project-files .col-modified { display: none; } }
   @media (max-width: 479px) { .project-files .col-size { display: none; } }
 
-  /* --- Tasks: a state mark, the transitions as tiny buttons, the composer last --- */
+  /* --- Tasks: a state mark, the transitions as tiny buttons, the composer last. The Shop manual
+     (slice 5) draws a task as the screens' "Next steps": a 15px title at 600 on a hairline row, and
+     the state as an INK square — empty to do, half filled doing, filled with a tick done — where it
+     was a coloured dot (status keeps its word: each group is headed by it). --- */
+  .tasks-group > h3 { margin: 0 0 2px; font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
+  .tasks-group + .tasks-group { margin-top: 16px; }
   .tasks-group { margin-top: 10px; }
-  .task-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--line); }
-  .task-title { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+  .task-row { display: flex; align-items: center; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .task-title { flex: 1; min-width: 0; font-size: 15px; font-weight: 600; line-height: 1.3; overflow-wrap: anywhere; }
   .status-done .task-title { text-decoration: line-through; color: var(--fg-muted); }
-  .task-state { width: 14px; height: 14px; flex: 0 0 auto; border-radius: 50%; border: 1.5px solid var(--fg-muted); position: relative; }
-  .task-state--doing { background: linear-gradient(90deg, var(--info) 50%, transparent 50%); border-color: var(--info); }
-  .task-state--done { background: var(--ok); border-color: var(--ok); }
-  .task-state--done::after { content: ""; position: absolute; left: 4px; top: 1px; width: 3px; height: 7px; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
+  .task-state { width: 18px; height: 18px; flex: 0 0 auto; border-radius: var(--radius-control); border: 1.5px solid var(--fg); position: relative; }
+  .task-state--doing { background: linear-gradient(90deg, var(--fg) 50%, transparent 50%); }
+  .task-state--done { background: var(--fg); }
+  .task-state--done::after { content: ""; position: absolute; left: 5px; top: 1px; width: 4px; height: 9px; border: solid var(--bg); border-width: 0 2px 2px 0; transform: rotate(45deg); }
   .task-actions { display: flex; gap: 4px; align-items: center; }
   .task-actions form { margin: 0; }
-  .task-move { min-height: 22px; padding: 0 7px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--surface); color: var(--fg-muted); font: 500 11px/1 var(--font-ui); cursor: pointer; }
-  .task-move:hover { color: var(--fg); border-color: var(--line-strong); }
+  .task-move { min-height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--fg); font: 600 12px/1 var(--font-ui); cursor: pointer; }
+  .task-move:hover { background: var(--raised); }
   /* Delete is `linkbtn danger small` like every destructive control on the hub (2026-11-02); this
      only sizes it to the row's other buttons. */
   .task-delete { min-height: 22px; padding: 0 6px; }
@@ -275,16 +359,18 @@
   /* --- Build log: composer, then the timeline with its dates in a column --- */
   .build-log-panel details.composer { margin: 0 0 8px; }
   .log-timeline { list-style: none; padding: 0; margin: 8px 0 0; }
-  .log-entry { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 14px; padding: 10px 0; border-top: 1px solid var(--line); }
-  .entry-time { font: 11px/1.6 var(--font-mono); white-space: nowrap; padding-top: 1px; }
+  .log-entry { display: grid; grid-template-columns: 136px minmax(0, 1fr); gap: 4px 14px; padding: 14px 0; border-bottom: 1px solid var(--line); }
+  .entry-time { font: 700 12.5px/1.6 var(--font-mono); white-space: nowrap; padding-top: 1px; color: var(--fg); }
+  @media (max-width: 479px) { .log-entry { grid-template-columns: minmax(0, 1fr); } }
   .entry-main { min-width: 0; }
-  .entry-head { display: flex; justify-content: flex-end; }
+  /* The entry's ⋯ menu sits at the right of its first line rather than on a line of its own. */
+  .entry-head { display: flex; justify-content: flex-end; float: right; margin: -4px 0 0 8px; }
   .entry-delete { font-size: 11px; }
   /* No `white-space: pre-wrap` here any more. It was right when .entry-body held a raw plain-text
      body — it is what made manual newlines visible. Since the Action Text move the element wraps real
      HTML with its own <br>s, and because white-space INHERITS, pre-wrap stopped collapsing the
      whitespace node the content partial emits and put a ~45px blank gap above every entry. */
-  .entry-body { margin: 0 0 6px; font-size: 14px; line-height: 1.55; max-width: 72ch; }
+  .entry-body { margin: 0 0 6px; font-size: 15px; line-height: 1.45; max-width: 72ch; }
 
   /* --- Bill of materials: badges are components.css; rows, rollup, composer here --- */
   .bom-rev { font-size: 12px; }
@@ -314,6 +400,13 @@
      order narrowest-first, matching the BOM table's own two breakpoints just above: Note first
      (least essential once the row is already named by From/To/Wire), then Wire. --- */
   .wiring input[type="text"] { width: 100%; margin: 0; }
+  /* A ROW READS AS THE TABLE THE SCREENS DRAW (the Shop manual, slice 5): each field is the cell's
+     text until it is pointed at or typed into, when its ink line comes back. Still a field, and
+     still the focus ring's (rule 13). */
+  .wiring-row input[type="text"] { border-color: transparent; background: transparent; padding-left: 4px; padding-right: 4px; }
+  .wiring-row input[type="text"]:hover, .wiring-row input[type="text"]:focus { border-color: var(--line-strong); background: var(--surface); }
+  .wiring .col-actions { white-space: nowrap; }
+  .wiring .col-actions .btn.small { min-height: 24px; }
   @media (max-width: 719px) { .wiring .col-note { display: none; } }
   @media (max-width: 479px) { .wiring .col-wire { display: none; } }
   /* A row being edited says so with its word (status carries its word, rule 13), and a refused
@@ -333,7 +426,9 @@
   .releases-panel details.release:last-of-type { border-bottom: 0; }
   .releases-panel details.release > summary { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; cursor: pointer; }
   .releases-panel details.release > summary time { font: 11px/1.4 var(--font-mono); color: var(--fg-muted); }
-  .release-version { font-weight: 600; }
+  /* The version reads as the screens set it: mono at 700, a size up from the row's facts. */
+  .release-version { font-size: 17px; font-weight: 700; }
+  .releases-panel details.release { padding: 10px 0; }
   .release-notes { margin: 8px 0; }
   .release-files { margin-top: 6px; }
   /* The path as the release recorded it, often one unbroken export name: it wraps anywhere, or the
@@ -347,9 +442,9 @@
   @media (max-width: 479px) { .release-files .col-state { display: none; } }
 
   /* --- Sheets panel, picker, sheet page (unchanged shapes, tokens) --- */
-  .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid var(--line); }
-  .sheets-panel .sheet-row:last-child { border-bottom: 0; }
-  .sheets-panel .sheet-row .muted { font: 11px/1.4 var(--font-mono); }
+  .sheets-panel .sheet-row { display: flex; align-items: center; justify-content: space-between; min-height: 35px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .sheets-panel .sheet-row > a { font-weight: 600; }
+  .sheets-panel .sheet-row .muted { font: 12.5px/1.4 var(--font-mono); }
   /* Saved calculations (projects/_calculations, 2026-10-21): label and answer on one line, the
      expression under them in mono (it is data), the three acts after. Long expressions wrap
      rather than widen the panel. */
@@ -405,13 +500,11 @@
      partial sets the class when its collection is empty; a populated panel is exactly what it was.
      A composer that opens takes the whole row. The panel-head counts are hidden — a zero is not
      information. A page modifier, not a redeclaration of `.panel` (design-system rule 3). --- */
-  .panel--quiet { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; padding: 8px 14px; }
-  .panel--quiet > h2, .panel--quiet > .panel-head { margin: 0; flex: 1 1 auto; }
-  .panel--quiet > .panel-head { display: flex; align-items: center; gap: 10px; }
-  .panel--quiet > .panel-head h2 { margin: 0; }
-  .panel--quiet > h2 { font-size: 13px; }
+  /* SINCE THE SHOP MANUAL A PANEL IS NOT A BOX (2026-11-19; components.css `.panel`), so a quiet one
+     is its section head and at most one muted sentence under it: the padding and the one-line row
+     that sized a quiet BOX went with the box, and padded a head that has no edge to keep off. */
+  .panel--quiet > .panel-head { margin-bottom: 8px; }
   .panel--quiet details.composer { margin: 0; }
-  .panel--quiet details.composer[open] { flex-basis: 100%; }
   .panel--quiet > form { margin: 0; display: flex; gap: 6px; }
   /* `:not(.bom-rev)`: a BOM present with zero lines is quiet too, and its revision badge is a fact,
      not a count -- hiding it made "rev 3" vanish the moment the last line was removed (review). */

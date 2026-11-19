@@ -125,9 +125,14 @@ theme: black on white, at true scale (measure-view.md).
    reversed the old exception under which the 3D models view lit a place of its own
    (`models_redirects_test.rb`). In the Library the lit row is the folder on screen — the deepest crumb
    (`@crumbs`, which FilesController#index and #show both build; a file's page lights its folder),
-   else the library root. A project lights its row among the eight listed (`sidebar_projects`), or
-   All projects when it is older; the Projects index lights the filter applied (All, Archived, a
-   kind). **The column is a slot**: a page supplies its own with `content_for :column`, and otherwise
+   else the library root. **A project's own page supplies its contents column** (`projects/_contents`,
+   Shop manual slice 5): Overview, then every section the page drew with the number its head shows and
+   its head's count, then the eight projects; it lights Overview (`[:project_overview, id]`) and marks
+   the project's own row in the list without lighting it, and it is rendered LAST in the view, so it
+   reads the numbers and counts the render recorded and asks the database nothing. Its sub-pages
+   (the edit area, Attach, the BOM page) keep the default and light the project's row among the eight
+   listed (`sidebar_projects`), or All projects when it is older; the Projects index lights the filter
+   applied (All, Archived, a kind). **The column is a slot**: a page supplies its own with `content_for :column`, and otherwise
    its section's default renders (`layouts/column/_<name>`, `ShellHelper::COLUMNS`); a section with
    none (Search) gets no column and no Contents button. Every default row is a real link, and every
    list in it is ONE query whatever it holds (`page_query_budget_test.rb`). Home's column is the
@@ -231,7 +236,9 @@ stylesheet or script tag goes in `_head`, never in either layout, or the two hea
     a primary (Shop manual slice 3): it replaced the top bar's Upload, which was the Library's, Recent's
     and the hub's primary, and `FolderDestination` lost its `primary` flag and `upload_primary!` with
     it, so a destination says where things land and nothing about weight. Home, the Library and a
-    project page spend nothing today. No secondary control is filled. The project hub is the one page the 2026-09-10 cohesion spec's
+    project page spend nothing today. The layout editor's bar is an ink band (slice 5), so its Save
+    layout is filled with the PAGE colour, the inverse primary, and the guard counts a fill against
+    its GROUND (ink on the page, the page colour on ink). No secondary control is filled. The project hub is the one page the 2026-09-10 cohesion spec's
     decision 3 allows two; since 2026-10-26 its second, Save publishing, has lived with the Publish
     panel in the edit area's Publishing tab, and since slice 3 its first (Upload) is Add's. Each of
     that area's three tabs (Details, Publishing, Page layout) spends it on its own Save (the YAML
@@ -299,6 +306,16 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     they hid it themselves, in the layout editor — and the stats line counts only panels on the page. Every panel's composer
     is a `details.composer` in its `.panel-head`, opened by "Add…", its submit naming the thing and
     never `primary`.
+    **Every panel is half a column by default** (Shop manual slice 5, `Maker::ProjectKind.default_width`):
+    Files, Photos and the folder panels included, the README excepted, and **a panel stays full while
+    it holds a repository** — a folder panel that is a working tree, and Files while the project's
+    folder is one (`Layout#holds_repo?`; the layout's callers hand it `root_repo:` from their
+    listing). A stored width wins. **A section's number belongs to its SLOT**
+    (`projects/_panel_slot`, `data-section` and `--section`, drawn before the head's title by
+    pages/projects.css), never to the panel's markup, because a view switch replaces the panel's
+    section and must leave the number standing; it is taken only once the body rendered
+    (`ProjectsHelper#section_number!`), so a panel with nothing to show takes none, and the editor
+    numbers nothing.
 
 **A PANEL'S VIEW BUTTONS SWITCH IT IN PLACE, AND THE DOOR STILL RENDERS NOTHING (2026-11-16).** A
 press on the page posts `in_place` (`projects/_view_toggle`). `Projects::PanelsController#in_place`

@@ -104,8 +104,12 @@ module Maker
     # AND IT KNOWS THE BLOCKS (2026-09-09, content blocks): a block is a panel of the layout, so its
     # key has to be in the vocabulary here or the maker's own order would be filtered down to the
     # panels alone on the page a visitor sees — every block dropped, silently, by the totality rule.
+    #
+    # AND WHETHER THE FOLDER IS A REPOSITORY (2026-11-19): Files keeps the full width a repository
+    # needs on both pages, from the same listing's in-memory answer.
     def layout = @layout ||= project.panel_layout(folders: listing.panel_folders,
-                                                  blocks: blocks.map { |b| [ b.key, b.kind ] })
+                                                  blocks: blocks.map { |b| [ b.key, b.kind ] },
+                                                  root_repo: listing.root_repo?)
 
     # THE PROJECT'S CONTENT BLOCKS, ONE QUERY, memoised for the page like everything else here. Read
     # BEFORE `layout` needs them and indexed for the loop, one read for both — a block created

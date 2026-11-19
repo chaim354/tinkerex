@@ -31,7 +31,7 @@ class PageEditorTest < ApplicationSystemTestCase
 
   def open_editor
     visit edit_layout_project_path(@project)
-    assert_selector ".layout-bar", text: "Editing page layout"
+    assert_selector ".layout-bar", text: /Editing page layout/i
     assert_selector "div.panel-slot", minimum: 5
   end
 
@@ -301,7 +301,7 @@ class PageEditorTest < ApplicationSystemTestCase
     within(".project-head") { click_on "Edit" }
     assert_current_path edit_project_path(@project)
     within("nav.edit-tabs") { click_on "Page layout" }
-    assert_selector ".layout-bar", text: "Editing page layout"
+    assert_selector ".layout-bar", text: /Editing page layout/i
     page.execute_script("localStorage.removeItem('page-editor-unload'); " \
                         "window.addEventListener('beforeunload', (e) => localStorage.setItem('page-editor-unload', String(e.defaultPrevented)))")
     within(slot("tasks")) { click_on "Hide" }

@@ -898,17 +898,17 @@ module Web
       project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
                                         logged_at: Time.zone.local(2026, 5, 1, 12, 0, 0))
       folder_key = Maker::ProjectKind.folder_key(models.node_id)
-      # BOTH WIDTHS ARE THE OPPOSITE OF THEIR DEFAULT (ProjectKind.default_width: a folder is full,
-      # build_log is half), so each assertion below fails if the width class is written from the
-      # default rather than from the maker's own layout.
+      # BOTH WIDTHS ARE THE OPPOSITE OF THEIR DEFAULT (ProjectKind.default_width: every panel is half
+      # since the Shop manual, a plain folder included, and the README full), so each assertion below
+      # fails if the width class is written from the default rather than from the maker's own layout.
       project.update!(panels: { "titles" => { folder_key => "Prints", "build_log" => "Diary" },
                                 "intros" => { folder_key => "Sliced." },
-                                "widths" => { folder_key => "half", "build_log" => "full" } })
+                                "widths" => { folder_key => "full", "build_log" => "full" } })
 
       get public_project_path("ada", project.slug)
 
       assert_response :success
-      assert_select "div.project-panels > div.panel-slot.panel--half > section.folder-panel h2", text: "Prints"
+      assert_select "div.project-panels > div.panel-slot.panel--full > section.folder-panel h2", text: "Prints"
       assert_select "section.folder-panel p.panel-intro", text: "Sliced."
       assert_select "div.panel-slot.panel--full > section.build-log-panel h2", text: "Diary"
       assert_select "div.panel-slot > section.photos-panel", { count: 0 }, "no photos, no slot"

@@ -60,7 +60,9 @@ class NarrowNamesTest < ApplicationSystemTestCase
 
     visit project_path(project)
     assert_selector ".project-head h1", text: LONG
-    assert_fits ".project-head h1", "the project page's h1"
+    # WITHIN THE HEAD, not the h1's parent: `.page-title` is `display: contents` on a project (the Shop
+    # manual's slice 5 lays its children on the head's own row), so it has no box to measure against.
+    assert_fits ".project-head h1", "the project page's h1", within: ".page-head"
     assert_selector ".releases-panel details.release[open] .release-files td.col-path", text: release.files.first.path
     assert_fits ".release-files td.col-path", "a release row's path", within: ".releases-panel"
     assert_no_sideways_scroll "the project page"

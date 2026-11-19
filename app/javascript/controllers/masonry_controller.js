@@ -19,6 +19,11 @@ import { Controller } from "@hotwired/stimulus"
 // ResizeObserver on every child (a thumbnail or a 3D preview arriving late), a MutationObserver on
 // the grid (a block added, deleted or dragged), and the media query itself (a window crossing the
 // breakpoint, where the answer is to clear every span rather than to recompute one).
+//
+// THE GAP IS THE GRID'S OWN `--panel-gap` (the Shop manual, slice 5: 40px between the page's
+// sections, 16px between the editor's boxes), read when the spans are computed rather than spelled
+// here, because `.masonry` zeroes the grid's real row gap and the spans must carry it instead. GAP is
+// the answer for a grid that names none.
 const GAP = 16
 const MIN_WIDTH = 900
 
@@ -53,8 +58,9 @@ export default class extends Controller {
     if (!this.media.matches) { this.clear(); return }
 
     this.element.classList.add("masonry")
+    const gap = parseFloat(getComputedStyle(this.element).getPropertyValue("--panel-gap")) || GAP
     for (const child of this.element.children) {
-      const span = `span ${Math.max(1, Math.ceil(child.getBoundingClientRect().height + GAP))}`
+      const span = `span ${Math.max(1, Math.ceil(child.getBoundingClientRect().height + gap))}`
       if (child.style.gridRowEnd !== span) child.style.gridRowEnd = span
     }
   }

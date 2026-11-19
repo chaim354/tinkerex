@@ -60,6 +60,9 @@
 <section class="panel attachments-panel" id="attachments">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "attachments") %></h2>
+    <%# THE FOLDER'S COUNT, the one "At a glance" and the contents column give for Files: every file
+        under the project folder, as the stats line counted it before (2026-11-19). %>
+    <%= section_note("attachments", @listing.total, pluralize(@listing.total, "file")) %>
     <%# "OPEN FOLDER →" (structural redesign §6, slice 6): the door to this folder in the Library,
         where the inspector answers for each file. The path rides in the link's `title`, so the
         panel still says WHERE it is showing on hover. Nothing to link to when the folder ensure
@@ -73,8 +76,8 @@
           section summary and inside its card; a project whose FOLDER is the working tree has no
           section of its own to hang them on, so the panel head is where they belong. %>
       <% if @listing.root_repo? %>
-        <%= link_to "Commits", repo_commit_path(@listing.folder_id), class: "linkbtn" %>
-        <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn" %>
+        <%= link_to "Commits", repo_commit_path(@listing.folder_id), class: "linkbtn", data: { turbo_prefetch: false } %>
+        <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn", data: { turbo_prefetch: false } %>
       <% end %>
       <%# Tiles / List, FOR THIS PANEL (2026-09-08, folder panels). The same view-toggle component
           the Files page uses (components.css), but the choice is a WRITE here, persisted on the
@@ -199,8 +202,8 @@
           tiles is what the row is. Each opens the file (projects/_file_tile).
         %>
         <% if @recent_files.any? %>
-          <div class="recent-files">
-            <h3 class="recent-files-head">Recently changed</h3>
+          <div class="recent-files plate">
+            <div class="plate-head"><h3 class="recent-files-head">Recently changed</h3> <span class="plate-count"><%= pluralize(@recent_files.size, "file") %></span></div>
             <div class="attachments-grid">
               <% @recent_files.each do |node| %>
                 <% row = @listing.row_for(node.node_id) ||

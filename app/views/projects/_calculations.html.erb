@@ -15,6 +15,7 @@
 <section class="panel calculations-panel<%= " panel--quiet" if @calculations.empty? %>" id="project-calculations">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "calculations") %></h2>
+    <%= section_note("calculations", @calculations.size, "#{@calculations.size} saved") %>
     <button type="button" class="btn small" data-calculator-open aria-haspopup="dialog"
             title="Open calculator (<%= calculator_shortcut %>)" aria-keyshortcuts="<%= CalculationsHelper::CALCULATOR_KEYS %>">Open calculator</button>
   </div>

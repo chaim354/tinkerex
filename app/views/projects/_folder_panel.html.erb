@@ -47,7 +47,7 @@
         caller knows it — Layout holds node ids and PANEL_LABELS names no folder — so it is passed
         in, and the maker's own title wins over it when there is one. %>
     <h2><%= panel_title(@panel_layout, key, dir.name) %></h2>
-    <span class="mono muted"><%= pluralize(count, "file") %></span>
+    <%= section_note(key, count, pluralize(count, "file")) %>
     <%# WHERE IT IS, not just what: the subfolder's path, linked to it in the Library. The Files
         panel's own `panel-path` reads "Open folder →" since slice 6, with the path as its title —
         that folder is the page's own subject, where a subfolder's path is the news. %>
@@ -55,8 +55,8 @@
     <% if dir.repo? %><span class="badge">repo</span><% end %>
     <div class="panel-actions">
       <% if dir.repo? %>
-        <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn" %>
-        <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn" %>
+        <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn", data: { turbo_prefetch: false } %>
+        <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn", data: { turbo_prefetch: false } %>
       <% end %>
       <%# THIS PANEL'S VIEW BUTTONS, all three of Maker::Project::VIEWS (projects/_view_toggle, which
           says why they are buttons and how a press replaces this section alone). The Files panel

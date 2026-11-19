@@ -66,6 +66,14 @@
     </div>
   </div>
 <% elsif body.present? %>
-  <div class="panel-slot panel--<%= width %>"><%= body %></div>
+  <%# THE SECTION NUMBER RIDES ON THE SLOT, NOT IN THE PANEL (the Shop manual, slice 5): a view
+      switch made on the page replaces the panel's SECTION by its id (ProjectsController
+      #switched_panel_streams) and leaves this div standing, so a number written into the panel's
+      head would vanish on the first press. The slot hands it down as `--section`, which
+      pages/projects.css draws before the head's title, and as `data-section` for the tests and the
+      contents column's order. Taken only now the body is known to be there (ProjectsHelper
+      #section_number!), so a panel that renders nothing takes no number. %>
+  <% n = section_number!(key) %>
+  <%= tag.div body, class: "panel-slot panel--#{width}", data: { section: n }, style: ("--section: '#{n}'" if n) %>
 <% end %>
 <% end %>
