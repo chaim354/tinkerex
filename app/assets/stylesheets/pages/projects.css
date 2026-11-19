@@ -169,6 +169,7 @@
      Pull out. In a list a stack is one row whose name opens its members, indented beneath it. --- */
   .stack-panel-switch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-3); }
   .attachment-tile .stack-toggle { width: 100%; }
+  .attachment-tile .stack-toggle .grid-sub { font-size: 11px; overflow-wrap: anywhere; }
   .attachment-tile .stack-role { display: block; margin-top: 2px; }
   .attachment-tile .stack-pull-out-form, .attachment-tile .stack-put-back-form { margin: 2px 0 0; }
   .project-files tr.stack-row.is-open, .project-files tr.stack-member { background: var(--raised); }

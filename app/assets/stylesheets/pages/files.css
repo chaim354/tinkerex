@@ -32,7 +32,7 @@
   table.files .stack-toggle .stack-count { margin-left: var(--space-1); }
   table.files .stack-toggle:hover .file-name { text-decoration: underline; }
   table.files tr.stack-row.is-open, table.files tr.stack-member { background: var(--raised); }
-  table.files tr.stack-member td.col-name { padding-left: 28px; }
+  table.files tr.stack-member td.col-name { padding-left: 28px; overflow-wrap: anywhere; }
   table.files tr.stack-member .stack-role { margin-left: var(--space-2); }
   table.files .stack-put-back-form, table.files .stack-pull-out-form { display: inline; margin-left: var(--space-2); }
   .files-grid .stack-toggle { width: 100%; }
