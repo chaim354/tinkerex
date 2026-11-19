@@ -42,7 +42,7 @@
             <%= link_to "Open it", file_path(detail.node.node_id), class: "linkbtn", data: file_open_data %>
             <%= link_to "Open #{detail.dir.name}", files_path(folder: detail.dir.node_id), class: "linkbtn" %>
           <% when "uncommitted" %>
-            <%= link_to "Review", repo_commit_path(detail.root_node_id), class: "linkbtn" %>
+            <%= link_to "Review", repo_commit_path(detail.root_node_id), class: "linkbtn", data: { turbo_prefetch: false } %>
           <% when "export_older" %>
             <%= link_to "Open it", file_path(detail.derived_id), class: "linkbtn", data: file_open_data %>
             <%= link_to "Open the source", file_path(detail.source_id), class: "linkbtn", data: file_open_data %>

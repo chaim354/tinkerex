@@ -123,7 +123,7 @@
               <% verb = row.detail.count == 1 ? "is" : "are" %>
               <span class="attention-text"><%= link_to row.project.name, project_path(row.project) %>:
                 <% if row.detail.root_node_id == row.project.folder_node_id %><%= saved %> saved in Tinkerex <%= verb %> not committed.<% else %><%= row.detail.name %> has <%= saved %> saved in Tinkerex that <%= verb %> not committed.<% end %></span>
-              <%= link_to "Review", repo_commit_path(row.detail.root_node_id), class: "linkbtn" %>
+              <%= link_to "Review", repo_commit_path(row.detail.root_node_id), class: "linkbtn", data: { turbo_prefetch: false } %>
             <% else %>
               <span class="attention-kind">Out of date</span>
               <span class="attention-text"><%= link_to row.project.name, project_path(row.project) %>: <%= row.detail.derived_name %> is older than <%= row.detail.source_name %>.</span>
