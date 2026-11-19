@@ -1,7 +1,7 @@
 <%# locals: (sections:) %>
 <%# A FILE PAGE'S COLUMN (Shop manual spec §7, slice 6): the page's own sections as in-page links,
     as Home's column carries its own, then the Library's column unchanged (layouts/column/_library:
-    the folder chain, the folder's subfolders, 3D models and Trash), whose lit row is this file's
+    the folder tree, open down to this file's folder, then 3D models and Trash), whose lit row is this file's
     folder (design-system.md rule 8). `sections` is [label, id, note] for each section the page
     renders, decided by files/show.html.erb from the same conditions that render them, so a section
     that leaves the page cannot leave its link (shell_layout_test.rb holds every in-page link to an

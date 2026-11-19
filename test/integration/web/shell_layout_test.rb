@@ -106,9 +106,10 @@ module Web
       end
     end
 
-    # THE LIBRARY'S COLUMN: the root, the chain down to the folder on screen, its subfolders (hidden
-    # ones excepted, as the Library lists them), then 3D models and Trash. The folder on screen is
-    # the one lit row; on a file's page that is the file's folder.
+    # THE LIBRARY'S COLUMN: the folder tree (the root, its folders, the chain down to the folder on
+    # screen open with each level's siblings: spec §9, library_folder_tree_test.rb has the rest), hidden
+    # ones excepted as the Library lists them, then 3D models and Trash. The folder on screen is the
+    # one lit row; on a file's page that is the file's folder.
     test "the Library column lists the folder chain and its subfolders, and lights the folder on screen" do
       @user.nodes.create!(node_id: "d-laser", name: "laser", kind: "dir", mtime: 1, size: 0)
       @user.nodes.create!(node_id: "d-cnc", name: "cnc", kind: "dir", mtime: 1, size: 0)
@@ -123,7 +124,7 @@ module Web
       assert_select "aside.column a.column-row[href=?][aria-current='page']", files_path
 
       get files_path(folder: "d-laser")
-      assert_equal [ "Library", "laser", "jigs", "3D models", "Trash" ], column_rows
+      assert_equal [ "Library", "cnc", "laser", "jigs", "3D models", "Trash" ], column_rows
       assert_equal [ "laser" ], lit_rows
       assert_select "aside.column a.column-row[href=?]", files_path(folder: "d-jigs") do |rows|
         assert_equal "--depth: 2", rows.first["style"]

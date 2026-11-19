@@ -192,6 +192,8 @@ root to: "home#index"
 
   # --- Library browse (session-authed JSON; data source for the reusable folder/file chooser) ---
   get  "library/children", to: "library_browse#children",      as: :library_children
+  # One folder of the Library column's tree, opened in place (a Turbo Frame; ShellHelper#folder_tree_level).
+  get  "library/tree",     to: "library_browse#tree",          as: :library_tree
   post "library/folders",  to: "library_browse#create_folder", as: :library_folders
 
   # --- Per-file notes (keyed by node_id, session auth) ---
