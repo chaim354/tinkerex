@@ -10,7 +10,7 @@ typewriter face for data, and a red numbered callout on each figure, so a projec
 manual for the thing being built. The look lands first and changes no behaviour. Nine behaviours
 the screens also show (§9) follow as their own slices.
 
-**Nothing here is built.** No file outside this spec has changed.
+**Slice 1 (§8) is built, in the same pull request as this spec. Nothing after it is.**
 
 ## 2. Where the designs are
 
@@ -79,14 +79,17 @@ The token names stay; rule 4 of `docs/invariants/design-system.md` already makes
 | `--radius-control`, `--radius-panel` | 3 px, 5 px | 2 px, 0 |
 
 The screens use one more tint, `#fdf1ef`, behind a selected row and a search match: that is
-`--accent-soft`, an `rgba` today. The status and code-viewer tokens are not drawn; keep them, and
-check each against a white ground. Nine more are not in the table and need a value or that check:
+`--accent-soft`, an `rgba` before slice 1. The status and code-viewer tokens are not drawn; they
+keep their values, and every one clears 4.5:1 on white, on `--raised` and on `--accent-soft`. Nine
+more are not in the table; slice 1 gave them these values:
 
-- `--accent-text` (`#ad3a0b`, the accent as text) and `--accent-ink` (text on an accent fill).
-- `--photo-stage`, `--thumb-stage` and `--thumb-ink`: literal copies of today's `--raised`,
-  `--surface` and `--fg-muted`, so they do not follow the new values.
-- `--shadow-float`, `--shadow-toggle` and `--scrim`, built from today's ink.
-- `--focus` is `var(--accent)`, so every focus ring turns red with the accent.
+- `--accent-text` is the accent itself, `#d42a20`: it clears 4.5:1 as text on its own (5.06 on
+  white, 4.58 on `--accent-soft`, the lowest). `--accent-ink` stays white (5.06 on the accent).
+- `--photo-stage`, `--thumb-stage` and `--thumb-ink` were literal copies of `--raised`,
+  `--surface` and `--fg-muted`, and take the new values: `#f4f4f1`, `#ffffff`, `#555b63`.
+- `--shadow-float`, `--shadow-toggle` and `--scrim` keep their alphas over the new ink.
+- `--focus` stays `var(--accent)`, so every focus ring turns red with the accent: a mark, which
+  proposal 1 allows.
 
 `#f4f2ed` is spelled in eight files, not one: `application.css`, `ShellHelper#theme_color_hex`,
 `pwa/manifest.json.erb`, `theme_controller.js`, the error pages `public/404.html`, `422.html` and
@@ -94,7 +97,10 @@ check each against a white ground. Nine more are not in the table and need a val
 icon's ground. `shell_layout_test.rb` asserts it as the theme colour. Two more of today's values are
 literals:
 
-- `--line-strong`'s `#878276`, in the select chevron's data URI (`components.css:92`).
+- `--line-strong`'s `#878276`, in the select chevron's data URI (`components.css:92`). It stays in
+  slice 1: a colour inside a data URI cannot follow the theme, and that grey reads on both
+  grounds (3.83:1 on white, 4.47:1 on Graphite's surface), where ink would vanish in Graphite.
+  Slice 2's select redraws it.
 - `--fg`'s `#1b1c19`, in `public/icon.svg` (`shell_chrome_test.rb` asserts it) and as
   `Maker::Previews::Palette::INK`. `palette_test.rb` holds `INK` equal to Paper's `--fg`, so the new
   `--fg` moves it, and moving it re-renders every text thumbnail: `TextThumb`'s
@@ -104,8 +110,8 @@ Both faces are OFL. They go under `app/assets/fonts` with their licence texts, a
 `font_src` is `:self, :data`, so a Google Fonts link is refused by the CSP. Material Symbols stays.
 Plex Mono ships 400 and 500; Courier Prime has 400 and 700. Seven rules set mono at 500 today
 (`.thumb-icon`, `.generic-thumb`, `.note-badge`, `.topbar-kbd`, `.commit-row-state`,
-`.print-log .print-run strong`, `.calculator-card-keys kbd`) and render at 400 unless slice 1
-moves them.
+`.print-log .print-run strong`, `.calculator-card-keys kbd`) and render at 400. Slice 1 leaves the
+declarations alone; the slice that restyles each one chooses its weight.
 
 | role | today | screens |
 |---|---|---|
@@ -181,8 +187,8 @@ lands once the dark theme is drawn (§4).
 | # | slice | touches | checked by |
 |---|---|---|---|
 | 0 | this spec, and the rule changes in §11 | docs only | Charles |
-| 1 | tokens and fonts, light | the token block, `app/assets/fonts`, the `@font-face` rules, the eight files that spell `#f4f2ed`, the chevron literal, `Palette::INK` and `TextThumb`'s revision (§5) | `css_hygiene_test`, `code_theme_test`, `settings_theme_test`, `shell_layout_test`, `shell_chrome_test`, `palette_test`, a contrast check on each changed pair |
-| 2 | components | `components.css`, the four new ones, `COMPONENT_SELECTORS`, rule 13, the add-on class list (below) | `css_hygiene_test`, `accent_spend_test` rewritten, `addon_bundle_test`, `addon_sdk_test` |
+| 1 | tokens and fonts, light | the token block, `app/assets/fonts`, the `@font-face` rules, the eight files that spell `#f4f2ed` (and `icon.png`, `favicon.ico` rendered from the icon), `Palette::INK` and `TextThumb`'s revision (§5) | `css_hygiene_test`, `code_theme_test`, `settings_theme_test`, `shell_layout_test`, `shell_chrome_test`, `palette_test`, a contrast check on each changed pair |
+| 2 | components | `components.css`, the four new ones, `COMPONENT_SELECTORS`, rule 13, the add-on class list (below), the select chevron (§5) | `css_hygiene_test`, `accent_spend_test` rewritten, `addon_bundle_test`, `addon_sdk_test` |
 | 3 | shell | `shell.css`, `layouts/_rail`, `_topbar`, `_tabbar`, `ShellHelper`, `rail_controller.js`, rules 7 to 9 | `shell_test`, `shell_rail_test`, `phone_topbar_test`, `shell_more_sheet_test`, `shell_layout_test` (one lit link per page), `models_redirects_test`, `narrow_names_test`, rewritten with the rules |
 | 4 | dark theme | the Graphite token set | `settings_theme_test`, `code_theme_test`, the viewers repainting |
 | 5 | project page | `pages/projects.css`, the panel partials, `Maker::ProjectKind.default_width` | `project_kind_test`, `project_layout_editor_test`, `public_project_test`, `page_editor_test`, `page_query_budget_test` |

@@ -10,7 +10,7 @@
 # kicanvas-embed.ts ENDS by appending a <link> to fonts.googleapis.com — Material Symbols Outlined for
 # the icons, Nunito for the labels; upstream's own TODO there reads "Package these up as part of
 # KiCanvas". So every page with a viewer sent each visitor's browser to Google, which a self-hosted
-# box on an isolated network cannot reach and a self-hosted app should not call (the IBM Plex
+# box on an isolated network cannot reach and a self-hosted app should not call (the self-hosted
 # @font-face in application.css says the same), and it broke the CSP on style-src-elem and font-src:
 # 22 report-only violations in ONE run of shell_test's phone sweep, ~49 on the Linux runners, past
 # CspReportsController's 30-a-minute cap, so the browser logged 429s and the sweep's console check
@@ -21,7 +21,7 @@
 #      same-origin and fingerprinted, and a document-level @font-face is what upstream's own <link>
 #      relied on too: the shadow trees resolve the family against the document's fonts.
 #   2. The embed's `:host` font stack, which opened with "Nunito", becomes `inherit`, so the labels
-#      take the page's own type (IBM Plex Sans, --font-ui) and there is no second UI font to ship.
+#      take the page's own type (--font-ui) and there is no second UI font to ship.
 #
 # THE ICON FONT IS SHIPPED WHOLE, NOT SUBSET. It is @material-symbols/font-400 at the pinned version
 # below (Apache-2.0): opsz 48, GRAD 0, weight 400, exactly the instance upstream asked Google for,

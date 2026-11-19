@@ -54,7 +54,7 @@ landed it (§11).
    (`.thumb`, `.render-card`, `.landing-tile`, `.generator-preview`) is `isolation: isolate` with
    its image `mix-blend-mode: multiply` onto `--thumb-stage`, so the white becomes the card and ink
    stays ink, without a stored pixel being edited. **The card is LIGHT IN BOTH THEMES** — Paper's
-   surface `#fcfbf8`, a dimmed paper `#bfbbb2` in Graphite — because the ink is often the FILE's
+   surface `#ffffff`, a dimmed paper `#bfbbb2` in Graphite — because the ink is often the FILE's
    colour (a LightBurn black or blue layer, a DXF's ACI 7, a plain SVG), which reads on no dark
    ground (LightBurn blue is 1.96:1 on Graphite's page) and no renderer may recolour. Measured on
    the Graphite card: 9.6:1 against the page (white was ~19:1, brighter than the text), black ink
@@ -69,7 +69,7 @@ landed it (§11).
    never a border, because the Measure tests derive mm-per-pixel from its width. Meshes are drawn
    in ONE material, `--model-material` `#7f7b73` (held equal to `Palette::MATERIAL` by
    `palette_test.rb`): it clears 3:1 on all four grounds it meets (the viewer's `--raised` in Paper
-   3.44 and Graphite 3.61, the card 4.18 and 3.58), which is why it is not redefined per theme.
+   3.82 and Graphite 3.61, the card 4.21 and 3.58), which is why it is not redefined per theme.
    **Drawing colours stay literal**: Measure's layer strokes and the hover/selected pair (pinned by
    computed style in the Measure system tests), the tray top-view fills, LightBurn swatches.
    `test/system/preview_stage_test.rb` pins the card, the isolation, the blend, the photo's
@@ -219,9 +219,12 @@ stylesheet or script tag goes in `_head`, never in either layout, or the two hea
     `folder_glyph`) or a word stands in. Data is no exception: an addon manifest's emoji `icon` is
     never drawn, the Tools gallery shows a monogram tile instead (`tools/home/_addon_mark`), and
     `tools_gallery_test.rb` reads the rendered gallery, since no source scan can see a manifest.
-    Labels stay Plex Sans and mono stays for data (the 2026-09-10 cohesion decisions 4 and 5). Text selection (`::selection`) and the code editor's selection and
-    active-line tints are browser text affordances, not UI selection state, and keep accent tints.
-    The values are the Tinkerex Design System artifact.
+    Labels stay in the UI face (`--font-ui`, Libre Franklin since 2026-11-18) and mono stays for
+    data (the 2026-09-10 cohesion decisions 4 and 5). Text selection (`::selection`) and the code
+    editor's selection and active-line tints are browser text affordances, not UI selection state,
+    and keep accent tints. The light values are the Shop manual spec's
+    (`docs/superpowers/specs/2026-11-18-shop-manual-redesign-design.md` §5); Graphite's are still
+    the Tinkerex Design System artifact's.
 
 **Every timestamp is `ApplicationHelper#time_at`, in the app's one zone (`config.time_zone`, from `TIME_ZONE`), and its three styles are the whole vocabulary** — `:absolute` `2026-11-01 22:09`, `:date`, `:relative` "10 minutes ago" — always a `<time datetime>`, with the full time and zone in `title` (a Date has no more to show); no template calls `strftime`, `to_fs(` or `time_ago_in_words`, and the History panel prints the server's `at_label`, never `toLocaleString()` (UX audit D1, `time_format_test.rb`).
 

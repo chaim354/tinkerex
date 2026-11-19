@@ -18,7 +18,7 @@ import { Controller } from "@hotwired/stimulus"
 const ORDER = ["light", "dark", "system"]
 // theme-color mirrors ShellHelper#theme_color_hex: Paper's ground for light and system, Graphite's
 // for dark.
-const META = { light: ["light", "#f4f2ed"], dark: ["dark", "#141512"], system: ["light dark", "#f4f2ed"] }
+const META = { light: ["light", "#ffffff"], dark: ["dark", "#141512"], system: ["light dark", "#ffffff"] }
 const CHANGE = "theme:change"
 
 export default class extends Controller {
