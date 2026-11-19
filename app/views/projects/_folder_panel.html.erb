@@ -55,8 +55,8 @@
     <% if dir.repo? %><span class="badge">repo</span><% end %>
     <div class="panel-actions">
       <% if dir.repo? %>
-        <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn" %>
-        <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn" %>
+        <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn", data: { turbo_prefetch: false } %>
+        <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn", data: { turbo_prefetch: false } %>
       <% end %>
       <%# THIS PANEL'S VIEW BUTTONS, all three of Maker::Project::VIEWS (projects/_view_toggle, which
           says why they are buttons and how a press replaces this section alone). The Files panel

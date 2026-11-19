@@ -76,8 +76,8 @@
           section summary and inside its card; a project whose FOLDER is the working tree has no
           section of its own to hang them on, so the panel head is where they belong. %>
       <% if @listing.root_repo? %>
-        <%= link_to "Commits", repo_commit_path(@listing.folder_id), class: "linkbtn" %>
-        <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn" %>
+        <%= link_to "Commits", repo_commit_path(@listing.folder_id), class: "linkbtn", data: { turbo_prefetch: false } %>
+        <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn", data: { turbo_prefetch: false } %>
       <% end %>
       <%# Tiles / List, FOR THIS PANEL (2026-09-08, folder panels). The same view-toggle component
           the Files page uses (components.css), but the choice is a WRITE here, persisted on the

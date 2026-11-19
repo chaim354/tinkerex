@@ -138,7 +138,7 @@
   <% if @info.content_token && @kind == :text && @repo_root %>
     <div class="repo-banner">
       <% if @committable_here %>
-        <%= link_to repo_commit_path(@repo_root.node_id), class: "repo-banner-link" do %>
+        <%= link_to repo_commit_path(@repo_root.node_id), class: "repo-banner-link", data: { turbo_prefetch: false } do %>
           <%= @pending_count.positive? ? pluralize(@pending_count, "pending change") : "No pending changes" %>
           in <%= @repo_root.name %> — review &amp; commit
         <% end %>
@@ -194,7 +194,7 @@
            data-history-work-url-value="<%= blob_file_path(@node.node_id) %>">
     <h2>History
       <%= link_to "All history in #{@repo_root.name}", repo_history_path(@repo_root.node_id),
-                  class: "muted history-repo-link" %>
+                  class: "muted history-repo-link", data: { turbo_prefetch: false } %>
     </h2>
     <div class="history-rows" data-history-target="rows">
       <p class="muted">Loading history…</p>
