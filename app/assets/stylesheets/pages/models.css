@@ -95,15 +95,17 @@
   /* THE 3D MODELS VIEW, A PLATE PER GROUP (Shop manual slice 7; the screen `models`). The plate, its
      head and its grid are components (components.css); the group's head is also the caps-label
      `.group-head` the tests know it by, so it drops that component's own margin and colour for the
-     plate head's. A model card is drawn as a plate's figure: a 160px frame, the name at 600 on one
-     line, the facts in mono under it, all left-aligned, overriding the project card it also is
-     (pages/projects.css centres a project card's name). */
+     plate head's. A model card is drawn as a plate's figure: the name at 600 on one line, the facts
+     in mono under it, all left-aligned, overriding the project card it also is (pages/projects.css
+     centres a project card's name). ITS FRAME STAYS SQUARE, the 2026-10-20 rule further down, where
+     the screen draws a 160px frame: a model's render is square, and projects_models_pages_test.rb
+     measures the box. */
   .models-group + .models-group { margin-top: var(--space-5); }
   .models-group .plate-head.group-head { margin: 0; color: var(--fg); }
   .models-group .plate-head a { color: var(--fg); }
   .models-group .plate-grid { grid-template-columns: repeat(auto-fill, minmax(min(190px, calc((100% - 4px) / 2)), 1fr)); }
   .models-group .model-card { position: relative; align-items: stretch; gap: 3px; min-width: 0; padding: 8px 8px 0 0; }
-  .models-group .model-card > .thumb { width: 100%; height: 160px; aspect-ratio: auto; padding: 9px; }
+  .models-group .model-card > .thumb { width: 100%; height: auto; aspect-ratio: 1 / 1; padding: 9px; }
   .models-group .model-card > .thumb > .thumb { width: 100%; height: 100%; aspect-ratio: auto; padding: 0; border: 0; }
   .models-group .model-card .model-name { overflow: hidden; font-size: 13.5px; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
   .models-group .model-facts { align-items: flex-start; margin: 0; font-size: 12px; text-align: left; }

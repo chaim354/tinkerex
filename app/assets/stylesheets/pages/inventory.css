@@ -76,5 +76,8 @@
   .ledger .delta-out { color: var(--danger); }
   .ledger .col-when { font-family: var(--font-mono); font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
   @media (max-width: 719px) { .ledger .col-note, .ledger .col-project { display: none; } }
+  /* At phone width the time goes under the date: kept on one line beside a one-word reason
+     ("Consumed"), the history table outgrew a 375px page (measured, slice 7). */
+  @media (max-width: 479px) { .ledger .col-when { white-space: normal; } }
   .item-notes { max-width: 72ch; }
 }

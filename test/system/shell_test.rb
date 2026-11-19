@@ -253,6 +253,9 @@ class ShellTest < ApplicationSystemTestCase
                                                part_number: "91290A113SSM3X8BX100", category: "Fasteners", min_quantity: 50,
                                                unit_cost: 0.04, location:, supplier:)
     Maker::InventoryTransaction.apply!(item:, user: @user, delta: 12, reason: "initial", note: "stocktake")
+    # A ONE-WORD REASON, which cannot wrap, beside the history's date and time (Shop manual slice 7):
+    # with the time kept on the date's line the item page scrolled sideways at 375px.
+    Maker::InventoryTransaction.apply!(item:, user: @user, delta: -2, reason: "consumed")
     # STAGE 2, S2-4: one BOM line so the panel's table (and its composer) render at 375px rather
     # than the empty state -- reuses `item`/`supplier` above, the same argument the inventory
     # fixtures two lines up make for exercising a populated row rather than an empty page.
@@ -458,9 +461,13 @@ class ShellTest < ApplicationSystemTestCase
     begin
       # THE OVERFLOW ASSERTION IS THE SWEEP; the per-page selectors around it are how each half
       # proves the phone rules ran at all. Shared as a lambda rather than duplicated, so the two
-      # loops below cannot drift about what "scrolls sideways" means.
+      # loops below cannot drift about what "scrolls sideways" means. AGAINST `clientWidth`, NOT
+      # `innerWidth` (Shop manual slice 7): a Chrome that draws classic scrollbars (CI's Linux one, and
+      # this Mac's) gives the page 360 of the 375, and `innerWidth` counted the scrollbar's 15px as
+      # page, so an item page 370px wide read green while it scrolled. With the history table's time
+      # kept on the date's line it reddens: "/inventory/1 scrolls sideways at 375px (scrollWidth 370)".
       no_sideways_scroll = lambda do |path|
-        assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
+        assert page.evaluate_script("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
                "#{path} scrolls sideways at 375px (scrollWidth #{page.evaluate_script('document.documentElement.scrollWidth')})"
       end
 
