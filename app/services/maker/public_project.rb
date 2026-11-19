@@ -231,7 +231,8 @@ module Maker
       @readme = source && Maker::Readme.render(
         source, base_path: listing.path, index: listing.path_index,
         link: ->(id) { authored_url_for(id) }, image_link: ->(id) { image_url_for(id) },
-        context: Maker::Readme::Live::Context.new(user: owner, project:, listing:, bom_lines:, tasks:, entries:, thumbs:)
+        context: Maker::Readme::Live::Context.new(user: owner, project:, listing:, bom_lines:, tasks:, entries:, thumbs:,
+                                                  figures: figure_numbers)
       )
     end
 
@@ -795,7 +796,42 @@ module Maker
       permits?(node) ? file_url_for(node.node_id, filename: node.name) : nil
     end
 
+    # FIGURE NUMBERS ON THE VISITOR'S PAGE (the Shop manual spec §9 and §11.3): the maker's page's
+    # rule — panel order, then file order, the cover first, a file numbered where it first appears
+    # (Maker::FigureNumbers) — walked over THIS page's own figures, which are the published panels
+    # only: a hidden panel, a hidden folder's files and a file this page does not show draw nothing,
+    # so they number nothing and leave no gap. The visitor's page has no stacks and no browser, so
+    # each file is one figure, in the order public/projects/_page and its partials draw them: the
+    # Files table's rows, a folder panel's sections, Photos, Schematics' list, an image block. In
+    # memory over what the page already loads; no query (page_query_budget_test.rb).
+    def figure_numbers
+      @figure_numbers ||= Maker::FigureNumbers.build do |numbers|
+        numbers.figure(cover_node.node_id, place: "hero") if cover_node
+        groups = layout.groups(visible_panels)
+        (groups.top + groups.tabs.flat_map(&:keys)).each do |key|
+          public_figure_rows(key).each { |row| numbers.figure(row.node_id, place: key) }
+        end
+      end
+    end
+
+    def figure_number(node_id) = figure_numbers.number(node_id)
+
     private
+
+    # The rows one panel of this page draws as figures, in its order (each partial named).
+    def public_figure_rows(key)
+      if layout.block?(key)
+        block = blocks_by_key[key]
+        node = block&.kind == "image" && block_image_node(block)
+        node ? [ node ] : []
+      elsif layout.folder?(key)
+        dir = folder_dir(key)
+        dir ? folder_sections(dir).flat_map(&:last) : []
+      else
+        { "attachments" => -> { loose_rows }, "photos" => -> { photo_rows }, "schematics" => -> { kicad_rows } }
+          .fetch(key) { -> { [] } }.call
+      end
+    end
 
     # THE ONE SECTION WALK, for `#sections` (the whole folder) and `#folder_sections` (one panel).
     # Depth-first, a dir before its children, dirs with no files of their own skipped — the order

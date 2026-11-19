@@ -42,10 +42,12 @@
       <div class="entry-photos" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
         <% photos.each do |att| %>
           <% name = @page_nodes[att.node_id].name %>
+          <%# THE PHOTO'S FIGURE NUMBER, CITED (spec §9): Photos draws every entry photo as a figure, so the
+              entry shows the number it carries there and never takes one (Maker::ProjectFigures). %>
           <%= link_to file_path(att.node_id), class: "entry-photo file-cell", title: name, "aria-label": name,
-                      data: file_open_data(thumb_cell_data(att.node_id, "IMG")) do %>
+                      data: file_open_data(thumb_cell_data(att.node_id, "IMG")).merge(figure_data(att.node_id, repeat: true)) do %>
             <%= render "files/thumb", thumb: @page_thumbs.thumb(att.node_id), ext_label: "IMG",
-                       url: preview_src(@page_thumbs.thumb(att.node_id)) %>
+                       url: preview_src(@page_thumbs.thumb(att.node_id)), fig: fig_num_tag(figure_number(att.node_id), size: :ring) %>
           <% end %>
         <% end %>
       </div>

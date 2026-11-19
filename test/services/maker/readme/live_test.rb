@@ -159,6 +159,27 @@ module Maker
         MD
       end
 
+      # FIGURE NUMBERS (the Shop manual spec §9): ON THE PAGE a `files` table cites the number each file
+      # carries there, and a file the page draws as no figure cites none; IN THE FILE never, because a
+      # positional number written into a README is wrong the moment a file is added (§11.3).
+      test "files cites each file's figure number on the page, and never writes one into the file" do
+        laser = dir!("laser", @folder)
+        box = file!("box.svg", laser)
+        file!("tile.lbrn2", laser)
+        figures = Maker::FigureNumbers.build { |f| f.figure([ "elsewhere" ]); f.figure([ box.node_id ]) }
+
+        page = expand("<!-- tinkerex:files laser -->\n", mode: :page, figures:)
+        assert_includes page, "| Fig. | File | Kind | Size | Modified |"
+        assert_includes page, "| 2 | [box.svg](laser/box.svg) |"
+        assert_includes page, "|  | [tile.lbrn2](laser/tile.lbrn2) |", "no figure, no number"
+
+        file = expand("<!-- tinkerex:files laser -->\n", mode: :file, figures:)
+        assert_includes file, "| File | Kind | Size | Modified |"
+        refute_includes file, "Fig."
+        assert_includes expand("<!-- tinkerex:files laser -->\n", mode: :page), "| File | Kind | Size | Modified |",
+                        "a page that numbers nothing (the editor) cites nothing"
+      end
+
       test "files . lists the root's loose files and leaves the README itself out" do
         file!("README.md", @folder)
         file!("notes.txt", @folder)

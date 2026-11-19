@@ -214,10 +214,21 @@ module Web
     test "a panel's switch is answered in place, and the editor's Save keeps it" do
       key = Maker::ProjectKind.folder_key(laser.node_id)
       patch project_panels_path(@project), params: { stack: { key => "0" }, in_place: "1" }
-      assert_redirected_to project_path(@project, panel: key, files: "1", pressed: "stack", anchor: key)
-      # Turbo follows with the stream type: the panel and the Files panel (its Backups changed).
-      get project_path(@project, panel: key, files: "1", pressed: "stack"), headers: { "Accept" => "text/vnd.turbo-stream.html, text/html" }
-      assert_equal [ key, "attachments" ], css_select("turbo-stream[action=replace]").map { |t| t["target"] }
+      assert_redirected_to project_path(@project, panel: key, files: "1", figures: "1", pressed: "stack", anchor: key)
+      # Turbo follows with the stream type: the panel, the Files panel (its Backups changed), and,
+      # because a stack is one figure and its versions several (spec §9), every other panel that
+      # shows a figure number and the index of files, renumbered.
+      get project_path(@project, panel: key, files: "1", figures: "1", pressed: "stack"), headers: { "Accept" => "text/vnd.turbo-stream.html, text/html" }
+      numbered = %w[cnc design docs images models].map { |name| Maker::ProjectKind.folder_key(@dirs.fetch(name).node_id) }
+      assert_equal [ key, "attachments", *numbered, "photos", "project-index" ], css_select("turbo-stream[action=replace]").map { |t| t["target"] }
+      # The laser panel's versions now stand alone, each with its own number, and the index agrees.
+      game_box = file("laser/game box.lbrn2")
+      game_box_v1 = file("laser/game box v1.lbrn2")
+      streamed = ->(target) { Nokogiri::HTML5.fragment(css_select("turbo-stream[target='#{target}'] template").sole.inner_html) }
+      tiles = streamed.call(key).css(".attachment-tile[data-fig]").to_h { |el| [ el.at_css("a.file-cell")["href"], el["data-fig"] ] }
+      assert_not_equal tiles.fetch(file_path(game_box.node_id)), tiles.fetch(file_path(game_box_v1.node_id))
+      index = streamed.call("project-index").css(".files-index-entry").to_h { |li| [ li.at_css("a.files-index-name")["href"], li["data-entry-fig"] ] }
+      assert_equal tiles[file_path(game_box.node_id)], index[file_path(game_box.node_id)]
       assert_select "turbo-stream[target=?] .stack-panel-switch input[autofocus]", key
 
       draft = { layout: 1, panels: [ { key: "tasks", hidden: true, width: "full" } ] }

@@ -157,15 +157,16 @@ module Web
     # THE FILES PANEL'S "RECENTLY CHANGED" ROW LEAVES OUT A BROWSED FOLDER'S FILES
     # (ProjectsController#dirs_without_tiles), so a folder going into or out of the browser changes
     # a second panel. The door says so, and only then: a switch between tiles and list changes
-    # nothing outside its own panel.
+    # nothing outside its own panel. AND THE FIGURE NUMBERS MOVE WITH IT (`figures`, the Shop manual spec
+    # §9): a browsed folder draws no figure, so every figure after it renumbers.
     test "a folder switched into or out of the browser asks for the Files panel too" do
       models, firmware = seed_folders!
 
       patch project_panels_path(@project), params: { view: { models => "browser" }, in_place: "1" }
-      assert_redirected_to project_path(@project, panel: models, files: "1", anchor: models)
+      assert_redirected_to project_path(@project, panel: models, files: "1", figures: "1", anchor: models)
 
       patch project_panels_path(@project), params: { view: { models => "list" }, in_place: "1" }
-      assert_redirected_to project_path(@project, panel: models, files: "1", anchor: models)
+      assert_redirected_to project_path(@project, panel: models, files: "1", figures: "1", anchor: models)
 
       patch project_panels_path(@project), params: { view: { models => "tiles" }, in_place: "1" }
       assert_redirected_to project_path(@project, panel: models, anchor: models)
@@ -174,7 +175,7 @@ module Web
       # opens in the browser (Maker::ProjectKind.default_view), so its first switch leaves it.
       assert_nil @project.reload.panels.dig("views", firmware)
       patch project_panels_path(@project), params: { view: { firmware => "tiles" }, in_place: "1" }
-      assert_redirected_to project_path(@project, panel: firmware, files: "1", anchor: firmware)
+      assert_redirected_to project_path(@project, panel: firmware, files: "1", figures: "1", anchor: firmware)
 
       patch project_panels_path(@project), params: { view: { firmware => "tiles" }, in_place: "1" }
       assert_redirected_to project_path(@project, panel: firmware, anchor: firmware)

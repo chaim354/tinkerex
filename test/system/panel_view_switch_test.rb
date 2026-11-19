@@ -180,12 +180,16 @@ class PanelViewSwitchTest < ApplicationSystemTestCase
     end
     assert_selector "#{FILES} .recent-files .attachment-tile", count: 1
     assert_equal %w[notes.txt], recent_names
-    assert_equal 2, probe("streams"), "the panel and the Files panel"
+    # AND THE INDEX OF FILES (the Shop manual spec §9): a browsed folder draws no figure, so its files
+    # lose their numbers there and every number after them moves (Projects::PanelsController#in_place).
+    assert_equal 3, probe("streams"), "the panel, the Files panel and the index of files"
+    assert_equal "—", find("#project-index .files-index-entry", text: "base.stl").find(".files-index-fig").text
 
     within(panel_for(@models)) { click_on "Tiles" }
     within(panel_for(@models)) { assert_selector ".attachments-grid .attachment-tile", count: 2 }
     assert_selector "#{FILES} .recent-files .attachment-tile", count: 3
     assert_equal %w[base.stl lid.stl notes.txt], recent_names.sort
+    assert_match(/\A\d+\z/, find("#project-index .files-index-entry", text: "base.stl").find(".files-index-fig").text)
 
     assert_page_was_not_redrawn
     assert_equal "tiles", @project.reload.panels.dig("views", "folder:#{@models.node_id}")

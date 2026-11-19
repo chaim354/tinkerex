@@ -27,6 +27,7 @@
       projects/_bom_lines is SHARED with the BOM page, whose own empty state says "No lines yet". %>
   <% if @bom_lines.any? %>
     <%= render "projects/bom_lines", lines: @bom_lines, shown: @bom_lines_shown, rollup: @bom_rollup,
-               nodes: @page_nodes, project: @project, bom: @bom, more_path: project_bom_path(@project) %>
+               nodes: @page_nodes, project: @project, bom: @bom, more_path: project_bom_path(@project),
+               figures: !@figures.nil? %>
   <% end %>
 </section>

@@ -174,15 +174,16 @@
      h2, because a view switch replaces the panel and must not take its number with it. A slot with
      no number (the editor, the visitor's page, a block with no heading) draws none. --- */
   .project-panels > .panel-slot[data-section] > .panel > .panel-head > h2::before,
-  .project-panels > .panel-slot[data-section] > .panel > h2::before {
+  .project-panels > .panel-slot[data-section] > .panel > h2::before,
+  .files-index-grid > .panel-slot[data-section] > .panel > .panel-head > h2::before {
     content: var(--section, none); margin-right: 12px; font-family: var(--font-mono); font-weight: 700; letter-spacing: 0;
   }
-  .project-panels .panel-head > h2 { margin-right: auto; }
+  .project-panels .panel-head > h2, .files-index .panel-head > h2 { margin-right: auto; }
   /* WHERE A FOLDER PANEL IS (its path, linked) is a second line under the head's first, so the
      title, the note and the view buttons keep one line in half a column. */
   .project-panels .folder-panel > .panel-head > .panel-path { flex-basis: 100%; order: 1; margin: 0; }
-  .project-panels .panel-head { align-items: baseline; row-gap: 8px; }
-  .project-panels .panel-head > .panel-note { font: 400 13px/1.2 var(--font-mono); white-space: nowrap; }
+  .project-panels .panel-head, .files-index .panel-head { align-items: baseline; row-gap: 8px; }
+  .project-panels .panel-head > .panel-note, .files-index .panel-head > .panel-note { font: 400 13px/1.2 var(--font-mono); white-space: nowrap; }
 
   /* --- Folder panels (2026-09-08): one per depth-one subfolder of the project's folder, each with
      its own view. Half a column by default, full while it is a repository (Maker::ProjectKind
@@ -246,6 +247,28 @@
   .project-files tr.stack-member td.col-name { padding-left: 24px; }
   .project-files .stack-role, .project-files .stack-pull-out-form, .project-files .stack-put-back-form { margin-left: 8px; }
   .project-files .stack-pull-out-form, .project-files .stack-put-back-form { display: inline; }
+  /* --- FIGURE NUMBERS (the Shop manual spec §9; `.fig-num` is components.css's, and so is its place
+     on a plate figure's frame). Every other figure the page draws puts its disc at the same top left
+     of its picture: the cover (26px), a photo, an image block, a build-log photo (the ring: a
+     citation of the Photos panel's figure, not a figure of its own). A list's figure is a first
+     mono column, `col-fig`; the BOM's cites with the disc, as the screens' Parts list does. THE
+     SELECTED FIGURE — the one the find box or the index just went to — takes the 2px red outline
+     (spec §6): components.css draws it on a plate figure's frame, this on every other shape. --- */
+  .project-hero-frame, .block-image-link { position: relative; display: block; }
+  .project-hero-frame > .fig-num, .project-hero .thumb > .fig-num { position: absolute; left: 8px; top: 8px; z-index: 1; }
+  .project-photos .thumb > .fig-num, .entry-photos .thumb > .fig-num,
+  .block-figure .thumb > .fig-num, .block-image-link > .fig-num { position: absolute; left: 5px; top: 5px; z-index: 1; }
+  .stack-open .stack-open-head > .fig-num { align-self: center; }
+  .project-files .col-fig, .bom-lines .col-fig { width: 3.5em; white-space: nowrap; }
+  .project-files td.col-fig { font-weight: 700; font-variant-numeric: tabular-nums; }
+  .bom-lines td.col-fig { vertical-align: middle; }
+  .schematics-list li > .fig-num { flex: 0 0 auto; }
+  .attachment-tile.stack-item[aria-current="true"] .stack-toggle > .thumb { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .project-hero[aria-current="true"] .project-hero-frame, .project-hero[aria-current="true"] .thumb,
+  .project-photos [data-fig][aria-current="true"] .thumb, .block-figure[aria-current="true"] .block-image-link,
+  .block-figure[aria-current="true"] .thumb { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .project-files tr[data-fig][aria-current="true"] > td, .schematics-list li[data-fig][aria-current="true"] { background: var(--accent-soft); }
+  .project-files tr[data-fig][aria-current="true"] > td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
   .attachment-tile .grid-name { font-size: 13.5px; }
   /* A FIGURE'S WORDS SIT FLUSH LEFT UNDER ITS FRAME AND END IN AN ELLIPSIS: `.file-cell` centres its
      children, which left a long name as wide as itself and spilling past the frame, so the card is
@@ -609,4 +632,40 @@
   .danger-zone-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); }
   .danger-zone-actions form { margin: 0; }
   .danger-zone-actions p { margin: 0; font-size: 12px; }
+
+  /* --- THE INDEX OF FILES AND THE FIND BOX (the Shop manual spec §9; projects/_files_index and
+     projects/_contents). The index is the page's last section: every file A to Z in newspaper columns
+     220px wide, its name, a dotted leader and its figure number in mono 700, as the
+     `project-organized` screen sets it. A name never pushes its number off the line: it ends in an
+     ellipsis, and its title carries the whole. The entry the find box went to for a file with no
+     figure takes the selected row's tint. The find box is the column's first thing, drawn as the
+     strip's Search is (shell.css), with a mono status line under it that the box reads its answers
+     into. --- */
+  /* NOT A `.project-panels` GRID: its one slot is full width, and the grids above are the layout's
+     (project_tabs_test.rb counts them); it keeps their gap above it and their section head. */
+  .files-index-grid { margin-top: 40px; }
+  .files-index-grid > .panel-slot { min-width: 0; }
+  .files-index-list { margin: 0; padding: 0; list-style: none; column-width: 220px; column-gap: 30px; font-size: 12.5px; }
+  .files-index-entry { display: flex; align-items: baseline; gap: 8px; min-height: 21px; break-inside: avoid; }
+  .files-index-entry[aria-current="true"] { background: var(--accent-soft); }
+  .files-index-name { flex: 0 1 auto; min-width: 0; overflow: hidden; color: var(--fg); text-decoration: none; text-overflow: ellipsis; white-space: nowrap; }
+  .files-index-name:hover { text-decoration: underline; }
+  .files-index-folder { font-size: 12px; }
+  .files-index-leader { flex: 1 1 10px; min-width: 10px; border-bottom: 1px dotted var(--line); }
+  .files-index-fig { flex: 0 0 auto; color: var(--fg); font: 700 12.5px/1 var(--font-mono); font-variant-numeric: tabular-nums; text-decoration: none; }
+  a.files-index-fig:hover { color: var(--accent-text); text-decoration: underline; }
+  .files-index-fig--none { color: var(--fg-muted); font-weight: 400; }
+  .files-index-empty, .files-index-truncated { margin: 10px 0 0; font-size: 12.5px; }
+  .files-index-more { margin-top: 10px; }
+  .figure-find { margin: 0 0 22px; }
+  .figure-find-box {
+    display: flex; align-items: center; gap: 8px; height: var(--control-height); padding: 0 10px;
+    border: 1.5px solid var(--fg); border-radius: var(--radius-control); background: var(--surface); color: var(--fg-muted);
+  }
+  .figure-find-box:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .figure-find-box input { flex: 1 1 0; width: 0; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--fg); font: 400 13.5px/20px var(--font-ui); }
+  .figure-find-box input:focus-visible { outline: none; }
+  .figure-find-box input::-webkit-search-cancel-button { filter: grayscale(1); }
+  .figure-find-status { margin: 6px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+  .figure-find-status:empty { display: none; }
 }

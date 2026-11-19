@@ -327,7 +327,29 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     pages/projects.css), never to the panel's markup, because a view switch replaces the panel's
     section and must leave the number standing; it is taken only once the body rendered
     (`ProjectsHelper#section_number!`), so a panel with nothing to show takes none, and the editor
-    numbers nothing.
+    numbers nothing. `projects/_panel_groups` renders the top group BEFORE the tab panes, because a
+    slot takes its number as it renders and the page reads top group first.
+    **Figure numbers are positional, computed once per render, and one walk answers every place
+    that shows one** (the Shop manual spec §9 and §11.3). `ProjectsController#show` builds
+    `Maker::FigureNumbers` from `Maker::ProjectFigures`, which walks what the page already loaded in
+    the order the page draws it: the cover (Fig. 1), then each visible panel in layout order, top
+    group then tabs, and each panel's files in its own order; a stack is one figure and every member
+    carries its number; a file drawn twice keeps its first number. The callouts, the list views'
+    `Fig.` column, the BOM's citations, a README `files` table on the page, the Recently changed row
+    and a build-log photo (both cite, never take) and the index of files all read `@figures`; no
+    partial counts. Four things not to undo. **The walk and the partials are two descriptions of
+    one page**, so a partial that changes the order it draws files in changes the walk with it, and
+    group-drawing goes through the one `Maker::ProjectFigures.stack_figures`; `figure_numbers_test.rb`
+    reads every `[data-fig]` off the rendered page and holds the first appearances to 1, 2, 3 with no
+    gap. **A number is never stored or written anywhere** — not in a row, not in a README's `:file`
+    mode, not on another page (the Library's "IN <project>" column was left out for this). **A switch
+    that moves the numbers redraws every numbered panel and the index in place** (`figures=1` from
+    `Projects::PanelsController#in_place`: a stack switch, a folder into or out of the browser); a
+    tiles/list switch moves none. **The index of files is a section, not a panel of the layout**: the
+    page's last, full width, numbered by the same counter and listed in the contents column
+    (`ProjectsHelper::FILES_INDEX_KEY`), so the editor, the visitor's page, its feed, bundle and CSV
+    never see it. The visitor's page numbers its own published figures the same way
+    (`Maker::PublicProject#figure_numbers`).
     **The public page is the published view** (2026-11-19, the Shop manual's spec §3 and §9): the
     maker leaves panels off it with the Publishing tab's "On the public page" boxes, saved by its
     one Save publishing, and their own page keeps every panel. The choice is `panels["unpublished"]`,

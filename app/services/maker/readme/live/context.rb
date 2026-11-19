@@ -13,7 +13,10 @@ module Maker
       class Context
         attr_reader :user, :project, :listing
 
-        def initialize(user:, project:, listing:, bom_lines: nil, tasks: nil, entries: nil, thumbs: nil)
+        # `figures` is the page's Maker::FigureNumbers (the Shop manual spec §9), nil for a caller that
+        # numbers nothing — the README editor's Save above all, since a figure number is positional and
+        # must never be written into the file (§11.3). A `files` table cites them on the page.
+        def initialize(user:, project:, listing:, bom_lines: nil, tasks: nil, entries: nil, thumbs: nil, figures: nil)
           @user = user
           @project = project
           @listing = listing
@@ -21,7 +24,13 @@ module Maker
           @tasks = tasks
           @entries = entries
           @thumbs = thumbs
+          @figures = figures
         end
+
+        def figures? = !@figures.nil?
+
+        # The number the page draws a node's figure with, or nil.
+        def figure(node_id) = @figures&.number(node_id)
 
         def bom_lines
           @bom_lines ||= (bom = project.current_bom) ? bom.lines.includes(:inventory_item, :supplier).to_a : []

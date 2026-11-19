@@ -25,6 +25,7 @@
     <table class="table public-bom">
       <thead>
         <tr>
+          <th class="col-fig">Fig.</th>
           <th class="col-ref">Ref</th>
           <th class="col-part">Part</th>
           <th class="num col-qty">Qty</th>
@@ -32,7 +33,11 @@
       </thead>
       <tbody>
         <% pub.bom_lines.each do |line| %>
+          <%# THE FIGURE A FILE LINE CITES (the Shop manual spec §9): only a file this page shows, so only a
+              number this page draws. %>
+          <% cited = line.target_kind == :design_file && (n = pub.page_nodes[line.node_id]) && pub.permits?(n) ? pub.figure_number(n.node_id) : nil %>
           <tr>
+            <%= tag.td class: "col-fig", data: (cited ? { fig_cite: cited } : {}) do %><%= fig_num_tag(cited) %><% end %>
             <td class="col-ref mono"><%= line.reference %></td>
             <td class="col-part">
               <% case line.target_kind %>
