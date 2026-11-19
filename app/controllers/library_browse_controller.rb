@@ -1,5 +1,6 @@
 # Session-authed, user-scoped JSON data source for the reusable folder/file chooser
-# (app/javascript/controllers/filechooser_controller.js). NOT the device-token v1 API — this is the
+# (app/javascript/controllers/filechooser_controller.js), and the Library column's folder tree opened
+# in place (#tree, a Turbo Frame of rows). NOT the device-token v1 API — this is the
 # web UI. Reads the shared `nodes` catalog (backend-neutral: chunk/share/s3 all populate it) and
 # creates folders through the one cross-backend seam, Maker::LibraryFolder. No bytes flow through
 # here — metadata reads and dir-node creates only (§15).
@@ -35,6 +36,26 @@ class LibraryBrowseController < ApplicationController
       menus.key?(n.node_id) ? entry.merge(menu: menus[n.node_id]) : entry
     end
     render json: { parent: parent&.node_id, crumbs: crumbs(parent), entries: entries }
+  end
+
+  # GET /library/tree?parent=<node_id>&depth=<n> -> ONE FOLDER OF THE LIBRARY COLUMN'S TREE, opened in
+  # place (Shop manual spec §9): a Turbo Frame holding the folder's subfolders as rows at `depth`, each
+  # one the maker left open (the `library_tree` cookie) open beneath it, drawn by the same
+  # ShellHelper#folder_tree_level the column's first paint uses. column_tree_controller.js asks for it
+  # the first time a closed folder opens. Three queries whatever the folder holds: this lookup and
+  # Maker::FolderTree's two.
+  #
+  # THE PARENT MUST BE A LIVE, VISIBLE FOLDER OF THIS USER'S, the rows the tree itself lists: a
+  # foreign, tombstoned or stale id, a file, `.git` or a dot-folder answers the frame with nothing in
+  # it, never another user's folders and never a 500. `depth` only indents the rows, and is clamped.
+  def tree
+    id = params[:parent]
+    @frame_node_id = id.is_a?(String) ? id : ""
+    parent = id.is_a?(String) && current_user.nodes.present.visible_entries(false).find_by(node_id: id, kind: "dir")
+    @depth = params[:depth].is_a?(String) ? params[:depth].to_i.clamp(1, 64) : 1
+    @tree = parent && Maker::FolderTree.new(current_user, root_id: parent.node_id, depth: @depth,
+                                                          open_ids: helpers.folder_tree_open_ids)
+    render layout: false
   end
 
   # POST /library/folders {parent_node_id, name} -> create ONE child dir, return its node JSON.

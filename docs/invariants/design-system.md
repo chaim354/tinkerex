@@ -107,7 +107,14 @@ theme: black on white, at true scale (measure-view.md).
    rendered on the Settings page and in the strip's account menu; every instance re-renders on a
    change made in another (the `theme:change` broadcast). **The `rail` cookie retired with the rail
    (Shop manual slice 3): nothing reads or writes it, and no `body.rail--*` class exists**
-   (`shell_layout_test.rb` sends both old values and finds the body unchanged).
+   (`shell_layout_test.rb` sends both old values and finds the body unchanged). **The Library
+   column's open folders are the second such cookie (`library_tree`, Shop manual spec §9)**: node ids,
+   dot-separated, oldest first, the newest 50 kept, written by `column_tree_controller.js` with the
+   theme cookie's attributes on every disclosure press and rendered open by the server
+   (`Maker::FolderTree`), which trusts nothing beyond WELL-FORMED ids and opens one only where the
+   tree reaches it through this user's own live, visible folders, so an id naming a tombstone,
+   someone else's folder or nothing at all opens nothing (`library_folder_tree_test.rb`). Never
+   `localStorage` and never a script that opens folders before paint: the first byte is right.
 8. **The shell is a strip of four places — Library, Projects, Tools, Inventory, always all four —
    over a left column, and `ShellHelper#sidebar_current` alone decides what is lit: AT MOST ONE place
    and AT MOST ONE column row** (Shop manual spec §7 and §11.2). It answers one key (`[:folder, id]`,
@@ -125,7 +132,12 @@ theme: black on white, at true scale (measure-view.md).
    reversed the old exception under which the 3D models view lit a place of its own
    (`models_redirects_test.rb`). In the Library the lit row is the folder on screen — the deepest crumb
    (`@crumbs`, which FilesController#index and #show both build; a file's page lights its folder),
-   else the library root. **A project's own page supplies its contents column** (`projects/_contents`,
+   else the library root. **The Library's folders are a tree** (spec §9; `ShellHelper#column_tree`):
+   the chain to the folder on screen is always drawn open with each level's siblings beside it, even
+   where its level is cut at 40 or hides it (a dot-folder reached with hidden files shown), so the lit
+   row is always drawn; a folder with subfolders has a disclosure button before its row, and a closed
+   one opens in place through a Turbo Frame (`library_tree_path`), never one request per row.
+   **A project's own page supplies its contents column** (`projects/_contents`,
    Shop manual slice 5): Overview, then every section the page drew with the number its head shows and
    its head's count, then the eight projects; it lights Overview (`[:project_overview, id]`) and marks
    the project's own row in the list without lighting it, and it is rendered LAST in the view, so it
@@ -135,7 +147,7 @@ theme: black on white, at true scale (measure-view.md).
    applied (All, Archived, a kind). **The column is a slot**: a page supplies its own with `content_for :column`, and otherwise
    its section's default renders (`layouts/column/_<name>`, `ShellHelper::COLUMNS`); a section with
    none (Search) gets no column and no Contents button. Every default row is a real link, and every
-   list in it is ONE query whatever it holds (`page_query_budget_test.rb`). Home's column is the
+   list in it is ONE query whatever it holds, the folder tree two (`page_query_budget_test.rb`). Home's column is the
    page's sections as in-page links, then Pinned (the pinned folders and the pinned tools, the
    calculator's row opening its modal, each tool row keeping its right-click Unpin);
    `shell_layout_test.rb` holds every in-page link to an element the page carries, and walks every

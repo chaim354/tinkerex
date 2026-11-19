@@ -547,6 +547,9 @@ module Web
         # the frame reaches the attach chips and the thumbnail cell. Its 404 sibling,
         # files/inspector_gone, is in UNSWEPT_TEMPLATES — this sweep asserts :success.
         "file inspector" => inspector_file_path("n-stl"),
+        # Shop manual §9: one folder of the Library column's tree, opened in place (a frame
+        # fragment, LibraryBrowseController#tree). `d-pcb` holds a subfolder, so the level has rows.
+        "folder tree frame" => library_tree_path(parent: "d-pcb", depth: 2),
         # 2026-09-10: the "New text file" door's own form (Files::TextFilesController#new). Its
         # comment quotes `f.text_field` and `fields_for`, which is the §14d shape this file exists
         # for, and no other page renders it.

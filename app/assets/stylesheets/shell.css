@@ -149,6 +149,27 @@
      (Help, the wizard) or bare text after a space (Home, Search, an item). */
   .column-row-num { display: inline-block; flex: 0 0 18px; width: 18px; font: 700 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
   .column-row--more .column-row-name { color: var(--fg-muted); }
+  /* THE LIBRARY'S FOLDER TREE (spec §9; ShellHelper#folder_tree_item, column_tree_controller.js):
+     nested lists of the same 28px rows, a folder's level in a frame under its row. A folder with
+     subfolders has a disclosure, a 16px button in the indent just before its row's square, so the
+     names sit where the screens draw them; a chevron that turns down when open, the shape the other
+     folding lists draw. The indent stops growing at seven levels, so a deep chain cannot push a row
+     past the column's edge (rule 11); its names ellipsize as every row's does. */
+  .column-tree { list-style: none; margin: 0; padding: 0; }
+  .column-tree-item { position: relative; --tree-indent: min(calc(var(--depth, 0) * 16px), 112px); }
+  .column-tree-item > .column-row { padding-left: var(--tree-indent); }
+  .column-tree-frame { display: block; }
+  .column-tree-toggle {
+    position: absolute; top: 0; left: calc(var(--tree-indent) - 16px); width: 16px; height: 28px;
+    display: flex; align-items: center; justify-content: center; padding: 0; border: 0; background: none;
+    color: var(--fg-muted); cursor: pointer;
+  }
+  .column-tree-toggle::before {
+    content: ""; width: 5px; height: 5px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+    transform: rotate(-45deg);
+  }
+  .column-tree-toggle[aria-expanded="true"]::before { transform: rotate(45deg); }
+  .column-tree-toggle:hover { color: var(--fg); }
   .column-scrim { display: none; }
 
   /* --- THE PAGE HEAD'S CAPS PATH (rule 9): the crumbs, or the page's title, above the page. --- */

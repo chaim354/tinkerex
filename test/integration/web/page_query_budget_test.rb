@@ -1399,6 +1399,49 @@ module Web
       assert_equal small, large, "the column's queries grew with projects, pins, folders, places or suppliers"
     end
 
+    # THE LIBRARY COLUMN'S FOLDER TREE (Shop manual spec §9, Maker::FolderTree): OPEN FOLDERS and
+    # FOLDERS PER LEVEL both grow, and no page does. Every open folder is named by the `library_tree`
+    # cookie, a nested one under each too, and every listed subfolder holds one of its own, so the
+    # closed rows' disclosure query is measured with rows to answer. On a folder's page (the chain
+    # open as well, and its own level growing) and on Trash (the cookie alone); and the frame a
+    # closed folder opens into. Mutation-checked (2026-11-19): a disclosure asked per closed row
+    # (`dirs.where(parent_node_id: id).exists?` in Maker::FolderTree#build) read 27/16/8 queries small
+    # and 255/232/20 large; the subfolders loaded per open folder (a `parents.flat_map` of capped
+    # queries) 22/12/10 against 46/36/34.
+    test "the Library column's folder tree does not grow with open folders or folders per level" do
+      dir = lambda do |id, name, parent = nil|
+        @user.nodes.find_or_create_by!(node_id: id) do |d|
+          d.assign_attributes(name:, kind: "dir", parent_node_id: parent, mtime: 1, size: 0)
+        end
+      end
+      dir.call("tree-here", "here")
+      grow = lambda do |n|
+        (0...n).each do |i|
+          dir.call("tree-#{i}", "open #{i}")
+          dir.call("tree-here-#{i}", "beside #{i}", "tree-here")
+          (0...n).each do |j|
+            dir.call("tree-#{i}-#{j}", "sub #{j}", "tree-#{i}")
+            dir.call("tree-#{i}-#{j}-x", "leaf", "tree-#{i}-#{j}")
+          end
+        end
+        cookies[Maker::FolderTree::COOKIE] = (0...n).flat_map { |i| [ "tree-#{i}", "tree-#{i}-0" ] }.join(".")
+      end
+      paths = [ files_path(folder: "tree-here"), trash_index_path, library_tree_path(parent: "tree-0", depth: 2) ]
+      grow.call(SMALL)
+      paths.each { |path| get path; assert_response :success }
+      small = paths.to_h { |path| [ path, count_queries { get path } ] }
+      grow.call(LARGE)
+      paths.each { |path| get path; assert_response :success }
+      large = paths.to_h { |path| [ path, count_queries { get path } ] }
+      assert_equal small, large, "the folder tree's queries grew with open folders or folders per level"
+      # THE MEASUREMENT WAS OF A GROWN TREE, not of a column that drew nothing: on Trash, the library
+      # root, "here" and every open folder (closed "here" and each "sub j" but the opened first one
+      # carrying a disclosure), every open folder's subfolders, and each first subfolder's leaf.
+      get trash_index_path
+      assert_equal 1 + 1 + LARGE + (LARGE * LARGE) + LARGE, css_select("aside.column .column-tree .column-row").size
+      assert_equal 1 + LARGE * (LARGE - 1), css_select("aside.column button.column-tree-toggle[aria-expanded='false']").size
+    end
+
     # THE TAGS LIST (S2-6). Each iteration grows a tag AND tags a project with it, so the one
     # grouped count (Settings::TagsController#index's @counts) is under measurement -- a per-row
     # `tag.taggings.count` in the view would show as growth here, the same argument

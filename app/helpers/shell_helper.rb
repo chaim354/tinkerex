@@ -137,11 +137,11 @@ module ShellHelper
     SECTIONS.find { |_key, heads| heads.include?(head) || heads.include?(controller_path) }&.first
   end
 
-  # --- What the column lists. Each list is ONE query whatever it holds, so no page's query count
-  # grows with projects, pins, folders, places or suppliers (page_query_budget_test.rb). Memoised per
-  # request: the column and `sidebar_current` both ask.
+  # --- What the column lists. Each list is ONE query whatever it holds (the folder tree two), so no
+  # page's query count grows with projects, pins, folders, open folders, places or suppliers
+  # (page_query_budget_test.rb). Memoised per request: the column and `sidebar_current` both ask.
   SIDEBAR_PROJECTS = 8
-  COLUMN_FOLDERS = 40
+  COLUMN_FOLDERS = Maker::FolderTree::CAP
   COLUMN_PLACES = 30
 
   def sidebar_projects
@@ -160,30 +160,59 @@ module ShellHelper
     end
   end
 
-  # THE LIBRARY COLUMN'S FOLDERS (spec §7): the library root, the chain down to the folder this page
-  # shows, then that folder's own subfolders, as [node_id (nil for the root), name, depth]. The chain
-  # is `@crumbs`, which FilesController#index and #show already built for the breadcrumb, so it costs
-  # nothing here; the subfolders are ONE query, capped, and the column says when it cut the list
-  # (`column_folders_more?`). The full tree, remembering what is open, is a later behaviour (spec §9).
-  # The same rows the Library lists: live, visible (no dot-folders, no `.git`, §14b).
-  def column_folders
-    @column_folders ||= begin
-      chain = Array(@crumbs)
-      parent_id = chain.last&.node_id
-      children = current_user.nodes.present.visible_entries(false)
-                             .where(kind: "dir", parent_node_id: parent_id)
-                             .order(Arel.sql("LOWER(nodes.name)"), :node_id)
-                             .limit(COLUMN_FOLDERS + 1).pluck(:node_id, :name)
-      @column_folders_more = children.size > COLUMN_FOLDERS
-      [ [ nil, "Library", 0 ] ] +
-        chain.each_with_index.map { |crumb, i| [ crumb.node_id, crumb.name, i + 1 ] } +
-        children.first(COLUMN_FOLDERS).map { |node_id, name| [ node_id, name, chain.size + 1 ] }
-    end
+  # THE LIBRARY COLUMN'S FOLDER TREE (spec §9; Maker::FolderTree): the library root's folders, the
+  # chain down to the folder this page shows open with each level's siblings, and every folder the
+  # maker opened, which the `library_tree` cookie remembers (design-system.md rule 7). The chain is
+  # `@crumbs`, which FilesController#index and #show already built for the breadcrumb, so it costs
+  # nothing here; the tree is two queries whatever it holds. Memoised per request.
+  def column_tree
+    @column_tree ||= Maker::FolderTree.new(current_user, chain: Array(@crumbs), open_ids: folder_tree_open_ids)
   end
 
-  def column_folders_more?
-    column_folders
-    @column_folders_more
+  # The open folders the cookie names, well-formed and the newest Maker::FolderTree::OPEN_MAX only.
+  def folder_tree_open_ids = Maker::FolderTree.open_ids(cookies[Maker::FolderTree::COOKIE])
+
+  def folder_tree_frame_id(node_id) = "column-tree-#{node_id}"
+
+  # ONE LEVEL OF THE TREE: a list of folder rows at `depth`, each open folder's own level nested in
+  # it, then "All folders here" (opening `parent_id` itself, which lists them all) when the level was
+  # cut. The column renders the root's level and LibraryBrowseController#tree any other one, through
+  # this one method, so a folder opened in place is drawn exactly as the first paint draws it.
+  def folder_tree_level(branches, parent_id:, depth:, more:)
+    items = branches.map { |branch| folder_tree_item(branch) }
+    if more
+      items << tag.li(column_row("All folders here", (parent_id ? files_path(folder: parent_id) : files_path),
+                                 depth:, class: "column-row--more"), class: "column-tree-item", style: "--depth: #{depth}")
+    end
+    tag.ul(safe_join(items), class: "column-tree")
+  end
+
+  # A FOLDER'S ROW: its disclosure (a real button, before the link, so focus meets it first as the
+  # eye does), the link, then its subfolders in a frame. Only a folder with subfolders gets the
+  # disclosure and the frame. An OPEN folder's frame holds its level now; a CLOSED one's is hidden and
+  # empty, and names where its level comes from (`data-src`), which column_tree_controller.js loads
+  # the first time it opens: one request per folder opened, never one per row. `target="_top"`, so a
+  # folder link inside a loaded level opens the page, not the frame. The row's `--depth` is on the
+  # item too, which is where the disclosure reads its place from.
+  def folder_tree_item(branch)
+    depth = branch.depth
+    row = column_row(branch.name, files_path(folder: branch.node_id), key: [ :folder, branch.node_id ], depth:)
+    return tag.li(row, class: "column-tree-item", style: "--depth: #{depth}") unless branch.expandable
+
+    frame = folder_tree_frame_id(branch.node_id)
+    toggle = tag.button(type: "button", class: "column-tree-toggle", "aria-expanded": branch.open?.to_s,
+                        "aria-controls": frame, "aria-label": "Folders in #{branch.name}",
+                        data: { action: "column-tree#toggle", folder_id: branch.node_id })
+    level =
+      if branch.open?
+        turbo_frame_tag(frame, class: "column-tree-frame", target: "_top") do
+          folder_tree_level(branch.children, parent_id: branch.node_id, depth: depth + 1, more: branch.more)
+        end
+      else
+        turbo_frame_tag(frame, class: "column-tree-frame", target: "_top", hidden: true,
+                               data: { src: library_tree_path(parent: branch.node_id, depth: depth + 1) })
+      end
+    tag.li(safe_join([ toggle, row, level ]), class: "column-tree-item", style: "--depth: #{depth}")
   end
 
   # The Inventory column's Places and Suppliers: one query each, capped, by name.
