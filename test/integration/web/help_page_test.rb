@@ -87,7 +87,7 @@ module Web
       get help_path
       text = maker_text.squish
       assert_no_match(/Files page|sweep|Publish panel/i, text)
-      assert_match(/under ⋯ in the Library/, text)
+      assert_match(/Rescan library at the top of the Library/, text)
       assert_match(/filed onto their shelf on the next scan/, text)
       assert_match(/shelves: type folders such as models\//, text)
       assert_match(/Publishing tab/, text)

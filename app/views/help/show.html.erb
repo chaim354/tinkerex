@@ -32,12 +32,12 @@
     <% if capabilities.scannable? %>
       <% if capabilities.presignable? %>
         <p>Your library is the storage this server was set up with. Anything put into it by other
-          means appears here within 15 minutes, or straight away with <em>Rescan library</em> under
-          ⋯ in the <%= link_to "Library", files_path %>.</p>
+          means appears here within 15 minutes, or straight away with <em>Rescan library</em> at the
+          top of the <%= link_to "Library", files_path %>.</p>
       <% else %>
         <p>Your library is a folder on this server. Anything put there — over a NAS share, by a
           slicer or another program, by copying it in — appears here within 15 minutes, or
-          straight away with <em>Rescan library</em> under ⋯ in the <%= link_to "Library", files_path %>.</p>
+          straight away with <em>Rescan library</em> at the top of the <%= link_to "Library", files_path %>.</p>
         <p>The library is the whole folder the server was given, or a folder inside it, chosen by an
           admin in <%= link_to "Library folder", settings_library_path %> under Settings, since it is
           every user's library; other users see it there but cannot change it. Changing it keeps

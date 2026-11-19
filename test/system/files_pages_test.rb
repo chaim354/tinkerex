@@ -8,8 +8,10 @@ require "application_system_test_case"
 # that each assertion be shown to carry weight rather than the test merely going red somewhere):
 #   - Commenting out BOTH `document.addEventListener` lines in menu_controller.js#connect reddens
 #     test 1 at the assertion AFTER THE OUTSIDE CLICK: `expected not to find visible css
-#     ".page-actions details.menu[open]", found 1 match: "⋯\nRescan library"`. The Escape
-#     assertion below it is never reached, so that mutation alone does not speak for it.
+#     ".page-actions details.menu[open]", found 1 match: "⋯\nRescan library"` (the menu held Rescan
+#     until Shop manual slice 6 made it a head button; the test now opens a folder's menu, whose
+#     first item is Pin). The Escape assertion below it is never reached, so that mutation alone
+#     does not speak for it.
 #   - Commenting out only the `keydown` listener reddens the same test at the assertion AFTER
 #     ESCAPE, with the identical message — the outside-click half having passed first. So both
 #     halves of the controller are pinned, not just whichever fails first.
@@ -33,12 +35,13 @@ class FilesPagesTest < ApplicationSystemTestCase
   end
 
   test "the overflow menu opens on its button and closes on an outside click or Escape" do
-    visit files_path
+    folder = create_node!(@user, node_id: SecureRandom.uuid, name: "jigs", kind: "dir")
+    visit files_path(folder: folder.node_id)
     assert_selector ".page-actions details.menu"
     assert_no_selector ".page-actions details.menu[open]"
     find(".page-actions details.menu > summary").click
-    assert_selector ".page-actions details.menu[open] .menu-item", text: /rescan/i
-    find("h1", text: "Library").click
+    assert_selector ".page-actions details.menu[open] .menu-item", text: "Pin to sidebar"
+    find("h1", text: "jigs").click
     assert_no_selector ".page-actions details.menu[open]"
     find(".page-actions details.menu > summary").click
     assert_selector ".page-actions details.menu[open]"

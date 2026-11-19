@@ -69,6 +69,10 @@ class AccentSpendTest < ApplicationSystemTestCase
     # them, and the folder page spends nothing either.
     @model_folder = FileLayer.current.mkdir(@user, parent_node_id: nil, name: "bracket")
     @user.maker_models.create!(title: "Wall Bracket", folder_node_id: @model_folder.node_id)
+    # A FILE, for its own page and for the Library with it selected (Shop manual slice 6): the page
+    # spends its primary on Download, the selected panel on Open.
+    @plate = create_node!(@user, node_id: SecureRandom.uuid, name: "plate.dxf", kind: "file",
+                                 size: 5, mtime: 1_000_000_000, content_hash: "h-plate")
   end
 
   teardown do
@@ -85,8 +89,12 @@ class AccentSpendTest < ApplicationSystemTestCase
       # strip's Add replaced Upload and New ▾ as an outlined button on every page. (The front door's
       # primary was "Files" until 2026-09-10, then "New project" until slice 6, then Upload.)
       "/" => [],
-      # The Library spends nothing: Add is outlined, and a selected file's Open is slice 6's.
+      # The Library spends nothing: Add is outlined, and so are the head's Add files and New folder.
       "/files" => [],
+      # A SELECTED FILE'S PANEL spends its one on Open (Shop manual slice 6), the screens' SELECTED panel.
+      "/files (a file selected)" => [ "Open" ],
+      # A FILE'S PAGE spends it on Download (slice 6): what the page is opened for.
+      "/files/:id" => [ "Download" ],
       # The model strip above the files adds nothing (slice 5).
       "/files (a model folder)" => [],
       # The Library's 3D models view (slice 5): its one action is the Add model menu (UX audit E3:
@@ -141,6 +149,7 @@ class AccentSpendTest < ApplicationSystemTestCase
     paths = {
       "/" => root_path, "/files" => files_path, "/files/models" => files_models_path,
       "/files (a model folder)" => files_path(folder: @model_folder.node_id),
+      "/files (a file selected)" => files_path(selected: @plate.node_id), "/files/:id" => file_path(@plate.node_id),
       "/projects" => projects_path, "/inventory" => inventory_items_path,
       "/projects/desk-lamp" => project_path(@project), "/settings" => settings_path,
       "/projects/desk-lamp/edit" => edit_project_path(@project),
@@ -168,6 +177,8 @@ class AccentSpendTest < ApplicationSystemTestCase
       # The model folder's row pins the strip spending nothing only while the strip is ON the page —
       # without it, a folder that stopped showing its model would report [] just the same.
       assert_selector ".model-strip h2", text: "Wall Bracket" if path == paths["/files (a model folder)"]
+      # The panel loads into a frame after the page, so its Open is measured only once it is there.
+      assert_selector ".inspector .inspector-name", text: "plate.dxf" if path == paths["/files (a file selected)"]
       filled = filled_controls
       accent[name] = filled["accent"]
       [ name, filled["ink"] ]
