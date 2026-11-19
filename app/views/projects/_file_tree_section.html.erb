@@ -54,7 +54,7 @@
         badge/link block on its own line leaves a newline-plus-indentation TEXT NODE behind even
         when it renders nothing, which breaks a `text: /name \(N\)/` substring match against the
         rendered summary (found by driving a real request, not by reading the template). %>
-    <summary class="attachment-group-head"><%= dir.name %><% if dir.repo? %> <span class="badge">repo</span><% end %> <span class="muted">(<%= count %>)</span><% if dir.repo? %> <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn small" %> <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn small" %><% end %></summary>
+    <summary class="attachment-group-head"><%= dir.name %><% if dir.repo? %> <span class="badge">repo</span><% end %> <span class="muted">(<%= count %>)</span><% if dir.repo? %> <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn small", data: { turbo_prefetch: false } %> <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn small", data: { turbo_prefetch: false } %><% end %></summary>
     <%# THE CARD (stage 3, S3-2): README rendered, latest commit, current tag — at the top of the
         section, before its files. @repo_cards is keyed by node_id (ProjectsController#show) and
         holds one for every repo? Dir on the page, so a missing entry here would be a real bug, not
@@ -69,12 +69,20 @@
           is the one that cannot answer "what is in src/?" without unrolling the whole tree. %>
       <%= render "projects/repo_browser", dir: %>
     <% else %>
-      <% if visible.any? %>
+      <%# As figures, the enclosing panel's stacks included (ProjectsHelper#stack_figures). %>
+      <% figures = stack_figures(visible, folder_id: dir.node_id) %>
+      <% if figures.any? %>
         <% if view == "list" %>
-          <%= render "file_rows", rows: visible %>
+          <%= render "file_rows", rows: visible, figures: figures %>
         <% else %>
           <div class="attachments-grid">
-            <%= render partial: "file_tile", collection: visible, as: :row %>
+            <% figures.each do |figure| %>
+              <% if figure.is_a?(ProjectsHelper::StackFigure) %>
+                <%= render "projects/stack_tile", figure: figure %>
+              <% else %>
+                <%= render "file_tile", row: figure %>
+              <% end %>
+            <% end %>
           </div>
         <% end %>
       <% end %>

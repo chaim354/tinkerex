@@ -144,6 +144,9 @@ module Web
       file!("n-stl", "bracket.stl")
       file!("n-bak", "sign_backup.lbrn2", parent_node_id: "d-laser")
       file!("n-mill", "panel.mage", parent_node_id: "d-laser")
+      # A VERSION STACK (Shop manual spec §9): sign.lbrn2 and its backup beside it, so a Library
+      # folder renders files/_list_stack and files/_grid_stack.
+      file!("n-sign", "sign.lbrn2", parent_node_id: "d-laser")
       # THE :text BRANCH, WHICH THIS SWEEP DID NOT REACH UNTIL THE CODE VIEWER LANDED. Its ERB
       # comment was one line; it is now seven, and a leak from it would print into the page of
       # every source file in the library. The balance check below covers the two-snippet shape
@@ -238,6 +241,8 @@ module Web
       models_dir = @user.nodes.create!(node_id: "d-models", name: "models", kind: "dir",
                                        parent_node_id: folder.node_id)
       file!("n-models-base", "base.stl", parent_node_id: models_dir.node_id)
+      # ITS NEXT VERSION, so the models panel's list draws a stack row (projects/_file_rows, spec §9).
+      file!("n-models-base-v2", "base v2.stl", parent_node_id: models_dir.node_id)
       @project.update!(panels: { "views" => { "folder:d-models" => "list" } })
       # ONE GENERATED FILE IN THE FOLDER, OR projects/_generated_group IS NEVER RENDERED: a file with
       # a Maker::AddonState behind it, keyed to the `fixture` addon the sweep's ADDON_SOURCE_PATH
@@ -263,6 +268,9 @@ module Web
       # answers `:other`; pick another extension if a later slice claims this one.
       file!("n-pdf", "manual.pdf", parent_node_id: folder.node_id)
       file!("n-other", "telemetry.bin", parent_node_id: folder.node_id)
+      # ITS NEXT VERSION, so Loose draws a stack figure in tiles (projects/_stack_tile, spec §9); the
+      # models panel above draws one as a list row.
+      file!("n-other-v2", "telemetry v2.bin", parent_node_id: folder.node_id)
       # 2026-10-21: the workbook viewer, files/viewers/_spreadsheet. The page renders only the shell
       # (the grid fetches its data), so a row with a content token is all it needs.
       file!("n-xlsx", "bom.xlsx", parent_node_id: folder.node_id)
@@ -523,6 +531,10 @@ module Web
         "files (grid)" => files_path(view: "grid"),
         "files (filtered)" => files_path(ext: "stl"),
         "files (in a folder)" => files_path(folder: "d-laser"),
+        # A version stack in both views (files/_list_stack, files/_grid_stack; spec §9): the views
+        # are a cookie, so each is asked for by name.
+        "files (a folder's stacks, rows)" => files_path(folder: "d-laser", view: "list"),
+        "files (a folder's stacks, tiles)" => files_path(folder: "d-laser", view: "grid"),
         # F onboarding (2026-10-13): an EMPTY folder, the one page here that renders
         # shared/_where_files_come_from. Every other page that does (Recent's getting-started
         # panel, the Library root and Projects' empty states) needs an account with no files or no

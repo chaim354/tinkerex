@@ -73,8 +73,8 @@
           section summary and inside its card; a project whose FOLDER is the working tree has no
           section of its own to hang them on, so the panel head is where they belong. %>
       <% if @listing.root_repo? %>
-        <%= link_to "Commits", repo_commit_path(@listing.folder_id), class: "linkbtn" %>
-        <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn" %>
+        <%= link_to "Commits", repo_commit_path(@listing.folder_id), class: "linkbtn", data: { turbo_prefetch: false } %>
+        <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn", data: { turbo_prefetch: false } %>
       <% end %>
       <%# Tiles / List, FOR THIS PANEL (2026-09-08, folder panels). The same view-toggle component
           the Files page uses (components.css), but the choice is a WRITE here, persisted on the
@@ -95,6 +95,10 @@
     </div>
   </div>
   <%= panel_intro(@panel_layout, "attachments") %>
+  <%# VERSION STACKS, THIS PANEL'S OWN SWITCH (spec §9): it stacks Loose, the folder's own root files. %>
+  <% if @listing.loose.size > 1 %>
+    <%= render "projects/stack_switch", key: "attachments", label: "Files" %>
+  <% end %>
 
   <%#
     THE FOLDER IS IN THE TRASH, AND THE PAGE SAYS SO (stage 4, S4-6; decision 2). Deleting a
@@ -163,7 +167,9 @@
       pretended otherwise would be lying about what is on disk. Filtered against @generated_ids
       like every other group, for the rare case an
       addon's own output happens to look like one. %>
-  <% backups = @listing.backups.reject { |r| @generated_ids.include?(r.node_id) } %>
+  <%# A BACKUP THAT STACKS WITH A FILE BESIDE IT IS DRAWN IN THAT STACK, in its own panel, and so not
+      here as well (spec §9; ProjectsController#load_version_stacks). %>
+  <% backups = @listing.backups.reject { |r| @generated_ids.include?(r.node_id) || @stacks.stacked?(r.node_id) } %>
   <%# THE README THE README PANEL RENDERS IS NOT LOOSE (2026-11-02, the UX audit's C3): it is the
       project's own description, the filing pass never moves it (`:project_readme`), and listing it
       under Loose beside "a README stays here" contradicted itself in one sentence. It is still in
@@ -183,7 +189,7 @@
         here to poll or right-click, and an empty `thumbs` div would be a controller instance over
         no cells. %>
     <% if @recent_files.any? || loose.any? || @generated.any? || backups.any? || @linked_rows.any? %>
-      <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <div data-controller="thumbs filemenu stack" data-thumbs-url-value="<%= thumbnails_files_path %>">
         <%#
           RECENTLY CHANGED (structural redesign §6, slice 6): the newest files ANYWHERE under the
           folder (ProjectFolderListing#recent_files, one query) — intake files most things into
@@ -221,7 +227,8 @@
               nothing, and their caption says so for every row at once. %>
           <% files_itself = @project.autofile? && !@listing.root_repo? %>
           <% notes = files_itself ? Maker::LooseFilingNotes.for(user: current_user, listing: @listing, rows: loose) : {} %>
-          <%= render "attachment_group", key: "loose", label: "Loose", rows: loose, open: true, view:, notes: notes %>
+          <%= render "attachment_group", key: "loose", label: "Loose", rows: loose, open: true, view:, notes: notes,
+                     folder_id: @listing.folder_id %>
           <%# THE CAPTION MUST BE TRUE OF THIS FOLDER (stage 4, S4-1): the filing pass does not file
               a working tree's files, so promising it would be a lie about the one shape most real
               project folders have — nor a project told not to file, nor a row that says it will

@@ -152,4 +152,29 @@ module ProjectsHelper
   rescue URI::Error
     ""
   end
+
+  # ONE VERSION STACK AMONG A PANEL'S FIGURES (2026-11-19): the stack and its members' rows,
+  # latest first, so a tile or a list row can draw the latest and open onto the rest.
+  StackFigure = Data.define(:stack, :rows) do
+    def latest = rows.first
+  end
+
+  # WHAT A PANEL'S GROUP DRAWS, IN ORDER: each Row that stands alone, and a StackFigure where a
+  # stack's first member stood (Maker::VersionStacks::Result#collapse over ProjectsController#show's
+  # @stacks). `folder_id` names the folder these rows sit in, so the backups that stack with them
+  # (@stacked_backups) join them here rather than in the Files panel's Backups group. A panel whose
+  # switch is off has no stacks in @stacks, so its rows come back as they went in. A stack missing a
+  # member's row (it cannot, the rows are what was grouped) is drawn as the rows it has.
+  def stack_figures(rows, folder_id: nil)
+    all = rows + Array(@stacked_backups&.fetch(folder_id, nil))
+    return all if @stacks.nil? || @stacks.stacks.empty?
+
+    by_id = all.index_by(&:node_id)
+    @stacks.collapse(all.map(&:node_id)).flat_map do |figure|
+      next [ by_id[figure] ] unless figure.is_a?(Maker::VersionStacks::Stack)
+
+      members = figure.node_ids.filter_map { |id| by_id[id] }
+      members.size == figure.size ? [ StackFigure.new(stack: figure, rows: members) ] : members
+    end
+  end
 end

@@ -255,6 +255,15 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     they hid it themselves, in the layout editor — and the stats line counts only panels on the page. Every panel's composer
     is a `details.composer` in its `.panel-head`, opened by "Add…", its submit naming the thing and
     never `primary` (the accent is the top bar's Upload).
+    **Every panel is half a column by default** (2026-11-19, `Maker::ProjectKind.default_width`; kept
+    when the Shop manual's look was reverted the same day): Files, Photos and the folder panels
+    included, the README excepted, and **a panel stays full while it holds a repository** — a folder
+    panel that is a working tree, and Files while the project's folder is one (`Layout#holds_repo?`;
+    the layout's callers hand it `root_repo:` from their listing), because a repository's card and the
+    Finder browser are where half a column stops being usable. A stored width wins, and a layout Save
+    writes every panel's width, so only a layout never saved re-flows. Every link to a repository's
+    commit or history page carries `data-turbo-prefetch="false"` (`git_link_prefetch_test.rb`): the
+    half-width panels put them under a panel drag's path, and their GET runs git.
 
 **A PANEL'S VIEW BUTTONS SWITCH IT IN PLACE, AND THE DOOR STILL RENDERS NOTHING (2026-11-16).** A
 press on the page posts `in_place` (`projects/_view_toggle`). `Projects::PanelsController#in_place`

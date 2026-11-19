@@ -23,12 +23,12 @@ module Maker
 
     test "the draft lists every panel in order with hidden, width, and a view only where offered" do
       d = doc({ "hidden" => %w[tasks], "views" => { key(MODELS) => "list" },
-                "widths" => { "photos" => "half" }, "titles" => { key(MODELS) => "Prints" } }).draft
+                "widths" => { "photos" => "full" }, "titles" => { key(MODELS) => "Prints" } }).draft
 
       assert_equal 1, d["layout"]
       assert_equal layout.order, d["panels"].map { |e| e["key"] }
       files = d["panels"].find { |e| e["key"] == "attachments" }
-      assert_equal({ "key" => "attachments", "hidden" => false, "width" => "full", "view" => "tiles" }, files)
+      assert_equal({ "key" => "attachments", "hidden" => false, "width" => "half", "view" => "tiles" }, files)
       models = d["panels"].find { |e| e["key"] == key(MODELS) }
       assert_equal "list", models["view"]
       assert_equal "Prints", models["title"]
@@ -36,7 +36,7 @@ module Maker
       tasks = d["panels"].find { |e| e["key"] == "tasks" }
       assert tasks["hidden"]
       refute tasks.key?("view"), "Tasks offers no view, so the draft carries none"
-      assert_equal "half", d["panels"].find { |e| e["key"] == "photos" }["width"]
+      assert_equal "full", d["panels"].find { |e| e["key"] == "photos" }["width"], "the stored width, the opposite of the default"
     end
 
     # --- export ----------------------------------------------------------------------------------
@@ -48,10 +48,10 @@ module Maker
 
       assert text.start_with?("# Desk Lamp, page layout."), text.lines.first
       assert_includes text, "layout: 1\n"
-      assert_includes text, "- panel: attachments\n  width: full\n  view: tiles\n"
+      assert_includes text, "- panel: attachments\n  width: half\n  view: tiles\n"
       # The QUOTE STYLE is Psych's to choose (single today; a version bump could pick double), so
       # the structural pin is the entry shape and the durable guard is the round trip below.
-      assert_match(/- folder: models\n  title: Prints\n  intro: .Everything you need to print: sliced\..\n  width: full\n  view: list\n/, text)
+      assert_match(/- folder: models\n  title: Prints\n  intro: .Everything you need to print: sliced\..\n  width: half\n  view: list\n/, text)
       assert_includes text, "- panel: wiring\n  width: half\n  hidden: true\n"
       assert_includes text, "- panel: tasks\n  width: half\n"
       refute_includes text, "d-models", "a node id never appears in the shareable form"
@@ -253,7 +253,7 @@ module Maker
       assert_equal "list", column["views"][key(MODELS)]
       assert_equal({ key(MODELS) => "Prints" }, column["titles"])
       assert_equal({ key(MODELS) => "Sliced." }, column["intros"])
-      assert_equal "full", column["widths"][key(MODELS)]
+      assert_equal "half", column["widths"][key(MODELS)]
       assert_equal "half", column["widths"]["tasks"]
 
       round = Maker::ProjectKind.layout_for(kind: "other", overrides: column, folders: FOLDERS)
@@ -537,7 +537,7 @@ module Maker
                    d["panels"].find { |e| e["key"] == tk(TAB_A) })
 
       text = tabbed.to_yaml(project_name: "Lamp")
-      assert_includes text, "- panel: photos\n  width: full\n- tab: Build\n  id: #{TAB_A}\n- panel: build_log\n"
+      assert_includes text, "- panel: photos\n  width: half\n- tab: Build\n  id: #{TAB_A}\n- panel: build_log\n"
       assert_includes text, "- tab: Downloads\n  id: #{TAB_B}\n- folder: models\n"
       # A TAB ENTRY IS `tab` AND `id` AND NOTHING ELSE, `id:` skipped so the check reaches the line
       # after it — the plan's `- tab: .*\n  (width|hidden):` could only ever see an attribute

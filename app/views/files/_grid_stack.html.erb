@@ -1,0 +1,59 @@
+<%# locals: (stack:) %>
+<%#
+  ONE VERSION STACK IN THE LIBRARY'S GRID (Shop manual spec §9): one card, drawn as the `.stack`
+  component (its latest member's picture with two copies behind it, the name in bold, a count chip),
+  standing for every member.
+
+  THE FIGURE OPENS IN PLACE, NEVER NAVIGATES. It is a button (stack_controller.js#toggle, on the
+  grid) controlling the panel after it, an opened stack spanning the grid (`.stack-open`), which
+  holds Open latest, Download latest and Close, then every member as the card a file standing alone
+  would be (files/_grid_item). A stack is not a file, so the figure is not a selection item and has
+  no file menu; its members are and do. The picture, the facts and the doors are the LATEST
+  member's, and their names say so.
+%>
+<% latest = @node_by_id[stack.latest.node_id] %>
+<% info = @info_by_node[latest.node_id] %>
+<% dom = stack_dom_id(stack) %>
+<% renderable = Maker::Previews::Registry.for_filename(latest.name).present? %>
+<% ext_label = File.extname(latest.name).delete(".").upcase.first(4) %>
+<% count = stack_count_label(stack) %>
+<div class="grid-item stack-item">
+  <%= tag.button(type: "button", id: "#{dom}-toggle", class: "grid-card stack stack-toggle#{" file-cell" if renderable}",
+                 aria: { expanded: "false", controls: "#{dom}-open", label: "#{stack.name}, #{count}" },
+                 data: (renderable ? thumb_cell_data(latest.node_id, ext_label) : {}).merge(action: "stack#toggle")) do %>
+    <% if renderable %>
+      <% thumb = @thumb_by_node.thumb(latest.node_id) %>
+      <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: Maker::FileAttachment.photo?(latest.name) %>
+    <% else %>
+      <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
+    <% end %>
+    <span class="stack-marks"><span class="badge stack-count"><%= count %></span></span>
+    <span class="grid-name stack-name"><%= stack.name %></span>
+    <span class="grid-sub"><%= latest.name %></span>
+  <% end %>
+  <div class="grid-actions">
+    <%= link_to details_path_for(latest.node_id), class: "row-action", title: "Details",
+                aria: { label: "Details for #{latest.name}" },
+                data: { action: "selection#details", selection_id: latest.node_id } do %><%= row_action_content(:details, "Details") %><% end %>
+    <%= link_to blob_file_path(latest.node_id, download: 1), class: "row-action", title: "Download",
+                aria: { label: "Download #{latest.name}" } do %><%= row_action_content(:download, "Download") %><% end %>
+  </div>
+</div>
+<section class="stack-open" id="<%= dom %>-open" hidden aria-label="<%= stack.name %>, <%= count %>">
+  <div class="stack-open-head">
+    <h3 class="stack-name"><%= stack.name %></h3>
+    <span class="muted stack-facts">opened · <%= count %><%= " in #{@folder_paths[latest.node_id].presence || "Library"}" if @flat %></span>
+  </div>
+  <div class="stack-open-actions">
+    <%= link_to "Open latest", file_path(latest.node_id), class: "btn",
+                aria: { label: "Open #{latest.name}" } %>
+    <%= link_to "Download latest", blob_file_path(latest.node_id, download: 1), class: "btn",
+                aria: { label: "Download #{latest.name}" } %>
+    <button type="button" class="btn" data-action="stack#close" data-stack-toggle-param="<%= dom %>-toggle">Close</button>
+  </div>
+  <div class="stack-open-grid">
+    <% stack.members.each_with_index do |member, i| %>
+      <%= render "files/grid_item", node: @node_by_id[member.node_id], member: { role: i.zero? ? "latest" : "older" } %>
+    <% end %>
+  </div>
+</section>

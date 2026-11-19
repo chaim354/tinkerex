@@ -55,6 +55,37 @@ class RepoBrowserTest < ApplicationSystemTestCase
   # folder panel is a sibling section on the same page (see the toggle test below).
   def panel_for(dir) = "section.folder-panel[id='folder:#{dir.node_id}']"
 
+  # OPEN A NESTED SECTION BY ITS NAME, AT THE SUMMARY'S LEFT EDGE. A nested repository's summary
+  # also holds its Commits and History links, and in a half-width folder panel (every plain folder
+  # since 2026-11-19) the summary's middle, where a bare `click` lands, is the
+  # History link: the click left the page for /repos/:id/history. The offset is from the centre.
+  def open_section(name)
+    summary = find("summary", text: name)
+    summary.click(x: -(summary.native.size.width / 2) + 12, y: 0)
+  end
+
+  # WAIT FOR THE PAGE THE BLOCK RELOADS, BEFORE ANY QUERY TOUCHES IT. A selector both documents can
+  # match (or, for `assert_no_selector`, one the OLD document still matches) is checked for
+  # visibility on every candidate, and a candidate that goes stale mid-check raises Chrome's
+  # UNRETRYABLE "Node with given id does not belong to the document" — repo_history_test.rb records
+  # the same trap. This test died on it under load, intermittently, on `.note-popover`. A flag set on
+  # the old window cannot survive the reload, so its absence is a question no swap can tear.
+  def across_reload
+    page.execute_script("window.__acrossReload = true")
+    yield
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + Capybara.default_max_wait_time
+    loop do
+      reloaded = begin
+        page.evaluate_script("window.__acrossReload !== true && document.readyState === 'complete'")
+      rescue Selenium::WebDriver::Error::WebDriverError
+        false
+      end
+      break if reloaded
+      flunk "the page never reloaded" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+      sleep 0.05
+    end
+  end
+
   def open_firmware
     visit project_path(@project)
     # NO CLICK, AND THAT IS THE ASSERTION. A depth-one repository's panel defaults to `browser` and
@@ -150,7 +181,7 @@ class RepoBrowserTest < ApplicationSystemTestCase
       assert_no_selector ".filechooser--inline", visible: :all
       # CASE-INSENSITIVE, because `.attachment-group-head` is `text-transform: uppercase` and
       # Selenium reports a summary's RENDERED text — "BOOTLOADER", not "bootloader".
-      find("summary", text: /bootloader/i).click
+      open_section(/bootloader/i)
       assert_selector ".filechooser--inline .filechooser-col", count: 1
       assert_selector ".filechooser-row", text: "boot.c"
     end
@@ -245,10 +276,11 @@ class RepoBrowserTest < ApplicationSystemTestCase
     within(panel_for(@firmware)) { find(".filechooser-row.is-file", text: "main.c").right_click }
     find(".file-menu button", text: "Add note").click
     find(".note-popover textarea").set("reflash before the show")
-    find(".note-popover [data-role='save']").click
+    across_reload { find(".note-popover [data-role='save']").click }
 
-    # THE CONTROLLER RELOADS THE PAGE ONCE THE NOTE IS IN, so the popover leaving is the signal that
-    # the post answered; the columns are back because the reloaded panel mounted its browser again.
+    # THE CONTROLLER RELOADS THE PAGE ONCE THE NOTE IS IN. `across_reload` waited for the new
+    # document, so these ask it and nothing else; the columns are back because the reloaded panel
+    # mounted its browser again.
     assert_no_selector ".note-popover"
     within(panel_for(@firmware)) { assert_selector ".filechooser-row", text: "main.c" }
     bodies = @user.maker_notes.where(node_id: main.node_id).map { |note| note.body.to_plain_text }
@@ -306,7 +338,7 @@ class RepoBrowserTest < ApplicationSystemTestCase
 
     visit project_path(@project)
     within(panel_for(tools)) do
-      find("summary", text: /bootloader/i).click
+      open_section(/bootloader/i)
       find(".filechooser-row.is-file", text: "boot.c").right_click
     end
 

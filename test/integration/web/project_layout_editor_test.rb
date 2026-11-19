@@ -44,7 +44,7 @@ module Web
         assert_select "div.panel-slot[data-key=tasks].panel-slot--hidden[data-hidden=true]", 1
         # NO PUBLISH SLOT SINCE 2026-10-26: it is the edit area's Publishing tab, not a panel.
         assert_select "div.panel-slot[data-key=publish], .panel-slot--pinned", 0
-        assert_select "div.panel-slot[data-key=?][data-width=full]", models_key, 1
+        assert_select "div.panel-slot[data-key=?][data-width=half]", models_key, 1
         assert_select "div.panel-slot[data-key=tasks][data-width=half]", 1
         assert_select "aside.layout-drawer[hidden] textarea[data-layout-editor-target=yaml]", 1
         # THE DRAFT IS READ OFF THESE TARGETS (layout_editor_controller.js): drop one and Save posts
@@ -120,16 +120,17 @@ module Web
       @project.tasks.create!(user: @user, title: "Cut the base")
       get project_path(@project)
 
-      assert_select "div.project-panels > div.panel-slot.panel--full > section.attachments-panel", 1
+      # EVERY PANEL HALF BY DEFAULT, FILES AND FOLDERS INCLUDED (2026-11-19).
+      assert_select "div.project-panels > div.panel-slot.panel--half > section.attachments-panel", 1
       assert_select "div.project-panels > div.panel-slot.panel--half > section.tasks-panel", 1
-      assert_select "div.project-panels > div.panel-slot.panel--full > section.folder-panel", 1
+      assert_select "div.project-panels > div.panel-slot.panel--half > section.folder-panel", 1
 
       # A STORED WIDTH, THE OPPOSITE OF EACH DEFAULT, so `default_width` alone cannot pass this
       # (found in review: every width above is a default).
-      @project.update!(panels: { "widths" => { "tasks" => "full", "attachments" => "half" } })
+      @project.update!(panels: { "widths" => { "tasks" => "full", "attachments" => "full" } })
       get project_path(@project)
       assert_select "div.project-panels > div.panel-slot.panel--full > section.tasks-panel", 1
-      assert_select "div.project-panels > div.panel-slot.panel--half > section.attachments-panel", 1
+      assert_select "div.project-panels > div.panel-slot.panel--full > section.attachments-panel", 1
       assert_select ".panel-strip", count: 0
       assert_select ".layout-bar", count: 0
       assert_select "details.panel-chooser", count: 0
@@ -141,6 +142,35 @@ module Web
       # The editor is the edit area's Page layout tab since 2026-10-26, reached from Edit; the page
       # itself links to it nowhere (project_page_test.rb pins the one door).
       assert_select "a[href=?]", edit_layout_project_path(@project), 0
+    end
+
+    # A PANEL STAYS FULL WHILE IT HOLDS A REPOSITORY (2026-11-19; the Shop manual spec §4): a
+    # folder panel that is a working tree, and Files while the project's folder is one, because the
+    # card and the browser are where half a column stops being usable. Through the real listing — a
+    # `.git` directory node is what makes a folder a working tree (Maker::ProjectFolderListing) — so a
+    # caller that forgot to hand the layout `root_repo:` goes red here and not only in the unit test.
+    test "a panel holding a repository is full by default, and a plain one beside it half" do
+      firmware = dir!("firmware", @folder.node_id)
+      dir!(".git", firmware.node_id)
+      file!("main.c", firmware.node_id)
+      firmware_key = Maker::ProjectKind.folder_key(firmware.node_id)
+
+      get project_path(@project)
+      assert_select "div.panel-slot.panel--full > section.folder-panel[id=?]", firmware_key, 1
+      assert_select "div.panel-slot.panel--half > section.folder-panel[id=?]", models_key, 1
+      assert_select "div.panel-slot.panel--half > section.attachments-panel", 1, "the project's folder is no repository yet"
+
+      dir!(".git", @folder.node_id)
+      get project_path(@project)
+      assert_select "div.panel-slot.panel--full > section.attachments-panel", 1, "the project's folder is a working tree now"
+      assert_select "div.panel-slot.panel--half > section.folder-panel[id=?]", models_key, 1
+
+      # THE EDITOR'S SLOTS CARRY THE SAME ANSWER (projects/_panel_slot's `data-width`), so a Save
+      # writes `full` for the repository rather than the plain default.
+      get edit_layout_project_path(@project)
+      assert_select "div.panel-slot[data-key=attachments][data-width=full]", 1
+      assert_select "div.panel-slot[data-key=?][data-width=full]", firmware_key, 1
+      assert_select "div.panel-slot[data-key=?][data-width=half]", models_key, 1
     end
 
     # THE EDITOR IS THE EDIT AREA'S THIRD TAB (2026-10-26; spec 2026-10-26-project-edit-area §3): the
@@ -222,7 +252,7 @@ module Web
 
       post yaml_project_layout_path(@project), params: { draft: "not json" }
       assert_response :success
-      assert_includes response.body, "- panel: attachments\n  width: full\n  view: tiles\n"
+      assert_includes response.body, "- panel: attachments\n  width: half\n  view: tiles\n"
     end
 
     test "parse answers the draft with notes and errors as JSON, 200 either way" do

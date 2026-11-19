@@ -210,6 +210,12 @@ root to: "home#index"
   post   "files/:node_id/preview", to: "files/previews#create",  as: :file_preview
   delete "files/:node_id/preview", to: "files/previews#destroy"
 
+  # --- Pull a file out of its version stack, and put it back (Shop manual spec §9; keyed by node_id,
+  # session auth). The node_id shape of the three above: POST pulls out, DELETE puts back
+  # (Files::StackExclusionsController, over Maker::StackExclusion).
+  post   "files/:node_id/stack_exclusion", to: "files/stack_exclusions#create", as: :file_stack_exclusion
+  delete "files/:node_id/stack_exclusion", to: "files/stack_exclusions#destroy"
+
   # Sidebar places (structural redesign spec §4.1). `:id` IS THE FOLDER'S node_id, not the row's,
   # so the Unpin button names the folder it unpins and a stale row id can never unpin the wrong one.
   resources :pins, only: %i[create destroy]

@@ -424,6 +424,41 @@
   .grid-card:hover .thumb { border-color: var(--fg); }
   .grid-card .grid-name { font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 
+  /* --- Version stacks (2026-11-19; Maker::VersionStacks, stack_controller.js). A STACK is one card
+     standing for several versions of a part: its thumb takes the strong line and two copies drawn
+     behind it, up and to the right (each the surface inside a line: a shadow spread by -1px over one
+     that is not), its name is bold and a `.badge` carries the count. The card, or a list row's name,
+     is a BUTTON, since it opens its members in place rather than going anywhere, drawn as the link it
+     stands in for. An opened stack spans its grid on --raised and holds the members as the cards they
+     would be alone, each with its role ("latest", "older") and Pull out. The SWITCH, "Stack versions
+     and backups", is a plain checkbox and its words, submitting on change. --- */
+  .stack { position: relative; }
+  .stack > .thumb {
+    border-color: var(--line-strong);
+    box-shadow: 3px -3px 0 -1px var(--surface), 3px -3px 0 0 var(--line-strong), 6px -6px 0 -1px var(--surface), 6px -6px 0 0 var(--line-strong);
+  }
+  .stack-item.is-open .stack > .thumb { border-color: var(--accent); }
+  .stack-name { font-weight: 700; }
+  .stack-marks { position: absolute; right: 6px; top: 6px; z-index: 1; }
+  .stack-toggle {
+    margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left;
+    cursor: pointer; appearance: none;
+  }
+  .stack-toggle .stack-count { flex: 0 0 auto; }
+  .stack-role { color: var(--fg-muted); font: 400 12px/16px var(--font-mono); }
+  .stack-pull-out, .stack-put-back { font-size: 12px; color: var(--fg-muted); }
+  .stack-open {
+    grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--space-3); min-width: 0; padding: var(--space-3);
+    border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--raised);
+  }
+  .stack-open-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--space-1) var(--space-3); min-width: 0; }
+  .stack-open-head h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
+  .stack-open-head .stack-facts { overflow-wrap: anywhere; }
+  .stack-open-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+  .stack-switch { margin: 0; }
+  .stack-switch label, label.stack-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
+  .stack-switch input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
+
   /* --- Metadata strip, badges, empty state --- */
   dl.meta {
     display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px var(--space-4); margin: 0 0 var(--space-4);
