@@ -8,12 +8,13 @@ module Web
   #
   # THE ONE-LIT-PLACE GUARD (spec §10) is "every page lights at most one place and at most one
   # column row", walked over every kind of signed-in page below. MUTATION-CHECKED (2026-11-19):
-  #   1. `place_aria` answering "page" for every place: "/files lights 4 places".
+  #   1. `place_aria` answering "page" for every place: "/ lights 4 places".
   #   2. `row_aria` comparing only the key's first element (so every folder row lights on a folder):
   #      "/files?folder=d-laser lights 2 column rows".
   #   3. The tab bar lighting from its own rule (the 3D models view lighting nothing there):
   #      "/files/models: the tab bar lights [] where the strip lights [\"Library\"]".
-  #   4. Home's "Recently changed" section id renamed (`home-files`): "/ links #home-recent, which the\n  #      page does not carry".
+  #   4. Home's "Recently changed" section id renamed (`home-files`): "/ links #home-recent, which the
+  #      page does not carry".
   class ShellLayoutTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
     PLACES = %w[Library Projects Tools Inventory].freeze
