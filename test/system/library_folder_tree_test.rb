@@ -98,7 +98,6 @@ class LibraryFolderTreeTest < ApplicationSystemTestCase
     visit files_path(folder: parent)
     find("header.strip button.strip-contents").click
     assert_selector "aside.column", visible: true
-    assert_selector "aside.column .column-row[aria-current]", text: "level_17"
     drawn = page.evaluate_script(<<~JS)
       (() => { const c = document.querySelector("aside.column"), r = c.getBoundingClientRect();
                const rights = Array.from(c.querySelectorAll(".column-row, .column-tree-toggle")).map((e) => e.getBoundingClientRect().right);
@@ -108,6 +107,8 @@ class LibraryFolderTreeTest < ApplicationSystemTestCase
     assert_operator drawn["scroll"], :<=, drawn["client"], "the column scrolls sideways (#{drawn.inspect})"
     assert_operator drawn["rows"], :<=, drawn["right"], "a row runs past the column (#{drawn.inspect})"
     assert_operator drawn["page"], :<=, drawn["viewport"], "the page scrolls sideways (#{drawn.inspect})"
+    # And the folder on screen is still drawn, lit, with its name showing.
+    assert_selector "aside.column .column-row[aria-current]", text: "level_17"
     assert_no_console_errors
   end
 
