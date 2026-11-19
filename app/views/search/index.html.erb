@@ -1,27 +1,60 @@
 <% content_for :title, "Search — Tinkerex" %>
 
+<%# THE TERM IS THE TITLE (Shop manual slice 7; the screen `search`): the caps path says Search, the
+    title is what was asked, in quotes, and the lead says how much came back. Before a search the
+    title is the page's name. %>
+<% results = @groups.sum { |group| group[:total] } %>
 <div class="page-head">
-  <h1>Search</h1>
+  <h1><%= @q.present? ? "“#{@q}”" : "Search" %></h1>
+  <% if @q.present? %>
+    <p class="page-lead"><%= results.zero? ? "Nothing matches." : "#{count_words(results).capitalize} #{results == 1 ? "result" : "results"} in #{count_words(@groups.size)} #{@groups.size == 1 ? "group" : "groups"}." %></p>
+  <% end %>
+  <%# A plain GET form, exactly like files/models/index.html.erb's own search box — no Stimulus
+      controller for what a native form already does, and the result is a shareable URL. It carries
+      a visible submit button: this is the destination search hits land on, not an in-page
+      refinement control glued to a select's onchange. %>
+  <%= form_with url: search_path, method: :get, class: "toolbar search-toolbar", role: "search",
+                data: { turbo: false } do %>
+    <input type="search" name="q" value="<%= @q %>" placeholder="Search everything"
+           aria-label="Search everything" autocomplete="off" autofocus>
+    <%= submit_tag "Search", class: "btn" %>
+  <% end %>
 </div>
-
-<%# A plain GET form, exactly like files/models/index.html.erb's own search box — no Stimulus
-    controller for what a native form already does, and the result is a shareable URL. Unlike
-    the toolbar forms on the Files page this one carries a visible submit button (the plan calls
-    for it explicitly): this is the destination search hits land on, not an in-page refinement
-    control glued to a select's onchange. %>
-<%= form_with url: search_path, method: :get, class: "toolbar search-toolbar", role: "search",
-              data: { turbo: false } do %>
-  <input type="search" name="q" value="<%= @q %>" placeholder="Search everything"
-         aria-label="Search everything" autocomplete="off" autofocus>
-  <%= submit_tag "Search", class: "btn" %>
-<% end %>
 
 <% if @q.blank? %>
   <p class="search-prompt muted">Search files, folders, notes, projects, models, inventory and tags.</p>
 <% elsif @groups.empty? %>
   <p class="empty">Nothing matches “<%= @q %>”.</p>
 <% else %>
-  <% @groups.each do |group| %>
-    <%= render "shared/result_group", **group %>
+  <%# THE GROUPS ARE NUMBERED SECTIONS IN TWO STACKS, in the order SearchController#index found them.
+      Each goes into the shorter stack so far (counted in rows, a group's head as two), the way the
+      project page packs its half panels, so a long Files list does not leave the other stack
+      empty under a short one. Numbers follow the controller's order, and the left column lists them. %>
+  <% stacks = [ [], [] ] %>
+  <% heights = [ 0, 0 ] %>
+  <% @groups.each_with_index do |group, i| %>
+    <% shorter = heights[1] < heights[0] ? 1 : 0 %>
+    <% stacks[shorter] << [ group, i + 1 ] %>
+    <% heights[shorter] += group[:records].size + 2 %>
   <% end %>
+  <% content_for :column do %>
+    <%# THE RESULTS' COLUMN: each group as a numbered in-page link with its total, from the groups this
+        page already holds. Search lights no place and no row (design-system.md rule 8). %>
+    <div class="column-group">
+      <h2 class="column-head">Results</h2>
+      <% @groups.each_with_index do |group, i| %>
+        <%= column_row safe_join([ tag.span(i + 1, class: "column-row-num"), " ", group[:title] ]),
+                       "#search-#{group[:kind]}", note: group[:total] %>
+      <% end %>
+    </div>
+  <% end %>
+  <div class="page-columns search-columns">
+    <% stacks.reject(&:empty?).each do |stack| %>
+      <div class="page-column">
+        <% stack.each do |group, number| %>
+          <%= render "shared/result_group", **group, number: number, id: "search-#{group[:kind]}", query: @q %>
+        <% end %>
+      </div>
+    <% end %>
+  </div>
 <% end %>

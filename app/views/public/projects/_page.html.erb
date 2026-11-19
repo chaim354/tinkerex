@@ -17,10 +17,11 @@
 <%# THE TOP OF THE PAGE (Shop manual slice 8; the `public-project` screen): the head at the left and
     the cover, the project's own figure, at the right, wrapping under it on a narrow window.
 
-    `.page-head` LAYS OUT EXACTLY TWO SLOTS (template_hygiene_test.rb, "every .page-head passes exactly
-    the two slots it lays out"): `.page-title` holds the caps line, the name and the description, and
-    `.head-actions` the page's one action, the bundle, and the feed. This head once passed THREE, and
-    the byline was laid out in the centre of the page between the name and the button.
+    `.page-head` IS A TITLE, AT MOST A LEAD, AND AT MOST ONE ROW OF CONTROLS (template_hygiene_test.rb,
+    "every .page-head is a title, at most a lead, and at most one row of controls"): `.page-title`
+    holds the caps line, the name and the description, and `.head-actions` the page's one action, the
+    bundle, and the feed. This head once passed three slots, and the byline was laid out in the
+    centre of the page between the name and the button.
 
     THE CAPS LINE IS THE PAGE'S ONE BREADCRUMB LANDMARK, `nav.breadcrumb` around the byline: the way up
     is the maker, so "A project by @ada" is the path, and the owner's preview (projects/preview)

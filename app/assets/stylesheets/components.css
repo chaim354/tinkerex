@@ -237,6 +237,20 @@
   }
   .panel-head h2 { margin: 0; }
   .panel-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  /* A SECTION'S NUMBER AND ITS NOTE (spec §5's section head; Shop manual slice 7). The number is the
+     mono figure before the title, in ink, inside the h2 so a screen reader hears "1 Carry on"; the
+     note is the mono 13px fact at the head's right ("5 things", "4 of 5"). The pages that number
+     their sections (Home, Inventory, an item, Tools, Search, Settings) count them in the order
+     they render, so a number is a place on the page and never a stored thing. */
+  .panel-num { margin-right: 8px; font-family: var(--font-mono); font-weight: 700; }
+  .panel-note { color: var(--fg-muted); font: 400 13px/1.4 var(--font-mono); }
+  /* A PAGE OF NUMBERED SECTIONS IN TWO COLUMNS (the screens' Home, Search, Tools, Settings and an
+     inventory item): two stacks that wrap to one below about 920px of page, each section stacked
+     40px under the one above it in its own column, so a short section never leaves a gap beside a
+     tall one the way a grid row would. Which column a section goes in is the page's choice. */
+  .page-columns { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 40px; }
+  .page-column { display: flex; flex: 1 1 440px; flex-direction: column; gap: 40px; min-width: 0; }
+  .page-column > .panel { margin: 0; }
 
   /* --- The page editor (2026-09-09, spec 2026-09-09-page-editor §5): the slot, the strip along
      a panel's top edge, the ghost state, the layout bar and the YAML drawer. Components, so they hold

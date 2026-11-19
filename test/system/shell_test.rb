@@ -241,14 +241,21 @@ class ShellTest < ApplicationSystemTestCase
     folder.update!(storage_path: File.join(Maker::ProjectFolders::ROOT, project.slug))
     @root.join(folder.storage_path).mkpath
     # THE INVENTORY PAGES (S2-3) with every column populated and a long name, so the table drops
-    # and the settings rows are exercised at 375px, not an empty state.
+    # and the settings rows are exercised at 375px, not an empty state. THE PART NUMBER IS ONE
+    # UNBROKEN MONO RUN, as real ones are (Shop manual slice 7): with the short "91290A113" the
+    # index's part-number column fitted at 375px by luck, and the restyled table kept it there and
+    # overflowed a page of real items. Showing that column again below 480px reddens this sweep:
+    # "/inventory scrolls sideways at 375px (scrollWidth 413)".
     supplier = @user.maker_suppliers.create!(name: "McMaster-Carr Supply Company", url: "https://www.mcmaster.com")
     parent = @user.maker_locations.create!(name: "Cabinet B")
     location = @user.maker_locations.create!(name: "Drawer B1, second from the top", parent:)
     item = @user.maker_inventory_items.create!(name: "M3×8 socket-head cap screw, stainless, box of 100",
-                                               part_number: "91290A113", category: "Fasteners", min_quantity: 50,
+                                               part_number: "91290A113SSM3X8BX100", category: "Fasteners", min_quantity: 50,
                                                unit_cost: 0.04, location:, supplier:)
     Maker::InventoryTransaction.apply!(item:, user: @user, delta: 12, reason: "initial", note: "stocktake")
+    # A ONE-WORD REASON, which cannot wrap, beside the history's date and time (Shop manual slice 7):
+    # with the time kept on the date's line the item page scrolled sideways at 375px.
+    Maker::InventoryTransaction.apply!(item:, user: @user, delta: -2, reason: "consumed")
     # STAGE 2, S2-4: one BOM line so the panel's table (and its composer) render at 375px rather
     # than the empty state -- reuses `item`/`supplier` above, the same argument the inventory
     # fixtures two lines up make for exercising a populated row rather than an empty page.
@@ -434,9 +441,9 @@ class ShellTest < ApplicationSystemTestCase
     # rendered after every fixture above existed. (This used to pick a current project through the
     # rail's <select> so Home rendered its hero in full; both went in slice 4 of the 2026-10-08
     # redesign. Home became Recent in slice 6, and Home again, behind the wordmark, in Shop manual
-    # slice 3; the page's own heading still reads Recent.)
+    # slice 3; its heading has read Today since Shop manual slice 7.)
     visit root_path
-    assert_selector "main h1", text: "Recent"
+    assert_selector "main h1", text: "Today"
     assert_selector ".home-files .recent-grid .grid-card", count: HomeController::RECENT_FILES
 
     # THE VIEWPORT IS SET THROUGH CDP, NOT `manage.window.resize_to`, AND THE DIFFERENCE IS THE
@@ -454,9 +461,13 @@ class ShellTest < ApplicationSystemTestCase
     begin
       # THE OVERFLOW ASSERTION IS THE SWEEP; the per-page selectors around it are how each half
       # proves the phone rules ran at all. Shared as a lambda rather than duplicated, so the two
-      # loops below cannot drift about what "scrolls sideways" means.
+      # loops below cannot drift about what "scrolls sideways" means. AGAINST `clientWidth`, NOT
+      # `innerWidth` (Shop manual slice 7): a Chrome that draws classic scrollbars (CI's Linux one, and
+      # this Mac's) gives the page 360 of the 375, and `innerWidth` counted the scrollbar's 15px as
+      # page, so an item page 370px wide read green while it scrolled. With the history table's time
+      # kept on the date's line it reddens: "/inventory/1 scrolls sideways at 375px (scrollWidth 370)".
       no_sideways_scroll = lambda do |path|
-        assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
+        assert page.evaluate_script("document.documentElement.scrollWidth <= document.documentElement.clientWidth"),
                "#{path} scrolls sideways at 375px (scrollWidth #{page.evaluate_script('document.documentElement.scrollWidth')})"
       end
 

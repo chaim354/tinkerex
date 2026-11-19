@@ -18,9 +18,10 @@
 <% end %>
 
 <%# The title alone: the manifest's `icon` is an emoji by convention and is not drawn anywhere
-    (tools/home/_addon_mark, UX audit G1). %>
-<div class="page-head"><h1><%= @addon.title %></h1>
-  <p class="page-subtitle muted"><%= @addon.description %></p>
+    (tools/home/_addon_mark, UX audit G1). The description is the page's lead, in ink at the lead's
+    size (Shop manual slice 7); `.page-subtitle` is the lead's older name, which the bundles build too. %>
+<div class="page-head addon-head"><h1><%= @addon.title %></h1>
+  <p class="page-subtitle"><%= @addon.description %></p>
 </div>
 
 <%#
@@ -36,8 +37,10 @@
 %>
 <% if @addon.available? %>
 
+<%# WHAT THE TOOL CAN DO, under the caps label the gallery's card sets it under, a row a permission. %>
 <% if @addon.permissions.any? %>
-  <ul class="addon-permissions muted">
+  <p class="addon-can">This tool can</p>
+  <ul class="addon-permissions">
     <% @addon.permissions.each do |permission| %>
       <li>
         <%= Maker::Addons::Permissions.label_for(permission["name"]) %>

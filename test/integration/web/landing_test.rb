@@ -134,11 +134,11 @@ module Web
     test "signed in, / is Recent in both modes" do
       sign_in_as(make_owner!(handle: "ada"))
       get "/"
-      assert_select ".page-head h1", text: "Recent"
+      assert_select ".page-head h1", text: "Today"
 
       ENV["DEMO_ACCOUNT_EMAIL"] = "demo@example.com"
       get "/"
-      assert_select ".page-head h1", text: "Recent"
+      assert_select ".page-head h1", text: "Today"
       assert_select ".landing", 0
     end
 

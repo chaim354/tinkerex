@@ -4,27 +4,64 @@
    phone sweep (test/system/shell_test.rb) holds at 375px without a sideways scroll. */
 @layer pages {
 
-  .inventory-table .col-name a { color: var(--fg); font-weight: 500; }
+  /* THE STOCK TABLE AS THE SCREEN SETS IT (Shop manual slice 7): the item's name at 600 in ink, the
+     part number and every quantity in mono, the words (category, place, supplier) in the UI face. A
+     low row's on-hand count takes the accent beside its Low stock flag: a mark with its word, never
+     the colour alone (design-system.md rule 13). */
+  .inventory-stock .toolbar { margin-bottom: var(--space-3); }
+  .inventory-table .col-name a { color: var(--fg); font-weight: 600; }
   .inventory-table .col-part { font-family: var(--font-mono); font-size: 12px; color: var(--fg-muted); }
-  .inventory-table .col-category, .inventory-table .col-location, .inventory-table .col-supplier { color: var(--fg-muted); }
+  .inventory-table .num { color: var(--fg); }
+  .inventory-table .col-updated { font: 400 12.5px/16px var(--font-mono); }
   .inventory-table .badge.low-stock { margin-left: 6px; }
-  .inventory-table tr.low-stock .col-onhand { color: var(--warn); }
+  .inventory-table tr.low-stock .col-onhand { color: var(--accent-text); font-weight: 700; }
   @media (max-width: 719px) { .inventory-table .col-supplier, .inventory-table .col-min { display: none; } }
-  @media (max-width: 479px) { .inventory-table .col-category, .inventory-table .col-location { display: none; } }
+  /* At phone width the part number goes too: a mono run like `AMS1117-3.3` has no break in it, and
+     with it the table outgrew a 375px page (measured, slice 7). The item page still shows it. */
+  @media (max-width: 479px) { .inventory-table .col-category, .inventory-table .col-location, .inventory-table .col-part { display: none; } }
 
   /* Only the push-right is Inventory's own; the type comes from the component. */
   .inventory-toolbar .toolbar-count { margin-left: auto; }
 
-  /* The Adjust composer: one row of fields at desktop, a stack on the phone. */
-  .adjust-fields { display: grid; grid-template-columns: 110px 150px minmax(120px, 1fr) minmax(160px, 2fr) auto; gap: 8px; align-items: end; }
-  .adjust-fields label { display: flex; flex-direction: column; gap: 3px; font-size: 11px; color: var(--fg-muted); }
+  /* THE ITEM PAGE'S SECTIONS (Shop manual slice 7, the screen `inventory-item`): Stock and Adjust
+     stock side by side, History under Stock. A grid that fits two 440px tracks, so the three fall
+     into place in their page order and a phone reads them top to bottom; the row under Adjust is
+     open, where the screen's "Needed by" will stand. */
+  .inventory-item-sections {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(min(440px, 100%), 1fr)); gap: 40px; align-items: start;
+  }
+  .inventory-item-sections > .panel { min-width: 0; margin: 0; }
+  /* AN ITEM'S TITLE IS 44px, NOT A PAGE'S 56 (spec §5: "44 on an item"); a phone keeps the shell's size. */
+  @media (min-width: 720px) { .item-head h1 { font-size: clamp(30px, 1.8vw + 18px, 44px); } }
+  /* One fact per row in a half-width section: the component pairs two to a row from 900px. */
+  .inventory-item-stock dl.meta { grid-template-columns: max-content minmax(0, 1fr); }
+  .inventory-item-stock dl.meta dd:nth-of-type(odd) { padding-right: 0; }
+  /* The two figures: a mono number at 44px over its caps label, the on-hand one in the accent while
+     the item is low (a mark; the head's Low stock flag carries the word). */
+  .stock-figures { display: flex; flex-wrap: wrap; gap: 12px 40px; margin: 4px 0 14px; }
+  .stock-figure { display: flex; flex-direction: column; gap: 2px; }
+  .stock-figure-num { font: 700 44px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .stock-figure.is-low .stock-figure-num { color: var(--accent-text); }
+  .stock-figure-label { color: var(--fg-muted); font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  /* The composer is always open on this page and its section names it, so its summary (a toggle
+     reading the section's own title) is not drawn. */
+  .inventory-item-adjust details.composer > summary { display: none; }
+  .inventory-item-adjust .ledger-note, .inventory-item-history .ledger-note { margin-top: 0; }
+
+  /* The Adjust composer: the amount, the reason and the project on one row, the note and Apply on
+     the next, at the width of the half-page section; a stack on the phone. Each field's name is a
+     caps label (spec §5), as every field's is. */
+  .adjust-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; align-items: end; }
+  .adjust-fields > label:nth-of-type(4) { grid-column: span 2; }
+  .adjust-fields label { display: flex; flex-direction: column; gap: 3px; }
+  .adjust-fields label > span { color: var(--fg-muted); font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
   /* `minmax(0, 1fr)`, NOT `1fr`, AND FIELDS THAT FILL THEIR CELL: a bare `1fr` column cannot shrink
      below its content's min-content, and a <select>'s min-content is its longest option at the
      font's own metrics — which differ between macOS and the Linux CI runners. At the redesign's
      14px the reason select pushed /inventory/:id to scrollWidth 382 at 375px on Linux while
      measuring 362 on a Mac (2026-10-08). Column width now comes from the grid, never from text. */
   .adjust-fields input, .adjust-fields select { width: 100%; min-width: 0; }
-  @media (max-width: 719px) { .adjust-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .adjust-fields .adjust-submit { grid-column: 1 / -1; } }
+  @media (max-width: 719px) { .adjust-fields { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } .adjust-fields > label:nth-of-type(4), .adjust-fields .adjust-submit { grid-column: 1 / -1; } }
 
   /* The composer's errors (E4). Its one-line explanation of the reasons' directions is a
      components.css `.field-hint`, like every hint under a field. */
@@ -39,5 +76,8 @@
   .ledger .delta-out { color: var(--danger); }
   .ledger .col-when { font-family: var(--font-mono); font-size: 12px; color: var(--fg-muted); white-space: nowrap; }
   @media (max-width: 719px) { .ledger .col-note, .ledger .col-project { display: none; } }
+  /* At phone width the time goes under the date: kept on one line beside a one-word reason
+     ("Consumed"), the history table outgrew a 375px page (measured, slice 7). */
+  @media (max-width: 479px) { .ledger .col-when { white-space: normal; } }
   .item-notes { max-width: 72ch; }
 }

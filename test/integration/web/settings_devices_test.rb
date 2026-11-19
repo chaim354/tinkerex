@@ -182,9 +182,10 @@ module Web
     test "the page says what it is for before what signing out does" do
       sign_in_web!(@user, password: PASSWORD)
       get settings_devices_path
+      # What it is for is the page's lead (Shop manual slice 7), which comes before every note under it.
+      assert_match(/\AThe apps and assistants connected to your account/, css_select(".page-head .page-lead").first.text.squish)
       notes = css_select("main p.muted").map { |p| p.text.squish }
-      assert_match(/\AThe apps and assistants connected to your account/, notes.first)
-      assert_match(/\ASigning a device out ends its access to this server/, notes.second)
+      assert_match(/\ASigning a device out ends its access to this server/, notes.first)
       assert_select ".page-path nav.breadcrumb [aria-current=page]", "Devices"
     end
 

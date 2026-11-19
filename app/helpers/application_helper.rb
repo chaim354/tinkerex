@@ -160,4 +160,10 @@ module ApplicationHelper
     word = count == 1 ? singular : (plural || singular.pluralize)
     "#{number_with_delimiter(count)} #{word}"
   end
+
+  # A SMALL COUNT IN WORDS, FOR A SENTENCE (the Shop manual's lead paragraphs: "Four projects are
+  # open."). Zero to twelve are words, as prose writes them; anything larger stays digits.
+  COUNT_WORDS = %w[no one two three four five six seven eight nine ten eleven twelve].freeze
+
+  def count_words(count) = COUNT_WORDS[count] || number_with_delimiter(count)
 end

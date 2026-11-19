@@ -143,9 +143,11 @@
   .column-row[aria-current]::before { background: var(--accent); }
   .column-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .column-row-note { flex: 0 0 auto; font: 400 12px/1 var(--font-mono); color: var(--fg-muted); }
-  /* A NUMBERED ROW (slice 8: Help's sections, the wizard's steps): the number mono 700 in an 18px slot
-     between the square and the name, as the screens number a manual's parts. */
-  .column-row-num { flex: 0 0 18px; font: 700 13.5px/1 var(--font-mono); }
+  /* A NUMBERED ROW (slices 7 and 8: Home's "On this page", an item's and Search's sections, Help's
+     sections, the wizard's steps): the number mono 700 in an 18px slot between the square and the
+     name, as the screens number a manual's parts. One rule whether the row's name is its own span
+     (Help, the wizard) or bare text after a space (Home, Search, an item). */
+  .column-row-num { display: inline-block; flex: 0 0 18px; width: 18px; font: 700 12px/1 var(--font-mono); }
   .column-row--more .column-row-name { color: var(--fg-muted); }
   .column-scrim { display: none; }
 

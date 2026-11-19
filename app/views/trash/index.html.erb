@@ -11,16 +11,16 @@
   </nav>
 <% end %>
 
+<%# THE LEAD IS ONE SENTENCE TRUE ON EVERY BACKEND (the page's lead since the Shop manual, slice 7). It
+    used to say deleted files are kept "along with their versions", which is chunk mode's mechanism: a
+    share/s3 library has no versions and reclaims .trash after LIBRARY_TRASH_DAYS. Branching the copy
+    on `versioned?` would spell retention as an inference off a capability about history — two
+    questions that merely agree on today's three backends. Promising nothing about duration is the
+    honest way to say one thing. %>
 <div class="page-head">
   <h1>Trash</h1>
+  <p class="page-lead">Files you delete are moved here, and can be restored to your library.</p>
 </div>
-
-<%# One sentence true on every backend. It used to say deleted files are kept "along with their
-    versions", which is chunk mode's mechanism: a share/s3 library has no versions and reclaims
-    .trash after LIBRARY_TRASH_DAYS. Branching the copy on `versioned?` would spell retention as
-    an inference off a capability about history — two questions that merely agree on today's three
-    backends. Promising nothing about duration is the honest way to say one thing. %>
-<p class="muted head-note">Files you delete are moved here, and can be restored to your library.</p>
 
 <% if @entries.empty? %>
   <p class="empty">Trash is empty.</p>
@@ -37,7 +37,7 @@
 
       RESTORE IS ALWAYS SHOWN (`row-actions--shown`): it is the page's only action, and a control a
       maker has to hover to find is one a phone never finds at all. %>
-  <table class="files">
+  <table class="files trash-table">
     <thead>
       <tr>
         <th class="col-name">Name</th>
@@ -84,4 +84,11 @@
       <% end %>
     </tbody>
   </table>
+  <%# THE ONE RULE A RESTORE CAN MEET, SAID WHERE IT APPLIES (the screen's note): a row whose folder is
+      in the Trash too is refused until that folder comes back (docs: CLAUDE.md §14a, an orphaned
+      restore is refused, never scattered to the library root). Only while such a row is listed. %>
+  <% if @entries.any? { |entry| @origins[entry.node_id]&.restore_first.is_a?(String) } %>
+    <p class="note-box trash-note">A file whose folder is in the Trash too cannot be restored on its
+      own: restore the folder first.</p>
+  <% end %>
 <% end %>

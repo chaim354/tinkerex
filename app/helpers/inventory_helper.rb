@@ -2,6 +2,23 @@ module InventoryHelper
   # WHAT NARROWS THE LIST. "All" drops exactly these, and is lit exactly when none is set.
   INVENTORY_FACETS = %i[category low tag supplier location].freeze
 
+  # The sort's words, in the select's order: the select and the Stock section's head both read them.
+  SORT_LABELS = { "name" => "Name", "quantity" => "On hand", "category" => "Category", "updated" => "Updated" }.freeze
+
+  # THE INDEX'S LEAD (Shop manual slice 7): counted off the rows the page loaded and the low-stock
+  # count it already asks for, never a further query. A filtered page says how many matched; an
+  # inventory with nothing in it says nothing, because its empty state does.
+  def inventory_lead
+    count = @items.size
+    return nil if count.zero? && !@filtered
+    return "#{count_words(count).capitalize} #{count == 1 ? "item matches" : "items match"}." if @filtered
+
+    places = @items.map(&:location_id).compact.uniq.size
+    where = places.positive? ? " in #{count_words(places)} #{places == 1 ? "place" : "places"}" : ""
+    low = @low_count.zero? ? "None is low." : "#{count_words(@low_count).capitalize} #{@low_count == 1 ? "is" : "are"} low or out."
+    "#{count_words(count).capitalize} #{count == 1 ? "item" : "items"}#{where}. #{low}"
+  end
+
   # THE INDEX PAGE'S FILTER STATE, BUILT ONCE. Every chip, the toolbar form's hidden fields and the
   # sort headers start from this hash and state only their difference (`merge`, `except`). They
   # each used to rebuild the parameter set by hand, eight times with eight sets of exclusions, and
@@ -41,6 +58,15 @@ module InventoryHelper
   # is the one control that drops them.
   def inventory_place_params
     { supplier: @supplier&.id, location: @location&.id }.compact
+  end
+
+  # THE OTHER THINGS IN AN ITEM'S PLACE, for its page's left column: one query, capped, by name. The
+  # column's last row opens the place's whole list on the index.
+  PLACE_ITEMS = 12
+
+  def inventory_place_items(item)
+    @inventory_place_items ||= current_user.maker_inventory_items.where(location_id: item.location_id)
+                                           .order(:name, :id).limit(PLACE_ITEMS).to_a
   end
 
   # One quantity, the way every inventory surface prints it: up to three decimals, no trailing zeros.

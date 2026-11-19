@@ -698,41 +698,49 @@ module Web
       end
     end
 
-    # `.page-head` IS `display: flex; justify-content: space-between`, WHICH LAYS OUT EXACTLY TWO
-    # SLOTS. With two children that reads title-left / actions-right, which is what fourteen of the
-    # sixteen pages do. A THIRD child does not overflow or wrap — `space-between` puts it in the
-    # CENTRE of the page, which is a plausible-looking layout and therefore invisible in review:
-    # /models (now /files/models) floated its primary action "Import model" mid-page with "Shelves"
-    # hard right, and the public project page centred its byline between the name and the download
-    # button. One mechanism, two pages, and an unwritten contract nothing enforced.
+    # `.page-head` IS A COLUMN SINCE THE SHOP MANUAL (components.css, slice 2): the title, then at most
+    # one lead sentence, then at most one row of the page's controls. It was `space-between`, which
+    # laid out exactly two slots and put a third in the CENTRE of the page — /models floated its
+    # primary "Import model" mid-page with "Shelves" hard right, and the public project page centred
+    # its byline — which is why this read "exactly the two slots" until slice 7. A column centres
+    # nothing; its failure is different and just as quiet: two bare controls in the head are two
+    # ROWS, each a full-width line of one button, because a column stacks what a row would have
+    # set side by side. So the head is anatomy, in order: a title (an `h1`, or the `.page-title`
+    # that holds one beside its flag, or a plain box holding it), an optional lead (`.page-lead`, or `.page-subtitle`, its older
+    # name), and one more child at most, which holds the controls (`.page-actions`, a form).
     #
     # THIS RIDES THE `pages` SWEEP RATHER THAN NAMING ROUTES, so a page added to that list is
     # covered here with no edit — and the sweep already carries a coverage assertion tying it to the
-    # templates on disk. It asserts the RENDERED DOM: the two defects were structural in ERB whose
+    # templates on disk. It asserts the RENDERED DOM: the defects were structural in ERB whose
     # `.page-head` class was correct on every one of them, so nothing short of the built tree could
     # tell a compliant head from a broken one.
     #
-    # MUTATION-CHECKED (§15), both directions:
-    #   - Unwrapping the two links in models/index.html.erb (files/models/index since slice 5) back
-    #       to bare children:
-    #       models index: .page-head passes 3 slots, not 2 — [h1 "Models", a.btn.primary
-    #       "Import model", a.btn "Shelves"]. `.page-head` is space-between: the MIDDLE one lands
-    #       in the centre of the page.
+    # MUTATION-CHECKED (§15), both directions, on the rewrite (slice 7):
+    #   - Unwrapping inventory_items/index's three buttons back to bare children of the head:
+    #       inventory index: .page-head is ["h1", "p.page-lead", "a.btn.primary", "a.btn", "a.btn"];
+    #       it takes a title, at most one lead after it, and at most one child of controls after that
     #   - Setting the non-vacuity floor to `> 500` (a count no sweep reaches) reddens it at the
-    #       floor instead, confirming `seen` really is counting: "only 50 .page-head elements were
-    #       examined across 50 pages" — one head per page, which is itself worth knowing.
-    test "every .page-head passes exactly the two slots it lays out" do
+    #       floor instead, confirming `seen` really is counting: "only 74 .page-head elements were
+    #       examined across 78 pages".
+    test "every .page-head is a title, at most a lead, and at most one row of controls" do
       seen = 0
       offenders = []
+      lead = ->(el) { el.classes.intersect?(%w[page-lead page-subtitle]) }
       pages.each do |name, path|
         get path
         assert_response :success, "#{name} (#{path}) did not render"
         css_select(".page-head").each do |head|
           seen += 1
           kids = head.element_children
-          next if kids.size <= 2
-          shape = kids.map { |k| [ k.name, k["class"] ].compact.join(".") }
-          offenders << "#{name}: .page-head passes #{kids.size} slots, not 2 — #{shape.inspect}"
+          shape = kids.map { |k| [ k.name, *k.classes ].join(".") }
+          title, *rest = kids
+          titled = title && (title.name == "h1" || title.classes.include?("page-title") || title.at_css("> h1"))
+          leads, controls = rest.partition(&lead)
+          in_order = rest.take_while(&lead).size == leads.size
+          next if titled && leads.size <= 1 && controls.size <= 1 && in_order
+
+          offenders << "#{name}: .page-head is #{shape.inspect}; it takes a title, at most one lead after it, " \
+                       "and at most one child of controls after that"
         end
       end
 

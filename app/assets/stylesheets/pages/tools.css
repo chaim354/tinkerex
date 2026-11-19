@@ -63,6 +63,36 @@
      a row keeps its border-top at the same height. */
   .addon-card-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); font: 11px/1.5 var(--font-mono); }
   ul.addon-permissions { list-style: none; margin: 0 0 18px; padding: 0; }
+  /* --- THE GALLERY AS THE SHOP MANUAL DRAWS IT (slice 7; the screen `tools`). Every rule below is
+     scoped to `.tools-home`, the gallery's own wrapper: the bundles build `.tools-grid` and
+     `.addon-card` for their own galleries (the Box Generator's generators), and those keep the card
+     face above (design-system.md rule 12). A tool's card is a numbered section: its head is the
+     number, the mark and the name at 800 20px over a 2px ink rule with its kind at the right; then
+     what it does, at reading size and in ink; then what it can do, under a caps label; then its pin.
+     No box: two tools to a row, 40px apart, the way the screen sets them. --- */
+  .tools-home .tools-section { margin-bottom: 40px; }
+  .tools-home .tools-section-head {
+    margin: 0 0 var(--space-3); color: var(--fg-muted);
+    font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+  }
+  .tools-home .tools-grid { grid-template-columns: repeat(auto-fill, minmax(min(440px, 100%), 1fr)); gap: 32px 40px; }
+  .tools-home .addon-card, .tools-home .tool-card { gap: 12px; padding: 0; border: 0; background: none; }
+  .tools-home .addon-card:hover { border-color: transparent; }
+  .tools-home .addon-card:hover .addon-title { text-decoration: underline; text-underline-offset: 3px; }
+  .tools-home .addon-card-head { align-items: baseline; gap: 10px; padding-bottom: 6px; border-bottom: 2px solid var(--line-strong); }
+  .tools-home .addon-card-head .panel-num { margin-right: 2px; font-size: 20px; }
+  .tools-home .addon-icon { align-self: center; width: 24px; height: 24px; font-size: 12.5px; font-weight: 700; }
+  .tools-home .addon-icon .rail-icon { width: 15px; height: 15px; }
+  .tools-home .addon-title { font-size: 20px; line-height: 1.2; letter-spacing: -.01em; }
+  .tools-home .addon-kind { margin-left: auto; }
+  .tools-home .addon-desc { max-width: 38em; color: var(--fg); font-size: 15px; line-height: 1.4; }
+  /* WHAT A TOOL CAN DO: a caps label, then the sentence on its own line, as the screen's list reads. */
+  .tools-home .addon-card-foot { display: flex; flex-direction: column; gap: 2px; margin-top: 0; padding-top: 0; border-top: 0;
+                                 color: var(--fg); font: 400 13.5px/1.45 var(--font-ui); }
+  .tools-home .addon-can { color: var(--fg-muted); font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .tools-home .calculator-card-actions, .tools-home .tool-card-actions { margin-top: 0; padding-top: 0; border-top: 0; }
+  .tools-home .addon-card.disabled .addon-desc { color: var(--fg-muted); }
+
   /* The addon page's own states around the mount (tools/addons/show): loading, a bundle that would
      not load, and an addon this server cannot run. The raw error stays folded, left-aligned, and
      wraps rather than pushing the page sideways at 375px (design-system.md rule 11). */
@@ -73,6 +103,11 @@
   .addon-load-failed details { margin-top: var(--space-3); text-align: left; }
   .addon-load-detail { margin: var(--space-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); }
   ul.addon-permissions li { margin-top: 4px; }
+  /* THE ADDON PAGE'S PERMISSIONS (tools/addons/show), as the gallery's card lists them: a caps label,
+     then a row a permission over a hairline, at reading size. */
+  .addon-can { margin: 0 0 2px; color: var(--fg-muted); font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .addon-head + .addon-can + ul.addon-permissions { max-width: 640px; margin-bottom: var(--space-6); font-size: 13.5px; }
+  .addon-head + .addon-can + ul.addon-permissions li { margin: 0; padding: 5px 0; border-bottom: 1px solid var(--line); }
   .addon-thumb { width: 100%; height: 120px; object-fit: contain; background: var(--thumb-stage); border: 1px solid var(--line); border-radius: 0; }
   .addon-thumb.is-missing { display: none; }
   /* THE FRAME A GENERATOR WITH NO SAMPLE PHOTO GETS, and it is a placeholder rather than nothing so

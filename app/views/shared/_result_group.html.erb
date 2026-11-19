@@ -21,6 +21,14 @@
                             (FilesHelper#result_folders), drawn under the name so three
                             "tetra.stl" rows can be told apart (UX audit D11, 2026-11-02). An
                             absent key draws nothing; "" is the library root, named "Library".
+    number      Integer  -- optional. THE SEARCH PAGE'S SECTION NUMBER (Shop manual slice 7): the
+                            group is drawn as a numbered section, its head a `.panel-head`, and
+                            `id` is its anchor for the page's left column. The tag page passes
+                            neither and keeps its plain heading.
+    id          String   -- optional, the section's id.
+    query       String   -- optional. The search term: a name that holds it marks it (`<mark>`,
+                            TextHelper#highlight), as the screen does. Names only — a note's
+                            excerpt stays plain text (search_test.rb refuses markup in it).
 
   A FILE ROW IS A NAME LINK, DELIBERATELY NOT thumb_cell_data — this list has no polling cell to
   seed (docs/invariants/files-preview.md), just a name and an extension label. It and the :note
@@ -36,20 +44,30 @@
   <% more_path = local_assigns.fetch(:more_path, nil) %>
   <% more_label = local_assigns.fetch(:more_label, "See all") %>
   <% folders = local_assigns.fetch(:folders, {}) %>
-  <section class="result-group result-group--<%= kind %>">
-    <h2><%= title %> <span class="muted"><%= total %></span></h2>
+  <% number = local_assigns[:number] %>
+  <% query = local_assigns[:query].presence %>
+  <% name = ->(text) { query ? highlight(text, query) : text } %>
+  <%= tag.section class: class_names("result-group", "result-group--#{kind}", "panel": number), id: local_assigns[:id] do %>
+    <% if number %>
+      <div class="panel-head">
+        <h2><span class="panel-num"><%= number %></span> <%= title %></h2>
+        <span class="panel-note"><%= total > records.size ? "#{records.size} of #{total}" : count_label(total, "result") %></span>
+      </div>
+    <% else %>
+      <h2><%= title %> <span class="muted"><%= total %></span></h2>
+    <% end %>
     <ul class="result-list">
       <% records.each do |record| %>
         <li class="result-row">
           <% case kind
              when :project %>
-            <%= link_to record.name, project_path(record) %>
+            <%= link_to name.(record.name), project_path(record) %>
             <% if record.description.present? %>
               <span class="result-sub"><%= truncate(record.description, length: 80) %></span>
             <% end %>
           <% when :model %>
             <span class="result-name">
-              <%= link_to record.title, model_path(record) %>
+              <%= link_to name.(record.title), model_path(record) %>
               <%= render "shared/result_folder", where: folders[record.id] %>
             </span>
             <%# A badge only for a status that says something — the model page's and the strip's rule
@@ -58,14 +76,14 @@
               <span class="badge mstatus-<%= record.print_status %>"><%= record.print_status_label %></span>
             <% end %>
           <% when :inventory_item %>
-            <%= link_to record.name, inventory_item_path(record) %>
+            <%= link_to name.(record.name), inventory_item_path(record) %>
             <span class="result-sub"><%= [
               "#{number_with_precision(record.quantity_cached, precision: 3, strip_insignificant_zeros: true)} #{record.unit}",
               record.location&.name
             ].compact.join(" · ") %></span>
           <% when :file %>
             <span class="result-name">
-              <%= link_to record.name, file_path(record.node_id), data: file_open_data %>
+              <%= link_to name.(record.name), file_path(record.node_id), data: file_open_data %>
               <%= render "shared/result_folder", where: folders[record.id] %>
             </span>
             <span class="result-sub"><%= File.extname(record.name).delete(".").upcase.first(4) %></span>
@@ -77,7 +95,7 @@
               with no type.
             %>
             <span class="result-name">
-              <%= link_to record.name, files_path(folder: record.node_id) %>
+              <%= link_to name.(record.name), files_path(folder: record.node_id) %>
               <%= render "shared/result_folder", where: folders[record.id] %>
             </span>
             <span class="result-sub">Folder</span>
@@ -103,5 +121,5 @@
     <% if more_path && total > records.size %>
       <p class="result-more"><%= link_to "#{more_label} #{total}", more_path %></p>
     <% end %>
-  </section>
+  <% end %>
 <% end %>
