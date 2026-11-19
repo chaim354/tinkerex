@@ -10,8 +10,25 @@ module Web
   # visible folders. Catalog rows only, so every backend leg runs the same tests (the tree reads
   # `nodes`, which all three populate).
   #
-  # MUTATION-CHECKED (2026-11-19; each reverted and the file re-run green), with the red line each gave:
-  #   see the report of the branch that built the tree; each assertion below names what it pins.
+  # MUTATION-CHECKED (2026-11-19; each reverted and the file re-run green), with the red each gave:
+  #   1. Maker::FolderTree#load_children keeping every row (`kids` for `kids.first(CAP)`): "Expected
+  #      exactly 40 elements matching …turbo-frame#column-tree-d-laser a.column-row[href^=…d-f], found
+  #      41" (and shell_layout_test.rb's cap test, found 41).
+  #   2. FolderTree.open_ids without `.grep(ID)`: "a malformed cookie id opened a folder" (the rows
+  #      held "inside odd").
+  #   3. FolderTree.open_ids without `.last(OPEN_MAX)`: "the oldest id past the newest 50 still opened
+  #      its folder".
+  #   4. FolderTree#dirs from `Node.present` (no user): the disclosures read [["elsewhere", "false"],
+  #      ["laser", "false"], ["Projects", "false"]], another user's root folder drawn at the root.
+  #   5. FolderTree#dirs without `.present`: [["laser", "false"], ["Projects", "false"], ["trashed", "false"]].
+  #   6. FolderTree#dirs without `visible_entries`: five tests red, the root reading
+  #      ["Library", ".cache", "laser", "Projects"].
+  #   7. FolderTree#keep_chain not called: the folder past the cut lit nothing (Expected ["zz last"],
+  #      Actual []).
+  #   8. LibraryBrowseController#tree's parent lookup without `visible_entries`: "the frame for d-git
+  #      listed rows".
+  #   9. The closed frame without `target: "_top"` (ShellHelper#folder_tree_item): "Expected at least 1
+  #      element matching …turbo-frame#column-tree-d-design[hidden][target='_top'], found 0".
   class LibraryFolderTreeTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 

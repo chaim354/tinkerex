@@ -7,7 +7,19 @@ require "application_system_test_case"
 # keyboard before its row, and a deep chain of long names never pushing the column sideways at 375px
 # (rule 11). What the server draws is library_folder_tree_test.rb's.
 #
-# MUTATION-CHECKED (2026-11-19): see the report of the branch that built the tree.
+# MUTATION-CHECKED (2026-11-19; each reverted and the file re-run green), with the red each gave:
+#   1. column_tree_controller.js#toggle not calling remember(): the first test, the cookie expected
+#      the Projects folder's id and read nil.
+#   2. #toggle not setting the frame's `src`: "expected to find css …turbo-frame#column-tree-<id>
+#      button.column-tree-toggle[aria-label='Folders in catan']…" (the keyboard test red too).
+#   3. shell.css's indent left unclamped (`--tree-indent: calc(var(--depth, 0) * 16px)`): "the column
+#      scrolls sideways ({"client" => 299, … "scroll" => 312, …})".
+#   4. The disclosure drawn at the indent rather than in it (`left: var(--tree-indent)`): "the
+#      disclosure overlaps its row's name ({… "name" => 48, "right" => 50})".
+#   5. The disclosure after its link in the DOM (ShellHelper#folder_tree_item): Tab from laser reached
+#      the Projects link, Expected "Folders in Projects", Actual nil.
+#   6. The closed frame without `target: "_top"`: a click on catan inside the loaded level stayed on
+#      the page, expected "/files" to equal "/files?folder=<catan>".
 class LibraryFolderTreeTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!

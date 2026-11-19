@@ -1404,7 +1404,10 @@ module Web
     # cookie, a nested one under each too, and every listed subfolder holds one of its own, so the
     # closed rows' disclosure query is measured with rows to answer. On a folder's page (the chain
     # open as well, and its own level growing) and on Trash (the cookie alone); and the frame a
-    # closed folder opens into. Mutation-checked (2026-11-19): see library_folder_tree_test.rb's header.
+    # closed folder opens into. Mutation-checked (2026-11-19): a disclosure asked per closed row
+    # (`dirs.where(parent_node_id: id).exists?` in Maker::FolderTree#build) read 27/16/8 queries small
+    # and 255/232/20 large; the subfolders loaded per open folder (a `parents.flat_map` of capped
+    # queries) 22/12/10 against 46/36/34.
     test "the Library column's folder tree does not grow with open folders or folders per level" do
       dir = lambda do |id, name, parent = nil|
         @user.nodes.find_or_create_by!(node_id: id) do |d|
