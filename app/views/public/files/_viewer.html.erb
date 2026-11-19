@@ -1,0 +1,56 @@
+<%# locals: (pub:, node:, info:, kind:, gerber_layers:, gerber_single:, thumbnail:, manifest:, frame_url:) %>
+<%# THE VISITOR'S VIEWER CHAIN (moved here from public/files/view on 2026-11-19, embedded files, so the
+    file page and its bare twin, public/files/embed, render ONE chain). Every URL is a PUBLIC one off
+    `pub`; nothing here may reach /files/:id. `frame_url` is the sandbox door's URL for an HTML file
+    (Maker::PublicProject#sandbox_url_for), nil for anything else — files/_html_view then yields the
+    chain untouched. %>
+<%= render layout: "files/html_view", locals: { name: node.name, frame_url: frame_url } do %>
+  <% blob = pub.file_url_for(node.node_id) %>
+  <% named = pub.file_url_for(node.node_id, filename: node.name) %>
+  <% download = pub.file_url_for(node.node_id, download: true) %>
+  <%# THE POSTER'S URL, BESIDE THE THREE BYTE URLS ABOVE (hardening, 2026-09-08; tinkerex#278). The
+      four viewers that render a server-made thumbnail take it as a strict local `thumbnail_url`, so
+      this page names the PUBLIC preview route where the maker's page names `preview_src` — the same
+      split `blob`/`named`/`download` already make. `url_for(preview.asset)` is what it replaces: a
+      signed blob URL with no expiry, which kept answering after the project went private. %>
+  <% poster = pub.preview_url_for(node.node_id) %>
+  <% if info&.content_token.nil? %>
+    <p class="muted">No content yet.</p>
+  <% elsif kind == :image %>
+    <%= render "files/viewers/image", name: node.name, blob_url: blob %>
+  <% elsif kind == :pdf %>
+    <%= render "files/viewers/pdf", name: node.name, blob_url: blob %>
+  <% elsif kind == :kicanvas %>
+    <%= render "files/viewers/kicanvas", named_url: named, controls: "full" %>
+  <% elsif kind == :gerber %>
+    <%= render "files/viewers/gerber", layers: gerber_layers, single: gerber_single,
+               thumbnail: thumbnail, thumbnail_url: poster, name: node.name,
+               download_url: download %>
+  <% elsif kind == :text %>
+    <%= render "files/viewers/code", blob_url: blob, editable: false, save_url: nil, base_token: nil,
+               ext: File.extname(node.name).downcase.delete(".") %>
+  <% elsif kind == :model3d %>
+    <%= render "files/viewers/model3d", name: node.name, named_url: named,
+               format: File.extname(node.name).downcase.delete("."),
+               colors: (manifest&.colors || []),
+               unit_factor: (manifest&.unit_factor || 1.0),
+               thumbnail: thumbnail, thumbnail_url: poster, download_url: download %>
+  <% elsif kind == :measure %>
+    <%# THE SEVEN SAVE LOCALS ARE NIL AND `save` IS FALSE, WHICH IS ONE DECISION, NOT EIGHT: the two
+        Save twins write an export into the MAKER's library through the upload doors, and a visitor
+        has neither a library nor a session. The partial drops the buttons AND the four write URLs
+        rather than disabling them — two dead controls would be worse than none. THE TWO LINEAGE
+        LOCALS (stage 4, S4-8) join them for the same reason and one more: a link is a fact about
+        the OWNER's library, and its far end may be a file no visitor may see. %>
+    <%= render "files/viewers/measure", name: node.name, blob_url: blob, thumbnail: thumbnail,
+               thumbnail_url: poster,
+               geometry_url: public_file_geometry_path(pub.handle, pub.project.slug,
+                                                       node.node_id, **pub.link_params),
+               download_url: download, save: false, port_writable: nil, create_url: nil,
+               begin_url: nil, finalize_url: nil, parent_node_id: nil,
+               source_node_id: nil, link_url: nil %>
+  <% else %>
+    <%= render "files/viewers/static", kind: kind, thumbnail: thumbnail, name: node.name,
+               thumbnail_url: poster, download_url: download %>
+  <% end %>
+<% end %>

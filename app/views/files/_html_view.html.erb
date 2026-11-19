@@ -1,0 +1,28 @@
+<%# locals: (name:, frame_url:) %>
+<%# AN HTML FILE'S TWO VIEWS (2026-11-19, embedded files), rendered AS A LAYOUT around the source viewer
+    it yields — files/_markdown_view's shape, and its controller: markdown_view_controller.js is a
+    Rendered / Source toggle that knows nothing about Markdown beyond its name, so a second copy of it
+    would be the pair that drifts. `frame_url` is the sandbox door's URL for this file, or nil for any
+    file that is not HTML (or has no content yet), when this yields the viewer untouched.
+
+    RENDERED BY DEFAULT: the page running in the sandboxed frame (files/viewers/_html). Source is the
+    same viewer chain every text file gets, so on an editable file Source is the editor; a Save there
+    marks Rendered stale and pressing it reloads the page, which mints a fresh frame of the new bytes. %>
+<% if frame_url %>
+  <div class="markdown-view html-view" data-controller="markdown-view" data-action="editor:saved->markdown-view#saved">
+    <div class="view-toggle markdown-view-toggle" role="group" aria-label="View">
+      <% [ [ "rendered", "Rendered" ], [ "source", "Source" ] ].each do |pane, label| %>
+        <button type="button" class="toggle<%= " active" if pane == "rendered" %>"
+                aria-pressed="<%= pane == "rendered" %>"
+                data-markdown-view-target="toggle" data-markdown-view-pane-param="<%= pane %>"
+                data-action="markdown-view#show"><%= label %></button>
+      <% end %>
+    </div>
+    <div class="html-rendered" data-markdown-view-target="pane" data-pane="rendered">
+      <%= render "files/viewers/html", name: name, frame_url: frame_url %>
+    </div>
+    <div class="markdown-source" data-markdown-view-target="pane" data-pane="source" hidden><%= yield %></div>
+  </div>
+<% else %>
+  <%= yield %>
+<% end %>

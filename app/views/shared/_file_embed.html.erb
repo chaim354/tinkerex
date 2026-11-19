@@ -1,0 +1,23 @@
+<%# locals: (name:, heading:, open_url:, frame_url:, embed_url:, open_data: {}) %>
+<%# A FILE BLOCK'S BODY (2026-11-19, embedded files), for the maker's page and the visitor's alike — so
+    EVERY URL IS A LOCAL (the viewer partials' rule, architecture_invariants_test.rb): the maker's page
+    hands in private routes, the visitor's the public seam's, and this names none.
+
+    TWO SHAPES. An HTML file runs in the sandboxed frame itself (`frame_url`, files/viewers/_html), the
+    page and nothing around it. Anything else is a same-origin frame of the file page's PREVIEW AREA
+    (`embed_url`: FilesController#embed or Public::FilesController#embed) — the very viewer, toggles and
+    editor that page shows, so a spreadsheet's grid saves and a Markdown note edits exactly as they do
+    there, and this page pays no stat or read for it. `loading="lazy"`: a block below the fold costs
+    nothing until it is scrolled to.
+
+    The heading names the file (the maker's own words, else its name) and opens its page — through
+    fileopen on the maker's page (`open_data`, FilesHelper#file_open_data; template_hygiene_test.rb
+    sweeps every file link for it), plainly on a visitor's, which mounts no fileopen. %>
+<h2 class="block-file-heading"><%= link_to heading.presence || name, open_url, data: open_data %></h2>
+<% if frame_url %>
+  <%= render "files/viewers/html", name: name, frame_url: frame_url %>
+<% else %>
+  <div class="embed-frame">
+    <iframe src="<%= embed_url %>" class="embed-frame-view" title="<%= name %>" loading="lazy"></iframe>
+  </div>
+<% end %>

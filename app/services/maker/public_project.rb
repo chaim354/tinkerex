@@ -129,6 +129,11 @@ module Maker
       node if node && shown?(node)
     end
 
+    # A FILE BLOCK'S FILE ANSWERS TO THE SAME THREE RULES AS AN IMAGE BLOCK'S PICTURE (2026-11-19,
+    # embedded files): live, permitted, not under a hidden folder. One method, two names, so the two
+    # kinds cannot drift into asking different questions about one node.
+    alias block_file_node block_image_node
+
     def visible_panels = layout.visible
 
     # WHAT THIS PAGE SHOWS OUT OF THE FOLDER: every listed row except the backups and whatever sits
@@ -639,6 +644,22 @@ module Maker
     # questions and one of them is load-bearing elsewhere — Maker::Readme resolves a README's `<a>`
     # AND its `<img src>` through #file_url_for, so a flag defaulting the wrong way would point
     # every inline README image at an HTML page.
+    # THE BARE PREVIEW AREA OF A FILE'S PUBLIC PAGE (2026-11-19, embedded files), which a File block
+    # frames. The view URL's twin, with the same link_params for the same reason.
+    def embed_url_for(node_id)
+      Rails.application.routes.url_helpers.public_file_embed_path(handle, project.slug, node_id, **link_params)
+    end
+
+    # AN HTML FILE'S SANDBOX FRAME, for a visitor (2026-11-19, embedded files). The token names this
+    # PROJECT, which is what makes the door re-ask `permits?` for the page and every file it loads,
+    # and stop answering the moment the project is unpublished (Maker::HtmlSandbox). No link_params:
+    # the token itself is the credential, and an unlisted project's `k` must not ride into a URL the
+    # page's own scripts can read.
+    def sandbox_url_for(node)
+      token = Maker::HtmlSandbox.token_for(owner:, node:, project:)
+      Rails.application.routes.url_helpers.sandbox_path(token, node.name)
+    end
+
     def view_url_for(node_id)
       Rails.application.routes.url_helpers.public_file_view_path(handle, project.slug, node_id,
                                                                  **link_params)

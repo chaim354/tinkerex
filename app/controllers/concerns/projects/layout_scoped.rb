@@ -52,7 +52,7 @@ module Projects
 
     def document
       Maker::LayoutDocument.new(current_layout, @listing.tree.to_h { |dir| [ dir.node_id, dir.name ] },
-                                blocks: blocks, images: folder_images,
+                                blocks: blocks, images: folder_images, files: @listing.folder_file_paths,
                                 # THE STORED COLUMN, NOT THE READER: `Maker::Project#cover_node_id` derives a
                                 # cover from the attachments when none is chosen, and drafting that value
                                 # would write the guess back as an answer on every Save (found in review).

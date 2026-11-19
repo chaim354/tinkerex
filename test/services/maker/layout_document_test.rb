@@ -417,6 +417,67 @@ module Maker
       assert_equal [ "No image at “photos/nope.jpg” in the project folder; the block keeps its picture." ], result.notes
     end
 
+    # --- a file block (2026-11-19, embedded files) ---------------------------------------------------
+    # The image block's rules against a map of EVERY file in the folder: a node id in the draft, a path
+    # in the text, dropped-and-said when it has no path, an error when new and unknown, a note when
+    # existing and unknown.
+
+    FILE_SHEET = "n-sheet".freeze
+    FILE_VIEWER = "n-viewer".freeze
+    FILES = { FILE_SHEET => "docs/cut list.xlsx", FILE_VIEWER => "out/viewer/case.html", IMG_SIDE => "photos/side.jpg" }.freeze
+
+    def file_rows = rows + [ BlockRow.new(key: "dddddddddddd", kind: "file", node_id: FILE_VIEWER, heading: "The case") ]
+
+    def fdoc
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: nil, folders: FOLDERS, blocks: file_rows.map { |r| [ r.key, r.kind ] })
+      Maker::LayoutDocument.new(layout, NAMES, blocks: file_rows, images: IMAGES, files: FILES, page: {})
+    end
+
+    test "a file block drafts its node id and heading, exports its path, and round-trips" do
+      d = fdoc
+      e = d.draft["panels"].find { |p| p["key"] == bkey("dddddddddddd") }
+      assert_equal({ "key" => bkey("dddddddddddd"), "kind" => "file", "hidden" => false, "width" => "full",
+                     "file" => FILE_VIEWER, "heading" => "The case" }, e)
+
+      text = d.to_yaml(project_name: "Case")
+      assert_includes text, "- block: file\n  id: dddddddddddd\n  file: out/viewer/case.html\n  heading: The case\n  width: full\n"
+      refute_includes text, FILE_VIEWER
+
+      result = d.parse(text)
+      assert result.ok?, result.errors.inspect
+      assert_equal d.draft, result.draft
+      assert_equal [ { "key" => bkey("dddddddddddd"), "kind" => "file", "heading" => "The case", "body" => nil,
+                       "url" => nil, "line" => nil, "caption" => nil, "node_id" => FILE_VIEWER } ],
+                   d.blocks_from(result.draft).select { |b| b["kind"] == "file" }
+    end
+
+    test "a new file block names any file in the folder by path, and is refused without one or with an unknown one" do
+      ok = fdoc.parse("layout: 1\npanels:\n  - block: file\n    file: docs/cut list.xlsx\n")
+      assert ok.ok?, ok.errors.inspect
+      assert_equal FILE_SHEET, ok.draft["panels"].find { |p| p["kind"] == "file" && p["key"].include?("new-") }["file"]
+
+      missing = fdoc.parse("layout: 1\npanels:\n  - block: file\n    file: docs/nope.md\n")
+      assert_includes missing.errors, "Entry 1: no file at “docs/nope.md” in the project folder."
+      bare = fdoc.from_draft("layout" => 1, "panels" => [ { "key" => "block:new-1", "kind" => "file" } ])
+      assert_includes bare.errors, "Entry 1: a file block needs a file."
+      # A CAPTION IS AN IMAGE'S FIELD, NOT A FILE BLOCK'S: the kinds' field sets stay separate.
+      stray = fdoc.parse("layout: 1\npanels:\n  - block: file\n    file: docs/cut list.xlsx\n    caption: x\n")
+      assert_includes stray.errors, "Entry 1: unknown attribute “caption”."
+    end
+
+    test "an existing file block whose file left the folder keeps it with a note, and is dropped from the text with a comment" do
+      result = fdoc.parse("layout: 1\npanels:\n  - block: file\n    id: dddddddddddd\n    file: gone.html\n")
+      assert result.ok?
+      assert_equal FILE_VIEWER, entry(result, bkey("dddddddddddd"))["file"]
+      assert_equal [ "No file at “gone.html” in the project folder; the block keeps its file." ], result.notes
+
+      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: nil, folders: FOLDERS, blocks: file_rows.map { |r| [ r.key, r.kind ] })
+      outside = Maker::LayoutDocument.new(layout, NAMES, blocks: file_rows, images: IMAGES, files: {}, page: {})
+      text = outside.to_yaml(project_name: "Case")
+      assert_includes text, "# file block dddddddddddd: its file is outside the project folder or gone; left out of this text\n"
+      refute_includes text, "block: file"
+    end
+
     test "the cap: a text that would leave more than CAP blocks is an error" do
       many = (1..38).map { |i| "  - block: text\n    body: b#{i}\n" }.join
       result = bdoc.parse("layout: 1\npanels:\n#{many}")

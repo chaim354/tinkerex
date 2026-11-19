@@ -1,0 +1,18 @@
+<%# locals: (name:, frame_url:) %>
+<%# AN HTML FILE, RUNNING (2026-11-19, embedded files). `frame_url` is a SandboxController URL, which
+    carries its own credential (Maker::HtmlSandbox's token) — the maker's pages and the visitor's both
+    hand one in, so this partial names no route (architecture_invariants_test.rb's viewer arm).
+
+    THE `sandbox` ATTRIBUTE IS THE SAME STRING THE RESPONSE HEADER CARRIES, and it never holds
+    `allow-same-origin` (Maker::HtmlSandbox::PERMISSIONS says why). Both, not either: the attribute
+    sandboxes the frame before a byte arrives, the header sandboxes the URL wherever it is opened.
+
+    "Open in a new tab" is the same URL top-level — still sandboxed, by the header — for a viewer that
+    wants the whole window. `allow="fullscreen"` lets a page's own full-screen button work in the
+    frame. %>
+<div class="html-frame">
+  <iframe src="<%= frame_url %>" class="preview-html" title="<%= name %>"
+          sandbox="<%= Maker::HtmlSandbox::PERMISSIONS %>" allow="fullscreen" allowfullscreen
+          referrerpolicy="no-referrer"></iframe>
+  <p class="html-frame-actions"><%= link_to "Open in a new tab", frame_url, target: "_blank", rel: "noopener", class: "linkbtn small" %></p>
+</div>

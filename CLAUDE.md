@@ -864,10 +864,10 @@ every session and needed on few. Nothing was dropped; this anchor stays because 
 
 - **The file-type vocabulary and the preview surfaces → `docs/invariants/files-preview.md`.**
   Read it before touching `Maker::FileAttachment`'s tables, `app/services/maker/previews/`,
-  `FilesController#preview_kind`/`#index`/`#thumbnails`, `app/views/files/`, `thumbs_controller.js`,
-  `modelviewer_controller.js`, `bin/build-o3dv` or `Node`'s display scopes. **Add an extension in
-  `ROLE_BY_EXT` only.** It holds `EXT_RE`, the `role` column, extensionless text, the poll's answer,
-  dot-file hiding, and the 3D engine (LGPL wasm §9, no CDN, the named route, `three`, the up-axis).
+  `FilesController#preview_kind`/`#index`/`#thumbnails`/`#embed`, `app/views/files/`, `thumbs_controller.js`,
+  `modelviewer_controller.js`, `bin/build-o3dv`, `Node`'s display scopes or `SandboxController`/`Maker::HtmlSandbox`.
+  **Add an extension in `ROLE_BY_EXT` only.** It holds `EXT_RE`, the `role` column, extensionless text, the poll,
+  dot-files, the 3D engine (LGPL wasm §9, no CDN, the named route, `three`, the up-axis), the sandbox (no `allow-same-origin`).
 - **A `form_with` that is missing `scope:` emits param names the controller's `require`
   rejects — and a nested-hash test cannot see it.** Two shipped instances: `form_with model:`
   on a **namespaced** model scopes to `maker_project[...]` while the controller required

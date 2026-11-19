@@ -1,0 +1,9 @@
+<% content_for :title, "#{@node.name} — #{@pub.project.name} — @#{@pub.handle} — Tinkerex" %>
+<%# THE VISITOR'S FILE PAGE'S PREVIEW AREA AND NOTHING ELSE (2026-11-19, embedded files;
+    Public::FilesController#embed), framed by a published project's File block. The chain is
+    public/files/_viewer, the one public/files/view renders, so the two cannot disagree. %>
+<div class="preview embed-preview">
+  <%= render "public/files/viewer", pub: @pub, node: @node, info: @info, kind: @kind,
+             gerber_layers: @gerber_layers, gerber_single: @gerber_single, thumbnail: @thumbnail,
+             manifest: @viewer_manifest, frame_url: @html_frame_url %>
+</div>

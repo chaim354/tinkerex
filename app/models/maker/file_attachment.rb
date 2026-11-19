@@ -243,6 +243,19 @@ module Maker
       MARKDOWN_EXTS.include?(ext) && ROLE_BY_EXT[ext] == "document"
     end
 
+    # HTML_EXTS — the `code`-role extensions whose file page offers a RENDERED view beside the source:
+    # the page itself, running in the sandboxed frame (2026-11-19, embedded files; SandboxController,
+    # files/viewers/_html). MARKDOWN_EXTS' shape exactly: a DISPLAY subset, the role stays `code` in
+    # ROLE_BY_EXT, and file_attachment_test.rb asserts it. `.htm` is deliberately absent — it has no
+    # role at all, and giving it one would MOVE every `.htm` on the NAS into `code/`, a change to the
+    # maker's files rather than to a preview (files-preview.md, "extensionless text").
+    HTML_EXTS = %w[html].freeze
+
+    def self.html?(name)
+      ext = File.extname(name.to_s).delete(".").downcase
+      HTML_EXTS.include?(ext) && ROLE_BY_EXT[ext] == "code"
+    end
+
     # EVERY EXTENSION THE 3D VIEWER CAN OPEN — the ONE list, read by BOTH doors that offer it
     # (`FilesController#preview_kind`'s `:model3d` branch and `ModelsController#show`'s hero
     # switcher). Each controller carried its own copy of `%w[stl 3mf obj]` until 2026-09-06, which

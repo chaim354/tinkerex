@@ -147,7 +147,7 @@ module Web
     test "Add block is disabled at the cap" do
       Maker::ProjectBlock::CAP.times { |i| block!(kind: "text", body: "b#{i}") }
       get edit_layout_project_path(@project)
-      assert_select "details.layout-add button[data-action='layout-editor#addBlock'][disabled]", 3
+      assert_select "details.layout-add button[data-action='layout-editor#addBlock'][disabled]", Maker::ProjectBlock::KINDS.size
       assert_select "details.layout-add .layout-add-cap", text: /#{Maker::ProjectBlock::CAP} blocks/
     end
 

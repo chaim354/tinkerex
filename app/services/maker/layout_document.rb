@@ -49,7 +49,8 @@ module Maker
     # on a link is the link's label, `view` on a block is an error, and the two sets are separate
     # so a misspelling inside a block is still caught by name (spec decision 5).
     BLOCK_COMMON = %w[width hidden].freeze
-    BLOCK_FIELDS = { "text" => %w[heading body], "link" => %w[url title line], "image" => %w[file caption] }.freeze
+    BLOCK_FIELDS = { "text" => %w[heading body], "link" => %w[url title line], "image" => %w[file caption],
+                     "file" => %w[file heading] }.freeze
     PAGE_KEYS = %w[description cover].freeze
     # PANELS THAT LEFT THE PAGE, AND WHAT A LAYOUT THAT STILL NAMES ONE IS TOLD (2026-10-26, the edit
     # area; spec 2026-10-26-project-edit-area §4). Publish became the Publishing tab, so a YAML copied
@@ -59,6 +60,7 @@ module Maker
     RETIRED_PANELS = { "publish" => "Publishing has its own tab now; that entry was skipped." }.freeze
     COVER_OUTSIDE_NOTE = "# cover: set from a file outside the project folder; the picker cannot name it".freeze
     IMAGE_OUTSIDE_NOTE = "# image block %s: its picture is outside the project folder or gone; left out of this text".freeze
+    FILE_OUTSIDE_NOTE = "# file block %s: its file is outside the project folder or gone; left out of this text".freeze
 
     Result = Data.define(:draft, :notes, :errors) do
       def ok? = errors.empty?
@@ -66,14 +68,17 @@ module Maker
 
     # blocks: the project's Maker::ProjectBlock rows (anything answering key/kind/heading/body/url/
     # line/caption/node_id); images: { node_id => path relative to the project folder } for the
-    # folder's image files — what an image block or the cover may name; page: the description and
-    # the cover node id as the row holds them.
-    def initialize(layout, folder_names, blocks: [], images: {}, page: {})
+    # folder's image files — what an image block or the cover may name; files: the same map for
+    # EVERY file in the folder — what a file block may name (2026-11-19, embedded files); page: the
+    # description and the cover node id as the row holds them.
+    def initialize(layout, folder_names, blocks: [], images: {}, files: {}, page: {})
       @layout = layout
       @names = folder_names.to_h { |id, name| [ id.to_s, name.to_s ] }
       @blocks = blocks.to_h { |b| [ Maker::ProjectKind.block_key(b.key), b ] }
       @images = images.to_h { |id, path| [ id.to_s, path.to_s ] }
       @paths = @images.invert
+      @files = files.to_h { |id, path| [ id.to_s, path.to_s ] }
+      @file_paths = @files.invert
       @page = { "description" => page["description"].presence, "cover" => page["cover"].presence }
     end
 
@@ -87,6 +92,7 @@ module Maker
 
     def to_yaml(draft = self.draft, project_name:)
       dropped = []
+      dropped_files = []
       panels = draft["panels"].filter_map do |e|
         out = {}
         # A SEPARATOR IN PLACE, TWO LINES AND NO MORE (2026-09-09, tabs; spec §4): `next out` leaves
@@ -124,6 +130,17 @@ module Maker
 
             out["file"] = path
             out["caption"] = e["caption"] if e["caption"]
+          when "file"
+            # THE IMAGE ARM'S RULE, AGAINST THE MAP OF EVERY FILE IN THE FOLDER: no shareable path,
+            # no entry — and the header says so.
+            path = @files[e["file"].to_s]
+            unless path
+              dropped_files << e["key"]
+              next
+            end
+
+            out["file"] = path
+            out["heading"] = e["heading"] if e["heading"]
           end
         elsif @layout.folder?(e["key"])
           # TOTAL, LIKE #label BELOW (found in review): a folder key with no name — the layout and
@@ -162,6 +179,9 @@ module Maker
       header += "#{COVER_OUTSIDE_NOTE}\n" if cover && !cover_path
       dropped.each do |key|
         header += format(IMAGE_OUTSIDE_NOTE, new_key?(key) ? "new" : key.delete_prefix(Maker::ProjectKind::BLOCK_PREFIX)) + "\n"
+      end
+      dropped_files.each do |key|
+        header += format(FILE_OUTSIDE_NOTE, new_key?(key) ? "new" : key.delete_prefix(Maker::ProjectKind::BLOCK_PREFIX)) + "\n"
       end
       header + body
     end
@@ -285,6 +305,9 @@ module Maker
         when "image"
           e["file"] = row&.node_id
           e["caption"] = row.caption if row&.caption.present?
+        when "file"
+          e["file"] = row&.node_id
+          e["heading"] = row.heading if row&.heading.present?
         end
         return e.compact
       end
@@ -619,6 +642,22 @@ module Maker
         end
         set_text(e, raw, "caption", Maker::ProjectBlock::LINE_MAX, n, errors, "the caption")
         errors << "Entry #{n}: an image block needs a file." if e["file"].blank?
+      when "file"
+        # THE IMAGE ARM'S ONE LOOKUP, AGAINST EVERY FILE IN THE FOLDER (2026-11-19, embedded files):
+        # a node id from the editor's picker, a path from the text.
+        if raw.key?("file")
+          given = raw["file"].to_s
+          node_id = @files.key?(given) ? given : @file_paths[given]
+          if node_id
+            e["file"] = node_id
+          elsif new_block
+            errors << "Entry #{n}: no file at “#{given}” in the project folder."
+          else
+            notes << "No file at “#{given}” in the project folder; the block keeps its file."
+          end
+        end
+        set_text(e, raw, "heading", Maker::ProjectBlock::HEADING_MAX, n, errors, "the heading")
+        errors << "Entry #{n}: a file block needs a file." if e["file"].blank?
       end
       e
     end

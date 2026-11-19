@@ -46,7 +46,7 @@
     <details class="menu layout-add" data-controller="menu" data-layout-editor-target="addMenu">
       <summary class="btn small">Add block ▾</summary>
       <div class="menu-list">
-        <% { "text" => "Text", "link" => "Link", "image" => "Image" }.each do |kind, name| %>
+        <% { "text" => "Text", "link" => "Link", "image" => "Image", "file" => "File" }.each do |kind, name| %>
           <button type="button" class="menu-item" data-action="layout-editor#addBlock"
                   data-kind="<%= kind %>" <%= "disabled" if at_cap %>><%= name %></button>
         <% end %>

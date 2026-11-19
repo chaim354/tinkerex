@@ -500,4 +500,17 @@
        the component's own rule is right, so this override lives only at this width. */
     .workspace-side dl.meta { grid-template-columns: max-content minmax(0, 1fr); }
   }
+
+  /* --- An HTML file, running (files/viewers/_html; 2026-11-19, embedded files). The frame is the
+     sandbox door's (SandboxController); a three.js viewer wants the height, so it takes most of the
+     viewport, and a floor keeps it usable on a short window. The Rendered pane's toggle sits above it
+     with the Markdown view's spacing (`.markdown-view > .view-toggle`, which `.html-view` also is). --- */
+  .preview-html { display: block; width: 100%; height: 75vh; min-height: 420px; border: 1px solid var(--line);
+                  border-radius: 6px; background: var(--raised); }
+  .html-frame-actions { margin: 6px 0 0; text-align: right; }
+
+  /* --- A file's preview area on its own (layouts/embed; FilesController#embed), framed by a project
+     page's File block. The frame has its own scroll, so the card's padding is the only chrome. --- */
+  .embed-preview { border: 0; padding: 0; }
+  .embed-gone { margin: 0; padding: 16px; }
 }

@@ -18,8 +18,10 @@
 
   Locals: pub (Maker::PublicProject), key (the section's id), block (a Maker::ProjectBlock).
 %>
-<% node = block.kind == "image" ? pub.block_image_node(block) : nil %>
-<% unless block.kind == "image" && node.nil? %>
+<%# A FILE BLOCK (2026-11-19, embedded files) answers to the image block's three rules through
+    `pub.block_file_node`, and renders nothing when the answer is nil. %>
+<% node = case block.kind when "image" then pub.block_image_node(block) when "file" then pub.block_file_node(block) end %>
+<% unless %w[image file].include?(block.kind) && node.nil? %>
   <section class="panel block-panel block--<%= block.kind %>" id="<%= key %>">
     <% case block.kind %>
     <% when "text" %>
@@ -55,6 +57,12 @@
         <% end %>
         <% if block.caption.present? %><figcaption class="muted"><%= block.caption %></figcaption><% end %>
       </figure>
+    <% when "file" %>
+      <%# READ-ONLY, THROUGH THE PUBLIC SEAM: the public file page's own chain in the frame, or the
+          sandbox door under a token naming this project (Maker::PublicProject#sandbox_url_for). %>
+      <%= render "shared/file_embed", name: node.name, heading: block.heading, open_url: pub.view_url_for(node.node_id),
+                 frame_url: (pub.sandbox_url_for(node) if Maker::FileAttachment.html?(node.name)),
+                 embed_url: pub.embed_url_for(node.node_id) %>
     <% end %>
   </section>
 <% end %>

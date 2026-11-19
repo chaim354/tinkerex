@@ -40,6 +40,12 @@ Rails.application.routes.draw do
     [ 404, { "content-type" => "text/plain" }, [ "Not Found" ] ]
   }
 
+# --- An HTML file from the library, served to RUN (2026-11-19, embedded files) ---
+# SandboxController: a signed token instead of the session, an enforcing CSP `sandbox` policy on every
+# response, and `*path` resolved inside the HTML file's own folder (Maker::HtmlSandbox). `format:
+# false` so `app.min.js` is a path, never a `js` format sliced off `app.min`.
+get "sandbox/:token/*path", to: "sandbox#show", as: :sandbox, format: false
+
 # --- Web UI (server-rendered file browser) ---
 # THE FRONT DOOR HAS THREE ANSWERS (the landing's second pass, 2026-10-16). Signed out on the public
 # demo's box (Tinkerex::Landing.enabled?, which is demo mode), `/` is the marketing landing
@@ -115,6 +121,9 @@ root to: "home#index"
     end
     member do
       get "blob"
+      # THE FILE PAGE'S PREVIEW AREA ALONE, IN A BARE LAYOUT (2026-11-19, embedded files): what a
+      # project page's File block frames. The same viewer, toggles and editor #show renders, no chrome.
+      get "embed"
       # KiCanvas (stage 3, S3-2) identifies a schematic/board by the URL it fetches, NOT by the
       # bytes it receives: its FetchFileSystem takes the FETCHED URL'S OWN trailing extension as
       # the file's name, so pointed at the plain `blob` route above — no extension anywhere in the
@@ -369,6 +378,10 @@ root to: "home#index"
     # enqueues, because a poll a stranger can issue must not be a write (§14h's own rule for a
     # `failed` row, and ThumbnailMap's required `backfill:` flag). #view enqueues on the RENDER.
     get "u/:handle/:slug/files/:id/geometry",     to: "files#geometry", as: :file_geometry, constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
+    # THE VISITOR'S FILE PAGE'S PREVIEW AREA ALONE (2026-11-19, embedded files), framed by a published
+    # project's File block. Above the byte route for `view`'s reason: `files/:id/embed` would otherwise
+    # match it with `filename: "embed"` and serve the BYTES.
+    get "u/:handle/:slug/files/:id/embed",        to: "files#embed",    as: :file_embed, constraints: { handle: /[a-z0-9][a-z0-9-]*/i }
     # HARDENING (2026-09-08, tinkerex#278): A FILE'S DERIVED ASSET — its thumbnail, or the Measure
     # payload — through the project's permission and then a SHORT-LIVED service URL, so a picture
     # stops answering when the project stops being public. A public page must never emit
