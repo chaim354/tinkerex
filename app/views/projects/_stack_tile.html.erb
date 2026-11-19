@@ -17,18 +17,21 @@
 <% ext = File.extname(latest.name).delete(".").upcase.first(4) %>
 <% count = stack_count_label(stack) %>
 <% thumb = @page_thumbs.thumb(latest.node_id) %>
-<div class="attachment-tile plate-figure stack-item">
+<%# THE STACK'S NUMBER (spec §9): one figure, so one number, which every member shares in the index. %>
+<% number = figure_number(latest.node_id) %>
+<%= tag.div class: "attachment-tile plate-figure stack-item", data: figure_data(latest.node_id) do %>
   <%= tag.button(type: "button", id: "#{dom}-toggle", class: "grid-card file-cell stack stack-toggle",
                  aria: { expanded: "false", controls: "#{dom}-open", label: "#{stack.name}, #{count}" },
                  data: thumb_cell_data(latest.node_id, ext).merge(action: "stack#toggle")) do %>
-    <%= render "files/thumb", thumb: thumb, ext_label: ext, url: preview_src(thumb) %>
+    <%= render "files/thumb", thumb: thumb, ext_label: ext, url: preview_src(thumb), fig: fig_num_tag(number) %>
     <span class="plate-marks"><span class="badge stack-count"><%= count %></span></span>
     <span class="grid-name plate-name stack-name" title="<%= stack.name %>"><%= stack.name %></span>
     <span class="plate-facts" title="<%= latest.name %>"><%= latest.name %></span>
   <% end %>
-</div>
+<% end %>
 <section class="plate-open stack-open" id="<%= dom %>-open" hidden aria-label="<%= stack.name %>, <%= count %>">
   <div class="stack-open-head">
+    <%= fig_num_tag(number) %>
     <h3 class="stack-name"><%= stack.name %></h3>
     <span class="plate-facts">opened · <%= count %><%= " in #{figure.latest.section}" if figure.latest.section.present? %></span>
   </div>

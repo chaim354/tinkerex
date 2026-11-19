@@ -224,11 +224,16 @@ module Projects
     #
     # THE EDITOR'S COPY OF THE BUTTONS SENDS NO `in_place` and keeps the plain redirect: its slots
     # hold a draft view, and a stream replacing the panel under one would leave the two disagreeing.
+    #
+    # `figures` SAYS THE PAGE'S FIGURE NUMBERS MOVED (the Shop manual spec §9 and §11.3): a folder
+    # going into the browser draws no figure, and one coming out draws them again, so every figure
+    # after it, every citation and the index of files renumber. A switch between tiles and list
+    # draws the same figures in the same order and moves none.
     def in_place(key, view)
       return {} unless params[:in_place] == "1"
 
       browsed = (current_layout.view_for(key) == "browser") != (view == "browser")
-      browsed ? { panel: key, files: "1" } : { panel: key }
+      browsed ? { panel: key, files: "1", figures: "1" } : { panel: key }
     end
 
     # ONE PANEL'S VERSION STACKS ON OR OFF (Shop manual spec §9, "a toggle per panel"): the shape and
@@ -245,7 +250,9 @@ module Projects
       return redirect_to(project_path(@project)) unless key && Maker::ProjectKind.stacks?(key) && %w[0 1].include?(value.to_s)
 
       back = if params[:in_place] == "1"
-        (current_layout.folder?(key) ? { panel: key, files: "1" } : { panel: key }).merge(pressed: "stack")
+        # A STACK SWITCH ALWAYS RENUMBERS (`figures`, #in_place): a stack is one figure and its
+        # versions standing alone are several.
+        (current_layout.folder?(key) ? { panel: key, files: "1" } : { panel: key }).merge(figures: "1", pressed: "stack")
       else
         {}
       end

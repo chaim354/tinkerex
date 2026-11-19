@@ -106,6 +106,15 @@ export default class extends Controller {
     }
   }
 
+  // EMPTIES A BOX FOR ITS PICTURE OR ITS BADGE, BUT KEEPS A FIGURE NUMBER (the Shop manual spec §9):
+  // a project page draws a figure's red disc inside its `.thumb` (the `fig` local of files/_thumb),
+  // and a box whose render lands while the page is open keeps the number it was drawn with.
+  clear(thumb) {
+    for (const child of Array.from(thumb.childNodes)) {
+      if (!(child.nodeType === Node.ELEMENT_NODE && child.classList.contains("fig-num"))) child.remove()
+    }
+  }
+
   setImage(cell, url) {
     const thumb = cell.querySelector(".thumb")
     if (!thumb || thumb.querySelector("img")) return
@@ -113,7 +122,7 @@ export default class extends Controller {
     img.src = url
     img.loading = "lazy"
     img.alt = ""
-    thumb.innerHTML = ""
+    this.clear(thumb)
     thumb.appendChild(img)
   }
 
@@ -159,7 +168,7 @@ export default class extends Controller {
       : slow ? "Preview is taking longer than usual. Reload the page to check again."
       : "Preview not supported"
     icon.textContent = cell.dataset.ext || "—"
-    thumb.innerHTML = ""
+    this.clear(thumb)
     thumb.appendChild(icon)
     thumb.classList.toggle("thumb-failed", failed)
   }

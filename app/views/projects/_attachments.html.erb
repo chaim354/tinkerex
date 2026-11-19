@@ -206,6 +206,9 @@
           the minimal folder Row the listing itself builds — a recent file past FILE_CAP is still a
           folder file, never Linked. Always tiles, whatever this panel's view, because a row of
           tiles is what the row is. Each opens the file (projects/_file_tile).
+          ITS NUMBERS ARE CITED, NOT TAKEN (spec §9): this row sits at the top of the Files panel and
+          would otherwise number the eight newest files before every panel below, so a manual's plates
+          would read 11, 2, 4. A recent file no panel draws carries no number.
         %>
         <% if @recent_files.any? %>
           <div class="recent-files plate">
@@ -214,7 +217,9 @@
               <% @recent_files.each do |node| %>
                 <% row = @listing.row_for(node.node_id) ||
                          Maker::ProjectFolderListing::Row.new(node: node, attachment: nil, linked: false, section: "") %>
-                <%= render "file_tile", row: row %>
+                <%# A SECOND LOOK, NUMBERING NOTHING (spec §9; Maker::ProjectFigures): each tile shows the
+                    number its file carries where it is filed. %>
+                <%= render "file_tile", row: row, repeat: true %>
               <% end %>
             </div>
           </div>

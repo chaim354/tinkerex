@@ -29,10 +29,12 @@
     <ul class="schematics-list">
       <% kicad_rows.each do |row| %>
         <% ext = File.extname(row.node.name).downcase.delete(".") %>
-        <li>
+        <%# EACH IS A FIGURE (spec §9): the disc before its name, numbered where the page first draws it. %>
+        <%= tag.li data: figure_data(row.node_id) do %>
+          <%= fig_num_tag(figure_number(row.node_id)) %>
           <%= link_to row.node.name, file_path(row.node_id), data: file_open_data %>
           <span class="badge"><%= ext == "kicad_sch" ? "schematic" : "board" %></span>
-        </li>
+        <% end %>
       <% end %>
     </ul>
     <%# ONE inline preview, controls="basic" — the file page's own is "full". Same kicanvas

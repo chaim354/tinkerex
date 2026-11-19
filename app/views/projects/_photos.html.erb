@@ -9,6 +9,9 @@
   @photo_rows is its own term in ProjectsController#show's union (an image inside a browsed
   repository is drawn by no tile, so nothing else would put it there), so this polls the pending
   ones and never builds a second ThumbnailMap.
+
+  EACH PICTURE IS A FIGURE (spec §9): numbered where the page first draws it, so an image a folder
+  panel above drew keeps that panel's number here (Maker::ProjectFigures).
 %>
 <% if @photo_rows.any? %>
   <%# `project-photos` IS THE CONTENTS COLUMN'S ANCHOR (ProjectsHelper::SECTION_ANCHORS, 2026-11-19). %>
@@ -23,9 +26,9 @@
         <%# NAMED BY THE FILE (the UX audit's §I): the picture inside carries an empty alt, so a
             `title` alone left a link a screen reader announced as nothing. %>
         <%= link_to file_path(row.node_id), class: "photo-cell file-cell", title: row.node.name, "aria-label": row.node.name,
-                    data: file_open_data(thumb_cell_data(row.node_id, "IMG")) do %>
+                    data: file_open_data(thumb_cell_data(row.node_id, "IMG")).merge(figure_data(row.node_id)) do %>
           <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: "IMG",
-                     url: preview_src(@page_thumbs.thumb(row.node_id)) %>
+                     url: preview_src(@page_thumbs.thumb(row.node_id)), fig: fig_num_tag(figure_number(row.node_id)) %>
         <% end %>
       <% end %>
     </div>

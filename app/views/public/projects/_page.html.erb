@@ -121,8 +121,12 @@
 
     Since slice 8 it stands at the head's right, its name under it in the mono of a caption. %>
 <% if (cover = pub.cover_node) %>
-  <div class="project-hero">
-    <%= link_to pub.view_url_for(cover.node_id) do %>
+  <%# THE COVER IS FIG. 1 HERE TOO (the Shop manual spec §9; Maker::PublicProject#figure_numbers): the
+      26px disc at the picture's top left. %>
+  <% cover_number = pub.figure_number(cover.node_id) %>
+  <%= tag.div class: "project-hero", data: (cover_number ? { fig: cover_number } : {}) do %>
+    <%= link_to pub.view_url_for(cover.node_id), class: "project-hero-link" do %>
+      <%= fig_num_tag(cover_number, size: :hero) %>
       <%# `inline_image?`, NOT the role (tinkerex#285): the same split projects/_hero makes. %>
       <% if Maker::FileAttachment.inline_image?(cover.name) %>
         <%= image_tag pub.file_url_for(cover.node_id), class: "project-hero-img", alt: cover.name %>
@@ -143,7 +147,7 @@
       <% end %>
     <% end %>
     <span class="project-hero-name mono muted"><%= cover.name %></span>
-  </div>
+  <% end %>
 <% end %>
 </div>
 

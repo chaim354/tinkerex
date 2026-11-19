@@ -52,10 +52,12 @@
                 blob URL is unauthenticated and never expires (tinkerex#278, the seam guard's third
                 arm), so files/_thumb takes it as a strict local. %>
             <% ext = File.extname(row.node.name).delete(".").upcase.first(4) %>
+            <%# ITS FIGURE NUMBER (the Shop manual spec §9; Maker::PublicProject#figure_numbers). %>
+            <% number = pub.figure_number(row.node_id) %>
             <%= link_to pub.view_url_for(row.node_id), class: "grid-card file-cell",
-                        title: row.node.name do %>
+                        title: row.node.name, data: (number ? { fig: number } : {}) do %>
               <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext,
-                         url: pub.preview_url_for(row.node_id), name: row.node.name %>
+                         url: pub.preview_url_for(row.node_id), name: row.node.name, fig: fig_num_tag(number) %>
               <span class="grid-name"><%= row.node.name %></span>
             <% end %>
           <% end %>
@@ -66,6 +68,7 @@
         <table class="table public-files">
           <thead>
             <tr>
+              <th class="col-fig">Fig.</th>
               <th class="col-thumb"></th>
               <th class="col-name">File</th>
               <th class="col-size">Size</th>
@@ -75,7 +78,9 @@
           <tbody>
             <% rows.each do |row| %>
               <% ext = File.extname(row.node.name).delete(".").upcase %>
-              <tr>
+              <% number = pub.figure_number(row.node_id) %>
+              <%= tag.tr data: (number ? { fig: number } : {}) do %>
+                <td class="col-fig mono"><%= number %></td>
                 <td class="col-thumb">
                   <span class="file-cell">
                     <%= render "files/thumb", thumb: pub.thumbs.thumb(row.node_id), ext_label: ext,
@@ -87,7 +92,7 @@
                 <td class="col-dl">
                   <%= link_to "Download", pub.file_url_for(row.node_id, download: true), class: "linkbtn small" %>
                 </td>
-              </tr>
+              <% end %>
             <% end %>
           </tbody>
         </table>

@@ -1,0 +1,62 @@
+<%#
+  THE INDEX OF FILES (the Shop manual spec §9; the `project-organized` screen's last section): every
+  file of the project, A TO Z as an index reads, each with the figure number it carries on this page
+  — what the column's find box filters as you type and jumps from (figure_find_controller.js).
+
+  ALWAYS THE PAGE'S LAST SECTION, AND NOT A PANEL OF THE LAYOUT. It holds no rows of its own — it is
+  an index of what the panels above draw, the contents column's companion for files — so there is
+  nothing for "+ Add panel" to open and nothing for the maker to arrange: projects/show draws it
+  after every panel group, full width, numbered as the last section, whenever the page numbers a
+  figure (ProjectsController#show's @index_rows). Not in the layout, so the editor, the visitor's
+  page, its feed, its bundle and its BOM CSV are untouched (design-system.md rule 14).
+
+  A FILE NO PANEL DRAWS IS LISTED WITH NO NUMBER — a browsed folder's, a nested repository's, a
+  hidden panel's, the README the README panel renders — so the index stays an index of the project
+  and its numbers stay ones the page can show. A stack's members each carry the stack's number.
+
+  A LARGE PROJECT STAYS USABLE: the listing is already capped (Maker::ProjectFolderListing::FILE_CAP,
+  and the note below says so), and the index shows the first SHOWN of what it holds with "Show all"
+  for the rest. The find box searches every entry, the hidden ones included.
+
+  A name that two files share says which folder each is in, as the screen's
+  "harbor-number-v4.svg (project folder)" does; every entry's folder and kind ride on it for the find
+  box and in its title. The name opens the file's page; the number goes to the figure.
+%>
+<% shown = ProjectsHelper::FILES_INDEX_SHOWN %>
+<% names = @index_rows.map { |row| row.node.name.downcase }.tally %>
+<section class="panel files-index" id="project-index" data-controller="files-index">
+  <div class="panel-head">
+    <h2>Index of files</h2>
+    <%= section_note("index", @index_rows.size, "#{pluralize(@index_rows.size, 'file')}, A to Z, with each one’s figure") %>
+  </div>
+  <ol class="files-index-list">
+    <% @index_rows.each_with_index do |row, i| %>
+      <% number = figure_number(row.node_id) %>
+      <% folder = row.section.presence || "project folder" %>
+      <% kind = Maker::FileAttachment::ROLE_LABELS.fetch(row.role, "Other") %>
+      <%= tag.li class: "files-index-entry", hidden: i >= shown,
+                 data: { files_index_target: "entry", name: row.node.name.downcase, folder: folder.downcase, kind: kind.downcase,
+                         entry_fig: number, beyond: (i >= shown || nil) }.compact do %>
+        <%= link_to file_path(row.node_id), class: "files-index-name", title: "#{row.node.name} · #{folder} · #{kind}",
+                    data: file_open_data do %><%= row.node.name %><% if names[row.node.name.downcase] > 1 %> <span class="files-index-folder muted">(<%= folder %>)</span><% end %><% end %>
+        <span class="files-index-leader" aria-hidden="true"></span>
+        <% if number %>
+          <%= link_to number, "#project-index", class: "files-index-fig", data: { fig_jump: number, action: "files-index#jump" },
+                      "aria-label": "Fig. #{number}, go to the figure" %>
+        <% else %>
+          <span class="files-index-fig files-index-fig--none" title="No panel draws this file">—</span>
+        <% end %>
+      <% end %>
+    <% end %>
+  </ol>
+  <p class="files-index-empty muted" hidden data-files-index-target="empty">No file matches.</p>
+  <% if @index_rows.size > shown %>
+    <button type="button" class="linkbtn files-index-more" data-files-index-target="more" data-action="files-index#showAll">Show all <%= pluralize(@index_rows.size, "file") %></button>
+  <% end %>
+  <% if @listing.truncated? %>
+    <p class="muted files-index-truncated">
+      The index lists the files this page lists, not every file in the folder.
+      <%= link_to "Open the folder", files_path(folder: @listing.folder_id) %>
+    </p>
+  <% end %>
+</section>

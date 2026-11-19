@@ -14,7 +14,8 @@
 <%# THE TILES ARE A PLATE (Shop manual spec §6, slice 6): a 2px ink box, its head a caps label naming
     what it holds at the left and the order at the right, then the figures. `.plate` is the
     component; `.files-grid` stays the grid inside it, the one the poll, the file menu and the
-    selection all read. A figure carries no number: figure numbers wait for spec §9. %>
+    selection all read. A figure carries no number here: a figure number is positional to a project
+    page (spec §9 and §11.3), and the Library prints none for another page's order. %>
 <% plate_order = case @sort
                  when "modified" then @dir == "desc" ? "Newest first" : "Oldest first"
                  when "type" then @dir == "desc" ? "By type, Z to A" : "By type, A to Z"

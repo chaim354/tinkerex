@@ -215,6 +215,18 @@
                        layout: @panel_layout, tail: nil } do |key| %>
     <%= render "projects/panel_slot", key: key, extra: panel_locals.fetch(key, {}) %>
   <% end %>
+  <%# THE INDEX OF FILES (the Shop manual spec §9), the page's last section whenever it numbers a
+      figure: full width, numbered after every panel, in its own box below the panels and any tabs,
+      so it is on view whichever tab is open. NOT A PANEL OF THE LAYOUT — projects/_files_index says
+      why — but a SECTION like one: its number rides on its slot (ProjectsHelper#section_number!) and
+      the contents column lists it. %>
+  <% if @index_rows.any? %>
+    <% index_body = render("projects/files_index") %>
+    <% n = section_number!(ProjectsHelper::FILES_INDEX_KEY) %>
+    <div class="files-index-grid">
+      <%= tag.div index_body, class: "panel-slot panel--full", data: { section: n }, style: ("--section: '#{n}'" if n) %>
+    </div>
+  <% end %>
   <%# THE PAGE'S OWN LEFT COLUMN (the Shop manual, slice 5; its spec §7): Overview, each section with
       its number and count, then the projects. LAST, AND THAT IS THE MECHANISM: the layout renders the
       column after this view, and by now every slot has taken its number (@page_sections) and every

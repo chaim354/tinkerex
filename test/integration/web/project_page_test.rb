@@ -109,7 +109,9 @@ module Web
       end
       assert_select ".project-head .project-hero", 0, "the cover is the head's neighbour, never inside it"
       assert_select ".project-hero", 1, "and it is not drawn twice"
-      assert_select ".project-hero .fig-num", 0, "a caption, not a callout: figure numbers wait for spec §9"
+      # AND A CALLOUT SINCE FIGURE NUMBERS (spec §9): the cover is the page's first figure, its disc
+      # the 26px one, and the caption reads the same number.
+      assert_select ".project-hero[data-fig='1'] a.project-hero-frame > .fig-num.fig-num--hero", text: "Fig. 1"
       assert_select ".project-top > aside.project-glance dl.project-stats", 1
     end
 

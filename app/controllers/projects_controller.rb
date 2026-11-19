@@ -451,6 +451,13 @@ class ProjectsController < ApplicationController
     # half is every live build-log photo, exactly what projects/_log_entry paints. In memory over
     # @listing, @entries and @page_nodes, all loaded above, so nothing here queries.
     @photo_rows = Maker::ProjectPhotos.rows(listing: @listing, entries: @entries, page_nodes: @page_nodes)
+    # FIGURE NUMBERS (the Shop manual spec §9 and §11.3): every figure this render draws, numbered by
+    # panel order and then file order, a stack as one, the cover as Fig. 1 — ONE walk over what is
+    # loaded above (Maker::ProjectFigures), so it costs no query and every callout, citation and index
+    # row on the page reads the same answer. HERE, ABOVE THE README, whose `files` tables cite them.
+    # The editor numbers nothing, as it numbers no section: its order is a draft.
+    @figures = load_figures unless @editing
+    @index_rows = @figures&.any? ? files_index_rows : []
     # THE PICKERS' OWN ROWS, IN EDIT MODE ONLY (content blocks; spec §2): the image block's picker
     # and the page intro's cover picker both draw the FOLDER'S images as thumbnails. They need no
     # union term: they are exactly the folder half of @photo_rows, which the union already holds.
@@ -486,7 +493,7 @@ class ProjectsController < ApplicationController
     @readme = if @readme_source
       context = Maker::Readme::Live::Context.new(user: current_user, project: @project, listing: @listing,
                                                  bom_lines: (bom_shown ? @bom_lines : nil), tasks: @tasks,
-                                                 entries: @entries, thumbs: @page_thumbs)
+                                                 entries: @entries, thumbs: @page_thumbs, figures: @figures)
       Maker::Readme.render(@readme_source, base_path: @listing.path, index: @listing.path_index,
                            link: Maker::RepoCard::DEFAULT_LINK,
                            image_link: helpers.maker_image_link(@listing, @page_thumbs), context:)
@@ -806,6 +813,25 @@ class ProjectsController < ApplicationController
     @stack_counts.transform_values! { |files, folded| [ files, files - folded ] }
   end
 
+  # THE PAGE'S FIGURE NUMBERS (#show's own comment says why here). The cover counts only where the
+  # head draws it.
+  def load_figures
+    Maker::ProjectFigures.new(layout: @panel_layout, listing: @listing, cover_id: @cover_node&.node_id,
+                              generated: @generated, readme_row_id: @readme_row&.node_id, stacks: @stacks,
+                              stacked_backups: @stacked_backups, linked_rows: @linked_rows,
+                              photo_rows: @photo_rows, blocks_by_key: @blocks_by_key, page_nodes: @page_nodes).numbers
+  end
+
+  # THE INDEX OF FILES (the Shop manual spec §9; the `project-organized` screen's last section): every
+  # file of the project — the folder's listing, backups and the README included, then each file
+  # Linked from elsewhere — A TO Z, as an index reads, each with the number it carries on this page
+  # or none where no panel draws it (a browsed folder, a nested repository, a hidden panel). In
+  # memory over the listing; capped where the listing is (FILE_CAP), and the index says so.
+  def files_index_rows
+    (@listing.all_rows + @linked_rows).uniq(&:node_id)
+                                      .sort_by { |row| [ row.node.name.downcase, row.section.to_s, row.node_id ] }
+  end
+
   # A folder panel's dir and every dir beneath it whose files draw as tiles: not a repository nested
   # inside it (a closed browser section, #dirs_without_tiles).
   def stacking_dirs(dir, skipped)
@@ -882,10 +908,29 @@ class ProjectsController < ApplicationController
   # #dirs_without_tiles, which a folder going into or out of the browser alters. AFTER the switched
   # panel, because Turbo hands the focus to the first marked element in the streams and that is
   # the pressed button (projects/_view_toggle).
+  #
+  # EVERY PANEL THAT SHOWS A FIGURE NUMBER COMES TOO WHEN THE NUMBERS MOVED (`figures=1`, the Shop
+  # manual spec §9; Projects::PanelsController#in_place): a stack switch, or a folder going into or
+  # out of the browser, renumbers every figure after it, so the panels that draw one, the panels
+  # that cite one (the Recently changed row, a build-log photo, a BOM line, a README table) and the
+  # index of files are redrawn from this render's one numbering, after the switched panel. A
+  # browser draws no figure, so another panel's browser keeps the folder it was in.
   def switched_panel_streams
     keys = [ @switched_panel ]
     keys << "attachments" if params[:files] == "1" && @panel_layout.folder?(@switched_panel)
-    keys.map { |key| turbo_stream.replace(key, partial: "projects/panel_body", locals: { key: key, extra: {} }) }
+    keys |= numbered_panel_keys if params[:figures] == "1"
+    streams = keys.map { |key| turbo_stream.replace(key, partial: "projects/panel_body", locals: { key: key, extra: {} }) }
+    streams << turbo_stream.replace("project-index", partial: "projects/files_index") if params[:figures] == "1" && @index_rows.any?
+    streams
+  end
+
+  # The panels on this page that show a figure number: every one the walk drew a figure in, and the
+  # ones that cite one, where they are on the page — the README only when there is one to render.
+  CITING_PANELS = %w[attachments build_log bom].freeze
+
+  def numbered_panel_keys
+    on_page = @panel_layout.visible - Array(@absent_panels)
+    on_page & ((@figures&.drawn_places || []) + CITING_PANELS + (@readme ? [ "readme" ] : []))
   end
 
   # [[dir name, dir node_id, [tag names]]] for the release composer's picker (stage 3, S3-5), over

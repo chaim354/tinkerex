@@ -42,11 +42,14 @@
       <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
       <%# ITS OWN `thumbs` CONTROLLER, like the hero: the thumb-cell arm below polls a pending
           preview, and nothing above this section mounts one (found in review). %>
-      <figure class="block-figure" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      <%# A FIGURE OF THE PAGE (spec §9), numbered in its place among the panels (Maker::ProjectFigures). %>
+      <% number = figure_number(node.node_id) %>
+      <%= tag.figure class: "block-figure", data: { controller: "thumbs", thumbs_url_value: thumbnails_files_path }.merge(figure_data(node.node_id)) do %>
         <%# `inline_image?`, NOT the role, and it is the hero's own split (tinkerex#285): a .heic is
             an image by role and a broken picture as raw bytes, so it takes the thumbnail branch. %>
         <% if Maker::FileAttachment.inline_image?(node.name) %>
-          <%= link_to file_path(node.node_id), data: file_open_data do %>
+          <%= link_to file_path(node.node_id), class: "block-image-link", data: file_open_data do %>
+            <%= fig_num_tag(number) %>
             <%= image_tag blob_file_path(node.node_id), class: "block-image",
                           alt: block.caption.presence || node.name %>
           <% end %>
@@ -54,11 +57,11 @@
           <%= link_to file_path(node.node_id), class: "file-cell block-thumb",
                       data: file_open_data(thumb_cell_data(node.node_id, ext)) do %>
             <%= render "files/thumb", thumb: @page_thumbs.thumb(node.node_id), ext_label: ext,
-                       url: preview_src(@page_thumbs.thumb(node.node_id)) %>
+                       url: preview_src(@page_thumbs.thumb(node.node_id)), fig: fig_num_tag(number) %>
           <% end %>
         <% end %>
         <% if block.caption.present? %><figcaption class="muted"><%= block.caption %></figcaption><% end %>
-      </figure>
+      <% end %>
     <% end %>
   </section>
 <% end %>

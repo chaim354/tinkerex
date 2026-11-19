@@ -161,7 +161,16 @@ module ProjectsHelper
   # IS its layout key. shell_layout_test.rb holds every in-page link in the column to an element the
   # page carries, so a panel that changes its id cannot leave a dead row behind.
   SECTION_ANCHORS = PANEL_ANCHORS.merge("readme" => "project-readme", "photos" => "project-photos",
-                                        "schematics" => "project-schematics").freeze
+                                        "schematics" => "project-schematics", "index" => "project-index").freeze
+
+  # THE INDEX OF FILES' SECTION KEY (projects/_files_index). Not a key of the layout — no panel may be
+  # called this (Maker::Project::PANELS, a folder key and a block key are all spelled otherwise) — but
+  # the key the section counter and the contents column know it by.
+  FILES_INDEX_KEY = "index".freeze
+  FILES_INDEX_LABEL = "Index of files".freeze
+  # How many entries the index shows before "Show all": catan's 60 whole, and a 300-file folder as a
+  # screenful a reader can scan, with the find box searching every entry either way.
+  FILES_INDEX_SHOWN = 80
 
   def section_anchor(key) = SECTION_ANCHORS.fetch(key.to_s, key.to_s)
 
@@ -197,33 +206,56 @@ module ProjectsHelper
   # WHAT THE CONTENTS COLUMN CALLS A SECTION: the head the panel itself shows — the maker's title,
   # else the label (a folder's own name, a text block's heading).
   def section_label(key)
+    return FILES_INDEX_LABEL if key == FILES_INDEX_KEY
     return @blocks_by_key[key]&.heading.to_s if @panel_layout.block?(key)
 
     panel_title(@panel_layout, key, @panel_labels[key])
   end
 
-  # ONE VERSION STACK AMONG A PANEL'S FIGURES (Shop manual spec §9): the stack and its members' rows,
-  # latest first, so a tile or a list row can draw the latest and open onto the rest.
-  StackFigure = Data.define(:stack, :rows) do
-    def latest = rows.first
+  # ONE VERSION STACK AMONG A PANEL'S FIGURES (Shop manual spec §9). Defined with the walk that numbers
+  # the page (Maker::ProjectFigures), so what a panel draws and what the page numbers are one list; the
+  # partials keep asking for it by this name.
+  StackFigure = Maker::ProjectFigures::StackFigure
+
+  # WHAT A PANEL'S GROUP DRAWS, IN ORDER: each Row that stands alone, and a StackFigure where a stack's
+  # first member stood, over ProjectsController#show's @stacks and @stacked_backups. The one definition
+  # is Maker::ProjectFigures.stack_figures, which the page's figure walk calls too.
+  def stack_figures(rows, folder_id: nil)
+    Maker::ProjectFigures.stack_figures(rows, stacks: @stacks, stacked_backups: @stacked_backups, folder_id:)
   end
 
-  # WHAT A PANEL'S GROUP DRAWS, IN ORDER: each Row that stands alone, and a StackFigure where a
-  # stack's first member stood (Maker::VersionStacks::Result#collapse over ProjectsController#show's
-  # @stacks). `folder_id` names the folder these rows sit in, so the backups that stack with them
-  # (@stacked_backups) join them here rather than in the Files panel's Backups group. A panel whose
-  # switch is off has no stacks in @stacks, so its rows come back as they went in. A stack missing a
-  # member's row (it cannot, the rows are what was grouped) is drawn as the rows it has.
-  def stack_figures(rows, folder_id: nil)
-    all = rows + Array(@stacked_backups&.fetch(folder_id, nil))
-    return all if @stacks.nil? || @stacks.stacks.empty?
+  # --- Figure numbers (the Shop manual spec §9 and §11.3) -------------------------------------------
 
-    by_id = all.index_by(&:node_id)
-    @stacks.collapse(all.map(&:node_id)).flat_map do |figure|
-      next [ by_id[figure] ] unless figure.is_a?(Maker::VersionStacks::Stack)
+  # THE NUMBER A FILE CARRIES ON THIS PAGE, or nil: ProjectsController#show's @figures (a
+  # Maker::FigureNumbers over the page's own walk, Maker::ProjectFigures). nil in the editor, which
+  # numbers nothing, as it numbers no section.
+  def figure_number(node_id) = @figures&.number(node_id)
 
-      members = figure.node_ids.filter_map { |id| by_id[id] }
-      members.size == figure.size ? [ StackFigure.new(stack: figure, rows: members) ] : members
+  # THE CALLOUT: a red disc holding the number (`.fig-num`, components.css). The number is read out as
+  # "Fig. 7": the disc sits inside the figure's link, so it is part of the name a screen reader gives.
+  # `size` is nil for a figure, :head or :hero for the larger discs, :ring for the outlined one.
+  def fig_num_tag(number, size: nil)
+    return unless number
+
+    tag.span(class: [ "fig-num", ("fig-num--#{size}" if size) ]) do
+      safe_join([ tag.span("Fig. ", class: "label-hidden"), number.to_s ])
     end
+  end
+
+  # WHAT MARKS AN ELEMENT AS A DRAWING OF FIGURE N (the find box's target, figure_find_controller.js,
+  # and what figure_numbers_test.rb reads in document order). `repeat: true` is a second look that
+  # numbers nothing — the Recently changed row, a build-log photo — so the find box never lands on it
+  # and the order check leaves it out. Empty, so `tag` drops the attributes, where the file has no number.
+  def figure_data(node_id, repeat: false)
+    number = figure_number(node_id)
+    return {} unless number
+
+    repeat ? { fig: number, fig_repeat: true } : { fig: number }
+  end
+
+  # A CITATION OF FIGURE N: a BOM line, a README row. Not a figure: the find box never lands on one.
+  def figure_cite_data(node_id)
+    number = figure_number(node_id)
+    number ? { fig_cite: number } : {}
   end
 end

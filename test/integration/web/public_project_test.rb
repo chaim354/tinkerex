@@ -580,9 +580,11 @@ module Web
 
     # --- 7. the BOM: three columns, and what is absent ------------------------------
 
-    test "the public BOM has exactly Ref, Part and Qty" do
+    # FIG. CITES THE FIGURE A FILE LINE NAMES ON THIS PAGE (the Shop manual spec §9), a number the
+    # visitor's page draws; it says nothing about stock or supply.
+    test "the public BOM has exactly Fig., Ref, Part and Qty" do
       get path
-      assert_equal %w[Ref Part Qty], css_select("table.public-bom thead th").map(&:text)
+      assert_equal %w[Fig. Ref Part Qty], css_select("table.public-bom thead th").map(&:text)
     end
 
     test "the public BOM names the item but never its stock level or its supplier" do

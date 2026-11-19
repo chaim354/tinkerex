@@ -1110,6 +1110,35 @@ module Web
       assert_select "section[id=?] .stack-item", Maker::ProjectKind.folder_key(laser.node_id), LARGE
     end
 
+    # FIGURE NUMBERS AND THE INDEX OF FILES (the Shop manual spec §9): one walk over what the page
+    # loaded, so neither the numbering, nor a callout per figure, nor a citation per BOM line, nor an
+    # index entry per file may cost a query. Each step adds a folder PANEL holding a stack and a file,
+    # a loose file, and a BOM line citing one of them — panels, figures, stacks, citations and index
+    # entries all grow together. MUTATION-CHECKED: a `current_user.nodes.find_by` per entry in
+    # projects/_files_index reddens this with the counts apart by the entries added.
+    test "projects#show numbers its figures and lists its index without growing with files or panels" do
+      project = @user.maker_projects.create!(name: "Figured", status: "active", autofile: false, kind: "mixed")
+      folder = project_folder_rows!(@user, project)
+      bom = project.boms.create!(user: @user)
+      add = lambda do |prefix, count|
+        count.times do |i|
+          panel = @user.nodes.create!(node_id: "#{prefix}-panel-#{i}", name: "#{prefix} panel #{i}", kind: "dir",
+                                      parent_node_id: folder.node_id, mtime: 1, size: 0)
+          %w[v1 v2].each { |v| node!("#{prefix}-#{i}-#{v}", "part #{prefix}#{i} #{v}.svg").update!(parent_node_id: panel.node_id) }
+          node!("#{prefix}-#{i}-jig", "jig #{prefix}#{i}.dxf").update!(parent_node_id: panel.node_id)
+          node!("#{prefix}-#{i}-loose", "notes #{prefix}#{i}.txt").update!(parent_node_id: folder.node_id)
+          bom.lines.create!(user: @user, node_id: "#{prefix}-#{i}-jig", quantity: 1, position: i)
+        end
+      end
+      assert_constant_queries(project_path(project), -> { add.call("fs", SMALL) }, -> { add.call("fl", LARGE - SMALL) },
+                              "projects#show (figures)")
+      assert_select ".files-index-entry", LARGE * 4, "the index lists every file the page lists"
+      assert_select ".folder-panel .attachment-tile.stack-item[data-fig]", LARGE, "each panel's stack is one figure"
+      assert_select ".bom-lines td.col-fig[data-fig-cite]", [ LARGE, Projects::BomLinesController::PANEL_CAP ].min,
+                    "each BOM line the panel shows cites its file's figure"
+      assert_select "#column .figure-find input[type=search]", 1
+    end
+
     test "search#index with version stacks does not grow with stacks or their members" do
       add = lambda do |prefix, count|
         count.times do |i|

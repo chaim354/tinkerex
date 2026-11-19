@@ -17,7 +17,25 @@
   default's own), then All projects and New project. This project's own row is marked as this one
   (`column-row--this`) and never lit: the lit row is Overview, and a column lights at most one
   (design-system.md rule 8).
+
+  THE FIND BOX (the Shop manual spec §7 and §9: "Find a file or figure"), first in the column where
+  the page has an index of files to search (@index_rows, ProjectsController#show). Typing filters the
+  index in place, Enter goes to the figure, Escape clears: figure_find_controller.js, with the index's
+  own controller as its outlet. `figure-find:go` closes the column when it is a sheet, so the figure
+  is not scrolled to underneath it.
 %>
+<% if Array(@index_rows).any? %>
+  <div class="figure-find" role="search" data-controller="figure-find" data-figure-find-files-index-outlet="#project-index"
+       data-action="figure-find:go->shell#closeColumn">
+    <label class="figure-find-box">
+      <%= rail_icon(:search) %>
+      <input type="search" placeholder="Find a file or figure" aria-label="Find a file or figure in this project"
+             aria-controls="project-index" autocomplete="off" spellcheck="false" enterkeyhint="go"
+             data-figure-find-target="input" data-action="input->figure-find#filter keydown->figure-find#key">
+    </label>
+    <p class="figure-find-status mono muted" role="status" aria-live="polite" data-figure-find-target="status"></p>
+  </div>
+<% end %>
 <div class="column-group project-contents">
   <h2 class="column-head">Contents</h2>
   <%= link_to "#overview", class: "column-row column-row--section", "aria-current": row_aria([ :project_overview, @project.id ]),
