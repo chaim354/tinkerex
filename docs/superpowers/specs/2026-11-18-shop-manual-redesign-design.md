@@ -244,6 +244,12 @@ things the rule above does not settle yet, and the test needs:
 
 (`design-system.md` still says the top bar drives the Files page's flat `?q=`. That line is stale.)
 
+The folder tree settled three things the row left open (2026-11-19). What is open lives in a
+cookie, `library_tree`, as the theme does (`design-system.md` rule 7), so each browser keeps its
+own and the server draws it in the first byte. The tree draws no counts: a total beside a folder is
+a walk of its whole subtree, and the root's subtree is the library, on every Library page. A closed
+folder opens in place through a frame (`/library/tree`); the choosers keep `library_children`.
+
 ## 10. Guards
 
 Every guard is broken once on purpose before it is trusted (`CLAUDE.md` §15).
