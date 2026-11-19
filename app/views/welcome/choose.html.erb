@@ -1,17 +1,40 @@
 <% content_for :title, "Welcome — Tinkerex" %>
-<div class="page-head"><h1>What will you mostly use Tinkerex for?</h1></div>
 <%= render "welcome/steps", current: :choose %>
-<%# NO PRIMARY ON THIS PAGE: the two cards are equal and neither is the default. %>
-<p class="welcome-lede">Pick one to see the parts of Tinkerex that matter most for it, then set up
-  your first project. Everything works either way.</p>
+<div class="page-head">
+  <h1>What will you mostly use Tinkerex for?</h1>
+  <p class="page-lead">Pick one to see the parts of Tinkerex that matter most for it, then set up your
+    first project. Everything works either way.</p>
+</div>
+<%# NO PRIMARY ON THIS PAGE: the two cards are equal and neither is the default. Each whole box is the
+    link; its "Choose this" is a span drawn as an outlined button, for the eye only (the link's name is
+    its heading and sentence), and never ink (accent_spend_test.rb: Choose spends nothing).
+
+    THE FIGURES ARE THE APP'S OWN RENDERS, the landing wall's (Tinkerex::Landing::TILES): the hex
+    tiles' LightBurn file for the files track and the robber's 3MF for the models track. Each sits on
+    the ink-on-paper card every render does (design-system.md rule 5), and carries a figure number,
+    a mark the accent may draw (rule 13). %>
 <div class="welcome-choices">
   <%= link_to welcome_tour_path(track: "files"), class: "welcome-choice" do %>
-    <h2>Organize my files</h2>
-    <p>Laser, CNC, electronics and documents.</p>
+    <div class="thumb">
+      <%= image_tag "landing/wall/hex-tiles-lbrn2.png", alt: "", width: Tinkerex::Landing::SIZE, height: Tinkerex::Landing::SIZE %>
+      <span class="fig-num fig-num--hero" aria-hidden="true">1</span>
+    </div>
+    <div class="welcome-choice-body">
+      <h2>Organize my files</h2>
+      <p>Laser, CNC, electronics and documents.</p>
+      <span class="btn" aria-hidden="true">Choose this</span>
+    </div>
   <% end %>
   <%= link_to welcome_tour_path(track: "models"), class: "welcome-choice" do %>
-    <h2>Organize my 3D models</h2>
-    <p>STL, 3MF, STEP and prints.</p>
+    <div class="thumb">
+      <%= image_tag "landing/wall/robber-3mf.png", alt: "", width: Tinkerex::Landing::SIZE, height: Tinkerex::Landing::SIZE %>
+      <span class="fig-num fig-num--hero" aria-hidden="true">2</span>
+    </div>
+    <div class="welcome-choice-body">
+      <h2>Organize my 3D models</h2>
+      <p>STL, 3MF, STEP and prints.</p>
+      <span class="btn" aria-hidden="true">Choose this</span>
+    </div>
   <% end %>
 </div>
 <%= render "welcome/skip" %>

@@ -9,7 +9,9 @@ class WelcomeController < ApplicationController
   # "Edit in <Addon>" on Done's file tiles, as Recent's tiles have it.
   include AddonOrigins
 
-  STEPS = { choose: "Choose", tour: "Tour", project: "Project", files: "Files", done: "Done" }.freeze
+  # The five steps as the left column lists them (welcome/_steps). The Shop manual's `welcome` screen
+  # names them this way (2026-11-19): each the question or the thing its page is about.
+  STEPS = { choose: "What for", tour: "The tour", project: "Your first project", files: "Bring files in", done: "Ready" }.freeze
 
   # THE FILES TRACK OFFERS EVERY KIND BUT `print`, which is the 3D track's — stated there, not asked.
   FILES_KINDS = (Maker::Project::KINDS - %w[print]).freeze

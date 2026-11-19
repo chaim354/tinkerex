@@ -1,65 +1,155 @@
-/* The landing (second pass, 2026-10-16): the marketing page at `/` on the public demo's box -- a nav,
-   the pitch beside a wall of twelve renders, how it works, four features with crops, a band on
-   self-hosting, a closing line and a footer (docs/superpowers/specs/2026-10-16-landing-format-wall-
-   design.md). Shared pieces are NOT restyled here: `.brand` comes from shell.css and `.btn` from
-   components.css (design-system.md rule 3); where the landing needs them different it qualifies them
-   inside its own containers. Tokens only. */
+/* THE FRONT DOOR (Shop manual slice 8; spec docs/superpowers/specs/2026-11-18-shop-manual-redesign-design.md
+   §8): the marketing landing at `/` on the public demo's box, the door every signed-out Devise page
+   stands in (users/shared/_door, the `sign-in` screen), the onboarding wizard (`welcome`) and Help
+   (`help`). Design-system.md rules 13 and 15 bind all four.
+
+   Shared pieces are NOT restyled here: `.brand` comes from shell.css, `.btn`, `.field`, `.thumb`,
+   `.fig-num` and `.panel` from components.css (rule 3); where a page needs one different it qualifies
+   it inside its own container. Tokens only, so Graphite follows; the drawing colours on these pages
+   are the renders' own. */
 @layer pages {
-  /* The anonymous layout branch defaults `main` to `.auth-main`, a 440px column for the card alone.
-     The landing opts out with `content_for :container_class, "landing-main"`. A BARE class wins here
-     because `pages` comes after `shell` in the layer order, as `.public-main` does (css_hygiene_test
-     derives the variant from the view and checks it). */
-  .landing-main { max-width: 1200px; padding-top: var(--space-5); padding-bottom: var(--space-8); }
+  /* --- THE DOOR (users/shared/_door): two halves across the whole window, the product named on the
+     left beside one of the app's own renders, the page's boxes on the right; stacked below 900px.
+     The anonymous layout's default container is `auth-main`; the door takes the window, so the
+     column it used to be (440px) is undone here. `main.container.auth-main`, qualified: in this layer
+     a bare class would already win on layer order, and the qualifier keeps it beating shell.css's
+     narrower-width `main.container` paddings by specificity too. --- */
+  main.container.auth-main { max-width: none; padding: 0; }
+
+  .auth-card { display: flex; flex-wrap: wrap; min-height: 100vh; background: var(--bg); }
+  .auth-intro {
+    flex: 1.2 1 520px; min-width: 0; display: flex; flex-direction: column; gap: 22px;
+    padding: 56px 64px; border-right: 2px solid var(--fg);
+  }
+  .auth-intro .brand { padding: 0; font-size: 22px; }
+  .auth-slogan { margin: 14px 0 0; max-width: 9em; font-size: 68px; line-height: .95; font-weight: 800; letter-spacing: -.04em; }
+  .auth-lead { margin: 0; max-width: 30em; font-size: 18px; line-height: 1.45; }
+  .auth-figure { display: flex; align-items: flex-end; gap: 18px; margin: 8px 0 0; }
+  .auth-figure .thumb { flex: 0 0 auto; width: 230px; height: 290px; padding: 14px; }
+  .auth-figure .thumb > .fig-num { position: absolute; left: 8px; top: 8px; z-index: 1; }
+  .auth-figure figcaption { display: flex; flex-direction: column; gap: 6px; padding-bottom: 4px; }
+  .auth-figure-label { font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .auth-figure-file { font: 400 12.5px/1.4 var(--font-mono); color: var(--fg-muted); }
+
+  .auth-forms {
+    flex: 1 1 380px; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 28px;
+    padding: 56px 64px;
+  }
+  /* A BOX: an ink frame, its head a caps label over the frame's own rule, then the body. The page's
+     own box is drawn at 2px and the demo's at 1.5px, as the screen draws them. The demo's box is the
+     bare `.demo-entry` its test reads, qualified here (components.css still spaces it for a card it
+     no longer sits in). */
+  .auth-box { border: 2px solid var(--fg); }
+  .auth-forms .demo-entry { margin: 0; padding: 0; border: 1.5px solid var(--fg); }
+  /* `.auth-card` qualifies the head so it outranks pages/settings.css's `.auth-card h1`, which gave the
+     old card's heading the size of its h2 (UX audit F4) and is not this sheet's to delete. */
+  .auth-card .auth-box-head {
+    margin: 0; padding: 7px 12px; border-bottom: 2px solid var(--fg);
+    font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+  }
+  .auth-forms .demo-entry .auth-box-head { border-bottom-width: 1.5px; }
+  .auth-box-body { display: flex; flex-direction: column; gap: 14px; padding: 16px; }
+  .auth-box-body > form { display: flex; flex-direction: column; gap: 14px; }
+  .auth-box-body p { margin: 0; }
+  .auth-box-body .field { margin: 0; }
+  .auth-card .field input { max-width: none; }
+  .auth-box-body .field-inline { margin: 0; font-weight: 600; }
+  .auth-box-body .field-inline input { width: 16px; height: 16px; margin: 0; }
+  .auth-box-body .actions { margin: 0; }
+  .auth-box-body .actions input[type="submit"] { width: 100%; min-height: 40px; }
+  .auth-box-body .form-errors { margin: 0; }
+  .auth-hint { font-size: 12px; color: var(--fg-muted); }
+  .auth-box-body > .auth-hint { font-size: 13.5px; }
+  .auth-forms .demo-entry .auth-hint { margin: 0; color: var(--fg); font-size: 14.5px; }
+  .auth-forms .demo-entry form { margin: 0; }
+  .auth-links { list-style: none; display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; font-size: 13.5px; }
+  .auth-links a { font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
+  .auth-note { margin: 0; font: 400 12.5px/1.4 var(--font-mono); color: var(--fg-muted); }
+
+  @media (max-width: 1099px) {
+    .auth-intro, .auth-forms { padding: 40px 40px; }
+    .auth-slogan { font-size: 52px; }
+  }
+  /* STACKED: the name and the sentence, then the boxes. The figure and the lead leave, so a phone
+     meets the form on its first screen; the intro's rule turns to run under it. */
+  @media (max-width: 899px) {
+    .auth-card { flex-direction: column; flex-wrap: nowrap; }
+    .auth-intro { flex: 0 0 auto; gap: 12px; padding: 24px 16px 20px; border-right: 0; border-bottom: 2px solid var(--fg); }
+    .auth-slogan { margin-top: 6px; font-size: 34px; }
+    .auth-lead, .auth-figure { display: none; }
+    .auth-forms { flex: 1 0 auto; justify-content: flex-start; gap: 20px; padding: 24px 16px 48px; }
+  }
+
+  /* --- THE LANDING (2026-10-16; restyled in slice 8): the marketing page at `/` on the public demo's
+     box, in the manual's vocabulary: a nav over a 2px ink rule, a title at 800 tracked in, the wall
+     of renders as figures on the ink-on-paper card, numbered steps, and plates of facts. --- */
+  /* The anonymous layout branch defaults `main` to `.auth-main`, the door's full window. The landing
+     opts out with `content_for :container_class, "landing-main"`. A BARE class wins here because
+     `pages` comes after `shell` in the layer order, as `.public-main` does (css_hygiene_test derives
+     the variant from the view and checks it). */
+  .landing-main { max-width: 1200px; padding-top: 0; padding-bottom: var(--space-8); }
 
   .landing { display: grid; gap: var(--space-8); }
   .landing h2, .landing h3, .landing p { margin: 0; }
 
-  /* NAV. The shell's `.brand` (shell.css; the strip's wordmark), reused, flush with the page's edge. */
-  .landing-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); }
+  /* NAV. The shell's `.brand`, reused, flush with the page's edge, over the strip's 2px ink rule. */
+  .landing-nav {
+    display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4);
+    min-height: var(--strip-height); border-bottom: 2px solid var(--fg);
+  }
   .landing-nav .brand { padding: 0; }
-  .landing-nav-links { display: flex; gap: var(--space-5); font-size: 14px; }
-  .landing-nav-links a, .landing-footer a { color: var(--fg-muted); }
-  .landing-nav-links a:hover, .landing-footer a:hover { color: var(--fg); }
+  .landing-nav-links { display: flex; flex-wrap: wrap; gap: var(--space-2) 22px; font-size: 14px; font-weight: 500; }
+  .landing-nav-links a, .landing-footer a { color: var(--fg); }
+  .landing-nav-links a:hover, .landing-footer a:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
 
   /* HERO: the pitch, then the wall on a phone; side by side from 900px. `minmax(0, …)` and never a
      bare `fr`: a track's default minimum is its content's min-width, and a row of 256px images would
      hold it open past a phone's viewport (rule 11). */
   .landing-hero { display: grid; gap: var(--space-6); grid-template-columns: minmax(0, 1fr); align-items: center; }
   @media (min-width: 900px) { .landing-hero { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: var(--space-7); } }
-  .landing-title { font-size: 40px; line-height: 46px; font-weight: 600; letter-spacing: -0.02em; max-width: 16ch; margin-bottom: var(--space-4); }
-  .landing .landing-lede { font-size: 17px; line-height: 26px; color: var(--fg-muted); max-width: 52ch; margin-bottom: var(--space-5); }
-  .landing-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+  .landing-title {
+    max-width: 10em; margin-bottom: 22px; font-size: clamp(36px, 3vw + 18px, 64px); line-height: .95;
+    font-weight: 800; letter-spacing: -.04em;
+  }
+  .landing .landing-lede { max-width: 32em; margin-bottom: var(--space-5); font-size: 17px; line-height: 1.45; }
+  .landing-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
   .landing-actions form { margin: 0; }
-  .landing .landing-hint { margin-top: var(--space-3); font-size: 13px; line-height: 18px; color: var(--fg-muted); }
+  .landing .landing-hint { margin-top: var(--space-3); font: 400 12.5px/1.4 var(--font-mono); color: var(--fg-muted); }
 
   /* THE WALL: three across on a phone, four from 900px. Each tile is the app's own render, so it
      sits on the thumb stage, white in both themes (rule 5): most tiles are TRANSPARENT PNGs of dark
-     lines, drawn for a white stage, and would vanish on the dark theme's surface.
-     The extension is mono because it is data, on a stage-coloured chip. The render is INSET, with the
-     bottom 24px kept for that chip (6px off the edge plus its 16px line), so no drawing runs into the
-     frame or under its own label -- seen on the first look at the page, where both did. */
+     lines, drawn for a white stage, and would vanish on the dark theme's surface. A tile is a figure
+     in a hairline frame, square-cornered as every figure is; the extension under it is data, so
+     mono. The render is INSET, with the bottom 24px kept for that label, so no drawing runs into the
+     frame or under its own label. */
   .landing-wall-figure { margin: 0; }
-  .landing-wall-figure figcaption { margin-top: var(--space-3); font-size: 13px; line-height: 18px; color: var(--fg-muted); }
+  .landing-wall-figure figcaption { margin-top: var(--space-3); font: 400 12.5px/1.4 var(--font-mono); color: var(--fg-muted); }
   .landing-wall { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-2); grid-template-columns: repeat(3, minmax(0, 1fr)); }
   @media (min-width: 900px) { .landing-wall { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); } }
   /* The wall's tiles are the app's own renders, so they are ink on paper like every tile
      (design-system.md rule 5): isolated, and multiplied onto the card. */
-  .landing-tile { position: relative; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--thumb-stage); isolation: isolate; }
+  .landing-tile { position: relative; aspect-ratio: 1; overflow: hidden; border: 1px solid var(--line); border-radius: 0; background: var(--thumb-stage); isolation: isolate; }
   .landing-tile img { display: block; width: 100%; height: 100%; object-fit: contain; padding: var(--space-2) var(--space-2) var(--space-5); mix-blend-mode: multiply; }
-  .landing-tile-ext { position: absolute; left: 6px; bottom: 6px; padding: 0 4px; border-radius: var(--radius-control); background: var(--thumb-stage); color: var(--thumb-ink); font-family: var(--font-mono); font-size: 11px; line-height: 16px; }
+  .landing-tile-ext { position: absolute; left: 6px; bottom: 6px; padding: 0 4px; border-radius: 0; background: var(--thumb-stage); color: var(--thumb-ink); font: 700 11px/16px var(--font-mono); letter-spacing: .06em; }
 
-  .landing .landing-section-title { font-size: 24px; line-height: 30px; font-weight: 600; letter-spacing: -0.01em; margin-bottom: var(--space-5); }
+  /* A SECTION'S HEAD is a panel's: 800 20px over a 2px ink rule. */
+  .landing .landing-section-title {
+    margin-bottom: var(--space-5); padding-bottom: 6px; border-bottom: 2px solid var(--fg);
+    font-size: 20px; line-height: 1.2; font-weight: 800; letter-spacing: -.01em;
+  }
 
-  /* HOW IT WORKS: three numbered steps, one row from 720px. */
+  /* HOW IT WORKS: three numbered steps, one row from 720px. The number is mono, as every ordinal in
+     the manual is. */
   .landing-steps ol { list-style: none; margin: 0; padding: 0; counter-reset: step; display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 1fr); }
-  @media (min-width: 720px) { .landing-steps ol { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-  .landing-steps li { counter-increment: step; padding-top: var(--space-4); border-top: 1px solid var(--line); }
-  .landing-steps li::before { content: counter(step); display: block; margin-bottom: var(--space-2); font-family: var(--font-mono); font-size: 13px; color: var(--fg-muted); }
-  .landing .landing-steps h3 { font-size: 17px; line-height: 24px; font-weight: 600; margin-bottom: var(--space-2); }
-  .landing-steps p, .landing-feature-text p, .landing-own p, .landing-closing p { font-size: 15px; line-height: 23px; color: var(--fg-muted); }
+  @media (min-width: 720px) { .landing-steps ol { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-6); } }
+  .landing-steps li { counter-increment: step; }
+  .landing-steps li::before { content: counter(step); display: block; margin-bottom: var(--space-2); font: 700 22px/1.1 var(--font-mono); }
+  .landing .landing-steps h3 { margin-bottom: var(--space-2); font-size: 17px; line-height: 1.3; font-weight: 800; }
+  .landing-steps p, .landing-feature-text p, .landing-own p, .landing-closing p { font-size: 14.5px; line-height: 1.45; }
 
   /* FEATURES: the text beside its crop from 900px, alternating sides; the crop under the text below.
-     Counted inside `.landing-features`, so `:nth-child` sees features only. */
+     Counted inside `.landing-features`, so `:nth-child` sees features only. A crop is the app
+     photographed, framed by a hairline like any figure. */
   .landing-features { display: grid; gap: var(--space-8); }
   .landing-feature { display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 1fr); align-items: center; }
   @media (min-width: 900px) {
@@ -67,27 +157,102 @@
     .landing-feature:nth-child(even) { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); }
     .landing-feature:nth-child(even) .landing-feature-text { order: 2; }
   }
-  .landing .landing-feature h2 { font-size: 22px; line-height: 28px; font-weight: 600; margin-bottom: var(--space-3); }
+  .landing .landing-feature h2 { margin-bottom: var(--space-3); font-size: 26px; line-height: 1.05; font-weight: 800; letter-spacing: -.02em; }
   .landing-feature-shot { margin: 0; }
-  .landing-feature-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
+  .landing-feature-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 0; background: var(--surface); }
 
-  /* YOURS, ON YOUR BOX: four short cells in a panel, two across on a phone. */
-  .landing-own { padding: var(--space-6); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
-  .landing-own ul { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--space-5); grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* YOURS, ON YOUR BOX: a plate of four facts. A 2px ink box whose head is a caps label over its own
+     rule, the facts two across on a phone and four from 900px. */
+  .landing-own { border: 2px solid var(--fg); background: var(--surface); }
+  .landing .landing-own .landing-section-title {
+    margin: 0; padding: 7px 12px; border-bottom-width: 2px;
+    font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+  }
+  .landing-own ul { list-style: none; margin: 0; padding: var(--space-4); display: grid; gap: var(--space-5); grid-template-columns: repeat(2, minmax(0, 1fr)); }
   @media (min-width: 900px) { .landing-own ul { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
-  .landing .landing-own h3 { font-size: 15px; line-height: 22px; font-weight: 600; margin-bottom: var(--space-1); }
+  .landing .landing-own h3 { margin-bottom: var(--space-1); font-size: 15px; line-height: 1.3; font-weight: 800; }
 
   /* CLOSING AND FOOTER. */
-  .landing-closing { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-5); padding-top: var(--space-6); border-top: 1px solid var(--line); }
-  .landing .landing-closing h2 { font-size: 22px; line-height: 28px; font-weight: 600; margin-bottom: var(--space-1); }
-  .landing-footer { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); font-size: 13px; color: var(--fg-muted); }
+  .landing-closing { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-5); padding-top: var(--space-6); border-top: 2px solid var(--fg); }
+  .landing .landing-closing h2 { margin-bottom: var(--space-1); font-size: 26px; line-height: 1.05; font-weight: 800; letter-spacing: -.02em; }
+  .landing-footer { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-5); padding-top: var(--space-4); border-top: 1px solid var(--line); font: 400 12.5px/1.4 var(--font-mono); color: var(--fg-muted); }
+  .landing-footer a { text-decoration: underline; text-underline-offset: 3px; }
 
   @media (max-width: 899px) {
     .landing { gap: var(--space-7); }
-    .landing-title { font-size: 30px; line-height: 36px; }
-    .landing .landing-lede { font-size: 15px; line-height: 23px; }
-    /* The panel's desktop padding left each of the four cells about 130px at 375, wrapping a
-       two-word heading onto two lines. */
-    .landing-own { padding: var(--space-5) var(--space-4); }
+    .landing .landing-lede { font-size: 15px; }
+    .landing .landing-feature h2, .landing .landing-closing h2 { font-size: 22px; }
+    .landing-own ul { padding: var(--space-4) var(--space-3); }
   }
+
+  /* --- THE ONBOARDING WIZARD (welcome/*; the `welcome` screen): five steps, listed in the left
+     column (welcome/_steps), the step on screen named in the caps path. Its sheet moved here from
+     pages/home.css in slice 8, the front door's sheet. --- */
+  .welcome-steps { list-style: none; margin: 0; padding: 0; }
+  .welcome-steps .column-row { cursor: default; }
+  .welcome-steps .column-row:hover { text-decoration: none; }
+  .welcome-files, .welcome-kind, .welcome-other-way, .welcome-empty { max-width: 38em; }
+  /* THE CHOICE: two equal boxes, each a figure over its words. The whole box is the link; its
+     "Choose this" is drawn as a button but is a span inside it, outlined, because the two are equal
+     and neither is the page's primary (accent_spend_test.rb: Choose spends nothing). */
+  .welcome-choices { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 40px; margin: 0 0 var(--space-5); }
+  .welcome-choice { display: flex; flex-direction: column; min-width: 0; border: 2px solid var(--fg); color: var(--fg); text-decoration: none; }
+  .welcome-choice:hover { color: var(--fg); text-decoration: none; }
+  .welcome-choice:hover .btn { background: var(--raised); }
+  .welcome-choice .thumb { position: relative; height: 300px; padding: 18px; border: 0; border-bottom: 2px solid var(--fg); }
+  .welcome-choice .thumb img { width: auto; max-width: 100%; height: 100%; }
+  .welcome-choice .thumb > .fig-num { position: absolute; left: 10px; top: 10px; z-index: 1; }
+  .welcome-choice-body { display: flex; flex-direction: column; align-items: flex-start; gap: 10px; padding: 16px; }
+  .welcome-choice h2 { margin: 0; font-size: 26px; line-height: 1.05; font-weight: 800; letter-spacing: -.02em; }
+  .welcome-choice p { margin: 0; font-size: 15px; }
+  /* THE TOUR: a grid of boxed cards, each an optional shot over its head and its sentences. */
+  .welcome-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr)); gap: var(--space-5); }
+  .welcome-cards .welcome-card { display: flex; flex-direction: column; gap: var(--space-2); padding: 0 0 var(--space-4); border: 2px solid var(--fg); }
+  .welcome-cards .welcome-card > :not(.welcome-shot) { margin-left: var(--space-4); margin-right: var(--space-4); }
+  .welcome-cards .welcome-card > :first-child:not(.welcome-shot) { margin-top: var(--space-4); }
+  .welcome-card h2 { margin: 0; font-size: 20px; line-height: 1.2; }
+  .welcome-card p { margin: 0; font-size: 14.5px; line-height: 1.45; }
+  /* The shared where-files-come-from partial (shared/_where_files_come_from) wraps its paragraphs. */
+  .welcome-card > div { display: flex; flex-direction: column; gap: var(--space-2); }
+  .welcome-card strong { font-weight: 700; }
+  .welcome-shot { display: block; width: 100%; height: auto; margin: 0 0 var(--space-2); border-bottom: 2px solid var(--fg); }
+  .welcome-where { font: 400 12.5px/1.4 var(--font-mono); color: var(--fg-muted); }
+  .welcome-where a { color: var(--fg); font-weight: 700; }
+  .welcome-nav { display: flex; flex-wrap: wrap; gap: var(--space-2) var(--space-3); align-items: center; margin-top: var(--space-6); padding-top: var(--space-4); border-top: 2px solid var(--fg); }
+  .welcome-nav .welcome-skip { margin-left: auto; }
+  /* A group head on Done is a folder NAME, so it keeps its case: the caps label's face without the caps. */
+  .welcome-landed h3 { margin: var(--space-5) 0 var(--space-2); font: 700 12.5px/16px var(--font-mono); color: var(--fg-muted); }
+  .welcome-files p, .welcome-empty, .welcome-kind, .welcome-other-way { font-size: 14.5px; line-height: 1.45; }
+  .welcome-folder-pending p { margin: 0 0 var(--space-2); }
+  .welcome-skip { margin: 0; }
+  .project-form + .welcome-skip, .welcome-note { margin-top: var(--space-3); }
+  @media (max-width: 719px) {
+    .welcome-choice .thumb { height: 200px; }
+    .welcome-choice h2 { font-size: 22px; }
+  }
+
+  /* --- HELP (help/show; the `help` screen): the head, then the sections in two columns from 1200px,
+     packed shortest column first by masonry_controller.js (the project page's mechanism), each under
+     a numbered section head. The number is a counter, so a heading's text stays its name
+     (help_page_test.rb reads `h2#inventory` as "Inventory"). The column numbers its rows to match. --- */
+  .help-head .page-title { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; }
+  .help-sections.prose { max-width: none; font-size: 14.5px; line-height: 1.45; }
+  .help-sections { display: grid; grid-template-columns: minmax(0, 1fr); column-gap: 40px; row-gap: var(--space-4); counter-reset: help; }
+  @media (min-width: 1200px) { .help-sections { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .help-sections.masonry { grid-auto-rows: 1px; row-gap: 0; align-items: start; }
+  .help-sections > section { min-width: 0; padding-bottom: var(--space-5); }
+  .help-sections > section > h2 {
+    display: flex; align-items: baseline; gap: 12px; margin: 0 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--fg);
+    font-size: 20px; line-height: 1.2; font-weight: 800; letter-spacing: -.01em;
+  }
+  .help-sections > section > h2::before { counter-increment: help; content: counter(help); font: 700 20px/1.2 var(--font-mono); letter-spacing: 0; }
+  .help-sections p { max-width: 36em; margin: 0 0 10px; }
+  .help-sections code, .help-server code { font-size: 12.5px; }
+  .help-server { max-width: 48em; margin-top: var(--space-5); border: 1.5px solid var(--fg); font-size: 14.5px; line-height: 1.45; }
+  .help-server > summary {
+    padding: 7px 12px; cursor: pointer;
+    font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+  }
+  .help-server[open] > summary { border-bottom: 1.5px solid var(--fg); }
+  .help-server > p { margin: 10px 12px; }
 }

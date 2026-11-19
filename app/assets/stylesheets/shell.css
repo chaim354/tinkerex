@@ -131,6 +131,9 @@
   .column-row[aria-current]::before { background: var(--accent); }
   .column-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .column-row-note { flex: 0 0 auto; font: 400 12px/1 var(--font-mono); color: var(--fg-muted); }
+  /* A NUMBERED ROW (slice 8: Help's sections, the wizard's steps): the number mono 700 in an 18px slot
+     between the square and the name, as the screens number a manual's parts. */
+  .column-row-num { flex: 0 0 18px; font: 700 13.5px/1 var(--font-mono); }
   .column-row--more .column-row-name { color: var(--fg-muted); }
   .column-scrim { display: none; }
 
@@ -162,23 +165,8 @@
 
   .tabbar { display: none; }
 
-  /* Signed-out pages: the auth card. */
-  /* QUALIFIED `main.container.auth-main`, NOT a bare `.auth-main`, and the qualifier is the whole
-     rule. Both live in this layer, so specificity decides, and `main.container` (0,1,1) outranks a
-     bare `.auth-main` (0,1,0) — so from the day this shipped the auth card computed max-width
-     1360px and padding-top 20px, i.e. neither declaration here ever applied and every sign-in and
-     sign-up page rendered full width. `container-wide` three lines up is the same shape written
-     correctly and is why that one has always worked. Measured on /users/sign_up at 1440px; guarded
-     by test/system/shell_test.rb, which reads the COMPUTED value — a static check on this file
-     cannot see a specificity loss. */
-  main.container.auth-main { max-width: 440px; padding-top: var(--space-7); }
-  .auth-card { padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
-  .auth-card .brand { padding: 0; margin-bottom: 18px; }
-  .auth-card h2 { font-size: 18px; margin: 0 0 16px; }
-  .auth-card .field input { max-width: none; }
-  .auth-card .actions { margin-top: 8px; }
-  .auth-hint { font-size: 12px; color: var(--fg-muted); }
-  .auth-links { list-style: none; margin: 16px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  /* Signed-out pages: the door (Devise's pages, users/shared/_door) is drawn by pages/landing.css,
+     the front door's sheet, since Shop manual slice 8; only the error box below stays here. */
   #error_explanation {
     margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radius-control);
     border: 1px solid var(--danger); background: var(--danger-soft); color: var(--fg); font-size: 13px;

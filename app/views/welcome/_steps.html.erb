@@ -1,9 +1,24 @@
 <%# locals: (current:) %>
-<%# WHERE THE PERSON IS IN THE FIVE STEPS. Text, not links: Back and Next on each page are the way
-    between steps, so a step not reached yet is never a link to a page that needs a project nobody
-    has made. A native <ol>, so a screen reader hears the count. %>
-<ol class="welcome-steps">
-  <% WelcomeController::STEPS.each do |key, label| %>
-    <%= tag.li label, class: ("is-current" if key == current), "aria-current": ("step" if key == current) %>
-  <% end %>
-</ol>
+<%# WHERE THE PERSON IS IN THE FIVE STEPS (Shop manual slice 8; the `welcome` screen): the step on
+    screen as the page's caps path ("Step 2 of 5"), and the five listed in the left column, the
+    current one lit with the column's square. Rendered from each step's page, it writes both slots
+    and draws nothing where it is called. The wizard is Home's section, so this replaces Home's column
+    for its five pages (`content_for :column`, design-system.md rule 8).
+
+    Text, not links: Back and Next on each page are the way between steps, so a step not reached yet
+    is never a link to a page that needs a project nobody has made. A native <ol>, so a screen reader
+    hears the count; `aria-current="step"`, the token for a place in a process. %>
+<% keys = WelcomeController::STEPS.keys %>
+<% content_for :crumbs, "Step #{keys.index(current) + 1} of #{keys.size}" %>
+<% content_for :column do %>
+  <div class="column-group">
+    <h2 class="column-head">Getting started</h2>
+    <ol class="welcome-steps">
+      <% WelcomeController::STEPS.each_with_index do |(key, label), i| %>
+        <%= tag.li class: "column-row", "aria-current": ("step" if key == current) do %>
+          <span class="column-row-num"><%= i + 1 %></span><span class="column-row-name"><%= label %></span>
+        <% end %>
+      <% end %>
+    </ol>
+  </div>
+<% end %>
