@@ -2,21 +2,20 @@
   The project folder's ROOT, shown as the Files panel (stage 3, S3-1; folder panels 2026-09-08):
   the Recently changed row first (slice 6 — the newest files ANYWHERE under the folder, the one
   part of this panel that reaches into subfolders), then loose root files (the sweep's inbox), then
-  Generated (tool output, once, never repeated in the folder it sits in), Backups, and every
-  attachment that points OUTSIDE the folder ("Linked from elsewhere"). Each real SUBFOLDER is its
-  own panel now — see the note below.
-  Maker::ProjectFolderListing (@listing) computes the tree, the loose files and the cross-cutting
-  Backups list; ProjectsController#show computes Generated (Maker::AddonOrigin.for) and Linked
-  (diffing @attachments against @listing's own tree).
+  Backups. Each real SUBFOLDER is its own panel now — see the note below. Maker::ProjectFolderListing
+  (@listing) computes the tree, the loose files and the cross-cutting Backups list.
+
+  NO GENERATED AND NO "LINKED FROM ELSEWHERE" GROUP (2026-11-19, the owner's call). Tool output is a
+  file in whichever folder holds it and shows in that folder's panel like any other; an attachment
+  to a file living outside the project's folder is not drawn on this page at all.
 
   THE FOLDER AND THE RELATION ARE TWO DIFFERENT THINGS, AND THE PANEL SHOWS BOTH. `@attachments` is
   the file→project RELATION ProjectsController#show has always computed (detach, cover, addon
   origin, the missing count) — but a file dropped straight into the project's folder on the NAS is
   listed here even though nothing ever attached it: the folder IS the relation for a plain folder
-  row, whose `attachment` is nil. A file that IS attached but still lives somewhere else in the
-  library renders once, in Linked, with Detach and a button to move it in. `@page_nodes` (PageNodes)
-  is what the Linked rows below (and the build-log photos elsewhere on this page) read to find
-  their node; a folder row needs no such lookup — its node comes straight off the listing's own walk.
+  row, whose `attachment` is nil. `@page_nodes` (PageNodes) is what the build-log photos elsewhere on
+  this page read to find their node; a folder row needs no such lookup — its node comes straight
+  off the listing's own walk.
 
   `@missing_attachment_count` — attached rows whose node ProjectsController#show could not find
   live at all — is unrelated to either list above and is reported on its own, below.
@@ -24,7 +23,7 @@
   `@page_thumbs` (ThumbnailMap) is best-effort and INDEPENDENT OF LIVENESS, which is the distinction
   to keep: a backend blip degrades a tile to its format badge, a different condition from a file
   being gone. It is exactly why liveness reads `nodes.present` and not the port, for the folder
-  listing as much as for the Linked rows — ThumbnailMap rescues FetchError to {}, so an unmounted
+  listing as much as for the build-log photos — ThumbnailMap rescues FetchError to {}, so an unmounted
   NAS would otherwise empty this panel and report every file deleted. Pinned by page_nodes_test.rb.
 
   ONE `thumbs` controller wraps every group in THIS panel rather than one per grid: Stimulus finds
@@ -40,9 +39,9 @@
 
   THE PANEL IS THE FOLDER'S ROOT NOW, NOT THE WHOLE TREE (2026-09-08, folder panels; spec
   decision 4). Every DEPTH-ONE subfolder is its own panel (projects/_folder_panel), so the
-  `file_tree_section` collection render that used to sit between Loose and Generated is gone from
+  `file_tree_section` collection render that used to sit after Loose is gone from
   here — deleting it is what stops a folder rendering twice. What stays is everything that is NOT
-  a subfolder: the root's card, Loose, and the cross-cutting Generated, Backups and Linked groups,
+  a subfolder: the root's card, Loose, and the cross-cutting Backups group,
   plus the truncation and missing-attachment notes.
 
   `view` IS THIS PANEL'S OWN, read once here off @panel_layout and passed DOWN as a required local
@@ -164,31 +163,29 @@
       NODE's name rather than any attachment's label — a folder row carries no attachment at all,
       and Row#backup? always reads the node. They keep their own closed section rather than being
       dropped: a rescue copy is still a real file in the project's folder, and a panel that
-      pretended otherwise would be lying about what is on disk. Filtered against @generated_ids
-      like every other group, for the rare case an
-      addon's own output happens to look like one. %>
+      pretended otherwise would be lying about what is on disk. %>
   <%# A BACKUP THAT STACKS WITH A FILE BESIDE IT IS DRAWN IN THAT STACK, in its own panel, and so not
       here as well (spec §9; ProjectsController#load_version_stacks). %>
-  <% backups = @listing.backups.reject { |r| @generated_ids.include?(r.node_id) || @stacks.stacked?(r.node_id) } %>
+  <% backups = @listing.backups.reject { |r| @stacks.stacked?(r.node_id) } %>
   <%# THE README THE README PANEL RENDERS IS NOT LOOSE (2026-11-02, the UX audit's C3): it is the
       project's own description, the filing pass never moves it (`:project_readme`), and listing it
       under Loose beside "a README stays here" contradicted itself in one sentence. It is still in
       Recently changed and in the Library. Only the card's row leaves: a second README-named file
       stays listed, and its row says why it stays. %>
-  <% loose = @listing.loose.reject { |r| @generated_ids.include?(r.node_id) || r.node_id == @readme_row&.node_id } %>
-  <% if @listing.tree.empty? && loose.empty? && @readme_row.nil? && backups.empty? && @linked_rows.empty? &&
-        @generated.empty? && @missing_attachment_count.zero? && !@listing.truncated? %>
+  <% loose = @listing.loose.reject { |r| r.node_id == @readme_row&.node_id } %>
+  <% if @listing.tree.empty? && loose.empty? && @readme_row.nil? && backups.empty? &&
+        @missing_attachment_count.zero? && !@listing.truncated? %>
     <%# THE TREE STAYS IN THIS TEST THOUGH ITS SECTIONS LEFT: the sentence is about the PROJECT,
         not about this panel, and a project whose folder holds nothing but subfolders has files —
         they are in the panels below. Saying "no files in this project yet" over three full folder
         panels would be the flat lie the folder-missing note above exists to avoid. %>
     <p class="muted">No files in this project yet.<% if @listing.available? %> Upload one, or drop files into <span class="mono"><%= @listing.path %></span>.<% end %></p>
   <% else %>
-    <%# THE WRAPPER IS CONDITIONAL because this panel's groups are, all five of them: with the
+    <%# THE WRAPPER IS CONDITIONAL because this panel's groups are, all three of them: with the
         subfolder sections gone, a folder holding only subfolders and no recent file leaves nothing
         here to poll or right-click, and an empty `thumbs` div would be a controller instance over
         no cells. %>
-    <% if @recent_files.any? || loose.any? || @generated.any? || backups.any? || @linked_rows.any? %>
+    <% if @recent_files.any? || loose.any? || backups.any? %>
       <div data-controller="thumbs filemenu stack" data-thumbs-url-value="<%= thumbnails_files_path %>">
         <%#
           RECENTLY CHANGED (structural redesign §6, slice 6): the newest files ANYWHERE under the
@@ -201,7 +198,7 @@
 
           THE SAME TILE, NEVER A SECOND PARTIAL: the listing's own Row where it holds the node, else
           the minimal folder Row the listing itself builds — a recent file past FILE_CAP is still a
-          folder file, never Linked. Always tiles, whatever this panel's view, because a row of
+          folder file. Always tiles, whatever this panel's view, because a row of
           tiles is what the row is. Each opens the file (projects/_file_tile).
         %>
         <% if @recent_files.any? %>
@@ -242,23 +239,11 @@
           <% end %>
         <% end %>
 
-        <%# TOOL OUTPUT, once, never repeated inside whichever section it sits in. %>
-        <% if @generated.any? %>
-          <%= render "generated_group", view: %>
-        <% end %>
-
         <%# COLLAPSED, and that is the whole of "don't show the backups": they are one click away
             rather than gone, so nothing about the project's folder is hidden from someone looking
             for it. %>
         <% if backups.any? %>
           <%= render "attachment_group", key: "backups", label: "Backups", rows: backups, open: false, view: %>
-        <% end %>
-
-        <%# ATTACHED, BUT LIVING ELSEWHERE. Not a folder row and not counted in @listing.total — its
-            own section, always open, so it reads as "these still need your attention" rather than
-            being buried among the folder's own files. %>
-        <% if @linked_rows.any? %>
-          <%= render "attachment_group", key: "linked", label: "Linked from elsewhere", rows: @linked_rows, open: true, view: %>
         <% end %>
       </div>
     <% end %>

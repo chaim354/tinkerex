@@ -56,24 +56,6 @@ module Web
       assert_select "section.models-panel.panel--quiet", 0
     end
 
-    test "a linked model's files leave Linked from elsewhere" do
-      attach(@knob)
-
-      get project_path(@project)
-
-      assert_no_match "Linked from elsewhere", response.body
-    end
-
-    test "with the panel hidden, a linked model's files stay in Linked from elsewhere" do
-      attach(@knob)
-      @project.update!(panels: { "hidden" => %w[models] })
-
-      get project_path(@project)
-
-      assert_select "section.models-panel", count: 0
-      assert_match "Linked from elsewhere", response.body
-    end
-
     test "a project with no models says so beside Add model" do
       bare = @user.maker_projects.create!(name: "Bare")
       project_folder_rows!(@user, bare)

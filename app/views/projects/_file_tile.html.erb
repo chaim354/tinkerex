@@ -1,7 +1,6 @@
 <%#
-  ONE ROW'S TILE — thumbnail + name, plus (for a Linked row only) the Detach/Move-into-project
-  corner. Extracted from _attachment_group.html.erb (stage 3, S3-1) so _file_tree_section.html.erb
-  and _generated_group.html.erb can render the identical tile without a second copy of the
+  ONE ROW'S TILE — thumbnail + name. Extracted from _attachment_group.html.erb (stage 3, S3-1) so
+  _file_tree_section.html.erb and the folder panels can render the identical tile without a second copy of the
   thumb_cell_data/file_menu_data wire contract (docs/invariants/files-preview.md).
 
   Local: row (Maker::ProjectFolderListing::Row). Reads @project, @addon_origins and @page_thumbs
@@ -18,10 +17,6 @@
 
   Optional local `notes` ({ node_id => sentence }, projects/_attachment_group): one muted line under
   the name, OUTSIDE the link, so it reads as a fact about the file rather than part of its name.
-
-  DETACH IS THE PAGE'S ONE DESTRUCTIVE SHAPE (2026-11-02, the UX audit's C4): `linkbtn danger
-  small`, the shape Remove and Delete wear in every panel, with a confirm naming the file and the
-  project. The Linked list row offers the same two controls (projects/_file_rows).
 %>
 <% node = row.node %>
 <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
@@ -46,5 +41,4 @@
     <%= button_to "Put back", file_stack_exclusion_path(row.node_id), method: :delete, class: "linkbtn stack-put-back",
                   form_class: "stack-put-back-form", aria: { label: "Put #{node.name} back in its stack" } %>
   <% end %>
-  <%= render "projects/linked_actions", row: row, node: node, tile: true %>
 </div>

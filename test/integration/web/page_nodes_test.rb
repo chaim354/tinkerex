@@ -159,6 +159,7 @@ module Web
     test "a node on both surfaces resolves from the one map" do
       project = @user.maker_projects.create!(name: "Shared")
       node = file!("both", "shared.stl")
+      @user.nodes.find_by!(node_id: node).update!(parent_node_id: project_folder_rows!(@user, project).node_id)
       project.file_attachments.create!(user: @user, node_id: node, role: "model")
       entry = project.build_log_entries.create!(user: @user, body: "same file", logged_at: Time.current)
       entry.file_attachments.create!(user: @user, node_id: node, role: "image")
@@ -178,8 +179,9 @@ module Web
     # told by the one degradation path the maker layer exists to be independent of.
     test "a FetchError from the port still renders every attachment" do
       project = @user.maker_projects.create!(name: "Unmounted")
-      project.file_attachments.create!(user: @user, node_id: file!("nas-1", "bracket.stl"),
-                                       role: "model")
+      bracket = file!("nas-1", "bracket.stl")
+      @user.nodes.find_by!(node_id: bracket).update!(parent_node_id: project_folder_rows!(@user, project).node_id)
+      project.file_attachments.create!(user: @user, node_id: bracket, role: "model")
       entry = project.build_log_entries.create!(user: @user, body: "day one", logged_at: Time.current)
       entry.file_attachments.create!(user: @user, node_id: file!("nas-2", "shot.png"), role: "image")
 

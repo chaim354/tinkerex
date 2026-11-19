@@ -1,6 +1,6 @@
 <%#
-  One collapsible cross-cutting group of the project Files panel — Loose, Backups and Linked
-  from elsewhere (a real subfolder renders through _file_tree_section.html.erb instead, since
+  One collapsible cross-cutting group of the project Files panel — Loose and Backups (a real
+  subfolder renders through _file_tree_section.html.erb instead, since
   stage 3, S3-1 made sections the folder's own subfolders rather than a role derived from the
   filename).
 
@@ -8,18 +8,12 @@
   label, rows (Maker::ProjectFolderListing::Row), open (Boolean), view (one of
   Maker::Project::VIEWS — the ENCLOSING PANEL's, passed down; see below).
 
-  A ROW IS A FOLDER FILE OR A LINKED ATTACHMENT, AND row.linked? IS THE ONLY BRANCH IN THIS
-  PARTIAL (inside _file_tile.html.erb, which owns it). A folder row's node comes straight from the
-  listing's own walk and carries no attachment at all (row.attachment is nil) — there is nothing
-  to detach and nowhere else in the library the file already lives, so its tile is the thumbnail
-  alone. A linked row's node is attached to this project but living somewhere else in the library,
-  so its tile also carries a corner: Detach (severs the reference; the file itself is kept) and
-  Move into project (Maker::AttachToProject#relocate under the file's own name — the same door the
-  collision prompt's "Move it in as…" button posts to, in _move_conflict.html.erb).
+  A ROW IS A FOLDER FILE: its node comes straight from the listing's own walk, so its tile is the
+  thumbnail alone.
 
   TILES OR LIST, AS THE ENCLOSING PANEL WAS TOLD (`view`, a REQUIRED local since 2026-09-08) —
   _file_rows.html.erb draws the same rows as a table when the panel is in list mode, so
-  Loose/Backups/Linked switch exactly the way a folder panel's own files do. It was `@view`, one
+  Loose and Backups switch exactly the way a folder panel's own files do. It was `@view`, one
   page-wide cookie, until the view became per panel (spec decision 6): an ivar cannot say WHICH
   panel is asking, and a group renders inside exactly one.
 
@@ -37,7 +31,7 @@
 %>
 <% notes = local_assigns.fetch(:notes, {}) %>
 <%# `folder_id` (optional): the folder these rows sit in, when the group's panel may stack them — only
-    Loose passes it (ProjectsHelper#stack_figures). Backups and Linked never stack. %>
+    Loose passes it (ProjectsHelper#stack_figures). Backups never stack. %>
 <% figures = local_assigns.key?(:folder_id) ? stack_figures(rows, folder_id: folder_id) : rows %>
 <section class="attachment-group">
   <details <%= "open" if open %>>

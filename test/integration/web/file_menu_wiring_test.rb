@@ -45,6 +45,7 @@ module Web
 
     test "a project's attachment tiles offer one as well" do
       project = @user.maker_projects.create!(name: "Lamp")
+      @user.nodes.find_by!(node_id: "n-stl").update!(parent_node_id: project_folder_rows!(@user, project).node_id)
       project.file_attachments.create!(user: @user, node_id: "n-stl", role: "model")
 
       get project_path(project)
@@ -134,6 +135,7 @@ module Web
       @user.nodes.create!(node_id: "n-in", name: "inner.stl", kind: "file", mtime: 1, size: 5,
                           parent_node_id: dir.node_id, content_hash: "h-in", current_version_id: "v-in")
       project = @user.maker_projects.create!(name: "Lamp")
+      @user.nodes.find_by!(node_id: "n-stl").update!(parent_node_id: project_folder_rows!(@user, project).node_id)
       project.file_attachments.create!(user: @user, node_id: "n-stl", role: "model")
 
       [ files_path(view: "list"), files_path(view: "grid"), files_path(folder: dir.node_id, view: "grid"),

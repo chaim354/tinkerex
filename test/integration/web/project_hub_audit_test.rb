@@ -183,24 +183,7 @@ module Web
       assert_select "p.loose-note", text: /next scan/, count: 0
     end
 
-    # --- C8: List keeps a Linked file's controls; build-log photos open ----------------------------
-
-    # MUTATION-CHECKED: deleting the `<% if actions %>` cell from projects/_file_rows reddens this
-    # with `Expected at least 1 element matching "table.project-files td.col-actions
-    # form[action=\"/attachments/1\"][data-turbo-confirm=…] button.linkbtn.danger.small", found 0.`
-    test "a Linked file in List view keeps Detach and Move into project" do
-      project = @user.maker_projects.create!(name: "Lamp", panels: { "views" => { "attachments" => "list" } })
-      project_folder_rows!(@user, project)
-      elsewhere = @user.nodes.create!(node_id: SecureRandom.uuid, name: "bolt.stl", kind: "file", mtime: 1, size: 3)
-      att = project.file_attachments.create!(user: @user, node_id: elsewhere.node_id, role: "model")
-
-      get project_path(project)
-
-      assert_select "table.project-files td.col-actions form[action=?][data-turbo-confirm=?] button.linkbtn.danger.small",
-                    attachment_path(att), "Detach bolt.stl from Lamp? The file stays in your library.", text: "Detach"
-      assert_select "table.project-files td.col-actions form[action=?] button", relocate_project_attachments_path(project),
-                    text: "Move into project"
-    end
+    # --- C8: Detach says what it detached; build-log photos open -------------------------------------
 
     test "Detach names what it detached" do
       project = @user.maker_projects.create!(name: "Lamp")

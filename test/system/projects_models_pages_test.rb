@@ -70,25 +70,6 @@ class ProjectsModelsPagesTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  test "Detach is hidden until the tile is hovered, then detaches" do
-    node = create_node!(@user, node_id: SecureRandom.uuid, name: "base.stl", kind: "file")
-    @project.file_attachments.create!(user: @user, node_id: node.node_id, role: "model")
-    visit project_path(@project)
-    tile = find(".attachments-panel .attachment-tile", text: "base.stl")
-    # Hidden-until-hover only where hover exists. Under (hover: none) — a touch device, or a headless
-    # Linux Chrome that reports no pointer, which is what CI runs — the stylesheet keeps the control
-    # visible from the start ON PURPOSE, so asserting it hidden there asserts the wrong behaviour.
-    # Found by CI, not locally: this Mac's Chrome reports hover: hover, CI's Linux Chrome does not.
-    if page.evaluate_script("matchMedia('(hover: hover)').matches")
-      assert_no_selector ".attachment-tile .tile-detach", visible: true
-      tile.hover
-    end
-    assert_selector ".attachment-tile .tile-detach", visible: true
-    accept_confirm { tile.find(".tile-detach").click }
-    assert_no_selector ".attachments-panel .attachment-tile", text: "base.stl"
-    assert_no_console_errors
-  end
-
   test "moving a task to Done fills its mark" do
     @project.tasks.create!(user: @user, title: "Wire the LED", status: "todo", position: 0)
     visit project_path(@project)

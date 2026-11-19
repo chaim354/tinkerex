@@ -29,12 +29,13 @@ module Web
     end
 
     # Seed a library node + attach it to a project via the model (attach UI is Task 6). THE NODE
-    # SITS AT THE LIBRARY ROOT — outside any project's folder — which the folder-based panel
-    # (Maker::ProjectFolderListing) makes the LINKED CASE: attached to this project, but not one of
-    # its folder's own files. Kept under its original name because most of the tests below only
-    # care that an attached, live file renders as a tile — which a Linked row still does.
+    # SITS AT THE ROOT OF THE PROJECT'S FOLDER (its Loose files), minting the folder's rows on first
+    # use: since 2026-11-19 an attachment to a file OUTSIDE the folder is not drawn on the page at
+    # all (the "Linked from elsewhere" group left), and the tests below need an attached, live file
+    # on the page.
     def attach_node(user, project, name:, node_id:, role: "model")
-      user.nodes.create!(node_id:, name:, kind: "file")
+      folder = project.folder_node_id || project_folder_rows!(user, project).node_id
+      user.nodes.create!(node_id:, name:, kind: "file", parent_node_id: folder)
       project.file_attachments.create!(user:, node_id:, role:)
     end
 
@@ -120,15 +121,13 @@ module Web
     end
 
     # A HUB TILE OPENS THE FILE — its file page, never the Library with the file selected, which is
-    # where it went until the owner asked for it to just open (2026-10-20). Both a Linked file at the
-    # library ROOT and a folder file, because the old Library link was shaped differently for each.
+    # where it went until the owner asked for it to just open (2026-10-20). Both an attached folder
+    # file and one nothing attached, because the folder is the relation for the second.
     test "attached files render as tiles opening the file" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      # attach_node's node sits at the library ROOT, outside the project's folder — the LINKED
-      # CASE now (Row#linked? true) — and a Linked row still renders as an ordinary .attachment-tile.
       attach_node(user, project, name: "base.stl", node_id: "n-1", role: "model")
-      folder = project_folder_rows!(user, project).node_id
+      folder = project.folder_node_id
       user.nodes.create!(node_id: "n-lid", name: "lid.stl", kind: "file", parent_node_id: folder)
 
       get project_path(project)
@@ -162,8 +161,6 @@ module Web
     test "the panel says how many attachments left, rather than removing them silently" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      # attach_node's node sits at the library root — the Linked case now — and still renders as
-      # an ordinary tile with a grid-name, which is all this test needs.
       attach_node(user, project, name: "bracket.stl", node_id: "n-live", role: "model")
       ghost_attachment!(project, user:, node_id: "gone", role: "model", label: "ghost.stl")
 
@@ -477,17 +474,29 @@ module Web
       assert_select ".attachments-truncated", text: /Showing 300 of 301/
     end
 
-    test "a file attached from elsewhere is Linked, with Detach and Move into project" do
+    # NO "LINKED FROM ELSEWHERE" (2026-11-19, the owner's call): a file attached to the project but
+    # living outside its folder is not drawn on the page at all, and the stats line does not count it.
+    test "a file attached from outside the folder is not drawn" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
-      attach_node(user, project, name: "loose.stl", node_id: "n-loose", role: "model")
+      folder = project_folder_rows!(user, project)
+      # A FILE OF THE FOLDER'S OWN, the control: without one the panel says "No files in this project
+      # yet" and draws no group at all, so the absence below would hold over a page that never got
+      # as far as drawing tiles.
+      user.nodes.create!(node_id: "n-home", name: "home.stl", kind: "file", parent_node_id: folder.node_id)
+      user.nodes.create!(node_id: "n-away", name: "elsewhere.stl", kind: "file")
+      project.file_attachments.create!(user:, node_id: "n-away", role: "model")
 
       get project_path(project)
       assert_response :success
-      assert_select ".attachment-group-head", text: /Linked from elsewhere \(1\)/
-      assert_select ".attachment-tile button.tile-detach"
-      assert_select ".attachment-tile form[action=?] button.tile-move",
-                    relocate_project_attachments_path(project)
+      assert_select ".attachments-panel .attachment-tile .grid-name", text: "home.stl"
+      # NOT `response.body`: the head's cover still falls back to the first attached file wherever it
+      # lives (projects/_hero), which is the cover's rule, not a group's.
+      assert_select ".attachment-tile .grid-name", text: "elsewhere.stl", count: 0
+      assert_select "table.project-files td.col-name", text: "elsewhere.stl", count: 0
+      assert_no_match "Linked from elsewhere", response.body
+      assert_select ".project-stats", text: /linked/, count: 0
+      assert_select ".tile-detach, .tile-move", count: 0
     end
 
     # A GENUINELY EMPTY PROJECT (no folder files, no linked attachments, no subfolders, nothing
@@ -760,15 +769,14 @@ module Web
     # can be perfect while the controller still hands the ids over, which is §14h's own lesson about
     # the 172 stale LightBurn thumbnails.
     #
-    # TWO CONTROLS, AND WITHOUT THEM THIS PASSES ON A PAGE WHOSE THUMBNAIL PATH STOPPED RUNNING
-    # ALTOGETHER. The loose file outside the repository must still get its row; so must the
-    # GENERATED file INSIDE it, which is the one exception the narrowing carries — a generated file
-    # renders as a tile in the Generated group wherever it physically sits, so dropping it from the
-    # union would blank a thumbnail the page really draws.
+    # A CONTROL, AND WITHOUT IT THIS PASSES ON A PAGE WHOSE THUMBNAIL PATH STOPPED RUNNING
+    # ALTOGETHER: the loose file outside the repository must still get its row. A GENERATED file
+    # inside the repository gets none either, since 2026-11-19: tool output is a file in its folder
+    # like any other, and the Generated group that once tiled it wherever it sat is gone.
     #
     # THE FIXTURES CARRY A CONTENT TOKEN (previewable_folder_file!) — without one the port reports
     # no content and the whole path short-circuits before any of this runs.
-    test "a repository's files enqueue no thumbnails, while a loose and a generated file still do" do
+    test "a repository's files enqueue no thumbnails, a generated one among them, while a loose file still does" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       folder = project.ensure_library_folder!(user)
@@ -791,10 +799,9 @@ module Web
       state = user.maker_addon_states.create!(addon_key: "boxes", name: "front panel", data: {}, revision: 1)
       state.files.create!(node_id: generated, role: "output", position: 0)
 
-      # EXACTLY TWO — the loose file and the generated one. A count rather than
-      # `assert_no_enqueued_jobs`, which cannot be scoped to a subset of node ids and would be red
-      # on the controls this case needs.
-      assert_enqueued_jobs 2, only: Maker::GeneratePreviewJob do
+      # EXACTLY ONE — the loose file. A count rather than `assert_no_enqueued_jobs`, which cannot be
+      # scoped to a subset of node ids and would be red on the control this case needs.
+      assert_enqueued_jobs 1, only: Maker::GeneratePreviewJob do
         get project_path(project)
       end
       assert_response :success
@@ -802,17 +809,16 @@ module Web
                    "a closed repository's files were given preview rows by a page that draws no " \
                    "tile for any of them"
       assert user.maker_previews.exists?(node_id: loose), "the loose file's thumbnail must still backfill"
-      assert user.maker_previews.exists?(node_id: generated),
-             "a generated file inside a repository renders in the Generated group — its thumbnail " \
-             "has to stay in the map"
+      assert_not user.maker_previews.exists?(node_id: generated),
+                 "a generated file inside a closed repository draws no tile, like the files beside it"
     end
 
-    # --- Generated (stage 3, S3-1) ----------------------------------------------
+    # --- Tool output (no Generated group since 2026-11-19) -------------------------------
 
     # THE FIXTURE IDIOM FROM addon_origin_surfaces_test.rb: a Maker::AddonState + AddonFile tie a
-    # node to a saved addon "thing". Revision 3, not the default 1, so the "rev N" assertion cannot
-    # pass against a hardcoded number.
-    test "a generated file appears once in Generated, with its tool, item and revision, and never in its section" do
+    # node to a saved addon "thing". A FILE A TOOL MADE IS A FILE IN ITS FOLDER: it draws in that
+    # folder's panel, its menu offers the tool, and the list's Origin column names it.
+    test "a generated file draws in its own folder's panel, and no Generated group renders" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       models = subfolder!(user, project, name: "models", node_id: "d-models")
@@ -827,21 +833,16 @@ module Web
 
       get project_path(project)
       assert_response :success
-      assert_select ".generated-group .attachment-group-head", text: /Generated \(1\)/
-      assert_select ".generated-group .grid-name", text: "box.svg"
-      assert_select ".generated-group .generated-meta", text: /shelf box/
-      assert_select ".generated-group .generated-meta", text: /rev 3/
-      assert_select ".generated-group a", text: "Edit in Box Generator"
-      # NOT repeated inside its own folder's panel, which holds nothing else and is therefore quiet.
-      assert_select "section.folder-panel.panel--quiet[id=?] .panel-head h2", "folder:d-models", text: "models"
-      assert_select "section.folder-panel[id=?] .grid-name", "folder:d-models", count: 0
+      assert_select ".generated-group", count: 0
+      assert_no_match(/Generated \(/, response.body)
+      assert_select "section.folder-panel[id=?] .attachment-tile .grid-name", "folder:d-models", text: "box.svg"
+      assert_select "section.folder-panel[id=?] [data-addon-open-label=?]", "folder:d-models", "Edit in Box Generator"
 
       # THE LIST VIEW'S ORIGIN COLUMN IS THE TOOL'S TITLE, read from the origin hash's own key —
       # not a prefix stripped off the menu label, which a rewording would silently break (review).
-      # Generated is a Files-panel group, so it is the FILES panel's view that switches it.
-      project.update!(panels: { "views" => { "attachments" => "list" } })
+      project.update!(panels: { "views" => { "folder:d-models" => "list" } })
       get project_path(project)
-      assert_select ".generated-group td.col-origin", text: "Box Generator"
+      assert_select "section.folder-panel[id=?] td.col-origin", "folder:d-models", text: "Box Generator"
     ensure
       Maker::Addons::Source.reset!
     end

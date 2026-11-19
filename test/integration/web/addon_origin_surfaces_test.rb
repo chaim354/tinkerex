@@ -113,16 +113,21 @@ module Web
       end
     end
 
+    # The two files sit in the project's folder: the page draws its folder's files (2026-11-19).
+    # Each draws twice there, in Recently changed and in Loose, so the answers are compared as SETS:
+    # the tool's file carries the entry in both places and the plain file in neither.
     test "a project's attachment tiles offer it" do
       project = @user.maker_projects.create!(name: "Lamp")
+      folder = project_folder_rows!(@user, project)
+      [ @from_addon, @plain ].each { |node| node.update!(parent_node_id: folder.node_id) }
       project.file_attachments.create!(user: @user, node_id: @from_addon.node_id, role: "model")
       project.file_attachments.create!(user: @user, node_id: @plain.node_id, role: "other")
 
       get project_path(project)
 
-      assert_equal [ expected_url ], open_urls
-      assert_equal "Edit in Box Generator",
-                   css_select("[data-addon-open-url]").sole["data-addon-open-label"]
+      assert_equal [ expected_url ], open_urls.uniq
+      assert_equal [ "Edit in Box Generator" ],
+                   css_select("[data-addon-open-url]").map { |el| el["data-addon-open-label"] }.uniq
     end
 
     # THE BROWSER VIEW'S ROWS ARE A MENU SURFACE TOO (2026-11-16), and the one whose cells the
