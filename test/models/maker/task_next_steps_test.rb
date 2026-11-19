@@ -3,8 +3,9 @@ require "test_helper"
 module Maker
   # Maker::Task.next_steps_for and .progress_for: a project's next step and its "1 of 4 done", for a
   # SET of projects, in a constant number of queries (spec 2026-11-18 §9 and §10's query budget).
-  # "First" is the tasks panel's order, so the last test here asks the panel's own order and checks
-  # the two agree, rather than trusting that they were written alike.
+  # "First" is a task under way before one not started, and the tasks panel's order inside each, so
+  # the last test here reads the panel's own order and checks the two agree, rather than trusting
+  # that they were written alike.
   class TaskNextStepsTest < ActiveSupport::TestCase
     setup do
       @user = User.create!(email: "next-steps-#{SecureRandom.hex(4)}@example.com")
@@ -19,20 +20,30 @@ module Maker
       assert_equal({ lamp.id => second }, Maker::Task.next_steps_for([ lamp ]))
     end
 
-    test "a Todo comes before a Doing whatever their positions, as the panel groups them" do
+    # CARRY ON MEANS THE STEP UNDER WAY (Maker::Task::NEXT_STEP_STATUSES). The Todo sits at the
+    # LOWER position, so a rank that followed the panel's groups, or position alone, picks it.
+    test "a Doing comes before a Todo whatever their positions" do
       lamp = project!("Lamp")
-      task!(lamp, "In progress", position: 0, status: "doing")
-      todo = task!(lamp, "Not started", position: 5)
+      task!(lamp, "Not started", position: 0)
+      doing = task!(lamp, "In progress", position: 5, status: "doing")
+
+      assert_equal doing, Maker::Task.next_steps_for([ lamp ])[lamp.id]
+    end
+
+    test "a Todo is the next step once nothing is under way" do
+      lamp = project!("Lamp")
+      task!(lamp, "Finished", position: 0, status: "done")
+      task!(lamp, "Later", position: 2)
+      todo = task!(lamp, "Sooner", position: 1)
 
       assert_equal todo, Maker::Task.next_steps_for([ lamp ])[lamp.id]
     end
 
-    test "a Doing is the next step once no Todo is left" do
-      lamp = project!("Lamp")
-      task!(lamp, "Done", position: 0, status: "done")
-      doing = task!(lamp, "In progress", position: 1, status: "doing")
-
-      assert_equal doing, Maker::Task.next_steps_for([ lamp ])[lamp.id]
+    # A STATUS THE RANK DOES NOT NAME WOULD SORT AS NULL, first on SQLite and last on Postgres, so a
+    # fourth open status added to STATUSES alone would rank differently per adapter. Every status
+    # but done is ranked, and done never is.
+    test "the rank names every open status and no other" do
+      assert_equal (Maker::Task::STATUSES - [ "done" ]).sort, Maker::Task::NEXT_STEP_STATUSES.sort
     end
 
     test "a project with no tasks, and one whose tasks are all done, are absent keys" do
@@ -161,11 +172,12 @@ module Maker
       assert_equal 5, Maker::Task.progress_for(large).size
     end
 
-    # "FIRST MEANS WHAT THE USER SEES FIRST": the panel's own reading — projects/_tasks loops over
-    # STATUSES and keeps `in_panel_order` inside each group — must put the next step at the top of
-    # its open tasks, for a shuffled set of positions, statuses and timestamps. The lowest open
-    # position is a Doing, so a rank that forgot the status groups picks the wrong task here too.
-    test "the next step is the first open task in the panel's own order" do
+    # "FIRST" READ OFF THE PANEL: projects/_tasks loops over STATUSES and keeps `in_panel_order`
+    # inside each group, so the first Doing it draws is the next step, for a shuffled set of
+    # positions, statuses and timestamps. Two Doings tie on nothing and the panel's first one is the
+    # later-created, so an order that ignored position or created_at picks the wrong one; and the
+    # first open task the panel draws is a Todo, so the panel's group order picks the wrong one too.
+    test "the next step is the first Doing the panel draws" do
       lamp = project!("Lamp")
       [ [ 2, "doing" ], [ 0, "done" ], [ 1, "todo" ], [ 0, "doing" ], [ 3, "todo" ], [ 1, "todo" ] ].each_with_index do |(pos, status), i|
         task!(lamp, "t#{i}", position: pos, status:, created_at: (10 - i).minutes.ago)
@@ -173,9 +185,10 @@ module Maker
 
       tasks = lamp.tasks.in_panel_order.to_a
       panel = Maker::Task::STATUSES.flat_map { |s| tasks.select { |t| t.status == s } }
-      first_open = panel.find { |t| t.status != "done" }
+      first_doing = panel.find { |t| t.status == "doing" }
 
-      assert_equal first_open, Maker::Task.next_steps_for([ lamp ])[lamp.id]
+      assert_equal first_doing, Maker::Task.next_steps_for([ lamp ])[lamp.id]
+      assert_not_equal panel.find { |t| t.status != "done" }, first_doing
     end
 
     private

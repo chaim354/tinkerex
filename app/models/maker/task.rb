@@ -45,8 +45,8 @@ module Maker
     # STATUSES (Todo, then Doing, then Done) and keeps this order inside each group. `id` is the
     # tie-break: two tasks on one position with one `created_at` (a v1 or MCP create sends no
     # position, so every such task sits at 0) otherwise come back in whatever order the adapter
-    # likes, and SQLite and Postgres need not agree. `.next_steps_for` ranks in exactly this order,
-    # so a project's next step is the first open task its panel draws.
+    # likes, and SQLite and Postgres need not agree. `.next_steps_for` ranks inside each status in
+    # exactly this order, so of two Todos the panel draws first, the first is the next step.
     PANEL_ORDER = %i[position created_at id].freeze
     scope :in_panel_order, -> { order(*PANEL_ORDER) }
 
@@ -61,26 +61,32 @@ module Maker
     # "1 of 4 done" beside a project's next step.
     Progress = Data.define(:done, :total)
 
-    # THE NEXT STEP OF EACH PROJECT IN ONE QUERY: { project_id => the first open task its panel
-    # shows }. A project with no tasks, or whose tasks are all done, is an ABSENT key, never nil
+    # WHICH OPEN STATUS IS THE NEXT STEP FIRST: a task already under way, then one not started.
+    # NOT THE PANEL'S GROUP ORDER (STATUSES draws Todo above Doing), and on purpose: the panel files
+    # tasks by status, it does not rank them, and the step a maker carries on with is the one they
+    # have started, while a Todo above it is waiting its turn. Home's "Carry on" asks exactly that.
+    # Every status but done, so no open task can fall outside the rank (pinned by the test file).
+    NEXT_STEP_STATUSES = %w[doing todo].freeze
+
+    # THE NEXT STEP OF EACH PROJECT IN ONE QUERY: { project_id => the task to carry on with }. A
+    # project with no tasks, or whose tasks are all done, is an ABSENT key, never nil
     # (Maker::Task.progress_for tells those two apart). Whatever projects the caller passes are
     # answered; which ones a screen shows is the screen's choice (Maker::Project.open for Home).
     #
-    # "FIRST" IS THE PANEL'S ORDER: Todo above Doing, then PANEL_ORDER. So a task in progress is
-    # the next step only once no Todo is left above it, exactly as the panel lists them.
+    # "FIRST" IS A DOING BEFORE A TODO (NEXT_STEP_STATUSES), then PANEL_ORDER inside the status: the
+    # first task under way in the panel's order, and with none under way the first Todo it draws.
     #
     # ONE STATEMENT, NOT ONE PER PROJECT: ROW_NUMBER over each project's open tasks, keeping rank 1.
     # SQLite has had window functions since 3.25 and Postgres since 8.4; Maker::ProjectFolderListing
-    # ranks the same way. The rank's CASE is built from STATUSES, so the group order cannot drift
-    # from the panel's loop over the same constant. Constancy in N is pinned by
-    # test/models/maker/task_next_steps_test.rb.
+    # ranks the same way. The rank's CASE is built from NEXT_STEP_STATUSES, so the order is stated
+    # once. Constancy in N is pinned by test/models/maker/task_next_steps_test.rb.
     def self.next_steps_for(projects)
       projects = projects.to_a
       return {} if projects.empty?
 
       ranked = for_projects(projects).open
         .select("maker_tasks.*, ROW_NUMBER() OVER (PARTITION BY maker_tasks.taskable_id " \
-                "ORDER BY #{panel_rank_sql}) AS step_rank")
+                "ORDER BY #{next_step_rank_sql}) AS step_rank")
       from(ranked, :maker_tasks).where(arel_table[:step_rank].eq(1)).index_by(&:taskable_id)
     end
 
@@ -97,12 +103,12 @@ module Maker
         .to_h { |id, total, done| [ id, Progress.new(done: done.to_i, total: total.to_i) ] }
     end
 
-    # The panel's order as SQL: the status group's place in STATUSES, then PANEL_ORDER's columns.
-    def self.panel_rank_sql
-      whens = STATUSES.each_with_index.map { |s, i| sanitize_sql_array([ "WHEN ? THEN ?", s, i ]) }
+    # The rank as SQL: the status's place in NEXT_STEP_STATUSES, then PANEL_ORDER's columns.
+    def self.next_step_rank_sql
+      whens = NEXT_STEP_STATUSES.each_with_index.map { |s, i| sanitize_sql_array([ "WHEN ? THEN ?", s, i ]) }
       [ "CASE maker_tasks.status #{whens.join(" ")} END", *PANEL_ORDER.map { |c| "maker_tasks.#{c}" } ].join(", ")
     end
-    private_class_method :panel_rank_sql
+    private_class_method :next_step_rank_sql
 
     # `completed_at` IS DERIVED FROM `status`, HERE AND NOWHERE ELSE: a done task carries the moment
     # it became done (kept through later saves, and kept as handed in by a caller that knows it),
