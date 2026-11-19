@@ -113,6 +113,39 @@ class NarrowNamesTest < ApplicationSystemTestCase
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
   end
 
+  # THE NEXT STEP AND TO BUY (Shop manual spec §9), where a maker's own long words land on three
+  # pages: a project's name and its step's title in Home's Carry on and on the Projects index's Next
+  # column, and an item's name and its project's in Inventory's To buy. Catalog rows only.
+  test "an eighty-character name wraps in Carry on, the Next column and To buy" do
+    project = @user.maker_projects.create!(name: LONG, status: "active")
+    @user.maker_tasks.create!(title: LONG, taskable: project)
+    item = @user.maker_inventory_items.create!(name: LONG, unit: "each", unit_cost: "0.12")
+    project.boms.create!(user: @user).lines.create!(user: @user, inventory_item_id: item.id, quantity: 3)
+
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
+
+    visit root_path
+    assert_selector ".home-carry-on .carry-on-step", text: LONG
+    assert_fits ".carry-on-step", "Carry on's step", within: ".carry-on-row"
+    assert_fits ".carry-on-project", "Carry on's project name", within: ".carry-on-row"
+    assert_no_sideways_scroll "Home"
+
+    visit projects_path
+    assert_selector ".projects-rows .project-next-step", text: LONG
+    assert_fits ".project-next-step", "the Next column's step", within: ".project-tile"
+    assert_no_sideways_scroll "the Projects index"
+
+    visit inventory_items_path
+    assert_selector ".to-buy-table td.col-name", text: LONG
+    assert_fits ".to-buy-table td.col-name a", "To buy's item name", within: ".inventory-to-buy"
+    assert_fits ".to-buy-table td.col-why", "To buy's why", within: ".inventory-to-buy"
+    assert_no_sideways_scroll "Inventory"
+    assert_no_console_errors
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
+  end
+
   private
 
   def assert_no_sideways_scroll(label)

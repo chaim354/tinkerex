@@ -835,6 +835,31 @@ module Web
                               "projects#index")
     end
 
+    # THE NEXT STEP COSTS NO QUERY PER PROJECT (Shop manual spec §10's "query budget", for §9's next
+    # step on Projects): every project carries a done, a doing and a todo task, so each row draws a
+    # Next and its "N of M steps done", and the list grows from SMALL to LARGE rows.
+    test "projects#index's next steps do not grow with projects or their tasks" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          project = @user.maker_projects.create!(name: "#{prefix}#{i}", status: "active")
+          seed_steps!(project)
+        end
+      end
+      assert_constant_queries(projects_path,
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "projects#index with next steps")
+      assert_select ".projects-rows .project-next .project-next-step", count: LARGE
+    end
+
+    # Three tasks on one project: done, under way, not started, so a project's next step, its
+    # progress and both open statuses are all on the page being measured.
+    def seed_steps!(project)
+      %w[done doing todo].each_with_index do |status, i|
+        @user.maker_tasks.create!(title: "#{project.name} step #{i}", taskable: project, status:, position: i)
+      end
+    end
+
     # Same reasoning as projects#index above: a model with no attachment has no derived cover, so
     # the grid's `@covers` map was being budgeted while resolving nothing. EVERY MODEL SITS IN ITS
     # OWN PROJECT'S FOLDER, one level down, so the page's grouping (Maker::ModelProjects) walks a
@@ -1017,6 +1042,52 @@ module Web
       assert_select ".home-files .grid-card", count: HomeController::RECENT_FILES
       assert_operator large, :>, HomeController::RECENT_FILES
       assert_operator small, :<, HomeController::RECENT_FILES
+    end
+
+    # CARRY ON COSTS NO QUERY PER PROJECT (Shop manual spec §10's "query budget", for §9's next step
+    # on Home): every open project has three tasks, so each draws a Carry on row and its Active
+    # projects row a "N of M steps done". LOCAL SIZES, as home#index's own test above: `small` sits
+    # under RECENT_PROJECTS (6) and `large` over it, so a query per row shows as 3 against 6 even
+    # though the list is capped.
+    test "home#index's Carry on does not grow with projects or their tasks" do
+      small = 3
+      large = 20
+      add = lambda do |prefix, count|
+        count.times do |i|
+          seed_steps!(@user.maker_projects.create!(name: "P #{prefix}#{i}", status: "active"))
+        end
+      end
+      assert_constant_queries(root_path,
+                              -> { add.call("cs", small) },
+                              -> { add.call("cl", large - small) },
+                              "home#index with Carry on")
+      assert_select ".home-carry-on .carry-on-row", count: HomeController::RECENT_PROJECTS
+      assert_select ".home-projects .project-steps", count: HomeController::RECENT_PROJECTS
+      assert_operator small, :<, HomeController::RECENT_PROJECTS
+    end
+
+    # TO BUY COSTS NO QUERY PER PROJECT, BOM OR LINE (Shop manual spec §9's To buy, on Inventory):
+    # every open project gets its own BOM with an item of its own it is short of, a line on an item
+    # they all share, and a typed-in part, so the list grows in rows, in the projects each row names,
+    # and in lines the rollup must pass over. An item per project is also a Stock row, which the
+    # page's own probe above already holds flat.
+    test "inventory#index's To buy does not grow with projects, BOMs or lines" do
+      shared = @user.maker_inventory_items.create!(name: "Shared washer", unit: "each", unit_cost: "0.10")
+      add = lambda do |prefix, count|
+        count.times do |i|
+          project = @user.maker_projects.create!(name: "#{prefix}proj#{i}", status: "active")
+          own = @user.maker_inventory_items.create!(name: "#{prefix}part#{i}", unit: "each", unit_cost: "1.5")
+          bom = project.boms.create!(user: @user)
+          bom.lines.create!(user: @user, inventory_item_id: own.id, quantity: 2)
+          bom.lines.create!(user: @user, inventory_item_id: shared.id, quantity: 1)
+          bom.lines.create!(user: @user, part_name: "#{prefix}wire#{i}", quantity: 1)
+        end
+      end
+      assert_constant_queries(inventory_items_path,
+                              -> { add.call("s", SMALL) },
+                              -> { add.call("l", LARGE - SMALL) },
+                              "inventory#index with To buy")
+      assert_select ".to-buy-table tbody tr", count: LARGE + 1
     end
 
     # Stage 2, S2-3. Each item gets its OWN location and supplier so `.includes(:location,

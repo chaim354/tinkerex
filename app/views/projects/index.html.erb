@@ -124,10 +124,13 @@
   <%# ONE LIST, NUMBERED IN THE ORDER IT RENDERS (the screen's rows): a number is a place on this
       page, never a stored thing, and it follows the sort. `projects-grid` keeps its name and its
       contract (each project one `.project-tile`, its Unarchive inside it); `projects-rows` lays it
-      out as rows (pages/projects.css, the index's section). %>
-  <div class="projects-grid projects-rows" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+      out as rows (pages/home.css, the index's section). `projects-rows--steps` gives every row the
+      column for its next step, and only while some project here has a task, so a list with none
+      keeps the room for its descriptions. %>
+  <div class="projects-grid projects-rows<%= " projects-rows--steps" if @progress.any? %>" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
     <% projects_in_order(@projects, @sort).each_with_index do |project, i| %>
-      <%= render "card", project: project, thumb: @covers.thumb(project.cover_node_id), number: i + 1, detail: true %>
+      <%= render "card", project: project, thumb: @covers.thumb(project.cover_node_id), number: i + 1, detail: true,
+                         next_step: @next_steps[project.id], progress: @progress[project.id] %>
     <% end %>
   </div>
 <% end %>

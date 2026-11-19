@@ -85,6 +85,12 @@ class ProjectsController < ApplicationController
     @projects = @archived_view ? archived : live
     @archived_count = archived.size
     @covers = Maker::Previews::ThumbnailMap.for(current_user, @projects.filter_map(&:cover_node_id))
+    # EACH ROW'S NEXT STEP AND "N OF M STEPS DONE" (Shop manual spec §9, "next step on Home and
+    # Projects"): one query each for the whole list, never one per row (page_query_budget_test.rb).
+    # Only an OPEN project (Maker::Project.open: planning, active, paused) has a next step: a task left
+    # open on a done or archived project is not what comes next, and its row shows its progress alone.
+    @next_steps = Maker::Task.next_steps_for(@projects.select { |p| p.status.in?(Maker::Project::OPEN_STATUSES) })
+    @progress = Maker::Task.progress_for(@projects)
     # Tags in use across the user's projects, for the filter chips below the toolbar -- ONE query,
     # not one per candidate tag. Mirrors InventoryItemsController#index's @item_tags.
     @project_tags = current_user.maker_tags.joins(:taggings)

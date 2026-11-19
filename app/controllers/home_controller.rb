@@ -1,5 +1,6 @@
-# RECENT (structural redesign spec §7, slice 6; the app's front door at `/`): the files you changed
-# lately, your active projects, and what needs attention — the last two only when they hold anything.
+# TODAY (structural redesign spec §7, slice 6; the app's front door at `/`): each open project's next
+# step, your active projects, what needs attention and the files you changed lately, each section
+# only when it holds anything (with no file, Getting started stands in for the files).
 # EVERY LIST HERE IS BOUNDED AND ORDERED BY A COLUMN THAT ALREADY EXISTS — there is no activity table
 # and no counter, and page_query_budget_test.rb asserts the count is constant in N.
 class HomeController < ApplicationController
@@ -46,10 +47,20 @@ class HomeController < ApplicationController
     # (page_query_budget_test.rb's small seed sits under it, the large one over it). Mirrors
     # ProjectsController#index, which eager-loads the same association for the same reason.
     # ACTIVE MEANS NOT FINISHED (slice 6 review): the section is "Active projects", so a done project is
-    # left out as an archived one is — it showed under that heading with a "Done" badge.
-    @recent_projects = current_user.maker_projects.where.not(status: %w[archived done])
+    # left out as an archived one is — it showed under that heading with a "Done" badge. That set is
+    # Maker::Project.open, the one Maker::ToBuy and the next steps read too.
+    @recent_projects = current_user.maker_projects.open
                                    .includes(:file_attachments)
                                    .order(updated_at: :desc).limit(RECENT_PROJECTS).to_a
+    # CARRY ON (Shop manual spec §9, "next step on Home"): the next step of each project Active projects
+    # lists, in its order, and "N of M done" beside it; a project with no open task has no row. One
+    # query each for the whole set (Maker::Task.next_steps_for / .progress_for), never one per
+    # project: page_query_budget_test.rb holds it constant as projects and tasks grow. The projects are
+    # the bounded list above, so Carry on is bounded by RECENT_PROJECTS too; the Projects index shows
+    # every project's step.
+    @next_steps = Maker::Task.next_steps_for(@recent_projects)
+    @progress = Maker::Task.progress_for(@recent_projects)
+    @carry_on = @recent_projects.filter_map { |project| (step = @next_steps[project.id]) && [ project, step ] }
     @recent_files = current_user.nodes.present.where(kind: "file").visible_entries(false)
                                 .order(updated_at: :desc).limit(RECENT_FILES).to_a
     @failed_prints = current_user.maker_print_runs.includes(:model)

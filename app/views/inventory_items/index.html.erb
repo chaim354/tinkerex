@@ -14,12 +14,50 @@
   </div>
 </div>
 
+<%# TO BUY (Shop manual spec §9; the screen's section 1): every item the open projects' current BOMs
+    need more of than is on hand, one row per item however many projects ask for it
+    (InventoryItemsController#index, Maker::ToBuy). The item, how many to buy, which projects need it
+    and why, and the cost where the item has a unit cost. Only when there is something to buy, and
+    only on the whole list. The screen's Copy the shopping list and Mark as bought are not here: each
+    is a behaviour of its own. Sections are numbered in the order they render, so Stock follows. %>
+<% section_num = 0 %>
+<% if @to_buy.any? %>
+  <section class="panel inventory-to-buy" id="inventory-to-buy">
+    <div class="panel-head">
+      <h2><span class="panel-num"><%= section_num += 1 %></span> To buy</h2>
+      <span class="panel-note"><%= to_buy_note(@to_buy) %></span>
+    </div>
+    <table class="table to-buy-table">
+      <thead>
+        <tr>
+          <th class="col-name">Item</th>
+          <th class="num col-buy">Buy</th>
+          <th class="col-why">Why</th>
+          <th class="num col-each">Each</th>
+          <th class="num col-total">Total</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% @to_buy.each do |row| %>
+          <tr>
+            <td class="col-name"><%= link_to row.item.name, inventory_item_path(row.item) %></td>
+            <td class="num col-buy"><%= inventory_quantity(row.short) %> <%= row.item.unit %></td>
+            <td class="col-why"><%= to_buy_why(row) %></td>
+            <td class="num col-each"><%= row.item.unit_cost ? number_to_currency(row.item.unit_cost) : "—" %></td>
+            <td class="num col-total"><%= row.cost ? number_to_currency(row.cost) : "—" %></td>
+          </tr>
+        <% end %>
+      </tbody>
+    </table>
+  </section>
+<% end %>
+
 <%# THE STOCK, AS A NUMBERED SECTION (the screen's "Stock"): its head counts the rows and says the sort,
-    then the filters and the table. The screen's To buy and Recent changes are later behaviours (spec
-    §9); they take the numbers above this one when they land. %>
+    then the filters and the table. The screen's Recent changes is a later behaviour; it takes a
+    number above this one when it lands. %>
 <section class="panel inventory-stock" id="inventory-stock">
 <div class="panel-head">
-  <h2><span class="panel-num">1</span> Stock</h2>
+  <h2><span class="panel-num"><%= section_num += 1 %></span> Stock</h2>
   <span class="panel-note">sorted by <%= InventoryHelper::SORT_LABELS.fetch(@sort).downcase %></span>
 </div>
 <form class="toolbar inventory-toolbar" method="get" action="<%= inventory_items_path %>">

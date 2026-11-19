@@ -221,8 +221,8 @@ starts by writing the real list down where rule 12 can point at it, then correct
 | version stacks | nothing | group by name: a version number, a copy number, "backup". A toggle per panel, and a way to pull one file out. Reused by the Library and Search | medium |
 | figure numbers | nothing | number files by panel order, then file order (§11.3) | medium |
 | tidy-up list | nothing | four checks: loose files, uncommitted repository changes, an export older than its source, a sheet that disagrees with a file. Stored dismissals | large |
-| next step on Home and Projects | `Maker::Task.open` | the first open task per project in one query | small |
-| To buy | `Maker::BomRollup#short`, per project | the shortfalls of every active project in one list | medium |
+| next step on Home and Projects | `Maker::Task.open` | the first open task per project in one query. Built: a Doing before a Todo, then the panel's order (`Maker::Task.next_steps_for`); Home's Carry on covers the projects Active projects lists, with no checkbox (the panel's tick answers for the project page) | small |
+| To buy | `Maker::BomRollup#short`, per project | the shortfalls of every active project in one list. Built: open projects' current BOMs, one row per item (`Maker::ToBuy`), on Inventory's unfiltered page; Buy is the shortfall, not a top-up to the item's minimum, and the column's "Needed by a project" waits for its own filter | medium |
 | folder tree in the Library | only in the choosers, through `library_children` | the same tree as the left column, remembering what is open | medium |
 | grouped search | `/search`, where the top bar's box submits, already groups by kind: Files, Folders, Projects, 3D models, Notes, Inventory, Tags (`SearchController`) | stacks inside the Files group | small, once stacks exist |
 | index of files, and the find box | nothing | every file with its figure number, filtered as you type | small |

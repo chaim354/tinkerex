@@ -3,8 +3,8 @@
 # order is the page's own reading order — the left stack, then the right — and a section that has
 # nothing to show is not numbered, so the numbers run 1, 2, 3 with no gap whatever is absent.
 #
-# THE SCREEN'S "CARRY ON" (each project's next step) IS A LATER BEHAVIOUR (spec §9) and is not here.
-# When it lands it heads the left stack, above Active projects, and takes the first number.
+# CARRY ON (each open project's next step, spec §9) heads the left stack, above Active projects, so
+# it takes the first number whenever it has a row.
 module HomeHelper
   HomeSection = Struct.new(:key, :label, :id, :count, :number, :column, keyword_init: true)
 
@@ -15,6 +15,10 @@ module HomeHelper
 
     @home_sections ||= begin
       sections = []
+      if @carry_on.any?
+        sections << HomeSection.new(key: :carry_on, label: "Carry on", id: "home-carry-on",
+                                    count: @carry_on.size, column: :left)
+      end
       if @recent_projects.any?
         sections << HomeSection.new(key: :projects, label: "Active projects", id: "home-projects",
                                     count: @recent_projects.size, column: :left)
@@ -55,6 +59,16 @@ module HomeHelper
       else "#{count_words(things).capitalize} #{things == 1 ? "thing needs" : "things need"} a look."
       end
     "#{project_clause} #{attention_clause}"
+  end
+
+  # "1 of 4 done": a project's task progress as Carry on and the project rows print it. `noun` is
+  # the word the row puts between the count and "done" ("steps" on a project row, none in Carry on,
+  # where the row is already about a step).
+  def steps_done(progress, noun: nil)
+    return nil unless progress
+
+    word = noun && " #{progress.total == 1 ? noun : noun.pluralize}"
+    "#{progress.done} of #{progress.total}#{word} done"
   end
 
   # What a Needs attention row is, in the caps word the screen sets before it: a mark in the accent

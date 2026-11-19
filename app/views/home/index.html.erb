@@ -23,8 +23,9 @@
   </div>
 </div>
 
-<%# THE TWO STACKS (components.css `.page-columns`). The left holds the projects; the right what needs
-    attention and the files. A stack with nothing in it is not drawn, so a lone stack takes the width. %>
+<%# THE TWO STACKS (components.css `.page-columns`). The left holds the projects, their next steps
+    first; the right what needs attention and the files. A stack with nothing in it is not drawn, so a
+    lone stack takes the width. %>
 <% left = home_sections.select { |s| s.column == :left } %>
 <% right = home_sections.select { |s| s.column == :right } %>
 <div class="page-columns home-columns">
@@ -32,6 +33,37 @@
 <div class="page-column">
 <% stack.each do |section| %>
   <% case section.key %>
+  <% when :carry_on %>
+    <%# CARRY ON (Shop manual spec §9, "next step on Home"): each open project's next step, in Active
+        projects' order (HomeController#index; Maker::Task.next_steps_for says which task: one under
+        way before one not started). The project's name as a caps label, the step, its progress, and
+        Open, which lands on the project's tasks. A project with no open task has no row, and with no
+        row the section is not drawn (HomeHelper#home_sections).
+
+        NO CHECKBOX, THOUGH THE SCREEN DRAWS ONE. The panel's own tick is Projects::TasksController#
+        update, and both its answers belong to the project page: the stream replaces #project-tasks,
+        which this page has none of, and the HTML answer redirects to the project. A tick here would
+        either change nothing on Home but a toast or carry the maker away from it; one that stays on
+        Home needs that endpoint to learn a way back, which is more than reusing it. %>
+    <section class="panel home-section home-carry-on" id="home-carry-on">
+      <div class="panel-head">
+        <h2><span class="panel-num"><%= section.number %></span> Carry on</h2>
+        <span class="panel-note">the next step of each project</span>
+      </div>
+      <ul class="carry-on-list">
+        <% @carry_on.each do |project, step| %>
+          <li class="carry-on-row">
+            <span class="carry-on-text">
+              <span class="carry-on-project"><%= project.name %></span>
+              <span class="carry-on-step"><%= step.title %></span>
+              <span class="carry-on-facts"><%= steps_done(@progress[project.id]) %></span>
+            </span>
+            <%= link_to "Open", project_path(project, anchor: ProjectsHelper::PANEL_ANCHORS.fetch("tasks")),
+                        class: "carry-on-open", "aria-label": "Open #{project.name}" %>
+          </li>
+        <% end %>
+      </ul>
+    </section>
   <% when :projects %>
     <%# ACTIVE PROJECTS, ONLY WHEN THERE ARE ANY: an empty account has one empty state, the
         getting-started section. A row per project, as the screen draws it: the cover, the name and
@@ -43,7 +75,8 @@
       </div>
       <div class="recent-grid project-rows" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
         <% @recent_projects.each do |project| %>
-          <%= render "projects/card", project: project, thumb: @covers.thumb(project.cover_node_id) %>
+          <%= render "projects/card", project: project, thumb: @covers.thumb(project.cover_node_id),
+                                      progress: @progress[project.id] %>
         <% end %>
       </div>
     </section>

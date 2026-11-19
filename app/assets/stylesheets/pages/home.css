@@ -1,6 +1,6 @@
 /* Home, the app's front door at `/` (Shop manual slice 7; the screen `home`): the numbered sections in
-   two stacks (components.css `.page-columns`), Active projects as rows, Needs attention as rows that
-   lead with their kind, Recently changed as figures. Its sections and their numbers are
+   two stacks (components.css `.page-columns`), Carry on and Active projects as rows, Needs attention as
+   rows that lead with their kind, Recently changed as figures. Its sections and their numbers are
    HomeHelper#home_sections, which the left column reads too.
 
    THE PROJECT ROW (projects/_card) IS DRAWN HERE FOR BOTH ITS PAGES, Home and the Projects index:
@@ -34,6 +34,20 @@
   .home-files .recent-grid .grid-card .thumb { height: 118px; aspect-ratio: auto; padding: 9px; }
   .home-files .recent-grid .grid-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .grid-facts { overflow: hidden; color: var(--fg-muted); font: 400 12px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+
+  /* CARRY ON (spec §9, "next step on Home"): a row per open project, as the screen draws it: the
+     project's name as a caps label, the step at 600, its progress in mono, then Open. No accent: a
+     next step is not a warning (design-system.md rule 13). */
+  .carry-on-list { list-style: none; margin: 0; padding: 0; }
+  .carry-on-row { display: flex; align-items: flex-start; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+  .carry-on-text { display: flex; flex: 1; flex-direction: column; gap: 2px; min-width: 0; }
+  .carry-on-project {
+    color: var(--fg-muted); font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
+    overflow-wrap: anywhere;
+  }
+  .carry-on-step { font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+  .carry-on-facts { color: var(--fg-muted); font: 400 12.5px/1.4 var(--font-mono); }
+  .carry-on-open { flex: 0 0 auto; color: var(--fg); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 
   /* NEEDS ATTENTION: a row per thing, its kind first as a caps word in the accent (a mark, with its
      word: design-system.md rule 13), the sentence, then the one thing to do about it. */
@@ -79,6 +93,9 @@
     width: 100%; height: 100%; padding: 0; border: 0;
   }
   .project-when { color: var(--fg-muted); font: 400 12.5px/1.4 var(--font-mono); white-space: nowrap; }
+  /* "1 of 4 steps done" (spec §9): mono, muted, as the screens print a row's facts, and one piece:
+     in a narrow facts line it moves to a line of its own rather than breaking after "of". */
+  .project-steps { color: var(--fg-muted); font: 400 12.5px/1.4 var(--font-mono); white-space: nowrap; }
 
   /* HOME'S ROW: a 64 x 48 cover, the name at 700 over its facts, when at the right. */
   .project-rows .project-tile { grid-template-columns: 64px minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: center; }
@@ -88,11 +105,20 @@
   .project-rows .project-name { grid-column: 2; grid-row: 1; align-self: end; font-size: 14.5px; font-weight: 700; }
   .project-rows .project-facts { grid-column: 2; grid-row: 2; align-self: start; }
   .project-rows .project-side { grid-column: 3; grid-row: 1 / 3; align-self: center; }
+  /* A PHONE'S HOME ROW puts when it changed under the facts, as the index's phone row does: beside
+     them it left the facts a track too narrow for a kind badge and "1 of 4 steps done" (measured at
+     375px: the badge ran under the time, the steps broke over three lines). */
+  @media (max-width: 479px) {
+    .project-rows .project-tile { grid-template-columns: 64px minmax(0, 1fr); grid-template-rows: auto auto auto; }
+    .project-rows .project-card { grid-row: 1 / 4; }
+    .project-rows .project-card > .thumb { grid-row: 1 / 4; align-self: start; }
+    .project-rows .project-side { grid-column: 2; grid-row: 3; align-items: flex-start; text-align: left; }
+  }
 
   /* THE INDEX'S ROW (the screen `projects`): the row's number in mono, a 132 x 96 cover, the name at
      800 24px, the description, the facts, and when at the right. The list opens on the 2px ink rule
-     a table head draws. The screen's "Next" step and "to tidy" count are later behaviours (spec §9);
-     they take a column between the text and the side when they land. */
+     a table head draws. The next step takes a column between the text and the side (at the foot of
+     this section); the screen's "to tidy" count is a later behaviour (spec §9). */
   .projects-grid.projects-rows { border-top: 2px solid var(--line-strong); }
   .projects-rows .project-tile {
     grid-template-columns: 26px 132px minmax(0, 1fr) auto; grid-template-rows: auto auto auto 1fr;
@@ -114,6 +140,31 @@
     .projects-rows .project-card > .thumb { width: 88px; height: 66px; }
     .projects-rows .project-name { font-size: 18px; }
     .projects-rows .project-side { grid-column: 3; grid-row: 4; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 4px 12px; text-align: left; }
+  }
+  /* THE NEXT STEP'S COLUMN (spec §9, "next step on Home and Projects"), drawn only while some project
+     on the list has a task (`projects-rows--steps`, projects/index), so a list with none keeps the
+     room for its descriptions. A caps "Next", the step at 600, "1 of 4 steps done" in mono. A phone
+     puts it under the facts, above the side.
+     THE COLUMNS ARE THE LIST'S, NOT EACH ROW'S: the list is the grid and every row a SUBGRID of it,
+     so every row's Next starts at the same x. Each row its own grid, as the list without steps is
+     drawn, put each Next where its own side left room (measured: four rows, four different lines).
+     The side is at most the screen's 118px and its "when" wraps inside it: as wide as "less than a
+     minute ago" on one line, it took the room the step needs beside a 220px column at 1024px. */
+  .projects-grid.projects-rows--steps {
+    display: grid; grid-template-columns: 26px 132px minmax(0, 1.4fr) minmax(0, 1fr) minmax(min-content, 118px); gap: 0 22px;
+  }
+  .projects-rows--steps .project-tile { grid-column: 1 / -1; grid-template-columns: subgrid; }
+  .projects-rows--steps .project-when { white-space: normal; }
+  .projects-rows--steps .project-next { grid-column: 4; grid-row: 1 / -1; }
+  .projects-rows--steps .project-side { grid-column: 5; }
+  .project-next { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+  .project-next-label { color: var(--fg-muted); font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .project-next-step { font-size: 15px; font-weight: 600; line-height: 1.35; overflow-wrap: anywhere; }
+  @media (max-width: 719px) {
+    .projects-grid.projects-rows--steps { grid-template-columns: 20px 88px minmax(0, 1fr); gap: 0 12px; }
+    .projects-rows--steps .project-tile { grid-template-rows: auto auto auto auto auto 1fr; }
+    .projects-rows--steps .project-next { grid-column: 3; grid-row: 4; margin-top: 4px; }
+    .projects-rows--steps .project-side { grid-column: 3; grid-row: 5; }
   }
 
   /* GETTING STARTED (F onboarding, 2026-10-13): Recent's panel while the library holds no live file.

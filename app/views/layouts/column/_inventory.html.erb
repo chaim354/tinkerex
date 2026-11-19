@@ -1,8 +1,13 @@
 <%# THE INVENTORY COLUMN (Shop manual spec §7): the items, then Places and Suppliers. Every row is a
     view the index already serves — all items, `?low=1`, `?location=`, `?supplier=` — or the Places
-    and Suppliers pages themselves. "Needed by a project" waits for the index to learn that filter
-    (spec §9's To buy). Places and Suppliers are one capped query each (ShellHelper), so the column
-    costs the same however many there are. %>
+    and Suppliers pages themselves. Places and Suppliers are one capped query each (ShellHelper), so
+    the column costs the same however many there are.
+
+    THE SCREEN'S "NEEDED BY A PROJECT" IS NOT THE TO BUY LIST, AND IS NOT HERE. It counts 20 of 20
+    items, beside the Stock table's "Needed by" column: every item an open project's BOM names, a
+    filter the index does not have. To buy (spec §9) is the few of those a project is short of, and
+    it is a section at the top of the page itself, not a view of the stock to narrow to; a row of
+    that name leading to it would name the wrong list. %>
 <div class="column-group">
   <h2 class="column-head">Inventory</h2>
   <%= column_row "All items", inventory_items_path, key: [ :inventory_items ] %>
