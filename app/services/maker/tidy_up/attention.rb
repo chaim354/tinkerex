@@ -41,7 +41,7 @@ module Maker
       end
 
       def rows
-        exports = TidyUp.stale_links(@user).order(Arel.sql("source.mtime DESC"), "maker_file_links.id")
+        exports = TidyUp.stale_links(@user).order(Arel.sql("source_node.mtime DESC"), "maker_file_links.id")
                         .limit(FETCH_CAP).pluck(*TidyUp::STALE_LINK_COLUMNS.map { |c| Arel.sql(c) })
         pending = @capabilities.local_worktree? ? TidyUp.pending_edits(@user).first(FETCH_CAP) : []
         return [] if exports.empty? && pending.empty?
@@ -62,6 +62,11 @@ module Maker
       # [Row, Suggestion] per repository with pending saves, in project-name order.
       def uncommitted_rows(pending)
         pending.filter_map do |root_id, (count, newest)|
+          # STILL A REPOSITORY: a `.git` marker under the root, in memory over the tree. A folder whose
+          # repository was removed keeps its pending rows until a commit page reconciles them, and a
+          # Review link to a commit box that refuses would be a row nobody can act on.
+          next unless tree.children_of(root_id).any? { |dir| Library::RepoMetadata.marker?(dir.name) }
+
           project = project_holding(root_id)
           next unless project
 

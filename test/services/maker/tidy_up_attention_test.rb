@@ -77,6 +77,16 @@ class Maker::TidyUpAttentionTest < ActiveSupport::TestCase
                  [ row.kind, row.project.id, row.detail.root_node_id, row.detail.name, row.detail.count ]
   end
 
+  # A folder whose repository is gone keeps its pending rows until a commit page reconciles them, and
+  # a Review link into a commit box that refuses is a row nobody can act on.
+  test "saves into a folder that is no longer a repository are not a row" do
+    repo = repo!
+    Maker::RepoEdit.record!(user: @user, repo_root_node_id: repo.node_id, node_id: file!("a.c", repo).node_id)
+    @user.nodes.find_by!(parent_node_id: repo.node_id, name: Library::RepoMetadata::DIR_NAME).update!(deleted: true)
+
+    assert_empty rows
+  end
+
   # Elsewhere the app records no pending save and there is no commit box, so Home asks nothing.
   test "no row is about uncommitted saves where the library is not a local folder" do
     repo = repo!

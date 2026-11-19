@@ -64,23 +64,26 @@ module Maker
     # The export and its source, both live, the export older than the source — the one definition of
     # "an export older than its source", shared by the project page and Home. Rows are
     # [from_node_id, to_node_id, derived name, source name, source mtime, derived parent, source parent].
-    # `deleted = :no` with a bound false, never a literal: SQLite stores the flag as 0/1 and Postgres
+    # The aliases are `derived_node` and `source_node`, never bare `source`, a keyword (non-reserved)
+    # in Postgres's MERGE grammar. `deleted = :no` with a bound false, never a literal: SQLite stores the flag as 0/1 and Postgres
     # as a boolean, and a bind is quoted right on both (§14e: adapter-agnostic SQL).
     STALE_LINK_JOINS = <<~SQL.squish.freeze
-      INNER JOIN nodes derived ON derived.user_id = maker_file_links.user_id
-                              AND derived.node_id = maker_file_links.from_node_id
-                              AND derived.deleted = :no
-      INNER JOIN nodes source ON source.user_id = maker_file_links.user_id
-                             AND source.node_id = maker_file_links.to_node_id
-                             AND source.deleted = :no
+      INNER JOIN nodes derived_node ON derived_node.user_id = maker_file_links.user_id
+                                   AND derived_node.node_id = maker_file_links.from_node_id
+                                   AND derived_node.deleted = :no
+      INNER JOIN nodes source_node ON source_node.user_id = maker_file_links.user_id
+                                  AND source_node.node_id = maker_file_links.to_node_id
+                                  AND source_node.deleted = :no
     SQL
-    STALE_LINK_COLUMNS = %w[maker_file_links.from_node_id maker_file_links.to_node_id derived.name source.name
-                            source.mtime derived.parent_node_id source.parent_node_id].freeze
+    STALE_LINK_COLUMNS = %w[maker_file_links.from_node_id maker_file_links.to_node_id derived_node.name
+                            source_node.name source_node.mtime derived_node.parent_node_id
+                            source_node.parent_node_id].freeze
 
     def self.stale_links(user)
       Maker::FileLink.where(user_id: user.id, kind: "derived_from")
                      .joins(ActiveRecord::Base.sanitize_sql([ STALE_LINK_JOINS, { no: false } ]))
-                     .where("derived.mtime IS NOT NULL AND source.mtime IS NOT NULL AND derived.mtime < source.mtime")
+                     .where("derived_node.mtime IS NOT NULL AND source_node.mtime IS NOT NULL " \
+                            "AND derived_node.mtime < source_node.mtime")
     end
 
     # A subject for a pair: the export's node id, then its source's. `>` appears in no node id.
@@ -207,8 +210,8 @@ module Maker
       # the listing's DIR_CAP, like everything else the page lists.
       dirs = [ @listing.folder_id ] + @listing.tree.flat_map(&:subtree_dir_ids)
       self.class.stale_links(@user)
-          .where("derived.parent_node_id IN (:dirs) OR source.parent_node_id IN (:dirs)", dirs:)
-          .order("derived.name", "maker_file_links.id")
+          .where("derived_node.parent_node_id IN (:dirs) OR source_node.parent_node_id IN (:dirs)", dirs:)
+          .order("derived_node.name", "maker_file_links.id")
           .pluck(*STALE_LINK_COLUMNS.map { |c| Arel.sql(c) })
           .map do |from_id, to_id, derived_name, source_name, source_mtime, _dp, _sp|
             Suggestion.new(kind: "export_older", subject: self.class.link_subject(from_id, to_id),
