@@ -27,9 +27,8 @@ module Web
                             mtime: 1_000_000_000, size: 10)
         @project.file_attachments.create!(user: @user, node_id: "n-#{i}", role: "model")
       end
-      # THE LINKED CASE: attached to this project, but the node lives elsewhere in the library. It
-      # is what "1 linked" below is about, and it is also the ONE attachment tile on this page that
-      # carries Detach — a plain folder file has nothing to detach (the folder IS its relation).
+      # ATTACHED TO THIS PROJECT, BUT THE NODE LIVES ELSEWHERE IN THE LIBRARY: since 2026-11-19 the
+      # page draws no tile, group or count for it (the "Linked from elsewhere" group left).
       @user.nodes.create!(node_id: "n-linked", name: "spare.stl", kind: "file",
                           mtime: 1_000_000_000, size: 10)
       @linked_attachment = @project.file_attachments.create!(user: @user, node_id: "n-linked",
@@ -47,7 +46,7 @@ module Web
       assert_response :success
       assert_select ".project-head .page-title h1", text: "Desk Lamp"
       assert_select ".project-stats", text: /2 files/
-      assert_select ".project-stats", text: /1 linked/
+      assert_select ".project-stats", text: /linked/, count: 0
       assert_select ".project-stats", text: /1 of 3 tasks done/
       assert_select ".project-stats", text: /1 log entry\b/
       assert_select ".project-stats", text: /1 sheet\b/
@@ -179,13 +178,13 @@ module Web
       refute_includes names, "base.stl", "a plain folder in browser view draws no tiles"
     end
 
-    # DETACH IS THE LINKED ROW'S CONTROL, ONLY. base.stl/shade.3mf are plain folder files now (no
-    # tile-meta corner at all — folder_files_do_not_get_detach in project_attachments_test.rb pins
-    # that directly); @linked_attachment is the one tile this page renders with a Detach button.
-    test "attachment tiles carry Detach as a corner control that keeps its text" do
+    # NO "LINKED FROM ELSEWHERE" (2026-11-19, the owner's call): @linked_attachment's file lives
+    # outside the project's folder, so no tile, Detach or group is drawn for it.
+    test "a file attached from outside the folder draws no tile and no Detach" do
       get project_path(@project)
-      assert_select ".attachments-panel .attachment-tile .tile-meta form[action=?] button.tile-detach",
-                    attachment_path(@linked_attachment), text: "Detach"
+      assert_select ".attachment-tile form[action=?]", attachment_path(@linked_attachment), count: 0
+      assert_select ".attachment-tile .grid-name", text: "spare.stl", count: 0
+      assert_no_match "Linked from elsewhere", response.body
     end
 
     # THE COMPOSER IS IN THE HEAD SINCE 2026-11-02 (the UX audit's C4: one composer pattern across

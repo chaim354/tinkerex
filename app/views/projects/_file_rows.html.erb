@@ -1,12 +1,12 @@
 <%#
   A group's files as a table — the list view's rendering for exactly the rows _file_tile.html.erb
   draws as tiles (Maker::ProjectFolderListing::Row), wherever they come from: a folder section,
-  Loose, Backups, Linked, or Generated. `.table` is the shared component (components.css);
+  Loose or Backups. `.table` is the shared component (components.css);
   `.project-files` carries only this page's column widths/drops (pages/projects.css), the same
   split files/_list.html.erb's `table.files` makes.
 
   `row.section` is precomputed by whoever built the row (Maker::ProjectFolderListing for a folder
-  row, ProjectsController#show for a Linked one) — this partial never walks the tree itself. Blank
+  row) — this partial never walks the tree itself. Blank
   reads as "Loose", the sweep's own name for the folder's root.
 
   THE ROW CARRIES THE TILE'S RIGHT-CLICK MENU (stage 4, S4-1) — `file_menu_data`, the one builder
@@ -21,24 +21,18 @@
 
   ORIGIN READS @addon_origins, THE SAME HASH EVERY TILE ON THIS PAGE ALREADY READS FOR ITS
   right-click menu (AddonOrigins#addon_origins_for, one Registry lookup for the whole page) — never
-  a second resolution here. A row with no addon origin answers nil and the cell reads "—"; a
-  Generated row's origin is never nil, by construction (Maker::AddonOrigin.for is what put it in
-  @generated in the first place). The label is parsed rather than re-derived because nothing renders
-  the bare addon title today outside this cell — see AddonOrigins' own comment on why `title` isn't
-  a key in that hash.
+  a second resolution here. A row with no addon origin answers nil and the cell reads "—". The
+  label is parsed rather than re-derived because nothing renders the bare addon title today outside
+  this cell — see AddonOrigins' own comment on why `title` isn't a key in that hash.
 
-  A LINKED ROW KEEPS ITS TWO CONTROLS (2026-11-02, the UX audit's C8): Detach and Move into
-  project, the tile's corner (projects/_linked_actions), in an actions column that renders only
-  when a row here is Linked — switching the panel to List used to drop both, leaving a Linked file
-  with no way to act on it from the hub. Optional local `notes` ({ node_id => sentence }) puts the
-  tile's one-line note under the name here too.
+  Optional local `notes` ({ node_id => sentence }) puts the tile's one-line note under the name here
+  too.
 %>
 <% notes = local_assigns.fetch(:notes, {}) %>
 <%# VERSION STACKS (Shop manual spec §9): `figures` (ProjectsHelper#stack_figures) is what the group
     draws when its panel stacks — a Row, or a StackFigure drawn as one row whose name opens its
     members beneath it (stack_controller.js, on the panel). Without it, every row stands alone. %>
 <% figures = local_assigns.fetch(:figures, rows) %>
-<% actions = rows.any?(&:linked?) %>
 <table class="table project-files">
   <thead>
     <tr>
@@ -47,7 +41,6 @@
       <th class="num col-size">Size</th>
       <th class="col-modified">Modified</th>
       <th class="col-origin">Origin</th>
-      <% if actions %><th class="col-actions"><span class="label-hidden">Actions</span></th><% end %>
     </tr>
   </thead>
   <tbody>
@@ -67,7 +60,6 @@
           <td class="num muted col-size"><%= latest.size ? number_to_human_size(latest.size) : "—" %></td>
           <td class="muted col-modified"><%= latest.mtime ? time_at(time_from_nanos(latest.mtime)) : "—" %></td>
           <td class="muted col-origin">—</td>
-          <% if actions %><td class="col-actions"></td><% end %>
         </tr>
       <% end %>
       <% (figure.is_a?(ProjectsHelper::StackFigure) ? figure.rows.each_with_index.to_a : [ [ figure, nil ] ]).each do |row, member_index| %>
@@ -93,9 +85,6 @@
           <%= node.mtime ? time_at(time_from_nanos(node.mtime)) : "—" %>
         </td>
         <td class="muted col-origin"><%= origin ? origin[:title] : "—" %></td>
-        <% if actions %>
-          <td class="col-actions"><%= render "projects/linked_actions", row: row, node: node, tile: false %></td>
-        <% end %>
       <% end %>
       <% end %>
     <% end %>

@@ -134,9 +134,8 @@ class ProjectsController < ApplicationController
     # THE FOLDER IS WHAT THE PANEL SHOWS; @attachments stay the file→project RELATION (detach,
     # cover, addon origin, the missing count). Maker::ProjectFolderListing reads folder_node_id and
     # never mints a folder — the ensure above is the one writer, and it runs first. An attachment
-    # whose node is not among the listing's own (capped) ids is Linked: attached to this project but
-    # living somewhere else in the library, so it gets its own group with Detach and a move-in
-    # button instead of the plain folder tile.
+    # whose node lives outside the project's folder is not drawn on this page (the "Linked from
+    # elsewhere" group left on 2026-11-19).
     #
     # THE LISTING NOW COMES BEFORE THE PANEL LAYOUT, AND THAT ORDER IS LOAD-BEARING (2026-09-08,
     # folder panels): every direct subfolder is a PANEL, so the layout cannot be computed until the
@@ -386,36 +385,13 @@ class ProjectsController < ApplicationController
     # Reuses the dirs and root nodes the repository cards above already collected, so a folder full
     # of repositories still costs the one batched `nodes` query it already paid.
     @release_repos = releases_shown && capabilities.local_worktree? ? release_repo_tags(repo_dirs, repo_roots) : []
-    # GENERATED (stage 3, S3-1): a file inside the folder that an addon produced is listed ONCE, in
-    # its own group below, never repeated inside the section it happens to sit in. Scoped to
-    # @listing.node_ids ONLY — never `tile_ids` a few lines down, which also carries Linked rows:
-    # a Linked file that is also addon output stays in Linked (unchanged since S2-2), because
-    # Generated is about how THIS FOLDER files itself, not about every addon-produced node the page
-    # renders anywhere. One query pair (Maker::AddonOrigin.for's own contract), regardless of N.
-    @generated = Maker::AddonOrigin.for(user: current_user, node_ids: @listing.node_ids)
-    @generated_ids = @generated.keys.to_set
     # THE MODELS PANEL (2026-10-21; docs/superpowers/specs/2026-10-20-attach-model-to-project-design.md):
     # the models in this project's folder plus the ones attached from elsewhere, derived from rows
-    # that already exist (Maker::ProjectModels). ONLY WHEN THE PANEL SHOWS — and that condition is
-    # load-bearing, not a saving: a carded model's files leave "Linked from elsewhere" below, so with
-    # the panel hidden they would be on the page nowhere at all.
+    # that already exist (Maker::ProjectModels). Only when the panel shows.
     @project_models = if @panel_layout.visible?("models")
       Maker::ProjectModels.for(current_user, @project, attached_node_ids: @attachments.map(&:node_id))
     end
-    carded = @project_models&.owned_node_ids || Set.new
-    # "Linked" is a FOLDER question, asked of the tree, not a LIST question: the listing is capped
-    # at FILE_CAP, so an attached file past the cap, or inside a repository the walk never entered
-    # (DIR_CAP), is absent from `node_ids` while sitting squarely in the folder — it must not
-    # reappear as "linked from elsewhere". `section` is the file's own library path (not scoped to
-    # this folder, since a Linked file lives somewhere else in it entirely) — @listing.path_for
-    # reads the same tree this listing already built, so this costs no extra query either.
-    @linked_rows = @attachments.reject { |a| @listing.contains?(@page_nodes[a.node_id]) || carded.include?(a.node_id) }
-                               .map { |a|
-                                 node = @page_nodes[a.node_id]
-                                 Maker::ProjectFolderListing::Row.new(node:, attachment: a, linked: true,
-                                                                       section: @listing.path_for(node))
-                               }
-    # Dead ids never reach either list: @listing only ever holds live nodes, and @attachments has
+    # Dead ids never reach a list: @listing only ever holds live nodes, and @attachments has
     # already dropped anything @page_nodes could not find — `stat_all` would answer nothing for a
     # gone id anyway, but it would still spend a slot in the ORDERED walk BACKFILL_LIMIT bounds.
     #
@@ -432,14 +408,12 @@ class ProjectsController < ApplicationController
     # disagreed with the row in four reachable cases: it backfilled a hidden panel, a browsed plain
     # folder and a repository nested in a tiles-view panel, none of which draws a tile, and it never
     # backfilled an image inside a browsed repository, which Photos paints (project_page_test.rb pins
-    # all four). EXCEPT @generated_ids: a generated file renders as a tile in the Generated group
-    # wherever it physically sits. Backups need no exception: Dir#subtree_file_ids never holds one,
-    # and the Backups group draws them all. In memory over the tree the listing already built, so
+    # all four). Backups need no exception: Dir#subtree_file_ids never holds one, and the Backups
+    # group draws them all. In memory over the tree the listing already built, so
     # this costs no query and page_query_budget_test.rb stays flat.
     load_version_stacks(no_tiles)
-    untiled = no_tiles.flat_map(&:subtree_file_ids).to_set - @generated_ids
-    tile_ids = @listing.node_ids.reject { |id| untiled.include?(id) } +
-               @linked_rows.map(&:node_id)
+    untiled = no_tiles.flat_map(&:subtree_file_ids).to_set
+    tile_ids = @listing.node_ids.reject { |id| untiled.include?(id) }
     # PHOTOS (stage 4, S4-1): the public page's own definition, on the maker's page too, and ITS OWN
     # TERM IN THE UNION, which is why it is computed here, above it. The panel is always shown
     # (Maker::ProjectKind::ALWAYS) and paints every image in the folder at any depth, a hidden
@@ -469,7 +443,7 @@ class ProjectsController < ApplicationController
                     Array(@readme_source&.image_node_ids) + (@cover_node ? [ cover_id ] : [])
     )
     # TILE_IDS ONLY, NOT THE PHOTO ROWS. Every tile this page can render — a folder section,
-    # Backups, Generated, Linked — carries `contextmenu->filemenu#open`; `_log_entry`'s photos and
+    # Loose, Backups — carries `contextmenu->filemenu#open`; `_log_entry`'s photos and
     # the Photos panel's cells are driven by the `thumbs` controller alone, with no menu to add an
     # entry to — so an origin resolved for one would be work nothing reads. That is why the photo
     # rows join the thumbnail union above and not this one.
@@ -713,8 +687,7 @@ class ProjectsController < ApplicationController
   # VERSION STACKS ON THIS PAGE (Shop manual spec §9): ONE Maker::VersionStacks result over every
   # file a STACKING panel draws as a tile or a row, and one query for it (the pull-outs; the rows are
   # the listing's own). A panel stacks unless its switch is off (Layout#stacked?); a panel or a
-  # nested repository that draws no tiles (#dirs_without_tiles) gives nothing, and neither does a
-  # generated file, which draws in the Generated group. Because only stacking panels' files go in,
+  # nested repository that draws no tiles (#dirs_without_tiles) gives nothing. Because only stacking panels' files go in,
   # a partial can ask `@stacks` about any row and get "not stacked" for every other panel's.
   #
   # A BACKUP JOINS ITS STACK. The listing diverts a LightBurn or MillMage rescue copy into the Files
@@ -735,7 +708,7 @@ class ProjectsController < ApplicationController
     end
     owner[@listing.folder_id] = "attachments" if @listing.folder_id && @panel_layout.stacked?("attachments")
     rows = @listing.all_rows.select { |row| owner.key?(row.node.parent_node_id) }
-                   .reject { |row| @generated_ids.include?(row.node_id) || row.node_id == @readme_row&.node_id }
+                   .reject { |row| row.node_id == @readme_row&.node_id }
     @stacks = Maker::VersionStacks.for_records(current_user, rows.map(&:node))
     @stacked_backups = @listing.backups.select { |row| @stacks.stacked?(row.node_id) }
                                .group_by { |row| row.node.parent_node_id }

@@ -93,9 +93,7 @@ module Maker
       # nested repository): that subtree draws no tiles, so a preview row and a render job per file
       # would be work for a picture no tile shows. OUT OF THE TILE TERM, NOT OUT OF THE MAP: the map
       # is the union of what the page paints, so an image in such a subtree comes back through the
-      # Photos term (Photos paints every image at any depth), and a generated file is excepted from
-      # the subtraction itself, because the Generated group tiles it wherever it physically sits
-      # (F-S15-1). BACKUPS ARE NOT IN EITHER ANSWER, and that is correct rather
+      # Photos term (Photos paints every image at any depth) (F-S15-1). BACKUPS ARE NOT IN EITHER ANSWER, and that is correct rather
       # than an oversight — `#bucket` diverts a backup out of `files` into the cross-cutting
       # `#backups` list, which the panel DOES render as tiles wherever the file physically sits, so
       # a rescue copy inside an untiled folder must keep its thumbnail.
@@ -230,8 +228,8 @@ module Maker
 
     # Every Row this listing holds anywhere — loose, backups, or any depth of the tree, in no
     # particular order. THE ONE PLACE THAT KNOWS THE FULL SET, so a caller that needs to find a
-    # folder row by its node_id (the Generated group: which of the folder's OWN rows did
-    # Maker::AddonOrigin.for match, complete with the section it actually sits in) reads it from
+    # folder row by its node_id (Recently changed: which of the folder's OWN rows is this node,
+    # complete with the section it actually sits in) reads it from
     # here rather than reconstructing a Row from a node looked up elsewhere on the page — a
     # PageNodes index built from attachments/photos/BOM lines has no reason to contain a plain
     # folder file that nothing ever attached.

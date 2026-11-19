@@ -96,11 +96,9 @@
 <%= tag_chips(@project) %>
 
 <%# THE STATS LINE reads collections ProjectsController#show already loaded — @listing, @tasks,
-    @entries, @sheets, @linked_rows — and nothing else, so page_query_budget_test.rb's "does not
+    @entries, @sheets — and nothing else, so page_query_budget_test.rb's "does not
     grow with attachments, tasks or build-log entries" holds without a counter cache. The file
-    count is the FOLDER's (@listing.total), not maker_file_attachments — an attachment to a node
-    living elsewhere in the library (Linked) is counted separately, right here, rather than folded
-    into the first number.
+    count is the FOLDER's (@listing.total), not maker_file_attachments.
 
     IT COUNTS ONLY WHAT THE PAGE SHOWS (2026-11-02, the UX audit's C1/C7). "0 of 0 tasks done · 0
     sheets" sat above a page with no Tasks and no Sheets panel, and a laser project's "1 sheet"
@@ -111,9 +109,6 @@
 <% done = @tasks.count { |t| t.status == "done" } %>
 <p class="project-stats">
   <span><b><%= @listing.total %></b> <%= "file".pluralize(@listing.total) %></span>
-  <% if @linked_rows.any? %>
-    <span><b><%= @linked_rows.size %></b> linked</span>
-  <% end %>
   <% if panel_on_page?(@panel_layout, "tasks", @absent_panels) %>
     <span><b><%= done %> of <%= @tasks.size %></b> <%= "task".pluralize(@tasks.size) %> done</span>
   <% end %>

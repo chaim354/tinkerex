@@ -6,11 +6,6 @@
   a section now, and the old standalone Repositories group (_repo_group.html.erb) is gone. What is
   INSIDE that section changed on 2026-09-07: see "ALWAYS OPEN" below.
 
-  @generated_ids IS FILTERED OUT HERE, AT EVERY LEVEL of the recursion, so a file with an addon
-  origin renders ONCE, in the Generated group below, never inside the folder it happens to sit in
-  (ProjectsController#show resolves @generated from @listing.node_ids, which already covers every
-  depth of this tree).
-
   ALWAYS OPEN, WITH ONE EXCEPTION SINCE 2026-09-07. S2-2's "closed by default" rule belongs to the
   synthetic, cross-cutting Backups group alone (_attachment_group.html.erb, unchanged) — a REAL
   subfolder is not that, whatever a user happens to name it. A REPOSITORY is the second exception,
@@ -26,9 +21,7 @@
   renders NO tiles at all since 2026-09-07 — the browser inside it holds every file at every depth —
   so the same number read "(3)" beside a repository holding 203 files. The recursive count is
   Maker::ProjectFolderListing::Dir#subtree_file_count, in memory over the tree the listing already
-  built. Generated files are NOT subtracted from a repository's count, unlike a plain section's: the
-  browser lists them like any other file, where a section genuinely does not render them (they are
-  in the Generated group instead).
+  built.
 
   A SECTION IS A NESTED FOLDER ONLY, SINCE 2026-09-08. A DEPTH-ONE subfolder of the project's
   folder is a PANEL now (projects/_folder_panel), so this partial is reached from that panel's
@@ -43,7 +36,7 @@
 <%# WHAT FILE_CAP LEFT OUT IS COUNTED (2026-11-12): a repository's browser lists every file, so its
     count is the real subtree; a plain section reads "(11 of 30)" when the cap drew 11 of its 30, and
     the enclosing panel's "Showing X of Y" line links to the folder. %>
-<% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
+<% visible = dir.files %>
 <% count = dir.repo? ? dir.subtree_file_count + dir.subtree_hidden_count : visible.size %>
 <% count = "#{count} of #{count + dir.hidden_count}" if !dir.repo? && dir.hidden_count.positive? %>
 <section class="attachment-group file-tree-section">

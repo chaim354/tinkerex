@@ -7,7 +7,7 @@
   `panels["views"]` under this panel's key.
 
   Locals: dir (Maker::ProjectFolderListing::Dir), key ("folder:<node_id>"), view (one of
-  Maker::Project::VIEWS). Reads @project, @generated_ids, @page_thumbs, @addon_origins and
+  Maker::Project::VIEWS). Reads @project, @page_thumbs, @addon_origins and
   @repo_cards off ProjectsController#show, exactly as the section partial it replaces always did.
 
   NESTING IS UNCHANGED AND DELIBERATE: only DEPTH ONE is a panel, so a subfolder of a subfolder
@@ -17,10 +17,8 @@
 
   THE COUNT IS THE WHOLE SUBTREE, which is _file_tree_section's rule for a REPOSITORY applied to
   every folder here — and for the same reason: a panel holds its nested sections, so its heading
-  must count what is inside them too, or a folder of folders reads "(0)". Generated files are
-  subtracted for a plain folder because they render in the Files panel's Generated group instead
-  and this panel really does not draw them; a repository's browser lists everything at every
-  depth, so nothing is subtracted there (_file_tree_section makes the same split).
+  must count what is inside them too, or a folder of folders reads "(0)". Tool output counts and
+  draws here like any other file (the Files panel's Generated group is gone, 2026-11-19).
 
   ITS OWN `thumbs filemenu` PAIR. The Files panel wraps its groups in one instance because they
   share a subtree; a panel is a sibling subtree, so a controller mounted over there would not find
@@ -34,9 +32,9 @@
   indexed (Maker::ProjectFolderListing's header has the live case). The "Showing X of Y" line is
   for the tiles and the list only; the browser lists every file, so it needs none.
 %>
-<% visible = dir.files.reject { |row| @generated_ids.include?(row.node_id) } %>
+<% visible = dir.files %>
 <% hidden = dir.subtree_hidden_count %>
-<% count = (dir.repo? ? dir.subtree_file_count : dir.subtree_file_ids.count { |id| !@generated_ids.include?(id) }) + hidden %>
+<% count = (dir.repo? ? dir.subtree_file_count : dir.subtree_file_ids.size) + hidden %>
 <% empty = count.zero? && dir.children.empty? %>
 <%# THE ID IS THE LAYOUT KEY, AND A VIEW SWITCH REPLACES THE SECTION BY IT (2026-11-16): the stream
     ProjectsController#show answers a press with targets `key`. An id that drifted from the key

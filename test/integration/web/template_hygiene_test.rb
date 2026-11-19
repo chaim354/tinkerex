@@ -172,8 +172,7 @@ module Web
                           kind: "dir", parent_node_id: firmware.node_id)
       # STAGE 3, S3-2: A README.md NODE, OR projects/_repo_card's readme branch never renders —
       # without one, `card.readme_note` and `card.readme_html` are both nil and the whole `readme`
-      # `<details>`/note paragraph is skipped, same as the file's own comment two lines up argues
-      # for _generated_group. This node has no real storage_path behind it (like every other one
+      # `<details>`/note paragraph is skipped. This node has no real storage_path behind it (like every other one
       # this fixture seeds), so it renders the "README unavailable" line rather than rendered
       # markdown — still the branch that needs sweeping, and still real coverage: the card itself,
       # its facts line and its refusal/no-tag wording are exercised by `firmware` having no real
@@ -244,7 +243,7 @@ module Web
       # ITS NEXT VERSION, so the models panel's list draws a stack row (projects/_file_rows, spec §9).
       file!("n-models-base-v2", "base v2.stl", parent_node_id: models_dir.node_id)
       @project.update!(panels: { "views" => { "folder:d-models" => "list" } })
-      # ONE GENERATED FILE IN THE FOLDER, OR projects/_generated_group IS NEVER RENDERED: a file with
+      # ONE GENERATED FILE IN THE FOLDER, so a tile carries an addon's menu entry: a file with
       # a Maker::AddonState behind it, keyed to the `fixture` addon the sweep's ADDON_SOURCE_PATH
       # already serves (link_for answers nil for a key the source does not know, and the concern
       # drops it). The list view of the same page sweeps _file_rows.

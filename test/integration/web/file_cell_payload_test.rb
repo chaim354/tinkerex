@@ -53,6 +53,12 @@ module Web
       project = @user.maker_projects.create!(name: "Lamp", cover_node_id: renderable)
       project.file_attachments.create!(user: @user, node_id: renderable, role: "model")
       project.file_attachments.create!(user: @user, node_id: plain, role: "other")
+      # THE PROJECT PAGE DRAWS ITS FOLDER'S FILES, not attachments living elsewhere (2026-11-19), so
+      # one of each branch sits in the project's folder too.
+      folder = project_folder_rows!(@user, project)
+      [ file!("n-in-stl", "bracket.stl"), file!("n-in-txt", "notes.rtf") ].each do |id|
+        @user.nodes.find_by!(node_id: id).update!(parent_node_id: folder.node_id)
+      end
       entry = project.build_log_entries.create!(user: @user, body: "day one", logged_at: Time.current)
       entry.file_attachments.create!(user: @user, node_id: file!("n-png", "shot.png"), role: "image")
 

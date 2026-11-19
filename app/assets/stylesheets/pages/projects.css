@@ -176,18 +176,6 @@
   .project-files tr.stack-member td.col-name { padding-left: 24px; }
   .project-files .stack-role, .project-files .stack-pull-out-form, .project-files .stack-put-back-form { margin-left: var(--space-2); }
   .project-files .stack-pull-out-form, .project-files .stack-put-back-form { display: inline; }
-  /* A Linked tile's corner holds TWO controls (Detach, Move into project) since S2-2, stacked and
-     right-aligned so they cover as little of the thumbnail as two labels can. On a no-pointer
-     device the corner is always visible, and two stacked buttons over a 96px thumb hid it
-     entirely — so there the controls sit BELOW the tile in a row instead of over it. */
-  .tile-meta { position: absolute; top: 4px; right: 4px; display: flex; flex-direction: column; gap: 4px;
-               align-items: flex-end; opacity: 0; transition: opacity .12s; }
-  .attachment-tile:hover .tile-meta, .attachment-tile:focus-within .tile-meta { opacity: 1; }
-  @media (hover: none) {
-    .tile-meta { position: static; opacity: 1; flex-direction: row; flex-wrap: wrap; align-items: center; }
-  }
-  .tile-meta form { margin: 0; }
-  .tile-detach, .tile-move { min-height: 22px; padding: 0 6px; font-size: 11px; background: var(--surface); }
   .entry-photo .thumb { width: 100%; height: 80px; }
   .attachment-group { margin-bottom: 16px; }
   .attachment-group:last-child { margin-bottom: 0; }
@@ -250,13 +238,6 @@
      lose to the bare `.markdown` above however specific it looked (the same trap the folder-panel
      view toggle records). */
   .block-panel .markdown, .block-preview.markdown { max-height: none; overflow: visible; margin-top: 0; }
-
-  /* --- Generated (stage 3, S3-1): the tile keeps its own thumbnail's shape; the meta line below
-     it is always visible (unlike a Linked tile's hover corner), because naming the tool and
-     revision is the point of the group, not an on-demand detail. --- */
-  .generated-tile { display: flex; flex-direction: column; gap: 4px; }
-  .generated-meta { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
-  .generated-meta .linkbtn.small { font-size: 11px; }
 
   /* --- The list view (stage 3, S3-1): `.table` is the component (components.css);
      `.project-files` carries only this page's column drops, the same split table.files/
