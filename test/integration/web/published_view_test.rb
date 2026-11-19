@@ -64,7 +64,13 @@ module Web
       assert_equal %w[attachments photos], boxes.select { |b| b["disabled"] }.map { |b| b["value"] },
                    "the folder root and the photos are what publishing a project is"
       assert_select ".publish-panels .publish-option", text: /Files\s+always shown/
-      assert_select ".publish-panels .publish-option .mono", text: "models/"
+      assert_select ".publish-panels .publish-option", text: /\Amodels\s+folder\z/
+      assert_select ".publish-panels .publish-option .mono", 0, "a folder named by its own title names itself once"
+
+      # A RETITLED FOLDER PANEL is named by its title, with the folder beside it.
+      @project.update!(panels: { "titles" => { key(@f[:models]) => "Prints" } })
+      get publishing_project_path(@project)
+      assert_select ".publish-panels .publish-option", text: /\APrints\s+models\/\z/
       assert_select ".publish-panels > p", text: "Never on the public page: 3D models, Tasks, Sheets and Calculations."
       assert_select "form.publish-form input[type=hidden][name=?][value='']", "project[public_panels][]", 1
       # THE TAB'S ONE INK PRIMARY STAYS ITS ONE (design-system.md rule 13; accent_spend_test.rb's row).

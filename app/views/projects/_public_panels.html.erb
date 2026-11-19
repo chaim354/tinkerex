@@ -33,12 +33,15 @@
   <% layout.order.select { |key| Maker::PublicProject.faced?(layout, key) }.each do |key| %>
     <% always = !offered.include?(key) %>
     <% label = labels.fetch(key, key) %>
+    <% title = layout.title_for(key, label) %>
     <label class="publish-option">
       <%= check_box_tag "project[public_panels][]", key, always || !layout.unpublished?(key),
                         id: nil, disabled: always %>
-      <span class="publish-option-label"><%= layout.title_for(key, label) %></span>
+      <span class="publish-option-label"><%= title %></span>
       <span class="muted publish-option-meaning">
-        <% if layout.folder?(key) %><span class="mono"><%= label %>/</span><% end %>
+        <%# A FOLDER SAYS SO, and names itself only when the maker titled its panel something else —
+            "cnc cnc/" on every row said the same word twice. %>
+        <% if layout.folder?(key) %><% if title == label %>folder<% else %><span class="mono"><%= label %>/</span><% end %><% end %>
         <% if always %>always shown<% elsif layout.hidden?(key) %>hidden on your page too<% end %>
       </span>
     </label>
