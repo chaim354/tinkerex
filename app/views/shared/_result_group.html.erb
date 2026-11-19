@@ -95,8 +95,7 @@
               <% stack = record.stack %>
               <% node = record.node %>
               <span class="result-name">
-                <%= link_to name.(stack.name), file_path(node.node_id), data: file_open_data %>
-                <span class="badge stack-count"><%= stack_count_label(stack) %></span>
+                <span class="stack-result-name"><%= link_to name.(stack.name), file_path(node.node_id), data: file_open_data %> <span class="badge stack-count"><%= stack_count_label(stack) %></span></span>
                 <%= render "shared/result_folder", where: folders[record.id] %>
               </span>
               <span class="result-sub">latest <%= node.name %></span>

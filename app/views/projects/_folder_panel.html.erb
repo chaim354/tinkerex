@@ -68,7 +68,7 @@
   </div>
   <%= panel_intro(@panel_layout, key) %>
   <%# VERSION STACKS, THIS PANEL'S OWN SWITCH (spec §9): not in the browser, which lists every file. %>
-  <% if !empty && view != "browser" %>
+  <% if count > 1 && view != "browser" %>
     <%= render "projects/stack_switch", key: key, label: dir.name %>
   <% end %>
 

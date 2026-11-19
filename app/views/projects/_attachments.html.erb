@@ -99,7 +99,7 @@
   </div>
   <%= panel_intro(@panel_layout, "attachments") %>
   <%# VERSION STACKS, THIS PANEL'S OWN SWITCH (spec §9): it stacks Loose, the folder's own root files. %>
-  <% if @listing.loose.any? %>
+  <% if @listing.loose.size > 1 %>
     <%= render "projects/stack_switch", key: "attachments", label: "Files" %>
   <% end %>
 

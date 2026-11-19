@@ -46,6 +46,10 @@
      lets the column shrink inside the flex row, and the row's own `overflow-wrap: anywhere` breaks a
      long path rather than pushing the page past 375px (rule 11). */
   .result-name { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  /* A VERSION STACK'S ROW (spec §9): its name and its count chip on one line, the chip at its own
+     width, as the screen `search` draws it. */
+  .stack-result-name { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+  .search-columns .stack-result-name > a { font-size: 15px; font-weight: 700; color: var(--fg); }
   .result-path { font: 400 12px/16px var(--font-mono); color: var(--fg-muted); text-decoration: none; }
   .result-path:hover { color: var(--fg); text-decoration: underline; }
 
