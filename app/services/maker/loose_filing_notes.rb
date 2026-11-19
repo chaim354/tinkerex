@@ -18,28 +18,49 @@ module Maker
   # `.zip`, because whether it files with the board is a CONTENT question (#board_folder_for reads
   # the archive), and a destination past the listing's FILE_CAP, which the tree does not hold.
   #
+  # TWO READERS OF ONE PREDICTION (the Shop manual's tidy-up list, 2026-11-19). `.blocked` is the
+  # prediction itself — which loose rows are blocked, by which folder — and `.for` words it for the
+  # Files panel's rows; Maker::TidyUp reads `.blocked` for its "Loose file" suggestions, so the panel
+  # and the tidy-up list can never disagree about which file the next pass will not file.
+  #
   # IT NEVER FILES, MOVES OR CREATES ANYTHING, and never calls the port.
   class LooseFilingNotes
+    # The folder the filing pass would file a row into (`folder`, its name, as the rules give it) and
+    # that folder's Dir in the listing's tree, which already holds a file or folder of the row's name.
+    Blocked = Data.define(:folder, :dir)
+
     def self.for(user:, listing:, rows:)
       return {} if rows.empty?
 
-      rules = Maker::FilingRules.for(user)
-      dirs = listing.tree.index_by(&:name)
+      blocked = blocked(user:, listing:, rows:)
       rows.each_with_object({}) do |row, notes|
         name = row.node.name
         # A README at the root is never filed (ProjectIntake's `:project_readme`), so a second one
         # beside the card's says that rather than wearing the "filed on the next scan" caption.
         if Maker::Readme::NAMES.include?(name)
           notes[row.node_id] = "A README stays at the project's root."
-          next
+        elsif (hit = blocked[row.node_id])
+          notes[row.node_id] = "#{hit.folder}/#{name} already exists — rename one to file it."
         end
-        next if Maker::GerberArchive.archive?(name)
+      end
+    end
 
+    # node_id => Blocked for every loose row the filing pass will refuse because its destination is
+    # taken. A README is never filed and a `.zip` is a content question (see the header), so neither
+    # is ever in the answer; with none left to ask about, the rules are not fetched at all.
+    def self.blocked(user:, listing:, rows:)
+      asked = rows.reject { |row| Maker::Readme::NAMES.include?(row.node.name) || Maker::GerberArchive.archive?(row.node.name) }
+      return {} if asked.empty?
+
+      rules = Maker::FilingRules.for(user)
+      dirs = listing.tree.index_by(&:name)
+      asked.each_with_object({}) do |row, out|
+        name = row.node.name
         folder = rules.fetch(Maker::ProjectFolders.ext_of(name), Maker::ProjectFolders::OTHER)
         dir = dirs[folder]
         next unless dir && (dir.files.any? { |f| f.node.name == name } || dir.children.any? { |c| c.name == name })
 
-        notes[row.node_id] = "#{folder}/#{name} already exists — rename one to file it."
+        out[row.node_id] = Blocked.new(folder:, dir:)
       end
     end
   end

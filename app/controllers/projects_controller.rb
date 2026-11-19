@@ -326,6 +326,16 @@ class ProjectsController < ApplicationController
       Maker::RepoCard.for(user: current_user, dir:, root_node: repo_roots[dir.node_id],
                           listing: @listing, capabilities:)
     end
+    # THE TIDY-UP LIST (the Shop manual's §9, 2026-11-19; Maker::TidyUp): loose files the filing pass
+    # cannot file, repositories with uncommitted changes, exports older than their source. Read-only,
+    # constant in queries (page_query_budget_test.rb), and its repositories' Nodes are the batch the
+    # cards above already loaded, so it costs no `nodes` query of its own. NOT IN THE EDITOR, whose
+    # head is the edit area's and draws no plate, and not for a panel's in-place view switch, which
+    # renders that one panel: neither draws the list, so neither pays a git status for it.
+    @tidy = unless @editing || @switched_panel
+      Maker::TidyUp.for(user: current_user, project: @project, listing: @listing, capabilities:,
+                        repos: Maker::TidyUp.repos_in(current_user, @listing, @project, nodes: repo_roots, capabilities:))
+    end
     # THE ROOT'S OWN CARD (stage 4, S4-1). A project whose folder IS the working tree had no card
     # and no Commits/History anywhere on its page — every real repository on the share deployment
     # is one (measured 2026-09-07). The root is a synthetic Dir: its files are the loose rows, its

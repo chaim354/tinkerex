@@ -23,7 +23,7 @@ module HomeHelper
         sections << HomeSection.new(key: :projects, label: "Active projects", id: "home-projects",
                                     count: @recent_projects.size, column: :left)
       end
-      attention = @failed_prints.size + @low_stock.size
+      attention = @failed_prints.size + @low_stock.size + Array(@tidy_attention).size
       if attention.positive?
         sections << HomeSection.new(key: :attention, label: "Needs attention", id: "home-attention",
                                     count: attention, column: :right)
@@ -51,8 +51,10 @@ module HomeHelper
       elsif projects >= HomeController::RECENT_PROJECTS then "These are the #{count_words(projects)} projects you worked on last."
       else "#{count_words(projects).capitalize} #{projects == 1 ? "project is" : "projects are"} open."
       end
-    capped = @failed_prints.size >= HomeController::ATTENTION_PRINTS || @low_stock.size >= HomeController::ATTENTION_STOCK
-    things = @failed_prints.size + @low_stock.size
+    tidy = Array(@tidy_attention).size
+    capped = @failed_prints.size >= HomeController::ATTENTION_PRINTS || @low_stock.size >= HomeController::ATTENTION_STOCK ||
+             tidy >= HomeController::ATTENTION_TIDY
+    things = @failed_prints.size + @low_stock.size + tidy
     attention_clause =
       if things.zero? then "Nothing needs a look."
       elsif capped then "At least #{count_words(things)} things need a look."
