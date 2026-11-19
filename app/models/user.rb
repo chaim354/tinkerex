@@ -86,6 +86,9 @@ class User < ApplicationRecord
   # test/models/tenant_cleanup_test.rb asks for.
   has_many :maker_project_blocks, class_name: "Maker::ProjectBlock", dependent: :destroy
   has_many :maker_pins, class_name: "Maker::Pin", dependent: :destroy
+  # Files pulled out of a version stack (Maker::StackExclusion). No callbacks, no dependents;
+  # TenantCleanupTest is what proves the line exists.
+  has_many :maker_stack_exclusions, class_name: "Maker::StackExclusion", dependent: :destroy
   has_many :maker_releases, class_name: "Maker::Release", dependent: :destroy
   has_many :maker_release_files, class_name: "Maker::ReleaseFile", dependent: :destroy
   has_many :maker_addon_states, class_name: "Maker::AddonState", dependent: :destroy

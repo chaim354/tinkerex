@@ -438,6 +438,7 @@ class ProjectsController < ApplicationController
     # wherever it physically sits. Backups need no exception: Dir#subtree_file_ids never holds one,
     # and the Backups group draws them all. In memory over the tree the listing already built, so
     # this costs no query and page_query_budget_test.rb stays flat.
+    load_version_stacks(no_tiles)
     untiled = no_tiles.flat_map(&:subtree_file_ids).to_set - @generated_ids
     tile_ids = @listing.node_ids.reject { |id| untiled.include?(id) } +
                @linked_rows.map(&:node_id)
@@ -710,6 +711,47 @@ class ProjectsController < ApplicationController
   # `panels["views"]` (Maker::Project::VIEWS, written by Projects::PanelsController#update's
   # `view[<key>]` branch and read through Layout#view_for). `?view=` on this action is inert, and
   # the cookie is simply never read again — nothing has to clear it.
+
+  # VERSION STACKS ON THIS PAGE (Shop manual spec §9): ONE Maker::VersionStacks result over every
+  # file a STACKING panel draws as a tile or a row, and one query for it (the pull-outs; the rows are
+  # the listing's own). A panel stacks unless its switch is off (Layout#stacked?); a panel or a
+  # nested repository that draws no tiles (#dirs_without_tiles) gives nothing, and neither does a
+  # generated file, which draws in the Generated group. Because only stacking panels' files go in,
+  # a partial can ask `@stacks` about any row and get "not stacked" for every other panel's.
+  #
+  # A BACKUP JOINS ITS STACK. The listing diverts a LightBurn or MillMage rescue copy into the Files
+  # panel's Backups group wherever it sits; in a stacking panel a backup of a file beside it is a
+  # member of that file's stack instead (the screens' "hex tiles · 1 backup"), drawn there and not in
+  # Backups. One that stacks with nothing stays in Backups. @stacked_backups says which, per folder.
+  #
+  # @stack_counts is each stacking panel's "N files in M figures": its files, backups in its stacks
+  # included, and the figures they make. In memory over the tree the listing already built.
+  def load_version_stacks(no_tiles)
+    skipped = no_tiles.flat_map(&:subtree_dir_ids).to_set
+    owner = {}
+    @listing.tree.each do |dir|
+      key = Maker::ProjectKind.folder_key(dir.node_id)
+      next if skipped.include?(dir.node_id) || !@panel_layout.stacked?(key)
+
+      stacking_dirs(dir, skipped).each { |id| owner[id] = key }
+    end
+    owner[@listing.folder_id] = "attachments" if @listing.folder_id && @panel_layout.stacked?("attachments")
+    rows = @listing.all_rows.select { |row| owner.key?(row.node.parent_node_id) }
+                   .reject { |row| @generated_ids.include?(row.node_id) || row.node_id == @readme_row&.node_id }
+    @stacks = Maker::VersionStacks.for_records(current_user, rows.map(&:node))
+    @stacked_backups = @listing.backups.select { |row| @stacks.stacked?(row.node_id) }
+                               .group_by { |row| row.node.parent_node_id }
+    @stack_counts = Hash.new { |h, k| h[k] = [ 0, 0 ] }
+    rows.each { |row| @stack_counts[owner[row.node.parent_node_id]][0] += 1 if !row.backup? || @stacks.stacked?(row.node_id) }
+    @stacks.stacks.each { |stack| @stack_counts[owner[stack.parent_node_id]][1] += stack.size - 1 }
+    @stack_counts.transform_values! { |files, folded| [ files, files - folded ] }
+  end
+
+  # A folder panel's dir and every dir beneath it whose files draw as tiles: not a repository nested
+  # inside it (a closed browser section, #dirs_without_tiles).
+  def stacking_dirs(dir, skipped)
+    [ dir.node_id ] + dir.children.reject { |child| skipped.include?(child.node_id) }.flat_map { |child| stacking_dirs(child, skipped) }
+  end
 
   # Every repo? Dir anywhere in the tree, at any depth — mirrors
   # Maker::ProjectFolderListing#flatten_dirs (private there, and rightly so: that walk is the

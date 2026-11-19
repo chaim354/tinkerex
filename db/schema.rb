@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_09_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_19_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -468,6 +468,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_09_120000) do
     t.index ["user_id", "name"], name: "index_maker_shelves_on_user_id_and_name", unique: true
   end
 
+  create_table "maker_stack_exclusions", force: :cascade do |t|
+    t.integer "user_id", null: false
+    t.string "node_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["user_id", "node_id"], name: "index_maker_stack_exclusions_on_user_id_and_node_id", unique: true
+  end
+
   create_table "maker_suppliers", force: :cascade do |t|
     t.datetime "created_at", null: false
     t.string "name", null: false
@@ -621,6 +629,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_09_120000) do
   add_foreign_key "maker_release_files", "users"
   add_foreign_key "maker_releases", "users"
   add_foreign_key "maker_repo_edits", "users"
+  add_foreign_key "maker_stack_exclusions", "users"
   add_foreign_key "nodes", "users"
   add_foreign_key "remote_manifest_chunks", "users"
   add_foreign_key "user_identities", "users"

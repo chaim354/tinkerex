@@ -39,5 +39,16 @@
     <span class="plate-facts"><%= safe_join([ ext.presence, (number_to_human_size(node.size) if node.size) ].compact, " · ") %></span>
   <% end %>
   <% if note %><p class="tile-note muted"><%= note %></p><% end %>
+  <%# A STACK'S MEMBER SAYS WHICH IT IS and can leave the stack; a file pulled out of its stack offers
+      to go back, quietly (Shop manual spec §9). `member` is the role, "latest" or "older", given by
+      projects/_stack_tile; @stacks is ProjectsController#show's. %>
+  <% if (member = local_assigns[:member]) %>
+    <span class="stack-role"><%= member %></span>
+    <%= button_to "Pull out", file_stack_exclusion_path(row.node_id), method: :post, class: "linkbtn stack-pull-out",
+                  form_class: "stack-pull-out-form", aria: { label: "Pull #{node.name} out of its stack" } %>
+  <% elsif @stacks&.pulled_out?(row.node_id) %>
+    <%= button_to "Put back", file_stack_exclusion_path(row.node_id), method: :delete, class: "linkbtn stack-put-back",
+                  form_class: "stack-put-back-form", aria: { label: "Put #{node.name} back in its stack" } %>
+  <% end %>
   <%= render "projects/linked_actions", row: row, node: node, tile: true %>
 </div>

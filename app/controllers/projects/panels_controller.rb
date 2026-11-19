@@ -27,6 +27,7 @@ module Projects
 
     def update
       return update_view if params[:view].present?
+      return update_stack if params[:stack].present?
       return replace if params[:layout].present?
 
       head :bad_request
@@ -59,6 +60,11 @@ module Projects
         @project.transaction do
           keys = write_blocks(doc.blocks_from(held)).merge(mint_tab_keys(held))
           attrs = { panels: doc.column(held).transform_values { |value| rekey(value, keys) } }
+          # THE STACK SWITCHES RIDE THROUGH A SAVE UNCHANGED. They are not part of the document (the
+          # editor neither shows nor posts them; they are switched in a panel's head, #update_stack),
+          # and the column a Save writes REPLACES the stored one, so leaving them out here would turn
+          # every panel's stacks back on whenever the maker saved a layout.
+          attrs[:panels]["unstacked"] = stored["unstacked"] if stored.key?("unstacked")
           if (page = doc.page_from(held))
             attrs[:description] = page["description"]
             attrs[:cover_node_id] = page["cover_node_id"]
@@ -217,6 +223,30 @@ module Projects
 
       browsed = (current_layout.view_for(key) == "browser") != (view == "browser")
       browsed ? { panel: key, files: "1" } : { panel: key }
+    end
+
+    # ONE PANEL'S VERSION STACKS ON OR OFF (Shop manual spec §9, "a toggle per panel"): the shape and
+    # the rules of #update_view, over `panels["unstacked"]` (Maker::ProjectKind::Layout#stacked?).
+    # `stack[<key>]=1` stacks, `stack[<key>]=0` does not; exactly one pair, a key this project's page
+    # holds that draws files (Maker::ProjectKind.stacks?), or nothing is written. Answered IN PLACE
+    # as a view switch is (#in_place). A FOLDER's switch redraws the Files panel too (`files`): a
+    # backup its stack holds leaves the Files panel's Backups group, and comes back when it stops.
+    def update_stack
+      raw = params[:stack]
+      pairs = raw.is_a?(ActionController::Parameters) ? raw.to_unsafe_h : {}
+      key, value = pairs.first if pairs.size == 1
+      key = current_layout.order.find { |k| k == key.to_s } if key
+      return redirect_to(project_path(@project)) unless key && Maker::ProjectKind.stacks?(key) && %w[0 1].include?(value.to_s)
+
+      back = if params[:in_place] == "1"
+        (current_layout.folder?(key) ? { panel: key, files: "1" } : { panel: key }).merge(pressed: "stack")
+      else
+        {}
+      end
+      off = Array(stored["unstacked"]).map(&:to_s) - [ key ]
+      off << key if value.to_s == "0"
+      @project.update!(panels: stored.merge("unstacked" => off))
+      redirect_to project_path(@project, **back, anchor: key)
     end
 
     def view_pair

@@ -10,13 +10,30 @@
 # so tenancy is ordinary Rails user_id scoping (§8) — the same shape as the Files search this
 # reuses the idiom from.
 class SearchController < ApplicationController
+  # The Library's "Stack versions and backups" choice, read here too (Shop manual spec §9).
+  include StackSwitch
+
   # Same bound as FilesController::QUERY_MAX, for the same reason: an unbounded query string
   # would build an unbounded LIKE pattern for no user-visible benefit.
   QUERY_MAX = 80
   # Five per kind on the results page; each group's own index ("See all") shows the rest.
   PER_GROUP = 5
+  # HOW MANY MATCHING FILES ARE GROUPED INTO STACKS: the Files group's figures are counted and chosen
+  # among the first STACK_SCAN matches by name (FilesController::FLAT_LIMIT, the Library's own bound
+  # on a whole-library list). A stack's members share a folder and a name, so they sort together and
+  # a cut rarely splits one; past the bound the rest count as one figure each.
+  STACK_SCAN = FilesController::FLAT_LIMIT
+
+  # ONE ROW OF THE FILES GROUP THAT STANDS FOR A VERSION STACK: the stack, and its latest member's
+  # node, which the row links to and which says where it is. `id` is that node's, as a file row's is
+  # (the group's `folders` map is keyed by it).
+  StackHit = Data.define(:stack, :node) do
+    def id = node.id
+  end
 
   def index
+    # Before the blank-query return, so the box is right on the empty page too.
+    @stacking = resolve_stacks
     @q = params[:q].to_s.strip.first(QUERY_MAX)
     @groups = []
     return if @q.blank?
@@ -34,9 +51,8 @@ class SearchController < ApplicationController
                         .where("LOWER(name) LIKE ? ESCAPE '\\'", like)
     # WHERE EACH ONE IS (UX audit D11, 2026-11-02): three "tetra.stl" rows could not be told apart.
     # #folders_for is the rendered rows' folder paths off ONE pluck of the user's folders.
-    if (group = add_group("Files", :file, files.order(:name), files_path(q: @q)))
-      group[:folders] = folders_for(group[:records].to_h { |node| [ node.id, node.parent_node_id ] })
-    end
+    group = @stacking ? add_stacked_files(files) : add_group("Files", :file, files.order(:name), files_path(q: @q))
+    group[:folders] = folders_for(group[:records].to_h { |rec| [ rec.id, (rec.respond_to?(:stack) ? rec.node : rec).parent_node_id ] }) if group
 
     # Folders: the DIRECTORY rows the Files group deliberately excludes, as their own kind. This is
     # story 3.5's "folder paths" half, in the only spelling all three backends can answer:
@@ -156,6 +172,30 @@ class SearchController < ApplicationController
   # A SCOPE HANDED IN HERE MUST CARRY NO `select` VALUES: `.count` on such a relation builds
   # `COUNT(a, b)`, which is not SQL. That is why the Notes group's file names are a second query
   # over the capped ids rather than a column on the scope itself.
+  # THE FILES GROUP WITH VERSIONS STACKED (Shop manual spec §9, "stacks inside the Files group"; the
+  # screen `search`): one row per stack, in name order where its first member stood, linking its
+  # latest member. `total` counts FIGURES and `files` the files they stand for, so the head can say
+  # "5 results · 8 files". FIVE QUERIES WHATEVER THE NUMBER OF MATCHES: the count, the bounded id
+  # list, Maker::VersionStacks.for_nodes' two, and the nodes of the rows shown.
+  def add_stacked_files(files)
+    matched = files.count
+    return if matched.zero?
+
+    ids = files.order(:name).limit(STACK_SCAN).pluck(:node_id)
+    stacks = Maker::VersionStacks.for_nodes(current_user, ids)
+    figures = stacks.collapse(ids)
+    shown = figures.first(PER_GROUP)
+    nodes = current_user.nodes.where(node_id: shown.map { |f| f.is_a?(Maker::VersionStacks::Stack) ? f.latest.node_id : f })
+                        .index_by(&:node_id)
+    records = shown.filter_map do |f|
+      f.is_a?(Maker::VersionStacks::Stack) ? (nodes[f.latest.node_id] && StackHit.new(stack: f, node: nodes[f.latest.node_id])) : nodes[f]
+    end
+    group = { title: "Files", kind: :file, records:, total: figures.size + (matched - ids.size), files: matched,
+              more_path: files_path(q: @q) }
+    @groups << group
+    group
+  end
+
   def add_group(title, kind, scope, more_path)
     total = scope.count
     return if total.zero?

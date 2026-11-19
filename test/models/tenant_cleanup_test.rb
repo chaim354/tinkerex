@@ -148,6 +148,11 @@ class TenantCleanupTest < ActiveSupport::TestCase
     "maker_pins" => ->(u) {
       dir = u.nodes.create!(node_id: SecureRandom.uuid, name: "pinned", kind: "dir")
       u.maker_pins.create!(node_id: dir.node_id)
+    },
+
+    "maker_stack_exclusions" => ->(u) {
+      file = u.nodes.create!(node_id: SecureRandom.uuid, name: "box v1.svg", kind: "file")
+      Maker::StackExclusion.pull_out!(u, file.node_id)
     }
   }.freeze
 
@@ -163,7 +168,7 @@ class TenantCleanupTest < ActiveSupport::TestCase
     maker_print_runs maker_taggings maker_file_attachments maker_collection_items maker_repo_edits
     maker_build_log_entries maker_sheets maker_boms maker_inventory_items
     maker_inventory_transactions maker_bom_lines maker_connections maker_calculations maker_project_blocks
-    maker_releases maker_release_files maker_pins
+    maker_releases maker_release_files maker_pins maker_stack_exclusions
   ].freeze
 
   def rows_for(user, table)
