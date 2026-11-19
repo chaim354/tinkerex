@@ -1,0 +1,36 @@
+<%# locals: (key:, label:) %>
+<%#
+  ONE PANEL'S VERSION-STACK SWITCH (Shop manual spec §9, "a toggle per panel"; the screens' words,
+  "Stack versions and backups"), under the panel's head as the screen draws it.
+
+  A WRITE, AND SAVED WHERE THE PANEL'S VIEW IS: on the project row, under `panels["unstacked"]`
+  (Projects::PanelsController#update_stack; Maker::ProjectKind::Layout#stacked?). A checkbox that
+  submits on change, the house's spelling for a control with no button, and the hidden 0 before it is
+  what an unticked box sends. `in_place` asks for the answer a view switch gets: a stream replacing
+  this panel (and the Files panel, whose Backups group a folder's stacks change), never the page.
+  `pressed=stack` there hands the focus back to this box rather than to a view button.
+
+  NOT IN THE EDITOR: the switch is a way of reading a panel, not part of the layout the editor drafts,
+  and a press there would leave the draft for the saved page.
+
+  The note beside it is the panel's "N files in M figures" when its stacks fold anything
+  (ProjectsController#load_version_stacks' @stack_counts).
+%>
+<% unless @editing %>
+  <% stacked = @panel_layout.stacked?(key) %>
+  <% files, figures = @stack_counts&.fetch(key, nil) %>
+  <%= form_with url: project_panels_path(@project), method: :patch, class: "stack-switch stack-panel-switch" do %>
+    <%= hidden_field_tag "stack[#{key}]", "0", id: nil %>
+    <%= hidden_field_tag :in_place, "1", id: nil %>
+    <%= hidden_field_tag :pressed, "stack", id: nil %>
+    <label>
+      <%= check_box_tag "stack[#{key}]", "1", stacked, id: "stack-switch-#{key.parameterize}",
+                        onchange: "this.form.requestSubmit()", "aria-label": "Stack versions and backups in #{label}",
+                        autofocus: (@switched_panel == key && params[:pressed] == "stack") %>
+      Stack versions and backups
+    </label>
+    <% if stacked && files && figures < files %>
+      <span class="panel-note"><%= pluralize(files, "file") %> in <%= pluralize(figures, "figure") %></span>
+    <% end %>
+  <% end %>
+<% end %>

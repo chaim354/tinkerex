@@ -7,7 +7,13 @@
 <div class="page-head">
   <h1><%= @q.present? ? "“#{@q}”" : "Search" %></h1>
   <% if @q.present? %>
-    <p class="page-lead"><%= results.zero? ? "Nothing matches." : "#{count_words(results).capitalize} #{results == 1 ? "result" : "results"} in #{count_words(@groups.size)} #{@groups.size == 1 ? "group" : "groups"}." %></p>
+    <p class="page-lead"><%= results.zero? ? "Nothing matches." : "#{count_words(results).capitalize} #{results == 1 ? "result" : "results"} in #{count_words(@groups.size)} #{@groups.size == 1 ? "group" : "groups"}." %>
+      <%# THE SCREEN'S SECOND SENTENCE, when stacks fold any file results (spec §9). %>
+      <% files = @groups.find { |g| g[:kind] == :file } %>
+      <% if files && files[:files] && files[:files] > files[:total] %>
+        The <%= count_words(files[:total]) %> file results stand for <%= count_words(files[:files]) %> files, because versions are stacked.
+      <% end %>
+    </p>
   <% end %>
   <%# A plain GET form, exactly like files/models/index.html.erb's own search box — no Stimulus
       controller for what a native form already does, and the result is a shareable URL. It carries
@@ -18,6 +24,14 @@
     <input type="search" name="q" value="<%= @q %>" placeholder="Search everything"
            aria-label="Search everything" autocomplete="off" autofocus>
     <%= submit_tag "Search", class: "btn" %>
+    <%# STACK VERSIONS AND BACKUPS (Shop manual spec §9), the Library's own box and cookie
+        (StackSwitch): one choice about file listings. Inside the search's own form, so a search
+        carries it and a change re-runs the search; the hidden 0 is what an unticked box sends. %>
+    <input type="hidden" name="stacks" value="0">
+    <label class="stack-switch">
+      <input type="checkbox" name="stacks" value="1" <%= "checked" if @stacking %> onchange="this.form.requestSubmit()">
+      Stack versions and backups
+    </label>
   <% end %>
 </div>
 

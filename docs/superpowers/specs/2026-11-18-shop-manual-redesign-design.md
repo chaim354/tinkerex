@@ -218,13 +218,13 @@ starts by writing the real list down where rule 12 can point at it, then correct
 
 | behaviour | exists today | needs | size |
 |---|---|---|---|
-| version stacks | nothing | group by name: a version number, a copy number, "backup". A toggle per panel, and a way to pull one file out. Reused by the Library and Search | medium |
+| version stacks | **built** (2026-11-19): `Maker::VersionStacks` (the rule in its header), drawn by the Library's rows and tiles, a project's Files and folder panels, and Search | group by name: a version number, a copy number, "backup". A toggle per panel, and a way to pull one file out. Reused by the Library and Search. Settled while building: the Library's and Search's switch is one `files_stacks` cookie, a panel's is saved on the project row (`panels["unstacked"]`, off-only); a stack opens in place; a backup that stacks leaves the Files panel's Backups group; a paged folder pages figures | medium |
 | figure numbers | nothing | number files by panel order, then file order (§11.3) | medium |
 | tidy-up list | nothing | four checks: loose files, uncommitted repository changes, an export older than its source, a sheet that disagrees with a file. Stored dismissals | large |
 | next step on Home and Projects | `Maker::Task.open` | the first open task per project in one query. Built: a Doing before a Todo, then the panel's order (`Maker::Task.next_steps_for`); Home's Carry on covers the projects Active projects lists, with no checkbox (the panel's tick answers for the project page) | small |
 | To buy | `Maker::BomRollup#short`, per project | the shortfalls of every active project in one list. Built: open projects' current BOMs, one row per item (`Maker::ToBuy`), on Inventory's unfiltered page; Buy is the shortfall, not a top-up to the item's minimum, and the column's "Needed by a project" waits for its own filter | medium |
 | folder tree in the Library | only in the choosers, through `library_children` | the same tree as the left column, remembering what is open | medium |
-| grouped search | `/search`, where the top bar's box submits, already groups by kind: Files, Folders, Projects, 3D models, Notes, Inventory, Tags (`SearchController`) | stacks inside the Files group | small, once stacks exist |
+| grouped search | `/search`, where the top bar's box submits, already groups by kind: Files, Folders, Projects, 3D models, Notes, Inventory, Tags (`SearchController`) | stacks inside the Files group. **Built** (2026-11-19): one row per stack, linking its latest, and the group counts figures and the files they stand for | small, once stacks exist |
 | index of files, and the find box | nothing | every file with its figure number, filtered as you type | small |
 | published view | the public page shares the working layout | choose the panels a visitor never sees, in `Maker::PublicProject#layout` | small to medium |
 
@@ -232,8 +232,8 @@ Stacks come first: figure numbers, the Library and Search build on them. The gro
 carry the catan names and keep "game box" and "game box 2" apart: they are different parts. Three
 things the rule above does not settle yet, and the test needs:
 
-- **Which names.** The demo seed holds 54 of catan's files (`db/seeds/demo/Projects/catan`). The
-  screens' 60 add six `Screenshot 2024-…` files (five PNG, one STL) that the seed does not hold.
+- **Which names.** The demo seed holds all 60 of catan's files (`db/seeds/demo/Projects/catan`),
+  the six `Screenshot 2024-…` files (five PNG, one STL) included; it held 54 when this was written.
 - **Which groups.** "25 of 60 in 9 stacks" does not follow from the rule as written. The loosest
   reading gives 24 files in 8 stacks, and stacks `docs/box.txt` with the `design/boxv*.svg` files;
   stacking only within one folder or one file type gives 18 to 20 in 7 or 8. So the rule must say

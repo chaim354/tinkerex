@@ -980,6 +980,63 @@ module Web
                               "files#index (folder)")
     end
 
+    # VERSION STACKS (Shop manual spec §9) MUST NOT COST A QUERY PER STACK OR PER MEMBER, on any of the
+    # three pages that draw them. Each step adds whole stacks — two versions and a backup of one part,
+    # and one of them pulled out — so the stacks, their members and the pull-outs all grow together.
+    # The Library is measured in both views and PAGED (the default name sort), which is the shape
+    # that loads a stack's other members in a query of its own (FilesController#stack_members_beyond_page):
+    # one for the page, never one per stack.
+    def add_stacks!(prefix, count, parent:)
+      count.times do |i|
+        id = "#{prefix}#{i}"
+        [ "part#{id} v1.stl", "part#{id} v2.stl", "part#{id}_backup.stl" ].each_with_index do |name, j|
+          node!("#{id}-#{j}", name).update!(parent_node_id: parent.node_id)
+        end
+        Maker::StackExclusion.pull_out!(@user, "#{id}-2") if i.zero?
+      end
+    end
+
+    test "files#index with version stacks does not grow with stacks or their members" do
+      folder = @user.nodes.create!(node_id: "budget-stacks", name: "stacks", kind: "dir", mtime: 1, size: 0)
+      add_stacks!("bs", SMALL, parent: folder)
+      %w[list grid].each do |view|
+        get files_path(folder: folder.node_id, view:)
+        assert_select ".stack-toggle", SMALL, "the #{view} page must draw the stacks it is budgeting"
+      end
+      assert_constant_queries(files_path(folder: folder.node_id, view: "list"), -> { },
+                              -> { add_stacks!("bl", LARGE - SMALL, parent: folder) }, "files#index (stacked list)")
+      assert_select ".stack-toggle", LARGE
+      assert_constant_queries(files_path(folder: folder.node_id, view: "grid"), -> { },
+                              -> { add_stacks!("bg", LARGE, parent: folder) }, "files#index (stacked grid)")
+      assert_select ".stack-toggle", 2 * LARGE
+    end
+
+    test "projects#show with version stacks does not grow with stacks or their members" do
+      project = @user.maker_projects.create!(name: "Stacked", status: "active", autofile: false)
+      folder = project_folder_rows!(@user, project)
+      laser = @user.nodes.create!(node_id: "budget-laser", name: "laser", kind: "dir",
+                                  parent_node_id: folder.node_id, mtime: 1, size: 0)
+      assert_constant_queries(project_path(project),
+                              -> { add_stacks!("ps", SMALL, parent: laser); add_stacks!("pr", SMALL, parent: folder) },
+                              -> { add_stacks!("pl", LARGE - SMALL, parent: laser); add_stacks!("pq", LARGE - SMALL, parent: folder) },
+                              "projects#show (stacked)")
+      assert_select "section[id=?] .stack-item", Maker::ProjectKind.folder_key(laser.node_id), LARGE
+    end
+
+    test "search#index with version stacks does not grow with stacks or their members" do
+      add = lambda do |prefix, count|
+        count.times do |i|
+          dir = @user.nodes.create!(node_id: "sd-#{prefix}#{i}", name: "box #{prefix}#{i}", kind: "dir", mtime: 1, size: 0)
+          [ "lamp v1.stl", "lamp v2.stl", "lamp_backup.stl" ].each_with_index do |name, j|
+            node!("sf-#{prefix}#{i}-#{j}", name).update!(parent_node_id: dir.node_id)
+          end
+        end
+      end
+      assert_constant_queries(search_path(q: "lamp"), -> { add.call("ss", SMALL) },
+                              -> { add.call("sl", LARGE - SMALL) }, "search#index (stacked)")
+      assert_select "#search-file .stack-result", SearchController::PER_GROUP
+    end
+
     # THE MODEL STRIP (slice 5) MUST NOT GROW WITH THE MODEL: its cover is derived from ONE load of its
     # attachments and its print log is one query, so a model folder with 15 files and 15 prints costs
     # what one with 3 does. Whether Maker::ModelFolder.model_in's eager load holds as hidden rows pile

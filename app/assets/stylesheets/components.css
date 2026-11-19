@@ -566,6 +566,20 @@
     box-shadow: 4px -4px 0 -1px var(--bg), 4px -4px 0 0 var(--line-strong), 8px -8px 0 -1px var(--bg), 8px -8px 0 0 var(--line-strong);
   }
   .stack .plate-name, .stack-name { font-weight: 800; }
+  /* A STACK THAT OPENS IN PLACE (spec §9; stack_controller.js): its figure or its row's name is a
+     BUTTON, since it shows its members rather than going anywhere, drawn as the link it stands in
+     for. `.stack-role` is a member's "latest" or "older", mono and muted as the screens set it. */
+  .stack-toggle {
+    margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left;
+    cursor: pointer; appearance: none;
+  }
+  .stack-toggle .stack-count { flex: 0 0 auto; }
+  .stack-role { color: var(--fg-muted); font: 400 12px/16px var(--font-mono); }
+  /* THE SWITCH, "Stack versions and backups": a plain checkbox and its words, submitting on change,
+     on the Library's toolbar, Search's form and under a project panel's head. The box is ink. */
+  .stack-switch { margin: 0; }
+  .stack-switch label, label.stack-switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; }
+  .stack-switch input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--fg); }
   /* THE NOTE BOX: a 1.5px ink box, its label an ink block reading NOTE in the caps style, then one
      sentence at 500. The label is generated, so the markup is the sentence alone, and it is read as
      text, the way a toast's "Done" is. Not `.note`, which is the file page's notes (pages/files.css). */

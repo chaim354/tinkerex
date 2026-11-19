@@ -69,12 +69,20 @@
           is the one that cannot answer "what is in src/?" without unrolling the whole tree. %>
       <%= render "projects/repo_browser", dir: %>
     <% else %>
-      <% if visible.any? %>
+      <%# As figures, the enclosing panel's stacks included (ProjectsHelper#stack_figures). %>
+      <% figures = stack_figures(visible, folder_id: dir.node_id) %>
+      <% if figures.any? %>
         <% if view == "list" %>
-          <%= render "file_rows", rows: visible %>
+          <%= render "file_rows", rows: visible, figures: figures %>
         <% else %>
           <div class="attachments-grid">
-            <%= render partial: "file_tile", collection: visible, as: :row %>
+            <% figures.each do |figure| %>
+              <% if figure.is_a?(ProjectsHelper::StackFigure) %>
+                <%= render "projects/stack_tile", figure: figure %>
+              <% else %>
+                <%= render "file_tile", row: figure %>
+              <% end %>
+            <% end %>
           </div>
         <% end %>
       <% end %>

@@ -26,6 +26,12 @@
                             `id` is its anchor for the page's left column. The tag page passes
                             neither and keeps its plain heading.
     id          String   -- optional, the section's id.
+    files       Integer  -- optional. THE :file ARM ON SEARCH WITH STACKS ON: how many files the
+                            group's `total` figures stand for, said beside it ("5 results ·
+                            8 files") when stacks fold any (SearchController#add_stacked_files).
+                            A :file record may then be a SearchController::StackHit — a stack
+                            and its latest node — drawn as one row naming the stack and its
+                            count, linking the latest (Shop manual spec §9).
     query       String   -- optional. The search term: a name that holds it marks it (`<mark>`,
                             TextHelper#highlight), as the screen does. Names only — a note's
                             excerpt stays plain text (search_test.rb refuses markup in it).
@@ -51,14 +57,15 @@
     <% if number %>
       <div class="panel-head">
         <h2><span class="panel-num"><%= number %></span> <%= title %></h2>
-        <span class="panel-note"><%= total > records.size ? "#{records.size} of #{total}" : count_label(total, "result") %></span>
+        <% files = local_assigns[:files] %>
+        <span class="panel-note"><%= total > records.size ? "#{records.size} of #{total}" : count_label(total, "result") %><%= " · #{count_label(files, "file")}" if files && files > total %></span>
       </div>
     <% else %>
       <h2><%= title %> <span class="muted"><%= total %></span></h2>
     <% end %>
     <ul class="result-list">
       <% records.each do |record| %>
-        <li class="result-row">
+        <li class="<%= class_names("result-row", "stack-result": record.respond_to?(:stack)) %>">
           <% case kind
              when :project %>
             <%= link_to name.(record.name), project_path(record) %>
@@ -82,11 +89,24 @@
               record.location&.name
             ].compact.join(" · ") %></span>
           <% when :file %>
+            <% if record.respond_to?(:stack) %>
+              <%# A VERSION STACK: its name, its count chip and where it is, linking the latest
+                  member, which the sub-line names (the screen `search`). %>
+              <% stack = record.stack %>
+              <% node = record.node %>
+              <span class="result-name">
+                <%= link_to name.(stack.name), file_path(node.node_id), data: file_open_data %>
+                <span class="badge stack-count"><%= stack_count_label(stack) %></span>
+                <%= render "shared/result_folder", where: folders[record.id] %>
+              </span>
+              <span class="result-sub">latest <%= node.name %></span>
+            <% else %>
             <span class="result-name">
               <%= link_to name.(record.name), file_path(record.node_id), data: file_open_data %>
               <%= render "shared/result_folder", where: folders[record.id] %>
             </span>
             <span class="result-sub"><%= File.extname(record.name).delete(".").upcase.first(4) %></span>
+            <% end %>
           <% when :folder %>
             <%#
               A FOLDER IS A DESTINATION, NOT A FILE, so it links into the Files page's folder view

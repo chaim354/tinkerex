@@ -219,6 +219,27 @@
   .plate > details > .table, .plate > details > .project-files { margin: 8px 6px 12px 12px; }
   .plate > details > .table, .plate > details > .project-files { width: calc(100% - 24px); }
   .attachment-tile .thumb { width: 100%; }
+  /* --- VERSION STACKS IN A PANEL (spec §9; the screen `project-organized`). The switch sits under the
+     panel's head with the panel's own figure count; a stack figure is the `.stack` component on a
+     button, sized as a figure's frame; its opened panel spans the grid (`.plate-open`) and holds the
+     members as figures of their own, each with its role and Pull out. In a list a stack is one row
+     whose name opens its members, indented beneath it. --- */
+  .stack-panel-switch { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin: 0 0 12px; }
+  .attachment-tile .stack-toggle { width: 100%; }
+  .attachment-tile .stack-toggle > .thumb { height: 118px; padding: 9px; }
+  .attachment-tile.is-open .stack-toggle > .thumb { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .attachment-tile .stack-role { display: block; margin-top: 2px; }
+  .attachment-tile .stack-pull-out-form, .attachment-tile .stack-put-back-form { margin: 2px 0 0; }
+  .stack-pull-out, .stack-put-back { font-size: 12.5px; color: var(--fg-muted); }
+  .attachments-grid > .stack-open { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-width: 0; }
+  .stack-open .stack-open-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+  .stack-open .stack-open-head h3 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+  .stack-open .stack-open-head .plate-facts { white-space: normal; overflow-wrap: anywhere; }
+  .stack-open .stack-open-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .project-files tr.stack-row.is-open, .project-files tr.stack-member { background: var(--raised); }
+  .project-files tr.stack-member td.col-name { padding-left: 24px; }
+  .project-files .stack-role, .project-files .stack-pull-out-form, .project-files .stack-put-back-form { margin-left: 8px; }
+  .project-files .stack-pull-out-form, .project-files .stack-put-back-form { display: inline; }
   .attachment-tile .grid-name { font-size: 13.5px; }
   /* A FIGURE'S WORDS SIT FLUSH LEFT UNDER ITS FRAME AND END IN AN ELLIPSIS: `.file-cell` centres its
      children, which left a long name as wide as itself and spilling past the frame, so the card is

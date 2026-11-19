@@ -33,6 +33,6 @@
     <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
                   params: { view: { key => value }, in_place: ("1" unless @editing) }.compact,
                   class: "toggle#{' active' if on}", "aria-pressed": on.to_s,
-                  autofocus: (on && @switched_panel == key) %>
+                  autofocus: (on && @switched_panel == key && params[:pressed] != "stack") %>
   <% end %>
 </div>

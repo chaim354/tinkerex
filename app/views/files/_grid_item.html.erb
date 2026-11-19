@@ -1,0 +1,73 @@
+<%# locals: (node:, member:) %>
+<%#
+  ONE CARD OF THE LIBRARY'S GRID: a file or a folder standing alone, or — `member`, a Hash with the
+  member's `role` ("latest" or "older") — one member of a version stack, drawn inside the stack's
+  opened panel (files/_grid_stack). A member is the same card a file standing alone is (its link,
+  menu, poll cell and actions), plus its role and a Pull out action.
+%>
+  <% info = @info_by_node[node.node_id] %>
+  <%# ext_label is the thumbnail badge and is capped at four characters so it fits the box; the
+      tile's sub-line below uses the full extension, so "LBRN2" does not read as "LBRN". %>
+  <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
+  <%= tag.div(class: [ "grid-item", ("stack-member" if member) ]) do %>
+  <% if !node.file? %>
+    <%# #folder_menu_data, NOT #file_menu_data - Delete is a folder's whole menu, and it takes no
+        thumb cell. The fuller note is in _list.html.erb; the argument is in files_helper.rb. %>
+    <%= link_to files_path(folder: node.node_id), class: "grid-card grid-folder",
+                data: folder_menu_data(node.node_id, node.name) do %>
+      <span class="thumb folder-thumb" aria-hidden="true"><%= folder_glyph %></span>
+      <span class="grid-name"><%= node.name %></span>
+    <% end %>
+  <% elsif Maker::Previews::Registry.for_filename(node.name).present? %>
+    <% thumb = @thumb_by_node.thumb(node.node_id) %>
+    <%# FilesHelper#file_menu_data carries data-download-url, the right-click menu's route to the
+        bytes. The folder branch above calls #folder_menu_data instead, whose one url is the delete
+        one, so none of this reaches a directory. See the fuller note in _list.html.erb and the
+        argument in files_helper.rb.
+
+        A FILE CARD STAYS A LINK TO ITS PAGE: a click opens the file and a double-click opens it in
+        a new tab (FilesHelper#file_open_data), and right-click › Details opens the side panel,
+        which is what makes the card a selection item (FilesHelper#with_selection). `photo:` crops
+        a camera format to fill the stage (Maker::FileAttachment.photo?). %>
+    <%= link_to file_path(node.node_id), class: [ "grid-card file-cell", ("is-selected" if node.node_id == @selected) ],
+                data: file_open_data(with_selection(thumb_cell_data(node.node_id, ext_label)
+                        .merge(file_menu_data(node, @addon_origins[node.node_id])), node.node_id)) do %>
+      <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: Maker::FileAttachment.photo?(node.name) %>
+      <span class="grid-name"><%= node.name %></span>
+      <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>
+      <%= render "note_badge", count: @note_counts[node.node_id] %>
+    <% end %>
+  <% else %>
+    <%# The non-renderable card: a menu, but no poll cell — nothing will ever render a thumbnail
+        for it, so a cell here would be a spinner the poll cannot resolve. %>
+    <%= link_to file_path(node.node_id), class: [ "grid-card", ("is-selected" if node.node_id == @selected) ],
+                data: file_open_data(with_selection(file_menu_data(node, @addon_origins[node.node_id]), node.node_id)) do %>
+      <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
+      <span class="grid-name"><%= node.name %></span>
+      <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>
+      <%= render "note_badge", count: @note_counts[node.node_id] %>
+    <% end %>
+  <% end %>
+    <%# A MEMBER SAYS WHICH IT IS; a file pulled out of its stack offers to put it back (spec §9). %>
+    <% if member %>
+      <span class="stack-role"><%= member[:role] %></span>
+      <%= button_to "Pull out", file_stack_exclusion_path(node.node_id), method: :post, class: "linkbtn stack-pull-out",
+                    form_class: "stack-pull-out-form", aria: { label: "Pull #{node.name} out of its stack" } %>
+    <% elsif @stacks.pulled_out?(node.node_id) %>
+      <%= button_to "Put back", file_stack_exclusion_path(node.node_id), method: :delete,
+                    class: "linkbtn stack-put-back", form_class: "stack-put-back-form",
+                    aria: { label: "Put #{node.name} back in its stack" } %>
+    <% end %>
+    <div class="grid-actions">
+      <% if node.file? %>
+        <%= link_to details_path_for(node.node_id), class: "row-action", title: "Details",
+                    aria: { label: "Details for #{node.name}" },
+                    data: { action: "selection#details", selection_id: node.node_id } do %><%= row_action_content(:details, "Details") %><% end %>
+        <%= link_to blob_file_path(node.node_id, download: 1), class: "row-action", title: "Download",
+                    aria: { label: "Download #{node.name}" } do %><%= row_action_content(:download, "Download") %><% end %>
+      <% end %>
+      <%= button_to file_path(node.node_id), method: :delete, class: "linkbtn danger row-action",
+            title: "Delete", aria: { label: "Delete #{node.name}" },
+            form: { data: { turbo_confirm: delete_confirm(node.name, kind: node.kind) } } do %><%= row_action_content(:delete, "Delete") %><% end %>
+    </div>
+  <% end %>

@@ -102,6 +102,18 @@ module FilesHelper
     delete: ShellHelper::ICON_PATHS.fetch(:trash)
   }.freeze
 
+  # A VERSION STACK'S COUNT CHIP (Shop manual spec §9; the screens' words): "4 versions" counts
+  # every member, and a stack whose only other members are backups or copies says how many of
+  # those it holds instead ("1 backup"), because a backup is not a version a maker chose to keep.
+  def stack_count_label(stack)
+    others = stack.members.drop(1)
+    others.all?(&:copy?) ? pluralize(others.size, "backup") : "#{stack.size} versions"
+  end
+
+  # A DOM ID FOR ONE STACK, from its latest member's node id: node ids are not guaranteed to be
+  # valid ids (a test's are paths), and a page shows a stack once, so its latest names it.
+  def stack_dom_id(stack) = "stack-#{Digest::SHA256.hexdigest(stack.latest.node_id.to_s).first(12)}"
+
   def action_icon(name)
     tag.svg(viewBox: "0 0 16 16", class: "action-icon", "aria-hidden": "true") do
       tag.path(d: ACTION_ICON_PATHS.fetch(name), fill: "none", stroke: "currentColor",

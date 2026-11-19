@@ -34,6 +34,10 @@
   tile's one-line note under the name here too.
 %>
 <% notes = local_assigns.fetch(:notes, {}) %>
+<%# VERSION STACKS (Shop manual spec §9): `figures` (ProjectsHelper#stack_figures) is what the group
+    draws when its panel stacks — a Row, or a StackFigure drawn as one row whose name opens its
+    members beneath it (stack_controller.js, on the panel). Without it, every row stands alone. %>
+<% figures = local_assigns.fetch(:figures, rows) %>
 <% actions = rows.any?(&:linked?) %>
 <table class="table project-files">
   <thead>
@@ -47,13 +51,41 @@
     </tr>
   </thead>
   <tbody>
-    <% rows.each do |row| %>
+    <% figures.each do |figure| %>
+      <% if figure.is_a?(ProjectsHelper::StackFigure) %>
+        <% stack = figure.stack %>
+        <% latest = figure.latest.node %>
+        <% dom = stack_dom_id(stack) %>
+        <% member_ids = figure.rows.each_index.map { |i| "#{dom}-#{i}" } %>
+        <tr class="stack-row">
+          <td class="col-name">
+            <%= tag.button(type: "button", id: "#{dom}-toggle", class: "stack-toggle",
+                           aria: { expanded: "false", controls: member_ids.join(" ") },
+                           data: { action: "stack#toggle" }) do %><span class="stack-name"><%= stack.name %></span> <span class="badge stack-count"><%= stack_count_label(stack) %></span><% end %>
+          </td>
+          <td class="muted col-section"><%= figure.latest.section.presence || "Loose" %></td>
+          <td class="num muted col-size"><%= latest.size ? number_to_human_size(latest.size) : "—" %></td>
+          <td class="muted col-modified"><%= latest.mtime ? time_at(time_from_nanos(latest.mtime)) : "—" %></td>
+          <td class="muted col-origin">—</td>
+          <% if actions %><td class="col-actions"></td><% end %>
+        </tr>
+      <% end %>
+      <% (figure.is_a?(ProjectsHelper::StackFigure) ? figure.rows.each_with_index.to_a : [ [ figure, nil ] ]).each do |row, member_index| %>
       <% node = row.node %>
       <% origin = @addon_origins[row.node_id] %>
-      <%= tag.tr(data: file_menu_data(node, origin)) do %>
+      <% member = member_index && { id: member_ids[member_index], role: member_index.zero? ? "latest" : "older" } %>
+      <%= tag.tr(id: member&.dig(:id), class: ("stack-member" if member), hidden: member.present?, data: file_menu_data(node, origin)) do %>
         <td class="col-name">
           <%= link_to node.name, file_path(row.node_id), data: file_open_data %>
           <% if (note = notes[row.node_id]) %><span class="row-note muted"><%= note %></span><% end %>
+          <% if member %>
+            <span class="stack-role"><%= member[:role] %></span>
+            <%= button_to "Pull out", file_stack_exclusion_path(row.node_id), method: :post, class: "linkbtn stack-pull-out",
+                          form_class: "stack-pull-out-form", aria: { label: "Pull #{node.name} out of its stack" } %>
+          <% elsif @stacks&.pulled_out?(row.node_id) %>
+            <%= button_to "Put back", file_stack_exclusion_path(row.node_id), method: :delete, class: "linkbtn stack-put-back",
+                          form_class: "stack-put-back-form", aria: { label: "Put #{node.name} back in its stack" } %>
+          <% end %>
         </td>
         <td class="muted col-section"><%= row.section.presence || "Loose" %></td>
         <td class="num muted col-size"><%= node.size ? number_to_human_size(node.size) : "—" %></td>
@@ -64,6 +96,7 @@
         <% if actions %>
           <td class="col-actions"><%= render "projects/linked_actions", row: row, node: node, tile: false %></td>
         <% end %>
+      <% end %>
       <% end %>
     <% end %>
   </tbody>

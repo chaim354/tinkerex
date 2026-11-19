@@ -36,6 +36,9 @@
   Both renderings draw it, so Tiles and List say the same thing about the same file.
 %>
 <% notes = local_assigns.fetch(:notes, {}) %>
+<%# `folder_id` (optional): the folder these rows sit in, when the group's panel may stack them — only
+    Loose passes it (spec §9; ProjectsHelper#stack_figures). Backups and Linked never stack. %>
+<% figures = local_assigns.key?(:folder_id) ? stack_figures(rows, folder_id: folder_id) : rows %>
 <%# A PLATE (the Shop manual, 2026-11-19; its spec §6): the group in a 2px ink box under a caps
     head. Its summary is the plate's head, and it keeps the label-then-count text the tests read. %>
 <section class="attachment-group plate">
@@ -44,10 +47,16 @@
       <%= label %> <span class="plate-count">(<%= rows.size %>)</span>
     </summary>
     <% if view == "list" %>
-      <%= render "file_rows", rows: rows, notes: notes %>
+      <%= render "file_rows", rows: rows, notes: notes, figures: figures %>
     <% else %>
       <div class="attachments-grid">
-        <%= render partial: "file_tile", collection: rows, as: :row, locals: { notes: notes } %>
+        <% figures.each do |figure| %>
+          <% if figure.is_a?(ProjectsHelper::StackFigure) %>
+            <%= render "projects/stack_tile", figure: figure %>
+          <% else %>
+            <%= render "file_tile", row: figure, notes: notes %>
+          <% end %>
+        <% end %>
       </div>
     <% end %>
   </details>

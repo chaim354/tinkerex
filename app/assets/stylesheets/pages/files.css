@@ -82,6 +82,34 @@
   .library-main table.files td.col-version { font: 400 12.5px/16px var(--font-mono); white-space: nowrap; }
   .library-main table.files td.col-modified { color: var(--fg); }
 
+  /* --- VERSION STACKS (spec §9; the screens `library-rows` and `library-tiles`). The switch (the
+     `.stack-switch` component) sits on the toolbar's second row. A stack ROW's name is the `.stack-toggle` button,
+     laid out as a file cell; its members are indented under it, each with its role; an opened row
+     takes the hover tint so the stack and its members read as one block. A stack FIGURE is the
+     `.stack` component; its opened panel spans the plate (`.plate-open`) and holds the members as
+     cards of their own. --- */
+  .library-main table.files .stack-toggle { display: inline-flex; align-items: center; gap: 12px; max-width: 100%; vertical-align: middle; }
+  .library-main table.files .stack-toggle .stack-label { min-width: 0; overflow-wrap: anywhere; }
+  .library-main table.files .stack-toggle .stack-count { margin-left: 4px; vertical-align: 1px; }
+  .library-main table.files .stack-toggle:hover .file-name { text-decoration: underline; }
+  .library-main table.files tr.stack-row.is-open, .library-main table.files tr.stack-member { background: var(--raised); }
+  .library-main table.files tr.stack-member td.col-name { padding-left: 30px; }
+  .library-main table.files tr.stack-member .stack-role { margin-left: 10px; }
+  .library-main table.files .stack-put-back-form, .library-main table.files .stack-pull-out-form { display: inline; margin-left: 10px; }
+  .library-main .stack-put-back, .library-main .stack-pull-out { font-size: 12.5px; color: var(--fg-muted); }
+  .files-grid .stack-toggle { width: 100%; }
+  .files-grid .stack-toggle .grid-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .files-grid .stack-toggle .grid-sub { overflow: hidden; color: var(--fg-muted); font: 400 12px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+  .files-grid .stack-item.is-open .stack > .thumb { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .files-grid .stack-member .stack-role { margin-top: 2px; }
+  .files-grid .stack-put-back-form, .files-grid .stack-pull-out-form { margin: 2px 0 0; }
+  .stack-open { display: flex; flex-direction: column; gap: 10px; padding: 12px; min-width: 0; }
+  .stack-open-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
+  .stack-open-head h3 { margin: 0; font-size: 17px; overflow-wrap: anywhere; }
+  .stack-open-head .plate-facts { white-space: normal; overflow-wrap: anywhere; }
+  .stack-open-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .stack-open-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 14px 4px; }
+
   /* --- PAGES, AS THE SCREENS FOOT A LIST: the position in mono, the way on a bold word. --- */
   .library-main .pager-prev, .library-main .pager-next { color: var(--fg); font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
 

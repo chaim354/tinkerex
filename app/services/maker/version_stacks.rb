@@ -68,17 +68,23 @@ module Maker
       def size = members.size
     end
 
-    # The stacks found in one set of nodes, and where each member sits.
+    # The stacks found in one set of nodes, and where each member sits. `excluded` is the pull-outs
+    # among the nodes asked about, so a listing can offer "Put back" beside a file that stands
+    # alone because the maker said so, without a second query.
     class Result
-      attr_reader :stacks
+      attr_reader :stacks, :excluded
 
-      def initialize(stacks)
+      def initialize(stacks, excluded: Set.new)
         @stacks = stacks.freeze
+        @excluded = excluded.to_set.freeze
         @by_node_id = stacks.each_with_object({}) { |s, h| s.members.each { |m| h[m.node_id] = s } }.freeze
       end
 
       def stack_for(node_id) = @by_node_id[node_id]
       def stacked?(node_id) = @by_node_id.key?(node_id)
+      def pulled_out?(node_id) = @excluded.include?(node_id)
+      # How many files the stacks fold away: a listing of N files shows N - folded figures.
+      def folded = @stacks.sum { |s| s.size - 1 }
 
       # A display order with each stack standing once, where its first member stood: an element
       # is a Stack, or the node_id of a file that stands alone.
@@ -111,9 +117,19 @@ module Maker
       build(scope, user.maker_stack_exclusions.where(node_id: scope.select(:node_id)))
     end
 
+    # The stacks among Node RECORDS the caller already holds (the project page's listing rows): no
+    # query for the nodes, one for the pull-outs. The caller vouches the records are live.
+    def for_records(user, records)
+      files = records.select { |n| n.kind == "file" }
+      return EMPTY if files.empty?
+
+      excluded = user.maker_stack_exclusions.where(node_id: files.map(&:node_id)).pluck(:node_id)
+      group(files.map { |n| Entry.new(n.node_id, n.parent_node_id, n.name, n.kind, n.mtime) }, excluded:)
+    end
+
     def build(nodes, exclusions)
       entries = nodes.pluck(:node_id, :parent_node_id, :name, :kind, :mtime).map { |row| Entry.new(*row) }
-      return EMPTY if entries.size < 2
+      return EMPTY if entries.empty?
 
       group(entries, excluded: exclusions.pluck(:node_id))
     end
@@ -136,7 +152,7 @@ module Maker
         ordered = order(pairs)
         Stack.new(parent_node_id:, ext:, key:, name: ordered.first.last.display, members: ordered.map(&:first))
       end
-      Result.new(stacks.sort_by { |s| [ s.parent_node_id.to_s, s.key, s.ext ] })
+      Result.new(stacks.sort_by { |s| [ s.parent_node_id.to_s, s.key, s.ext ] }, excluded:)
     end
 
     # One file name -> Parsed, or nil for a name that cannot be compared (not valid UTF-8: a NAS
