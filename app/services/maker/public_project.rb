@@ -766,11 +766,13 @@ module Maker
     # list plus SVG — shared with the `image` emitter and the maker's arm, so the file, the maker's
     # page and a visitor's cannot disagree about which files draw from their own bytes.
     #
-    # nil FOR A PICTURE IN A FOLDER LEFT OFF THE PUBLIC PAGE (2026-11-19), for #authored_url_for's
-    # reason: the byte URL would be a broken picture, the route answering 404.
+    # NO KEPT-BACK CHECK HERE, AND ITS ABSENCE IS THE ARGUMENT (2026-11-19): Maker::Readme asks this
+    # only of an id the README's `link` already issued a URL for (`render_markdown`'s `issued`), and
+    # `#authored_url_for` issues none for a file in a folder left off the public page, so its picture
+    # is already gone. A check here could never be reached — measured: removing it left the README
+    # test green — and would read as a second guard where there is one.
     def image_url_for(node_id)
       row = listing.row_for(node_id)
-      return nil if row && kept_back?(row.node)
       return file_url_for(node_id) if row.nil? || Maker::Readme::Live.picture?(row.node.name)
 
       thumbs.thumb(node_id)&.showable? ? preview_url_for(node_id) : nil

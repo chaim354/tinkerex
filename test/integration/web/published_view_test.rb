@@ -114,15 +114,16 @@ module Web
     test "a crafted list keeps back only what the tab offers, and a hash is no answer" do
       sign_in_as(@user)
 
+      # FIRST, FROM NOTHING KEPT BACK: a hash read as "no box ticked" would keep back every panel.
+      patch project_path(@project), params: { project: { public_panels: { "bom" => "1" } }, return_to: "publishing" }
+      assert_response :redirect
+      assert_empty unpublished, "a hash-shaped value changed the choice"
+
       save_publishing([ "", "../etc", "tasks" ])
       kept = unpublished
       assert_includes kept, key(@f[:models])
       assert_includes kept, "build_log"
       [ "attachments", "photos", "tasks", "sheets", "../etc" ].each { |k| refute_includes kept, k }
-
-      patch project_path(@project), params: { project: { public_panels: { "bom" => "1" } }, return_to: "publishing" }
-      assert_response :redirect
-      assert_equal kept, unpublished, "a hash-shaped value changed the choice"
     end
 
     # B3 (2026-11-02), FOR THE BOXES TOO: a refused save re-renders the tab with what was ticked.
@@ -280,16 +281,30 @@ module Web
 
     # --- 4. what links to a file kept back goes quiet --------------------------------------------
 
-    test "a README link into a folder kept back reads as its words" do
+    test "a README link into a folder kept back reads as its words, and its picture goes" do
       base_url = file_path_for(@f[:base])
       get page_path
       assert_select ".readme-panel .markdown a[href=?]", base_url
+      assert_select ".readme-panel .markdown img[src=?]", file_path_for(@f[:pic])
 
-      keep_back!(key(@f[:models]))
+      keep_back!(key(@f[:models]), key(@f[:photos]))
 
       get page_path
       assert_select ".readme-panel .markdown a[href=?]", base_url, 0
       assert_select ".readme-panel .markdown", text: /See base for the printed part/
+      assert_select ".readme-panel .markdown img[src=?]", file_path_for(@f[:pic]), 0
+    end
+
+    test "a text block's link into a folder kept back reads as its words" do
+      @project.blocks.create!(user: @user, kind: "text", heading: "Parts", body: "Print [the base](models/base.stl) first.")
+      get page_path
+      assert_select ".block-panel .markdown a[href=?]", file_path_for(@f[:base])
+
+      keep_back!(key(@f[:models]))
+
+      get page_path
+      assert_select ".block-panel .markdown a[href=?]", file_path_for(@f[:base]), 0
+      assert_select ".block-panel .markdown", text: /Print the base first/
     end
 
     test "a cover in a folder kept back is neither the hero nor the card's picture" do
