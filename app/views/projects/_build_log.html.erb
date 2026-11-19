@@ -13,6 +13,7 @@
       other panel's action. %>
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "build_log") %></h2>
+    <%= section_note("build_log", @entries.size, pluralize(@entries.size, "entry")) %>
     <details class="composer log-add">
       <%# THE PANELS' ONE COMPOSER PATTERN (2026-11-02, the UX audit's C4): the opener is "Add…" and
           the submit names the thing — "Add line", "Add connection", "Add release", "Add task", "Add

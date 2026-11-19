@@ -10,6 +10,7 @@
 <section class="panel sheets-panel<%= " panel--quiet" if @sheets.empty? %>" id="project-sheets">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "sheets") %></h2>
+    <%= section_note("sheets", @sheets.size, pluralize(@sheets.size, "sheet")) %>
     <details class="composer sheet-add">
       <summary class="btn small" aria-label="Add a sheet">Add…</summary>
       <%# text_field_tag, not f.text_field: this form has no model object, and the controller reads

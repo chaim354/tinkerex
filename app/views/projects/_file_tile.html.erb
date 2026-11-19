@@ -26,13 +26,17 @@
 <% node = row.node %>
 <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
 <% note = local_assigns.fetch(:notes, {})[row.node_id] %>
-<div class="attachment-tile">
+<%# A FIGURE SINCE THE SHOP MANUAL (2026-11-19; its spec §6): `plate-figure`, the component's 118px
+    frame, the name at 600 on one line and a mono fact under it — the file's type and size, which the
+    listing already holds. No figure number: those wait for spec §9. %>
+<div class="attachment-tile plate-figure">
   <%= link_to file_path(row.node_id), class: "grid-card file-cell",
               data: file_open_data(thumb_cell_data(row.node_id, ext)
                                      .merge(file_menu_data(node, @addon_origins[row.node_id]))) do %>
     <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,
                url: preview_src(@page_thumbs.thumb(row.node_id)) %>
-    <span class="grid-name"><%= node.name %></span>
+    <span class="grid-name plate-name" title="<%= node.name %>"><%= node.name %></span>
+    <span class="plate-facts"><%= safe_join([ ext.presence, (number_to_human_size(node.size) if node.size) ].compact, " · ") %></span>
   <% end %>
   <% if note %><p class="tile-note muted"><%= note %></p><% end %>
   <%= render "projects/linked_actions", row: row, node: node, tile: true %>

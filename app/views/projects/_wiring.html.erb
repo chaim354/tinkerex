@@ -46,7 +46,7 @@
   <div class="panel-head">
     <h2><%= panel_title(layout, "wiring") %></h2>
     <% if connections.any? %>
-      <span class="mono muted"><%= pluralize(connections.size, "connection") %></span>
+      <%= section_note("wiring", connections.size, pluralize(connections.size, "connection")) %>
     <% end %>
     <% if editable %>
       <%= render "projects/wiring_composer", project: project %>

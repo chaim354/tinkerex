@@ -23,9 +23,15 @@ require "application_system_test_case"
 # across 49 PRs is why this file exists, and the table carried over unchanged when the fill moved
 # from the accent to ink.
 #
-# WHAT IS COUNTED: controls inside the strip or `main` whose computed background-color equals the
-# resolved `--fg`, the ink, LESS those that announce a state (`aria-pressed="true"`, `aria-current`,
-# `aria-selected="true"`). Selection is ink too (a pressed toggle, a segmented control's lit part,
+# WHAT IS COUNTED: controls inside the strip or `main` FILLED AGAINST THEIR GROUND — the ink on the
+# page, or the page colour on an ink band — LESS those that announce a state (`aria-pressed="true"`,
+# `aria-current`, `aria-selected="true"`). THE GROUND IS THE NEAREST ANCESTOR WITH A BACKGROUND OF
+# ITS OWN (2026-11-19, the Shop manual's slice 5): the layout editor's bar is an ink band whose Save is
+# filled with the PAGE colour, the inverse of every other page's primary, and a guard that counted
+# ink alone saw no primary there while an ink-on-ink control would have counted as one nobody can
+# see. Asking the ground is what keeps one table for both: on the page an outlined button is the
+# page colour on the page colour and counts nothing, on the band it is transparent and counts
+# nothing, and only a fill that CONTRASTS what it sits on is a primary. Selection is ink too (a pressed toggle, a segmented control's lit part,
 # the chosen tag), and a lit part that SAYS it is lit is a selection, not an action; one that says
 # nothing is indistinguishable from a primary, which is why the Library's Grid/List links carry
 # `aria-current`. The strip is in because Add lives there: an outlined button on every page (Shop
@@ -47,6 +53,11 @@ require "application_system_test_case"
 #   5. Filling `.btn[aria-pressed="true"]` with the accent: the ink table stays right (a pressed
 #      button is a selection) and the accent table reports "/settings" => ["Light"], so the
 #      "fills nothing" half is not decoration either.
+#   6. Dropping the band's inverse Save (`.layout-bar .btn.primary` in components.css), so Save layout
+#      is ink on the ink band: "/projects/desk-lamp/layout" => [] where ["Save layout"] is expected —
+#      the ground is asked, and an ink fill nobody can see is no primary.
+#   7. Filling the band's Add tab with the page colour as well: "/projects/desk-lamp/layout" =>
+#      ["Add tab", "Save layout"] — the inverse arm counts every control on the band, not Save alone.
 class AccentSpendTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -111,6 +122,8 @@ class AccentSpendTest < ApplicationSystemTestCase
       # THE EDIT AREA'S THREE TABS, one primary each, and the strip's Add outlined on all three.
       "/projects/desk-lamp/edit" => [ "Save changes" ],
       "/projects/desk-lamp/publishing" => [ "Save publishing" ],
+      # The editor spends it on Save layout, the page colour on its ink band (the header says how the
+      # ground is asked).
       "/projects/desk-lamp/layout" => [ "Save layout" ],
       # Pages with no action of their own spend none, and pinning [] is what keeps it that way —
       # /tools in particular is about to grow a first-run state (slice 3).
@@ -234,7 +247,8 @@ class AccentSpendTest < ApplicationSystemTestCase
   private
 
     # { "ink" => [...], "accent" => [...] }: the labels of every control inside the strip or `main`
-    # filled with ink (less those announcing a state, see the header) and with the accent, in document
+    # filled against its ground — the primaries (less those announcing a state, see the header) — and
+    # filled with the accent, in document
     # order (the strip comes first). Labels rather than a bare count so a failure says WHICH controls —
     # a count alone sends the next reader back to the browser to find out what it was talking about.
     def filled_controls
@@ -248,7 +262,21 @@ class AccentSpendTest < ApplicationSystemTestCase
             probe.remove()
             return colour
           }
-          var ink = resolve('--fg'), accent = resolve('--accent')
+          var ink = resolve('--fg'), accent = resolve('--accent'), paper = resolve('--bg')
+          var transparent = function (colour) { return colour === 'transparent' || /^rgba\\(.*,\\s*0\\)$/.test(colour) }
+          // The ground a control sits on: the nearest ancestor that paints a background of its own.
+          var ground = function (el) {
+            for (var p = el.parentElement; p; p = p.parentElement) {
+              var bg = getComputedStyle(p).backgroundColor
+              if (!transparent(bg)) return bg
+            }
+            return paper
+          }
+          // A PRIMARY CONTRASTS ITS GROUND: ink on the page, the page colour on an ink band.
+          var primary = function (el) {
+            var bg = getComputedStyle(el).backgroundColor, on = ground(el)
+            return (bg === ink && on !== ink) || (bg === paper && on === ink)
+          }
           // A lit part that says it is lit is a selection, drawn in ink by rule 13, not an action.
           var announcesState = function (el) {
             return el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-selected') === 'true' ||
@@ -273,7 +301,7 @@ class AccentSpendTest < ApplicationSystemTestCase
             return controls.filter(function (el) { return getComputedStyle(el).backgroundColor === colour })
           }
           return {
-            ink: filled(ink).filter(function (el) { return !announcesState(el) }).map(label),
+            ink: controls.filter(primary).filter(function (el) { return !announcesState(el) }).map(label),
             accent: filled(accent).map(label)
           }
         })()

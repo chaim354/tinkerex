@@ -42,7 +42,7 @@ module ShellHelper
   # Settings and Help.
   PLACES = {
     library: { label: "Library", icon: :files, keys: %i[library folder models trash] },
-    projects: { label: "Projects", icon: :projects, keys: %i[all_projects archived_projects project_kind project new_project] },
+    projects: { label: "Projects", icon: :projects, keys: %i[all_projects archived_projects project_kind project project_overview new_project] },
     tools: { label: "Tools", icon: :tools, keys: %i[tools tool] },
     inventory: { label: "Inventory", icon: :inventory, keys: %i[inventory inventory_items low_stock location locations supplier suppliers] }
   }.freeze
@@ -335,7 +335,15 @@ module ShellHelper
   # filters the index already understands (All, Archived, a kind); on any other projects page, the
   # projects themselves. A listed project's own row beats All projects, and one older than the eight
   # listed lights All projects; New project lights on its own form.
+  #
+  # A PROJECT'S OWN PAGE HAS A THIRD SHAPE (the Shop manual, slice 5): its contents (Overview, then
+  # each section), then the projects, from projects/_contents through `content_for :column`. There
+  # the lit row is Overview, `[:project_overview, id]`, whether or not the project is among the eight
+  # — and so never the project's row in the list below it, which would be a second current row. The
+  # layout editor (the same action, `@editing`) keeps the plain column and its key.
   def projects_current
+    return [ :project_overview, @project.id ] if controller_path == "projects" && action_name == "show" && @project && !@editing
+
     if controller_path == "projects" && action_name == "index"
       kind = params[:kind].presence_in(Maker::Project::KINDS) if params[:kind].is_a?(String)
       return [ :project_kind, kind ] if kind

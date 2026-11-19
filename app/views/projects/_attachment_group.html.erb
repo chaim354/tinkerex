@@ -36,10 +36,12 @@
   Both renderings draw it, so Tiles and List say the same thing about the same file.
 %>
 <% notes = local_assigns.fetch(:notes, {}) %>
-<section class="attachment-group">
+<%# A PLATE (the Shop manual, 2026-11-19; its spec §6): the group in a 2px ink box under a caps
+    head. Its summary is the plate's head, and it keeps the label-then-count text the tests read. %>
+<section class="attachment-group plate">
   <details <%= "open" if open %>>
-    <summary class="attachment-group-head">
-      <%= label %> <span class="muted">(<%= rows.size %>)</span>
+    <summary class="attachment-group-head plate-head">
+      <%= label %> <span class="plate-count">(<%= rows.size %>)</span>
     </summary>
     <% if view == "list" %>
       <%= render "file_rows", rows: rows, notes: notes %>

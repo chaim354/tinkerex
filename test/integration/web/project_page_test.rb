@@ -42,15 +42,18 @@ module Web
       @project.sheets.create!(user: @user, name: "Bill of materials")
     end
 
+    # "AT A GLANCE" (the Shop manual, 2026-11-19) is the stats line as a list beside the head, one
+    # fact per row, still built from what the page already loaded (page_query_budget_test.rb).
     test "the head shows a stats line built from what the page already loaded" do
       get project_path(@project)
       assert_response :success
       assert_select ".project-head .page-title h1", text: "Desk Lamp"
-      assert_select ".project-stats", text: /2 files/
-      assert_select ".project-stats", text: /1 linked/
-      assert_select ".project-stats", text: /1 of 3 tasks done/
-      assert_select ".project-stats", text: /1 log entry\b/
-      assert_select ".project-stats", text: /1 sheet\b/
+      facts = css_select(".project-top aside.project-glance dl.project-stats").text.squish
+      assert_match(/Files 2 files, 1 linked/, facts)
+      assert_match(/Tasks 1 of 3 done/, facts)
+      assert_match(/Build log 1 entry\b/, facts)
+      assert_match(/Sheets 1 sheet\b/, facts)
+      assert_match(/Type Other\b/, facts)
     end
 
     # ONE WAY INTO EDITING (2026-10-26, the edit area; spec 2026-10-26-project-edit-area §2). The
@@ -78,29 +81,64 @@ module Web
       assert_select ".project-head a.public-link", 1, "state and the way out stay: the Public page link"
     end
 
-    # THE HUB'S HEAD (structural redesign §6, slice 6): the cover and the name in one head, a PROJECT
-    # eyebrow ABOVE the h1 and never inside it (projects_flow_test.rb pins the h1's exact text).
-    # `.page-head` keeps its two slots; template_hygiene_test.rb is the guard for that, this is the
-    # guard for what the first slot holds. (The ⋯ menu that sat in the second went behind Edit on
-    # 2026-10-26; the test above pins its absence.)
-    test "the head carries the cover and the PROJECT eyebrow outside the h1" do
+    # THE HUB'S HEAD, AS THE SHOP MANUAL DRAWS IT (2026-11-19): the name, the description as the lead,
+    # the state and the buttons, and beside the head — never inside it — the cover as Fig. 1 and "At a
+    # glance". `.page-head` keeps its two slots; template_hygiene_test.rb is the guard for that, this
+    # is the guard for what sits where. The PROJECT eyebrow went: the caps path above already says
+    # Projects. (The ⋯ menu that sat in the head went behind Edit on 2026-10-26; the test above pins
+    # its absence.)
+    test "the head carries the name and lead, and the cover sits beside it as Fig. 1" do
       folder = Maker::ProjectFolderListing.new(@user, @project).folder_id
       @user.nodes.create!(node_id: "n-cover", name: "lamp.png", kind: "file", parent_node_id: folder,
                           size: 1, mtime: 1_000_000_000)
-      @project.update!(cover_node_id: "n-cover")
+      @project.update!(cover_node_id: "n-cover", description: "A lamp for the desk.", status: "active")
 
       get project_path(@project)
 
       assert_select ".page-head.project-head > *", 2
       assert_select ".project-head .page-title" do
-        assert_select "> .project-hero img.project-hero-img[src=?]", blob_file_path("n-cover")
-        assert_select ".eyebrow", text: "Project"
         assert_select "h1", text: "Desk Lamp"
-        assert_select "h1 .eyebrow", 0
+        assert_select "p.page-lead.project-description", text: "A lamp for the desk."
+        assert_select ".project-state .badge.status-active", text: "Active"
       end
-      eyebrow, h1 = css_select(".project-head .eyebrow, .project-head h1")
-      assert_equal %w[span h1], [ eyebrow&.name, h1&.name ], "the eyebrow comes before the name"
-      assert_select ".project-hero", 1, "the cover moved into the head; it is not drawn twice"
+      assert_select ".eyebrow", 0
+      assert_select ".project-top#overview > figure.project-hero" do
+        assert_select "a.project-hero-frame img.project-hero-img[src=?]", blob_file_path("n-cover")
+        assert_select "figcaption .project-hero-fig", text: "Fig. 1"
+        assert_select "figcaption .project-hero-name", text: "lamp.png"
+      end
+      assert_select ".project-head .project-hero", 0, "the cover is the head's neighbour, never inside it"
+      assert_select ".project-hero", 1, "and it is not drawn twice"
+      assert_select ".project-hero .fig-num", 0, "a caption, not a callout: figure numbers wait for spec §9"
+      assert_select ".project-top > aside.project-glance dl.project-stats", 1
+    end
+
+    # EVERY SECTION IS NUMBERED IN THE PAGE'S OWN ORDER (the Shop manual, slice 5; its spec §5 and §8):
+    # the SLOT carries the number (`data-section` and the `--section` its head's ::before draws), so a
+    # view switch that replaces the panel leaves it standing (panel_view_switch_test.rb drives that).
+    # A block is a section only with a heading: a link card has no head to number. Nothing in the
+    # editor is numbered: its order is a draft. MUTATION-CHECKED: giving every block a number (the
+    # `return unless` in ProjectsHelper#section_number! removed) reddens the link block's assertion:
+    # "a link card has no head to number. Expected \"2\" to be nil."
+    test "every slot that draws a section head carries its number, in the page's order" do
+      @project.blocks.create!(user: @user, kind: "text", heading: "Why a lamp", body: "Light.")
+      @project.blocks.create!(user: @user, kind: "link", heading: "Datasheet", url: "https://example.com/ds")
+
+      get project_path(@project)
+
+      slots = css_select("div.project-panels > div.panel-slot")
+      numbered = slots.select { |s| s["data-section"] }
+      assert_equal (1..numbered.size).map(&:to_s), numbered.map { |s| s["data-section"] }, "one count, in order"
+      assert numbered.all? { |s| s["style"] == "--section: '#{s["data-section"]}'" }, "each hands its number to its head"
+      text = slots.find { |s| s.at_css("section.block--text") }
+      link = slots.find { |s| s.at_css("section.block--link") }
+      assert text["data-section"], "a text block with a heading is a section"
+      assert_nil link["data-section"], "a link card has no head to number"
+      assert_nil link["style"]
+      assert_operator numbered.size, :>=, 4, "Files, Tasks, Build log and Sheets at least"
+
+      get edit_layout_project_path(@project)
+      assert_select "div.panel-slot[data-section]", 0, "the editor numbers nothing"
     end
 
     # THE FILES PANEL'S "RECENTLY CHANGED" ROW (structural redesign §6, slice 6). NINE files in nested

@@ -19,10 +19,11 @@
 <% if kicad_rows.any? %>
   <%# ONE PANEL-HEAD SHAPE (2026-11-02, the UX audit's C10): this was the one panel with a bare
       `<h2>`, so `.panel-head`'s alignment and spacing missed it. %>
-  <section class="panel schematics-panel">
+  <%# `project-schematics` IS THE CONTENTS COLUMN'S ANCHOR (ProjectsHelper::SECTION_ANCHORS). %>
+  <section class="panel schematics-panel" id="project-schematics">
     <div class="panel-head">
       <h2><%= panel_title(@panel_layout, "schematics") %></h2>
-      <span class="mono muted"><%= pluralize(kicad_rows.size, "file") %></span>
+      <%= section_note("schematics", kicad_rows.size, pluralize(kicad_rows.size, "file")) %>
     </div>
     <%= panel_intro(@panel_layout, "schematics") %>
     <ul class="schematics-list">

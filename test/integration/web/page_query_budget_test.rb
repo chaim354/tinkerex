@@ -296,6 +296,14 @@ module Web
       # projects/_file_tile, whose per-tile cost the groups above already grow. It is full (8) at
       # BOTH sizes, so this proves the row rendered, not that a per-tile read inside it would show.
       assert_select ".attachments-panel .recent-files .attachment-tile", 8
+      # THE CONTENTS COLUMN WAS UNDER MEASUREMENT TOO (the Shop manual, slice 5): one row per section
+      # the page drew, so the folders this seed grows are as many rows there, and each row's number
+      # and count come off the render (ProjectsHelper#section_number!, #section_note), never a query
+      # of its own. MUTATION-CHECKED: reading each row's count as `@project.tasks.count` in
+      # projects/_contents reddens the budget above: "projects#show issued 62 queries at the small size
+      # and 86 at the large one".
+      assert_operator css_select("aside.column .project-contents a.column-row").size, :>, LARGE,
+                      "the contents column must list the sections the page drew"
     ensure
       Maker::Addons::Source.reset!
     end

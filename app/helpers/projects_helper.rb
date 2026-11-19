@@ -152,4 +152,50 @@ module ProjectsHelper
   rescue URI::Error
     ""
   end
+
+  # --- The page's sections (the Shop manual, slice 5; its spec §5 and §8) ---------------------------
+
+  # WHERE EACH PANEL'S OWN ELEMENT IS, for the contents column's in-page links. The on-demand panels
+  # carry PANEL_ANCHORS' ids; the rest carry their own (`attachments` and `models` ARE their keys,
+  # which is what an in-place view switch replaces them by), and a folder or a block's section id
+  # IS its layout key. shell_layout_test.rb holds every in-page link in the column to an element the
+  # page carries, so a panel that changes its id cannot leave a dead row behind.
+  SECTION_ANCHORS = PANEL_ANCHORS.merge("readme" => "project-readme", "photos" => "project-photos",
+                                        "schematics" => "project-schematics").freeze
+
+  def section_anchor(key) = SECTION_ANCHORS.fetch(key.to_s, key.to_s)
+
+  # THE PANEL'S NUMBER ON THIS PAGE, OR NIL, COUNTED AS THE SLOTS RENDER (projects/_panel_slot).
+  # Positional and never stored, like the figure numbers the spec's §11.3 describes: the panel order
+  # the page already has, minus what renders nothing. ASKED ONLY AFTER THE BODY RENDERED, so a panel
+  # with nothing to show (Photos with no photos, Schematics with no board) takes no number, and the
+  # numbers on the page and in the column are one count, recorded here in @page_sections.
+  # NOT IN THE EDITOR, whose strips name every panel and whose order is a draft. A BLOCK IS A SECTION
+  # ONLY WHEN IT CARRIES A HEADING: a link card or a picture has no head to number.
+  def section_number!(key)
+    return if @editing
+    if @panel_layout.block?(key)
+      block = @blocks_by_key[key]
+      return unless block&.kind == "text" && block.heading.present?
+    end
+    (@page_sections ||= []) << key
+    @page_sections.size
+  end
+
+  # THE MONO NOTE AT A SECTION HEAD'S RIGHT ("3 entries", "1 of 4 done"), and the count the contents
+  # column shows beside the same section. The panel partial knows its count; recording it here is
+  # what keeps the column from asking a second time — it renders after the panels (projects/show),
+  # so it reads @section_counts and issues no query of its own (page_query_budget_test.rb).
+  def section_note(key, count, text = nil)
+    (@section_counts ||= {})[key.to_s] = count
+    tag.span(text || count.to_s, class: "mono muted section-note")
+  end
+
+  # WHAT THE CONTENTS COLUMN CALLS A SECTION: the head the panel itself shows — the maker's title,
+  # else the label (a folder's own name, a text block's heading).
+  def section_label(key)
+    return @blocks_by_key[key]&.heading.to_s if @panel_layout.block?(key)
+
+    panel_title(@panel_layout, key, @panel_labels[key])
+  end
 end

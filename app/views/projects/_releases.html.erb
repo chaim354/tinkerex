@@ -34,7 +34,7 @@
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "releases") %></h2>
     <% if releases.any? %>
-      <span class="mono muted"><%= pluralize(releases.size, "release") %></span>
+      <%= section_note("releases", releases.size, pluralize(releases.size, "release")) %>
     <% end %>
     <% if editable %>
       <%= render "projects/release_composer", project: project, repos: repos %>

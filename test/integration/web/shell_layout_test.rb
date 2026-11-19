@@ -15,6 +15,12 @@ module Web
   #      "/files/models: the tab bar lights [] where the strip lights [\"Library\"]".
   #   4. Home's "Recently changed" section id renamed (`home-files`): "/ links #home-recent, which the
   #      page does not carry".
+  # A PROJECT'S CONTENTS COLUMN (Shop manual slice 5), MUTATION-CHECKED (2026-11-19):
+  #   5. Deleting `projects_current`'s `[:project_overview, id]` answer, so a project's page lights its
+  #      row in the list: `Expected: ["Overview"] Actual: ["P0"]` — the sweep alone stays green, one
+  #      lit row being within its ceiling, which is why the column has a test of its own.
+  #   6. Numbering the column's rows from 0: `Expected: ["1", "2", "3", "4"] Actual: ["0", "1", "2",
+  #      "3"]` — the column's numbers are held to the slots' `data-section`, not to themselves.
   class ShellLayoutTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
     PLACES = %w[Library Projects Tools Inventory].freeze
@@ -157,19 +163,56 @@ module Web
       assert_select "aside.column a.column-row[href=?]", projects_path(kind: "electronics")
     end
 
+    # ON A PROJECT'S SUB-PAGES (its Attach picker here; its edit area, its BOM page) the section's
+    # default column: the eight, then All projects and New project. The project's own page carries
+    # its contents column instead (the next test).
     test "elsewhere the Projects column lists the eight most recently updated live projects" do
       projects = 10.times.map { |i| @user.maker_projects.create!(name: "P#{i}") }
       projects.each_with_index { |p, i| p.update_column(:updated_at, i.days.ago) }
       @user.maker_projects.create!(name: "Shelved", status: "archived")
 
-      get project_path(projects.first)
+      get new_project_attachment_path(projects.first)
       assert_equal %w[P0 P1 P2 P3 P4 P5 P6 P7] + [ "All projects", "New project" ], column_rows
       assert_equal %w[P0], lit_rows
       # Older than the eight: All projects lights, so the column still says where you are.
-      get project_path(projects.last)
+      get new_project_attachment_path(projects.last)
       assert_equal [ "All projects" ], lit_rows
       get new_project_path
       assert_equal [ "New project" ], lit_rows
+    end
+
+    # A PROJECT'S OWN PAGE (the Shop manual, slice 5): Contents — Overview, then each section the page
+    # drew with its number and its count — then the projects. Overview is the one lit row whether or
+    # not the project is among the eight, and the project's own row below is marked, never lit. Each
+    # section row links to an element the page carries (the sweep above holds that for every page;
+    # here the rows are named). MUTATION-CHECKED: the header's record, items 5 and 6.
+    test "a project's own page lists its contents, numbered as the page numbers them, then the projects" do
+      projects = 10.times.map { |i| @user.maker_projects.create!(name: "P#{i}") }
+      projects.each_with_index { |p, i| p.update_column(:updated_at, i.days.ago) }
+      project = projects.first
+      project_folder_rows!(@user, project)
+      project.tasks.create!(user: @user, title: "Cut the base")
+      project.tasks.create!(user: @user, title: "Print the lid", status: "done")
+
+      get project_path(project)
+      assert_equal [ "Overview" ], lit_rows
+      contents = css_select("aside.column .project-contents a.column-row")
+      assert_equal "#overview", contents.first["href"]
+      sections = contents.drop(1).map do |a|
+        [ a.css(".column-row-num").text, a.css(".column-row-name").text, a.css(".column-row-note").text, a["href"] ]
+      end
+      slots = css_select("div.project-panels > div.panel-slot[data-section]")
+      assert_equal slots.map { |s| s["data-section"] }, sections.map(&:first), "the column's numbers are the slots'"
+      assert_equal (1..slots.size).map(&:to_s), sections.map(&:first)
+      assert_includes sections, [ sections.find { |s| s[1] == "Tasks" }&.first, "Tasks", "2", "#project-tasks" ]
+      assert_equal "#attachments", sections.find { |s| s[1] == "Files" }&.last
+      sections.each { |_n, name, _c, href| assert css_select(href).any?, "#{name} links #{href}, which the page lacks" }
+      assert_includes column_rows, "P0"
+      assert_select "aside.column a.column-row.column-row--this", { count: 1, text: "P0" }
+      assert_select "aside.column a.column-row--this[aria-current]", 0, "this project's row is marked, never lit"
+
+      get project_path(projects.last)
+      assert_equal [ "Overview" ], lit_rows, "older than the eight, its Overview still lights"
     end
 
     test "the Inventory column carries the items, places and suppliers, and lights the view on screen" do

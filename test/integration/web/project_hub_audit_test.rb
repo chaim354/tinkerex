@@ -55,10 +55,12 @@ module Web
       assert_select "section.releases-panel", 0
     end
 
-    # THE STATS LINE COUNTS ONLY WHAT THE PAGE SHOWS (C1/C7): "1 sheet" over a page with no Sheets
-    # panel, and "0 of 0 tasks done · 0 log entries" over a page with neither panel. MUTATION-CHECKED:
-    # replacing the `panel_on_page?` guard around the sheets span with `true` reddens it: `the sheet
-    # is in a hidden panel. Expected /sheet/ to not match "0 files 1 sheet".`
+    # THE STATS COUNT ONLY WHAT THE PAGE SHOWS (C1/C7): "1 sheet" over a page with no Sheets panel,
+    # and "0 of 0 tasks done · 0 log entries" over a page with neither panel. The line became the
+    # head's "At a glance" list in the Shop manual (2026-11-19), one fact per row, and kept its class
+    # and this rule. MUTATION-CHECKED: replacing the `panel_on_page?` guard around the Sheets row in
+    # projects/_glance with `true` reddens it: `the sheet is in a hidden panel. Expected /Sheets/ to
+    # not match "Type Laser cutting Files 0 files Sheets 1 sheet Folder Projects/catan".`
     test "the stats line counts the panels on the page, not the hidden or absent ones" do
       project = laser_project!
       project_folder_rows!(@user, project)
@@ -66,15 +68,15 @@ module Web
 
       get project_path(project)
 
-      stats = css_select("p.project-stats").text.squish
-      assert_match(/0 files/, stats)
-      assert_no_match(/sheet/, stats, "the sheet is in a hidden panel")
-      assert_no_match(/task/, stats, "Tasks is absent while empty")
-      assert_no_match(/log entr/, stats, "the build log is absent while empty")
+      stats = css_select("dl.project-stats").text.squish
+      assert_match(/Files 0 files/, stats)
+      assert_no_match(/Sheets/, stats, "the sheet is in a hidden panel")
+      assert_no_match(/Tasks/, stats, "Tasks is absent while empty")
+      assert_no_match(/Build log/, stats, "the build log is absent while empty")
 
       project.tasks.create!(user: @user, title: "Cut the box", status: "done")
       get project_path(project)
-      assert_match(/1 of 1 task done/, css_select("p.project-stats").text.squish)
+      assert_match(/Tasks 1 of 1 done/, css_select("dl.project-stats").text.squish)
     end
 
     # A PANEL THE MAKER HID IS THEIR CHOICE, MADE IN THE LAYOUT EDITOR (Maker::ProjectKind
