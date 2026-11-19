@@ -154,5 +154,23 @@ module Web
       get root_path
       assert_select ".tidy-attention", count: 0
     end
+
+    # Home runs no git: the row counts the app's own saves and says so. A share library is pinned so
+    # the case reads the same on every leg (elsewhere the app records no pending save at all).
+    test "Home's Needs attention counts the saves not committed and opens the commit box" do
+      use_fresh_share_library!
+      folder = project_folder_rows!(@user, @project)
+      repo = dir!("nesting", folder)
+      dir!(Library::RepoMetadata::DIR_NAME, repo)
+      Maker::RepoEdit.record!(user: @user, repo_root_node_id: repo.node_id, node_id: file!("nest.py", repo).node_id)
+
+      get root_path
+      assert_response :success
+      assert_select ".tidy-attention--uncommitted" do
+        assert_select ".attention-kind", text: "Not committed"
+        assert_select ".attention-text", text: /\ACatan:\s+nesting has 1 file saved in Tinkerex that is not committed\.\z/
+        assert_select "a.linkbtn[href=?]", repo_commit_path(repo.node_id), text: "Review"
+      end
+    end
   end
 end

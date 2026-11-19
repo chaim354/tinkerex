@@ -119,7 +119,10 @@
           <li class="attention-row attention-row--warn tidy-attention tidy-attention--<%= row.kind.dasherize %>">
             <% if row.kind == "uncommitted" %>
               <span class="attention-kind">Not committed</span>
-              <span class="attention-text"><%= link_to row.project.name, project_path(row.project) %>: <%= count_label(row.detail.count, "file") %> saved in Tinkerex <%= row.detail.count == 1 ? "is" : "are" %> not committed<%= " in #{row.detail.name}" unless row.detail.name == row.project.name %>.</span>
+              <% saved = count_label(row.detail.count, "file") %>
+              <% verb = row.detail.count == 1 ? "is" : "are" %>
+              <span class="attention-text"><%= link_to row.project.name, project_path(row.project) %>:
+                <% if row.detail.root_node_id == row.project.folder_node_id %><%= saved %> saved in Tinkerex <%= verb %> not committed.<% else %><%= row.detail.name %> has <%= saved %> saved in Tinkerex that <%= verb %> not committed.<% end %></span>
               <%= link_to "Review", repo_commit_path(row.detail.root_node_id), class: "linkbtn" %>
             <% else %>
               <span class="attention-kind">Out of date</span>
