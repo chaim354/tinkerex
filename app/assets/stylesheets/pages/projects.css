@@ -88,11 +88,10 @@
   .project-glance dl.meta { grid-template-columns: max-content minmax(0, 1fr); margin: 0; }
   .project-glance dl.meta dd:nth-of-type(odd) { padding-right: 0; }
   .project-glance dl.meta dd a { color: var(--fg); }
-  /* THE PROJECT'S OWN LEFT COLUMN (projects/_contents): a section's number in a mono slot between the
-     current row's square and its name, so Overview's name and every section's line up; this
-     project's own row in the list below, marked as this one at 800 but never lit (one lit row per
-     column, design-system.md rule 8). Qualified by the column, whose rows shell.css draws. */
-  .column .column-row-num { flex: 0 0 18px; font: 700 12px/1 var(--font-mono); font-variant-numeric: tabular-nums; }
+  /* THE PROJECT'S OWN LEFT COLUMN (projects/_contents): a section's number is shell.css's
+     `.column-row-num`, the slot Home, Help and the wizard number their rows with; this project's own
+     row in the list below is marked as this one at 800 but never lit (one lit row per column,
+     design-system.md rule 8). Qualified by the column, whose rows shell.css draws. */
   .column .column-row--this { font-weight: 800; }
   /* "Also in this project" (2026-11-02, the UX audit's C1): the hidden panels that hold rows, one
      line under the head. */

@@ -242,7 +242,7 @@
      note is the mono 13px fact at the head's right ("5 things", "4 of 5"). The pages that number
      their sections (Home, Inventory, an item, Tools, Search, Settings) count them in the order
      they render, so a number is a place on the page and never a stored thing. */
-  .panel-num { margin-right: 8px; font-family: var(--font-mono); font-weight: 700; }
+  .panel-num { margin-right: 12px; font-family: var(--font-mono); font-weight: 700; }
   .panel-note { color: var(--fg-muted); font: 400 13px/1.4 var(--font-mono); }
   /* A PAGE OF NUMBERED SECTIONS IN TWO COLUMNS (the screens' Home, Search, Tools, Settings and an
      inventory item): two stacks that wrap to one below about 920px of page, each section stacked
