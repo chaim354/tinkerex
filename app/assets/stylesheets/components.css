@@ -15,7 +15,7 @@
   .btn, input[type="submit"], .upload-btn span, details.composer > summary {
     display: inline-flex; align-items: center; justify-content: center; gap: 7px;
     min-height: var(--control-height); padding: 0 13px; border-radius: var(--radius-control);
-    border: 1.5px solid var(--line-strong); background: var(--bg); color: var(--fg);
+    border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--fg);
     font: 700 13.5px/1 var(--font-ui); text-decoration: none; cursor: pointer; white-space: nowrap;
     transition: background-color .12s, border-color .12s;
   }
@@ -89,7 +89,7 @@
   .app-shell input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="hidden"]),
   .app-shell select, .app-shell textarea,
   .auth-card input:not([type="checkbox"]):not([type="submit"]) {
-    font: 400 13.5px/20px var(--font-ui); color: var(--fg); background-color: var(--bg);
+    font: 400 13.5px/20px var(--font-ui); color: var(--fg); background-color: var(--surface);
     border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
     padding: 4px 10px; min-height: var(--control-height);
   }
@@ -155,7 +155,7 @@
   .tag-chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .tag-chip {
     display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 8px; border-radius: var(--radius-control);
-    border: 1.5px solid var(--line-strong); background: var(--bg); color: var(--fg);
+    border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--fg);
     font: 600 12.5px/1 var(--font-ui); text-transform: lowercase; text-decoration: none;
   }
   .tag-chip:hover { background: var(--raised); color: var(--fg); text-decoration: none; }
@@ -166,7 +166,7 @@
      fill. `> * + *` draws the divider because a part is sometimes wrapped in its own button_to form. */
   .view-toggle {
     display: inline-flex; gap: 0; padding: 0; overflow: hidden;
-    border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); background: var(--bg);
+    border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface);
   }
   .view-toggle > * + * { border-left: 1.5px solid var(--line-strong); }
   .view-toggle form { display: flex; margin: 0; }
@@ -262,7 +262,7 @@
   .panel-strip-edit > summary { list-style: none; cursor: pointer; }
   .panel-strip-edit > summary::-webkit-details-marker { display: none; }
   .panel-strip-popover { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; width: min(320px, 80vw); display: grid; gap: 8px;
-                         padding: 10px; background: var(--bg); border: 1.5px solid var(--line-strong);
+                         padding: 10px; background: var(--surface); border: 1.5px solid var(--line-strong);
                          border-radius: var(--radius-control); box-shadow: var(--shadow-float); }
   .panel-slot--hidden .panel-slot-body { opacity: .45; }
   .panel-slot--hidden .panel-strip, .panel-slot--hidden .panel-strip + .panel-slot-body { border-style: dashed; border-color: var(--fg-muted); }
@@ -277,10 +277,10 @@
   .layout-editor--drawer { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
   .layout-editor--drawer .layout-bar { grid-column: 1 / -1; }
   .layout-drawer { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 8px; padding: 12px;
-                   border: 1.5px solid var(--line-strong); border-radius: 0; background: var(--bg); }
+                   border: 1.5px solid var(--line-strong); border-radius: 0; background: var(--surface); }
   .layout-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .layout-yaml { width: 100%; min-height: 320px; resize: vertical; font: 12.5px/1.45 var(--font-mono); color: var(--fg);
-                 background: var(--bg); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); padding: 8px; }
+                 background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); padding: 8px; }
   .layout-note { margin: 0; font-size: 12px; }
   .layout-note--error { color: var(--danger); }
   .layout-note--ok { color: var(--ok); }
@@ -328,7 +328,7 @@
   .block-panel { display: flex; flex-direction: column; gap: 8px; }
   .block-panel > h2 { margin: 0; }
   .block-link-card { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; color: var(--fg);
-                     background: var(--bg); border: 1.5px solid var(--line-strong); border-radius: 0;
+                     background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: 0;
                      text-decoration: none; }
   .block-link-card:hover { background: var(--raised); text-decoration: none; }
   .block-link-title { font-weight: 700; }
@@ -504,14 +504,14 @@
   }
   .fig-num--head { --fig-size: 24px; }
   .fig-num--hero { --fig-size: 26px; }
-  .fig-num--ring { --fig-size: 18px; border: 1.5px solid var(--accent); background: var(--bg); color: var(--accent-text); font-size: 12px; }
+  .fig-num--ring { --fig-size: 18px; border: 1.5px solid var(--accent); background: var(--surface); color: var(--accent-text); font-size: 12px; }
   /* A PLATE: a 2px ink box holding a grid of figures, as a manual's plate of parts. Its head is a
      caps label at the left and a muted count at the right over a 2px ink rule. A FIGURE is a
      118px `.thumb` (the ink-on-paper card, rule 5: a figure never paints its own image surface),
      its number at the top left, its marks (a chip, a flag) at the top right, then the name at 600
      and mono facts. An OPENED figure spans the plate on `--raised` in a 1.5px ink line; a SELECTED
      one takes a 2px red outline. */
-  .plate { min-width: 0; border: 2px solid var(--line-strong); background: var(--bg); }
+  .plate { min-width: 0; border: 2px solid var(--line-strong); background: var(--surface); }
   .plate-head {
     display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 7px 12px; border-bottom: 2px solid var(--line-strong);
     font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
@@ -572,8 +572,8 @@
        - THE INK CHIP (the bare `.badge`): an ink fill, page-coloured mono 700 11.5px caps. A fact
          about the thing: its kind, its type, a tag, a version, "repo", a count ("4 VERSIONS").
        - THE OUTLINED CHIP (a state): the same in an ink line on the page colour, as the project
-         head's ACTIVE is drawn. The quiet states (paused, archived, a partial release, a text
-         line) take the muted line and text.
+         head's ACTIVE is drawn. The quiet states (planning, paused, archived, a partial
+         release, a text line) take the muted line and text.
        - THE FLAG (a warning word): red text in a 1px red line on the page colour, in the UI face
          and the word's own case ("over bed", "failed", "changed"). Red marks; rule 13.
      Status carries its WORD in all three, never colour alone (rule 13).
@@ -593,15 +593,16 @@
   /* THE OUTLINED CHIP: a state. */
   .badge.status-active, .badge.status-done, .badge.project-new, .badge.mstatus-want_to_print, .badge.mstatus-printed,
   .badge.visibility-public, .badge.bom-stock, .badge.bom-file {
-    background: var(--bg); border-color: var(--line-strong); color: var(--fg);
+    background: var(--surface); border-color: var(--line-strong); color: var(--fg);
   }
-  .badge.status-archived, .badge.status-paused, .badge.partial, .badge.bom-text {
-    background: var(--bg); border-color: var(--fg-muted); color: var(--fg-muted);
+  .badge.status-planning, .badge.status-archived, .badge.status-paused, .badge.partial, .badge.bom-text {
+    background: var(--surface); border-color: var(--fg-muted); color: var(--fg-muted);
   }
   /* --- Project status and the new-project mark (stage 4, S4-6). Variants of `.badge`, so they
      live HERE and nowhere else: a component selector is defined in components.css alone
      (design-system rule 3), and `pages/projects.css` may qualify one inside a container but never
-     redeclare it. `planning` has no rule because it is the default and is never badged. --- */
+     redeclare it. `planning` is the default, so the Projects card draws it quiet: an ink chip there
+     made the state nobody chose the loudest thing on the card. --- */
   .badge.project-new { text-transform: none; }
   .badge.bom-stock, .badge.bom-file, .badge.bom-text { text-transform: none; }
   /* Releases (stage 3, S3-5): a release recorded from a folder larger than the snapshot's cap says
@@ -614,7 +615,7 @@
      MODIFIER, because the private panel and the public one both render it), and an unlisted
      project (Publishing, S3-4: a link anyone holding it can open, the warning tone it always had). */
   .badge.mstatus-failed, .badge.low-stock, .badge.changed, .badge.visibility-unlisted {
-    background: var(--bg); border-color: var(--accent); color: var(--accent-text);
+    background: var(--surface); border-color: var(--accent); color: var(--accent-text);
     font: 700 11.5px/16px var(--font-ui); letter-spacing: 0; text-transform: none;
   }
   /* ONE EMPTY STATE, TWO SIZES (decision, UI-cohesion spec §2.4). `.empty` had THREE
@@ -650,10 +651,10 @@
   .truncated { margin: 0 0 var(--space-3); padding: 8px 12px; border: 1.5px solid var(--warn); border-radius: 0; background: var(--warn-soft); color: var(--fg); font-size: 13.5px; }
 
   /* --- Flash (inline colours here; the floating stack is shell.css's .flash-stack) --- */
-  .flash { display: flex; align-items: flex-start; gap: var(--space-3); padding: 10px 12px; border-radius: var(--radius-control); border: 1.5px solid; font-size: 13.5px; color: var(--fg); background: var(--bg); }
+  .flash { display: flex; align-items: flex-start; gap: var(--space-3); padding: 10px 12px; border-radius: var(--radius-control); border: 1.5px solid; font-size: 13.5px; color: var(--fg); background: var(--surface); }
   /* Each toast LEADS WITH ITS WORD, a caps label: a status is never colour alone (rule 13). */
   .flash::before { flex: 0 0 auto; font: 700 12px/19px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
-  .flash-notice { border-color: var(--line-strong); background: var(--bg); }
+  .flash-notice { border-color: var(--line-strong); background: var(--surface); }
   .flash.flash-notice::before { content: "Done"; color: var(--fg); }
   .flash-alert { border-color: var(--danger); background: var(--danger-soft); }
   .flash.flash-alert::before { content: "Problem"; color: var(--danger); }
@@ -667,7 +668,7 @@
      the float shadow so they read as over the page. --- */
   .file-menu {
     position: absolute; z-index: 1000; min-width: 200px; padding: 4px;
-    background: var(--bg); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
+    background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
   }
   .file-menu button, .file-menu a {
     display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--control-height); padding: 0 10px;
@@ -682,7 +683,7 @@
   .file-menu button.danger { color: var(--danger); }
   .note-popover {
     position: absolute; z-index: 1001; width: 320px; max-width: 90vw; padding: 10px;
-    background: var(--bg); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
+    background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
   }
   .note-popover textarea { width: 100%; box-sizing: border-box; resize: vertical; }
   .note-popover-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
@@ -692,7 +693,7 @@
   dialog.move-conflict {
     display: block; position: static; width: 100%; max-width: none; margin: 0 0 16px; padding: 12px 14px;
     border: 1.5px solid var(--line-strong); border-radius: 0;
-    background: var(--bg); color: var(--fg);
+    background: var(--surface); color: var(--fg);
   }
   dialog.move-conflict p { margin: 0 0 10px; }
   dialog.move-conflict .dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
@@ -709,7 +710,7 @@
   details.menu[open] > summary { border-color: var(--fg); background: var(--raised); }
   .menu-list {
     position: absolute; right: 0; top: calc(100% + 4px); z-index: 50; min-width: 220px; padding: 4px;
-    background: var(--bg); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
+    background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
   }
   .menu-list form { margin: 0; }
   .menu-item {
@@ -736,7 +737,7 @@
   .folder-field-btn {
     display: inline-flex; align-items: center; gap: 6px; max-width: 260px; min-height: var(--control-height);
     padding: 0 12px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
-    background: var(--bg); color: var(--fg); font: 600 13.5px/20px var(--font-ui); cursor: pointer;
+    background: var(--surface); color: var(--fg); font: 600 13.5px/20px var(--font-ui); cursor: pointer;
   }
   .folder-field-btn:hover { background: var(--raised); }
   .folder-field-btn .ff-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -746,7 +747,7 @@
   }
   .filechooser {
     display: flex; flex-direction: column; overflow: hidden; width: min(720px, 100%); max-height: min(560px, 90vh);
-    background: var(--bg); color: var(--fg); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
+    background: var(--surface); color: var(--fg); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
   }
   .filechooser-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 2px solid var(--line-strong); font-weight: 800; }
   .filechooser-close { background: none; border: 0; font-size: 16px; color: var(--fg-muted); cursor: pointer; }
@@ -802,7 +803,7 @@
   .skip-link {
     position: absolute; top: var(--space-2); left: var(--space-2); z-index: 100;
     padding: var(--space-2) var(--space-3); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
-    background: var(--bg); color: var(--fg); font: 700 13.5px/20px var(--font-ui); white-space: nowrap;
+    background: var(--surface); color: var(--fg); font: 700 13.5px/20px var(--font-ui); white-space: nowrap;
     transform: translateY(-200%);
   }
   .skip-link:focus { transform: none; text-decoration: none; }
@@ -828,7 +829,7 @@
 dialog.calculator {
   width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow-y: auto;
   border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
-  background: var(--bg); color: var(--fg); font: 400 13.5px/1.4 var(--font-ui);
+  background: var(--surface); color: var(--fg); font: 400 13.5px/1.4 var(--font-ui);
 }
 dialog.calculator::backdrop { background: var(--scrim); }
 .calculator-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 2px solid var(--line-strong); }

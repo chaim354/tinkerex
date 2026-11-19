@@ -155,15 +155,26 @@ module Web
       assert_response :success, "an unknown sort must fall back, not raise"
     end
 
-    test "the type scale carries no half-pixel step" do
+    # THE TYPE SCALE IS THE SHOP MANUAL'S, AND ITS HALF-PIXEL STEPS ARE THE ONLY ONES (2026-11-19;
+    # spec 2026-11-18 §5 and its screens). The cohesion pass refused every fractional size, because
+    # the one it found (an 11.5px hint) was a stray rather than a step. The Shop manual draws four on
+    # purpose: 13.5px for body text, 12.5px for data, 11.5px for a chip or a flag, and 14.5px for a
+    # name heading a list row (the screens use exactly these four, 1,330 times). Any other fraction
+    # is still the stray this guard was written for.
+    SHOP_MANUAL_HALF_STEPS = %w[11.5 12.5 13.5 14.5].freeze
+
+    test "the type scale carries no half-pixel step but the Shop manual's" do
       sheets = Dir[Rails.root.join("app/assets/stylesheets/**/*.css")]
                  .reject { |f| f.include?("jsuites") || f.include?("vendor") }
       refute_empty sheets, "no stylesheets were scanned"
-      offenders = sheets.select { |f| File.read(f).match?(/font(-size)?:[^;]*\d+\.\d+px/) }
-                        .map { |f| Pathname(f).relative_path_from(Rails.root).to_s }
+      offenders = sheets.flat_map do |f|
+        File.read(f).scan(/font(?:-size)?:[^;]*?(\d+\.\d+)px/).flatten
+            .reject { |size| SHOP_MANUAL_HALF_STEPS.include?(size) }
+            .map { |size| "#{Pathname(f).relative_path_from(Rails.root)}: #{size}px" }
+      end
       assert_empty offenders,
-                   "a fractional font size reads as misalignment rather than hierarchy, and there " \
-                   "was exactly one in the app before slice 4: #{offenders.inspect}"
+                   "a fractional font size off the scale reads as misalignment rather than " \
+                   "hierarchy; the scale's half steps are #{SHOP_MANUAL_HALF_STEPS.join(', ')}px: #{offenders.inspect}"
     end
 
     test "the two per-page copies of .empty stay deleted" do

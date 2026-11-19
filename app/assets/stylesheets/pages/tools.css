@@ -36,7 +36,7 @@
   .calculator-card-keys kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
   /* `.tool-card` is a built-in tool's card (the calculator): the same face, a different class, so
      every `.addon-card` is still one a manifest made. It is not a link, so it takes no hover. */
-  .addon-card, .tool-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 0; background: var(--bg); color: var(--fg); }
+  .addon-card, .tool-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 0; background: var(--surface); color: var(--fg); }
   .addon-card:hover { text-decoration: none; border-color: var(--fg); }
   .addon-card.disabled { opacity: .6; }
   .addon-card-head { display: flex; align-items: center; gap: 10px; }
