@@ -60,7 +60,7 @@ README line and the Gerber file names are real. Every other name, count, person 
 |---|---|
 | The dark theme. Every screen is black on white | slice 4. Until then Graphite keeps today's colours and takes the new type |
 | Anything narrower than 1440 px. The 220 px column cannot sit beside a 375 px page | slice 3 does not start until the strip and the column are drawn at phone width |
-| A repository at half width. The card renders inside the Files panel (`projects/_attachments`) and a folder panel (`projects/_folder_panel`), and slice 5 makes both half. `ProjectKind`'s own comment calls half a column the width where the browser view stops being usable. One reading of §3: a panel stays full while it holds a repository. `Layout#repo_ids` already names the folder panels that are working trees | slice 5 |
+| A repository at half width. The card renders inside the Files panel (`projects/_attachments`) and a folder panel (`projects/_folder_panel`), and slice 5 makes both half. `ProjectKind`'s own comment calls half a column the width where the browser view stops being usable. One reading of §3: a panel stays full while it holds a repository. `Layout#repo_ids` already names the folder panels that are working trees | **settled in slice 5**: a panel stays full while it holds a repository — a folder panel `repo_ids` names, and Files while the project's folder is one (`root_repo`). A stored width still wins |
 
 ## 5. Tokens and type
 
@@ -197,7 +197,7 @@ lands once the dark theme is drawn (§4).
 | 8 | front door and public | `pages/public.css`, `pages/landing.css`, sign-in, welcome, help | `landing_test`, `onboarding_test`, `public_bundle_test` |
 
 Slice 5 flips three defaults in `Maker::ProjectKind`: Files (`attachments`), Photos and folder
-panels become half, as the screens draw them. A stored width still wins, and a layout Save writes
+panels become half, as the screens draw them, except while one holds a repository (§4). A stored width still wins, and a layout Save writes
 every panel's width, defaults included, on purpose (`Maker::LayoutDocument#column`). So only
 projects whose layout was never saved re-flow: a project saved once in the editor keeps full Files,
 Photos and folder panels, and its stored row cannot tell a chosen full from a default. Section

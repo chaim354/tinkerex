@@ -247,8 +247,10 @@ module Maker
     # blocks keeps exactly the layout it has always had. The block keys are part of the vocabulary,
     # so a caller that does render them must say which they are or they drop out as stale — the
     # totality rule the folder keys already run on.
-    def panel_layout(folders: [], blocks: []) =
-      Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:, blocks:)
+    # `root_repo:` (2026-11-19) is Maker::ProjectFolderListing#root_repo? from the same listing, so
+    # Files keeps the full width its repository card needs; false for a caller with no listing.
+    def panel_layout(folders: [], blocks: [], root_repo: false) =
+      Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:, blocks:, root_repo:)
 
     # THE PANELS A CALLER MAY RENDER BY KEY, so a tab separator is filtered out (2026-09-09, tabs):
     # the two pages read Layout#groups instead, and every other caller of this method looks a panel
