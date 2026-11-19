@@ -319,7 +319,7 @@ module ShellHelper
 
   # The browser chrome's colour: Graphite's ground for dark, Paper's for light AND for system,
   # because the server cannot see the OS setting and light is the default.
-  def theme_color_hex = ui_theme == "dark" ? "#141512" : "#ffffff"
+  def theme_color_hex = ui_theme == "dark" ? "#111316" : "#ffffff"
 
   def color_scheme_meta
     case ui_theme

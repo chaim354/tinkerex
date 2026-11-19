@@ -54,12 +54,13 @@ landed it (§11).
    (`.thumb`, `.render-card`, `.landing-tile`, `.generator-preview`) is `isolation: isolate` with
    its image `mix-blend-mode: multiply` onto `--thumb-stage`, so the white becomes the card and ink
    stays ink, without a stored pixel being edited. **The card is LIGHT IN BOTH THEMES** — Paper's
-   surface `#ffffff`, a dimmed paper `#bfbbb2` in Graphite — because the ink is often the FILE's
+   surface `#ffffff`, a dimmed paper `#b6babf` in Graphite — because the ink is often the FILE's
    colour (a LightBurn black or blue layer, a DXF's ACI 7, a plain SVG), which reads on no dark
-   ground (LightBurn blue is 1.96:1 on Graphite's page) and no renderer may recolour. Measured on
-   the Graphite card: 9.6:1 against the page (white was ~19:1, brighter than the text), black ink
-   11:1, LightBurn blue 6.7:1, red 3.4:1. `--thumb-ink`, what the app paints on the card itself
-   (the type label, the spinner, the failed mark), flips with it: 6.5:1 and 5.6:1. Four things not
+   ground (LightBurn blue, #0000ff, is 2.2:1 on Graphite's page) and no renderer may recolour. Measured on
+   the Graphite card, the ink multiplied onto it: 9.5:1 against the page (white would be 18.6:1,
+   brighter than the text's 15.2:1), black ink 10.8:1, LightBurn blue 6.1:1, red 3.6:1.
+   `--thumb-ink`, what the app paints on the card itself (the type label, the spinner, the failed
+   mark), flips with it: 6.9:1 and 5.4:1. Four things not
    to undo. **A render's ground is white, never a stage colour baked in** — the card would multiply
    it a second time. **An image never paints the card itself**: a new surface takes `.render-card`
    or the `.thumb` pair, and `.project-hero-render` drops the hero image's own background for that
@@ -69,7 +70,12 @@ landed it (§11).
    never a border, because the Measure tests derive mm-per-pixel from its width. Meshes are drawn
    in ONE material, `--model-material` `#7f7b73` (held equal to `Palette::MATERIAL` by
    `palette_test.rb`): it clears 3:1 on all four grounds it meets (the viewer's `--raised` in Paper
-   3.82 and Graphite 3.61, the card 4.21 and 3.58), which is why it is not redefined per theme.
+   3.82 and Graphite 3.97, multiplied onto the card 4.21 and 3.54), which is why it is not
+   redefined per theme. **Every contrast this rule and the token comments state is computed by
+   `test/theme_contrast_test.rb`** from the three token blocks: text at 4.5:1 on the page,
+   `--raised` and `--accent-soft`, marks (the accent, the focus ring, the strong line, the
+   material) at 3:1, the system query's Graphite equal to the chosen one, and the ground's copies
+   outside the sheet (`theme_color_hex`, `theme_controller.js`, the error pages) equal to `--bg`.
    **Drawing colours stay literal**: Measure's layer strokes and the hover/selected pair (pinned by
    computed style in the Measure system tests), the tray top-view fills, LightBurn swatches.
    `test/system/preview_stage_test.rb` pins the card, the isolation, the blend, the photo's
@@ -251,8 +257,14 @@ stylesheet or script tag goes in `_head`, never in either layout, or the two hea
     2026-09-10 cohesion decision 4 kept labels in the UI face until 2026-11-19). Text selection (`::selection`) and the code
     editor's selection and active-line tints are browser text affordances, not UI selection state,
     and keep accent tints. The light values are the Shop manual spec's
-    (`docs/superpowers/specs/2026-11-18-shop-manual-redesign-design.md` §5); Graphite's are still
-    the Tinkerex Design System artifact's.
+    (`docs/superpowers/specs/2026-11-18-shop-manual-redesign-design.md` §5). **Graphite is the
+    same manual printed light-on-dark** (Shop manual slice 4, 2026-11-19), because the screens draw
+    no dark theme: neutral like Paper, never the warm olive set it replaced; a near-black page that
+    is its own surface, `--raised` one step lighter, ink and the strong line one near-white, so the
+    ink primary is a near-white fill with page-coloured text; the red brightened until it reads as
+    text on all three grounds, so `--accent-text` is the accent in both themes; `--accent-ink` is
+    the page colour in both (white on Paper's red, near-black on Graphite's). The values and their
+    ratios are application.css's Graphite comments.
 
 **Every timestamp is `ApplicationHelper#time_at`, in the app's one zone (`config.time_zone`, from `TIME_ZONE`), and its three styles are the whole vocabulary** — `:absolute` `2026-11-01 22:09`, `:date`, `:relative` "10 minutes ago" — always a `<time datetime>`, with the full time and zone in `title` (a Date has no more to show); no template calls `strftime`, `to_fs(` or `time_ago_in_words`, and the History panel prints the server's `at_label`, never `toLocaleString()` (UX audit D1, `time_format_test.rb`).
 

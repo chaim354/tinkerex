@@ -178,7 +178,7 @@ class O3dvTest < ApplicationSystemTestCase
     assert_equal [ 244, 244, 241 ], page.evaluate_script(STAGE_PIXEL_JS), "Paper's --raised before the switch"
 
     page.execute_script("document.documentElement.dataset.theme = 'dark'")
-    wait_until(message: "the open viewer never repainted for Graphite") { page.evaluate_script(STAGE_PIXEL_JS) == [ 37, 38, 34 ] }
+    wait_until(message: "the open viewer never repainted for Graphite") { page.evaluate_script(STAGE_PIXEL_JS) == [ 27, 30, 34 ] }
 
     click_on "Use this view as preview"
     assert_selector ".mv-status", text: "Saved as the preview."
@@ -197,7 +197,7 @@ class O3dvTest < ApplicationSystemTestCase
       probe.src = arguments[0];
     JS
     assert_equal [ 255, 255, 255 ], corner, "a view saved from Graphite is still photographed on the render paper"
-    assert_equal [ 37, 38, 34 ], page.evaluate_script(STAGE_PIXEL_JS), "the open viewer keeps Graphite's ground after the capture"
+    assert_equal [ 27, 30, 34 ], page.evaluate_script(STAGE_PIXEL_JS), "the open viewer keeps Graphite's ground after the capture"
     assert_no_console_errors
   ensure
     page.execute_script("document.documentElement.dataset.theme = 'light'")
