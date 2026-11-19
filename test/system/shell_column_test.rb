@@ -16,7 +16,8 @@ require "application_system_test_case"
 #   3. Dropping the focus move from shell_controller.js#openColumn: the sheet test red on the focused
 #      element.
 #   4. The ≤959px block keeping the grid's column track (`.shell-body--column` left at
-#      `var(--column-width) minmax(0, 1fr)`): the sheet test red, main shifted by the column's width.
+#      `var(--column-width) minmax(0, 1fr)`): the sheet test red, main squeezed into the 220px track
+#      (the fixed sheet takes no grid cell, so main is placed in the first one).
 class ShellColumnTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
@@ -48,7 +49,10 @@ class ShellColumnTest < ApplicationSystemTestCase
     contents = find("header.strip button.strip-contents[aria-expanded='false']")
     assert_selector "aside.column", visible: :hidden
     main_before = boxes("main#main").first
+    # The fixed sheet takes no grid cell, so a column track left in the grid would hand main the
+    # 220px track: main must span the page.
     assert_operator main_before["left"], :<, 40, "main keeps the column's track below 960px (#{main_before.inspect})"
+    assert_operator main_before["width"], :>, 800, "main is squeezed into the column's track below 960px (#{main_before.inspect})"
 
     contents.click
     assert_selector "header.strip button.strip-contents[aria-expanded='true']"
