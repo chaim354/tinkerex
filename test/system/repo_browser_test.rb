@@ -55,6 +55,15 @@ class RepoBrowserTest < ApplicationSystemTestCase
   # folder panel is a sibling section on the same page (see the toggle test below).
   def panel_for(dir) = "section.folder-panel[id='folder:#{dir.node_id}']"
 
+  # OPEN A NESTED SECTION BY ITS NAME, AT THE SUMMARY'S LEFT EDGE. A nested repository's summary
+  # also holds its Commits and History links, and in a half-width folder panel (every plain folder
+  # since the Shop manual, 2026-11-19) the summary's middle, where a bare `click` lands, is the
+  # History link: the click left the page for /repos/:id/history. The offset is from the centre.
+  def open_section(name)
+    summary = find("summary", text: name)
+    summary.click(x: -(summary.native.size.width / 2) + 12, y: 0)
+  end
+
   def open_firmware
     visit project_path(@project)
     # NO CLICK, AND THAT IS THE ASSERTION. A depth-one repository's panel defaults to `browser` and
@@ -150,7 +159,7 @@ class RepoBrowserTest < ApplicationSystemTestCase
       assert_no_selector ".filechooser--inline", visible: :all
       # CASE-INSENSITIVE, because `.attachment-group-head` is `text-transform: uppercase` and
       # Selenium reports a summary's RENDERED text — "BOOTLOADER", not "bootloader".
-      find("summary", text: /bootloader/i).click
+      open_section(/bootloader/i)
       assert_selector ".filechooser--inline .filechooser-col", count: 1
       assert_selector ".filechooser-row", text: "boot.c"
     end
@@ -306,7 +315,7 @@ class RepoBrowserTest < ApplicationSystemTestCase
 
     visit project_path(@project)
     within(panel_for(tools)) do
-      find("summary", text: /bootloader/i).click
+      open_section(/bootloader/i)
       find(".filechooser-row.is-file", text: "boot.c").right_click
     end
 

@@ -380,11 +380,15 @@ module Web
       # list rather than one link, so a key the menu drops or an anchor it misspells is a failure here.
       assert_equal(ADD_MENU.map { |key, (label, anchor)| [ label, project_path(fresh, add: key, anchor:) ] },
                    add_menu_links)
-      # After Edit, inside .head-actions: the head stays two slots, and Edit stays first.
+      # After Edit, inside .head-actions: the head stays two slots, Edit stays first and + Add panel
+      # last. BETWEEN THEM ONLY THE HEAD'S WAYS OUT (the Shop manual, 2026-11-19): Open the folder
+      # wherever the folder is available this render — on chunk_remote, where this fixture's ensure
+      # mints it, and not on share or s3, where no directory stands behind it — and the Public page
+      # link on a published project.
       actions = css_select(".page-head > .head-actions > *").map { |el| el["class"].to_s }
-      assert_equal 2, actions.size, actions.inspect
       assert_includes actions.first, "edit-link"
       assert_includes actions.last, "add-panel"
+      assert_empty actions[1...-1].reject { |c| c.include?("open-folder") || c.include?("public-link") }, actions.inspect
     end
 
     test "?add= opens one empty panel, quiet, with its composer, and nothing else" do

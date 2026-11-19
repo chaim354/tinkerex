@@ -588,16 +588,17 @@ class ShellTest < ApplicationSystemTestCase
           # measured the no-cover and no-photos branches and said nothing about the two new layouts.
           assert_selector ".project-hero img.project-hero-img"
           assert_selector "section.photos-panel .photo-cell", minimum: 1
-          # SLICE 6: THE HUB'S HEAD AND ITS RECENT ROW, both new markup. The cover now sits BESIDE the
-          # name with Edit after it (the ⋯ menu that followed went behind Edit, 2026-10-26), and the
-          # Files panel opens on a row of the folder's newest files — each laid out at 375px, and
-          # measured against the page's CLIENT width (the model strip's rule below: CI's Linux Chrome
-          # draws a scrollbar the Mac's does not).
-          assert_selector ".project-head .page-title > .project-hero img.project-hero-img"
+          # SLICE 6: THE HUB'S HEAD AND ITS RECENT ROW, both new markup. The cover sits beside the
+          # head as Fig. 1 since the Shop manual (2026-11-19), under it at this width, with Edit in the
+          # head (the ⋯ menu that followed went behind Edit, 2026-10-26), and the Files panel opens on
+          # a row of the folder's newest files — each laid out at 375px, and measured against the
+          # page's CLIENT width (the model strip's rule below: CI's Linux Chrome draws a scrollbar the
+          # Mac's does not).
+          assert_selector ".project-top > .project-hero img.project-hero-img"
           assert_selector ".project-head a.edit-link", visible: true
           assert_selector ".attachments-panel .recent-files .attachment-tile", minimum: 1
           right = page.evaluate_script(
-            "Math.max.apply(null, Array.from(document.querySelectorAll('.project-head, .project-head *, .recent-files, .recent-files *'))" \
+            "Math.max.apply(null, Array.from(document.querySelectorAll('.project-top, .project-top *, .recent-files, .recent-files *'))" \
             ".map(function (el) { return el.getBoundingClientRect().right }))")
           client = page.evaluate_script("document.documentElement.clientWidth")
           assert_operator right, :<=, client, "the hub's head or recent row runs past the page at 375px (right edge #{right}, client width #{client})"
