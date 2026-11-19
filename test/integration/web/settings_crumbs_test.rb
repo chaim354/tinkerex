@@ -36,7 +36,7 @@ module Web
       pages.each do |name, path|
         get path
         assert_response :success, path
-        crumbs = css_select(".topbar nav.breadcrumb").first
+        crumbs = css_select(".page-path nav.breadcrumb").first
         assert crumbs, "#{path} has no breadcrumb"
         assert_equal settings_path, crumbs.at_css("a")&.[]("href"), "#{path}'s crumbs do not start at Settings"
         assert_equal name, crumbs.at_css("[aria-current=page]")&.text&.strip, "#{path}'s crumbs do not end at the page"
@@ -48,7 +48,7 @@ module Web
     test "one account's page passes through Users" do
       get edit_settings_user_path(@other)
       assert_equal [ settings_path, settings_users_path ],
-                   css_select(".topbar nav.breadcrumb a").map { |a| a["href"] }
+                   css_select(".page-path nav.breadcrumb a").map { |a| a["href"] }
     end
 
     test "the hub's Users row counts users" do

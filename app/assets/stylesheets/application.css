@@ -102,9 +102,10 @@
     --row-height: 44px;
     --container-max: 1360px;
     --prose-measure: 72ch;
-    --rail-width: 216px;
-    --rail-collapsed-width: 56px;
-    --topbar-height: 48px;
+    /* The shell (Shop manual spec §7): the strip is 50px and its 2px ink rule, and the left column
+       220px. A sticky page part sits under --strip-height. */
+    --strip-height: 52px;
+    --column-width: 220px;
     --tabbar-height: 56px;
   }
   :root[data-theme="dark"] {

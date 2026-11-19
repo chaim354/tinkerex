@@ -1,49 +1,70 @@
-# The application shell's server-side state (spec §5): which rail section this request belongs
-# to, and the two cookies the layout renders into the first byte of HTML so there is no flash of
-# the wrong theme and no inline script — the CSP nonces script-src (§14e), and a script that
-# runs before paint is exactly the kind of thing not to add.
+# The application shell's server-side state (Shop manual spec §7, slice 3): which of the four places
+# and which left-column row this request lights, what the column lists, and the theme cookie the
+# layout renders into the first byte of HTML so there is no flash of the wrong theme and no inline
+# script — the CSP nonces script-src (§14e), and a script that runs before paint is exactly the kind
+# of thing not to add (design-system.md rule 7).
 module ShellHelper
   THEMES = %w[light dark system].freeze
 
   # controller_path's FIRST segment, so projects/tasks, models/print_runs and tools/addons all
   # resolve to their family — or, for an entry holding a "/", the WHOLE controller path, so one
   # controller can join a section its first segment does not name (users/registrations below). A
-  # controller not listed here lights nothing, which is correct for Devise's signed-out pages (they
-  # render without the rail anyway).
+  # controller not listed here lights nothing and gets no default column, which is correct for
+  # Devise's signed-out pages (they render without the shell anyway) and for Search, which lights
+  # no place (spec §11.2).
   SECTIONS = {
-    # The onboarding wizard (2026-11-09) is Recent's own flow — the page it opens from — so it lights Recent.
+    # The onboarding wizard (2026-11-09) opens from Home, so it is Home's: it lights no place either.
     "home" => %w[home welcome],
     "files" => %w[files library_browse notes repo_commits repo_histories],
     "models" => %w[models],
     "projects" => %w[projects],
+    # SUPPLIERS AND LOCATIONS LIGHT THE PLACE THEY SERVE, and since 2026-09-10 the URL agrees:
+    # `/inventory/suppliers` and `/inventory/locations` (the old `/settings/*` paths 301,
+    # config/routes.rb, and must keep doing so).
     "inventory" => %w[inventory_items suppliers locations],
     "tools" => %w[tools],
     "trash" => %w[trash],
-    # The hub and its own children (settings/tags, settings/shelves, settings/library) light the
-    # rail FOOT's Settings link, not a rail item — through this one entry, because the key is the
-    # controller path's first segment and every one of them is `settings/…`.
-    #
-    # SUPPLIERS AND LOCATIONS STILL LIGHT THE SECTION THEY SERVE — and since 2026-09-10 the URL
-    # agrees, which is the whole point of that move. They lived at `/settings/*` while this map lit
-    # Inventory, so clicking Settings landed a maker on a page where Settings went dark and something
-    # else was highlighted: `/inventory/suppliers` and `/inventory/locations` now read like what they
-    # are, and the old paths 301 (config/routes.rb) and must keep doing so.
-    # /settings/shelves is the Shelves page (2026-10-20: the folders filed into inside each
-    # project), a setting like its siblings, so `shelves` names no section of its own.
+    # The hub and its own children (settings/tags, settings/shelves, settings/library, …) are one
+    # section through this one entry, because every one of them is `settings/…`. /settings/shelves
+    # is the Shelves page (2026-10-20), a setting like its siblings.
     #
     # THE ACCOUNT PAGE (Devise's registrations#edit, /users/edit) IS A SETTINGS PAGE: the hub links
-    # to it, so it lights Settings rather than nothing (UX audit F1). By its whole path, not `users`:
-    # the other users/* controllers are Devise's signed-out doors, which have no rail to light.
+    # to it (UX audit F1). By its whole path, not `users`: the other users/* controllers are
+    # Devise's signed-out doors, which have no shell.
     "settings" => %w[settings users/registrations],
-    # /help lights the rail foot's Help, as the hub lights Settings: a page the rail links to must
-    # not render with nothing lit (design-system.md rule 8).
     "help" => %w[help]
   }.freeze
 
+  # THE FOUR PLACES, IN THE STRIP'S ORDER (spec §3): always all four, on every signed-in page, and in
+  # the phone tab bar below 720px. Each lights for the row keys listed here, so the place is DERIVED
+  # from `sidebar_current`'s one key and never decided a second time. A key no place lists (Home,
+  # Settings, Help) lights no place (spec §11.2): Home is the wordmark's, and the account menu holds
+  # Settings and Help.
+  PLACES = {
+    library: { label: "Library", icon: :files, keys: %i[library folder models trash] },
+    projects: { label: "Projects", icon: :projects, keys: %i[all_projects archived_projects project_kind project new_project] },
+    tools: { label: "Tools", icon: :tools, keys: %i[tools tool] },
+    inventory: { label: "Inventory", icon: :inventory, keys: %i[inventory inventory_items low_stock location locations supplier suppliers] }
+  }.freeze
+
+  # WHICH DEFAULT COLUMN A SECTION GETS (spec §7's table) when its page supplies none through
+  # `content_for :column`: layouts/column/_<name>. The 3D models view, the model pages and Trash
+  # are Library pages, so they get the Library's.
+  COLUMNS = {
+    "home" => "home", "files" => "library", "models" => "library", "trash" => "library",
+    "projects" => "projects", "inventory" => "inventory", "tools" => "tools",
+    "settings" => "settings", "help" => "help"
+  }.freeze
+
+  # The Settings column's rows, by the controller that renders each page. A settings controller not
+  # named here (a redirect-only door) lights the section's key with no row.
+  SETTINGS_ROWS = {
+    "settings" => :hub, "settings/library" => :library, "settings/shelves" => :shelves,
+    "settings/tags" => :tags, "settings/users" => :users, "settings/devices" => :devices,
+    "users/registrations" => :account
+  }.freeze
+
   ICON_PATHS = {
-    # A clock for Recent (slice 6), the root page's link in the sidebar and the tab bar. The page's
-    # sidebar KEY is still [:home] (sidebar_current) — only the label and the drawing changed.
-    recent: "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2zM8 5v3l2 1.5",
     files: "M2 4h5l2 2h5v7H2z",
     models: "M8 2l6 3v6l-6 3-6-3V5z M2 5l6 3 6-3 M8 8v6",
     projects: "M2 3h12v10H2z M6 3v10 M10 3v10",
@@ -51,29 +72,27 @@ module ShellHelper
     tools: "M10.5 2.5a3.5 3.5 0 0 0-3.2 4.9L2 12.7 3.3 14l5.3-5.3a3.5 3.5 0 0 0 4.9-3.2L11.6 7.4 9.6 6.4l1.9-1.9z",
     trash: "M3 4h10 M6 4V2.5h4V4 M4.5 4l.8 9.5h5.4L11.5 4 M7 7v4.5 M9 7v4.5",
     search: "M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z M10.5 10.5L14 14",
-    theme: "M8 2a6 6 0 0 0 0 12V2z M8 2a6 6 0 1 1 0 12",
-    collapse: "M3 8h10 M7 4L3 8l4 4",
     settings: "M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M8 1.5v2 M8 12.5v2 M1.5 8h2 M12.5 8h2 M3.4 3.4l1.4 1.4 M11.2 11.2l1.4 1.4 M3.4 12.6l1.4-1.4 M11.2 4.8l1.4-1.4",
-    # A door and an arrow leaving it, for the rail foot's Sign out (slice 7): collapsed, the foot
-    # draws icons only, and a bare-text button wrapped "Sign out" onto two lines in a 40px column.
+    # A door and an arrow leaving it: the account menu's Sign out.
     sign_out: "M6 3H3v10h3 M10 5l3 3-3 3 M13 8H7",
-    # A question mark in Recent's own circle, for the rail foot's Help (onboarding, 2026-10-13). The
-    # hook is r1.6 and the dot sits a full pixel below the stem, so at 16px it reads as a "?" rather
-    # than a blot; the dot is a .01 segment because a zero-length one draws nothing in some engines.
+    # A question mark in a circle: the account menu's Help. The hook is r1.6 and the dot sits a full
+    # pixel below the stem, so at 16px it reads as a "?" rather than a blot; the dot is a .01 segment
+    # because a zero-length one draws nothing in some engines.
     help: "M8 2a6 6 0 1 0 0 12A6 6 0 0 0 8 2z M6.4 5.9a1.6 1.6 0 1 1 2.73 1.13c-.4.4-1.13.72-1.13 1.27v.35 M8 11.35v.01",
     # A page with a folded corner and two lines: a file's note-count badge (slice 7), which drew
     # the last emoji in the interface (test/no_emoji_test.rb). The count and its title stay.
     note: "M3 2h7l3 3v9H3z M5 7h6 M5 10h6",
     # A calculator: the body, its display, and two rows of keys drawn as dots (.01 segments, the help
-    # icon's trick for a dot that draws in every engine). The rail's pinned Calculator link and the
-    # Tools card (2026-10-21).
+    # icon's trick for a dot that draws in every engine). The pinned Calculator row and the Tools
+    # card (2026-10-21).
     calculator: "M4 1.5h8v13H4z M6 4h4v2.5H6z M6.25 9.5v.01 M8 9.5v.01 M9.75 9.5v.01 M6.25 12v.01 M8 12v.01 M9.75 12v.01",
-    # Three bars, for the phone tab bar's fifth tab, More (UX audit A1): the sheet holding every rail
-    # destination the four tabs do not carry. Bars, not three dots, because a 1.5px stroke draws a
-    # dot too small to read at 16px.
-    more: "M2.5 4h11 M2.5 8h11 M2.5 12h11",
-    # A person, for the More sheet's Account item: a head and shoulders.
-    account: "M8 2.5a2.75 2.75 0 1 0 0 5.5 2.75 2.75 0 0 0 0-5.5z M2.5 14c.6-2.9 2.8-4.5 5.5-4.5s4.9 1.6 5.5 4.5"
+    # A person, for the account menu's Account item: a head and shoulders.
+    account: "M8 2.5a2.75 2.75 0 1 0 0 5.5 2.75 2.75 0 0 0 0-5.5z M2.5 14c.6-2.9 2.8-4.5 5.5-4.5s4.9 1.6 5.5 4.5",
+    # A plus, for the strip's Add.
+    plus: "M8 3v10 M3 8h10",
+    # Three lines of uneven length, a table of contents: the strip's Contents button below 960px,
+    # which opens the left column as a sheet.
+    contents: "M2.5 4h11 M2.5 8h8 M2.5 12h11"
   }.freeze
 
   # An unknown or absent cookie is the default, LIGHT ("Paper") since the 2026-10-08 redesign: the
@@ -85,14 +104,6 @@ module ShellHelper
     THEMES.include?(value) ? value : "light"
   end
 
-  # THE RAIL COOKIE HAS THREE STATES, AND ABSENT IS ONE OF THEM. Absent (or junk) follows the width:
-  # the full rail from 1100px, the icon rail below. `collapsed` and `expanded` are the maker's own
-  # choice from the Collapse button, and an explicit choice beats the width default, so `expanded`
-  # keeps the full rail at 1024px too (UX audit A2) — the button did nothing there before, because
-  # the viewport's media query set the track whatever the cookie said. Below 720px there is no rail.
-  def rail_collapsed? = cookies[:rail] == "collapsed"
-  def rail_expanded? = cookies[:rail] == "expanded"
-
   # IS THIS A PUBLIC SURFACE? `respond_to?` because a public controller stands on
   # ActionController::Base and Devise's own pages have neither helper. Extracted from
   # #shell_signed_in? (stage 4, S4-5) so the LAYOUT can ask it directly for the visitor's header
@@ -101,11 +112,10 @@ module ShellHelper
   # about which surface this is.
   def public_shell? = respond_to?(:public_surface?) && public_surface?
 
-  # The signed-in shell (rail, tab bar) renders for a signed-in user on
-  # every page EXCEPT a public one, which renders what a visitor sees (Public::BaseController, stage
-  # 3, S3-4). `respond_to?` on both halves because a public controller stands on
-  # ActionController::Base and has neither helper — and Devise's own pages have no
-  # `public_surface?`.
+  # The signed-in shell (strip, column, tab bar) renders for a signed-in user on every page EXCEPT a
+  # public one, which renders what a visitor sees (Public::BaseController, stage 3, S3-4).
+  # `respond_to?` on both halves because a public controller stands on ActionController::Base and
+  # has neither helper — and Devise's own pages have no `public_surface?`.
   # THE PUBLIC CHECK COMES FIRST, AND THE ORDER IS LOAD-BEARING RATHER THAN A STYLE CHOICE:
   # `user_signed_in?` is Warden's, so asking it AT ALL reads the session cookie and resolves a
   # user — which is precisely what a public request must not do. Short-circuiting on
@@ -117,39 +127,22 @@ module ShellHelper
     respond_to?(:user_signed_in?) && user_signed_in?
   end
 
-  # `rail--collapsed` only inside the shell, where it sets the rail's grid TRACK and nothing else
-  # (`body.app-shell.rail--collapsed`, shell.css). The icon rail itself is a container query on
-  # `.rail`, so no rule keyed on this class reaches the `.brand` the auth card renders. Until F-S20-1
-  # its rules were descendant selectors (`.rail--collapsed .brand-name`), and a user who collapsed
-  # the rail and signed out landed on a sign-in card with its wordmark hidden (found in review,
-  # 2026-09-04).
-  #
-  # READS `shell_signed_in?`, NOT `user_signed_in?`, FOR THE SAME REASON THE LAYOUT DOES.
-  # `body.app-shell` is a two-column grid whose first column is the rail's width (shell.css); a
-  # signed-in owner previewing their own public page renders NO rail, so the class alone would
-  # leave an empty rail-wide column and push the whole page off-centre — and at 375px it is what
-  # the phone sweep's `scrollWidth <= innerWidth` assertion would catch.
-  #
-  # `rail--expanded` is the other explicit choice, and it too sets only the track: it exempts the
-  # body from the ≤1099px media query's narrow track (shell.css), and the icon rail follows the width.
-  def body_classes
-    signed_in = shell_signed_in?
-    classes = []
-    classes << "app-shell" if signed_in
-    classes << "rail--collapsed" if signed_in && rail_collapsed?
-    classes << "rail--expanded" if signed_in && rail_expanded?
-    classes.join(" ")
-  end
+  # READS `shell_signed_in?`, NOT `user_signed_in?`, FOR THE SAME REASON THE LAYOUT DOES: a
+  # signed-in owner previewing their own public page renders no shell, so the class would style a
+  # page that has none.
+  def body_classes = shell_signed_in? ? "app-shell" : ""
 
-  def rail_section
+  def shell_section
     head = controller_path.split("/").first
     SECTIONS.find { |_key, heads| heads.include?(head) || heads.include?(controller_path) }&.first
   end
 
-  # --- The places sidebar (structural redesign spec §4.1, slice 2). Each list is ONE query
-  # whatever it holds, so no page's query count grows with projects or pins
-  # (page_query_budget_test.rb). Memoised per request: the sidebar and the tab bar both read them.
+  # --- What the column lists. Each list is ONE query whatever it holds, so no page's query count
+  # grows with projects, pins, folders, places or suppliers (page_query_budget_test.rb). Memoised per
+  # request: the column and `sidebar_current` both ask.
   SIDEBAR_PROJECTS = 8
+  COLUMN_FOLDERS = 40
+  COLUMN_PLACES = 30
 
   def sidebar_projects
     @sidebar_projects ||= current_user.maker_projects.where.not(status: "archived")
@@ -167,57 +160,114 @@ module ShellHelper
     end
   end
 
-  # Inventory earns its sidebar entry once it is used — or while the maker is standing in it, so the
-  # page they are on is never one with no lit link.
-  # Memoised like the two lists above: the rail and the phone's More sheet both ask.
-  def sidebar_inventory?
-    return @sidebar_inventory if defined?(@sidebar_inventory)
-
-    @sidebar_inventory = rail_section == "inventory" || current_user.maker_inventory_items.exists?
+  # THE LIBRARY COLUMN'S FOLDERS (spec §7): the library root, the chain down to the folder this page
+  # shows, then that folder's own subfolders, as [node_id (nil for the root), name, depth]. The chain
+  # is `@crumbs`, which FilesController#index and #show already built for the breadcrumb, so it costs
+  # nothing here; the subfolders are ONE query, capped, and the column says when it cut the list
+  # (`column_folders_more?`). The full tree, remembering what is open, is a later behaviour (spec §9).
+  # The same rows the Library lists: live, visible (no dot-folders, no `.git`, §14b).
+  def column_folders
+    @column_folders ||= begin
+      chain = Array(@crumbs)
+      parent_id = chain.last&.node_id
+      children = current_user.nodes.present.visible_entries(false)
+                             .where(kind: "dir", parent_node_id: parent_id)
+                             .order(Arel.sql("LOWER(nodes.name)"), :node_id)
+                             .limit(COLUMN_FOLDERS + 1).pluck(:node_id, :name)
+      @column_folders_more = children.size > COLUMN_FOLDERS
+      [ [ nil, "Library", 0 ] ] +
+        chain.each_with_index.map { |crumb, i| [ crumb.node_id, crumb.name, i + 1 ] } +
+        children.first(COLUMN_FOLDERS).map { |node_id, name| [ node_id, name, chain.size + 1 ] }
+    end
   end
 
-  # THE ONE ANSWER TO "WHICH LINK IS LIT", so exactly one is. A key, compared by sidebar_aria:
-  #   [:home] [:library] [:pin, node_id] [:project, id] [:all_projects] [:models] [:inventory]
-  #   [:tools] [:tool, key] [:trash] [:settings] [:help]
-  # The Library's 3D models view (`files/models`) lights [:models], not Library, though its section
-  # is files (slice 5).
-  # On the Files page AND a file's own page the DEEPEST pinned folder on the breadcrumb wins over
-  # Library (`@crumbs` is the folder chain FilesController#index and #show both build; absent
-  # elsewhere, where Library lights). On a project page the project's own
-  # link wins, unless it is older than the eight listed — then All projects, never nothing.
+  def column_folders_more?
+    column_folders
+    @column_folders_more
+  end
+
+  # The Inventory column's Places and Suppliers: one query each, capped, by name.
+  def column_locations
+    @column_locations ||= current_user.maker_locations.order(Arel.sql("LOWER(name)"), :id).limit(COLUMN_PLACES).to_a
+  end
+
+  def column_suppliers
+    @column_suppliers ||= current_user.maker_suppliers.order(Arel.sql("LOWER(name)"), :id).limit(COLUMN_PLACES).to_a
+  end
+
+  # THE ONE ANSWER TO "WHAT IS LIT", so at most one place and at most one column row are
+  # (design-system.md rule 8; shell_layout_test.rb walks every page). A key, compared by `row_aria`;
+  # the place is derived from it (PLACES), never decided twice:
+  #   [:home] [:library] [:folder, node_id] [:models] [:trash]
+  #   [:all_projects] [:archived_projects] [:project_kind, kind] [:project, id] [:new_project]
+  #   [:tools] [:tool, key]
+  #   [:inventory] [:inventory_items] [:low_stock] [:location, id] [:locations] [:supplier, id] [:suppliers]
+  #   [:settings, row] [:help]
+  # A key with no row on the page (Home's, Help's, an inventory item's) lights no row; that is
+  # allowed, and two is not.
+  #
+  # IN THE LIBRARY the folder this page shows is the row: the deepest crumb (`@crumbs`, the chain
+  # FilesController#index and #show both build; on a file's page its folder), else the library root.
+  # The 3D models view (`files/models`), the model pages and Trash are Library pages and light their
+  # own rows under Library (spec §11.2; this reversed rule 8's old exception, under which the 3D
+  # models view lit a place of its own).
   def sidebar_current
-    @sidebar_current ||=
-      case rail_section
+    return @sidebar_current if defined?(@sidebar_current)
+
+    @sidebar_current =
+      case shell_section
       when "home" then [ :home ]
       when "files"
-        # The Library's 3D models VIEW lights its own place, not Library (slice 5). Only one link is lit.
         if controller_path == "files/models"
           [ :models ]
         else
-          pinned = sidebar_pins.map { |pin, _| pin.node_id }
-          deepest = Array(@crumbs).map(&:node_id).reverse.find { |id| pinned.include?(id) }
-          deepest ? [ :pin, deepest ] : [ :library ]
+          folder = Array(@crumbs).last
+          folder ? [ :folder, folder.node_id ] : [ :library ]
         end
-      when "projects"
-        id = @project&.id
-        id && sidebar_projects.any? { |p| p.id == id } ? [ :project, id ] : [ :all_projects ]
       when "models" then [ :models ]
-      when "inventory" then [ :inventory ]
-      when "tools"
-        # A PINNED ADDON'S OWN PAGE LIGHTS ITS PINNED LINK, as a pinned folder beats Library. The
-        # calculator never lights: it is a modal over the page, not a page.
-        key = params[:key].to_s if controller_path == "tools/addons"
-        key && key != Maker::ToolPins::CALCULATOR && current_user.tool_pins.pinned?(key) ? [ :tool, key ] : [ :tools ]
       when "trash" then [ :trash ]
-      when "settings" then [ :settings ]
+      when "projects" then projects_current
+      when "inventory" then inventory_current
+      when "tools"
+        # An addon's own page lights its row (the Tools column lists the pinned ones). The calculator
+        # never lights: it is a modal over the page, not a page.
+        key = params[:key].to_s if controller_path == "tools/addons"
+        key.present? && key != Maker::ToolPins::CALCULATOR ? [ :tool, key ] : [ :tools ]
+      when "settings" then [ :settings, SETTINGS_ROWS[controller_path] ]
       when "help" then [ :help ]
       end
   end
 
-  def sidebar_aria(key) = sidebar_current == key ? "page" : nil
+  # The place this request lights, or nil (Home, Search, Settings, Help).
+  def sidebar_place
+    key = sidebar_current&.first
+    PLACES.find { |_place, spec| spec[:keys].include?(key) }&.first
+  end
+
+  def place_aria(place) = sidebar_place == place ? "page" : nil
+
+  def row_aria(key) = sidebar_current == key ? "page" : nil
+
+  # [place, label, path, icon] for the strip and the tab bar, in order.
+  def strip_places
+    paths = { library: files_path, projects: projects_path, tools: tools_path, inventory: inventory_items_path }
+    PLACES.map { |place, spec| [ place, spec[:label], paths.fetch(place), spec[:icon] ] }
+  end
+
+  # ONE COLUMN ROW: a link, its name, an optional muted note at the right (a count, or what kind of
+  # thing a pin is), lit when `key` is `sidebar_current`. `depth` indents a folder under its parent,
+  # 16px a level, through a custom property shell.css reads. Extra options (data, title, aria) pass
+  # through to the link, merged under the row's own class.
+  def column_row(label, path, key: nil, note: nil, depth: 0, **options)
+    classes = class_names("column-row", options.delete(:class))
+    style = "--depth: #{depth}" if depth.positive?
+    link_to path, class: classes, style:, "aria-current": (key && row_aria(key)), **options do
+      safe_join([ tag.span(label, class: "column-row-name"), (tag.span(note, class: "column-row-note") if note) ].compact)
+    end
+  end
 
   # THE RIGHT-CLICK MENU ON A TOOL (toolmenu_controller.js): the card in the Tools gallery, or the
-  # tool's pinned link in the rail. The server writes the URL and the state, so the menu says what a
+  # tool's pinned row in the column. The server writes the URL and the state, so the menu says what a
   # click DOES ("Pin to sidebar" / "Unpin from sidebar") and never assembles a path. Merged into a
   # link's own `data:` by the caller, which is why `extra` exists (the calculator's opener).
   def tool_menu_data(key, label, extra = {})
@@ -226,84 +276,24 @@ module ShellHelper
       tool_name: label }.merge(extra)
   end
 
-  # IN THE ICON RAIL (collapsed, or below 1100px without the `expanded` cookie) A PINNED ADDON'S LINK
-  # HIDES WITH ITS LABEL (shell.css), so a lit one would leave the rail with nothing lit to see: they
-  # all wear the Tools glyph, so icons alone could not tell them apart, and Tools carries the mark
-  # there instead. A CLASS, never aria-current, so the markup still lights exactly one link;
-  # shell.css draws it only in the icon rail.
-  #
-  # PROJECTS AND PINNED FOLDERS NO LONGER NEED THIS (UX audit A2): the icon rail draws each as a
-  # monogram tile (`rail_monogram`), so the lit one stays visible and carries the mark itself. They
-  # used to hide too, and the eight projects and every pin simply vanished at 1024px.
-  def sidebar_family_lit?(family) = { tool: :tools }[sidebar_current&.first] == family
+  # The round account button's letter: the first letter or digit of the address, a middle dot for an
+  # address with none (the interface draws no emoji, design-system.md rule 13).
+  def account_initial = current_user.email.to_s[/[[:alnum:]]/]&.upcase || "·"
 
-  # A project's or a pinned folder's face in the icon rail: the first letter or digit of its name, in
-  # a tile. aria-hidden, because the link's `title` (the full name) is its accessible name there —
-  # the label beside it is display:none in the icon rail and names nothing. A name with no letter
-  # or digit at all falls back to a middle dot rather than drawing whatever symbol it starts with
-  # (the interface draws no emoji, design-system.md rule 13).
-  #
-  # THE LETTER IS DRAWN FROM AN ATTRIBUTE (`::before { content: attr(data-monogram) }`, shell.css),
-  # NEVER A TEXT NODE: the link's text must stay exactly the name, which is what every lit-link
-  # assertion reads, and a text node would have made "Desk Lamp" read "DDesk Lamp".
-  def rail_monogram(name)
-    tag.span(class: "rail-monogram", "aria-hidden": "true",
-             data: { monogram: name.to_s[/[[:alnum:]]/]&.upcase || "·" })
-  end
-
-  # The phone tab bar: four destinations, each lit by the same answer the sidebar uses. The fifth
-  # tab, More, is `tabbar_more_links`.
-  def tabbar_links
-    current = sidebar_current&.first
-    [
-      # Recent, the root page (slice 6): labelled and drawn as Recent, lit by the [:home] key.
-      [ "Recent", root_path, :recent, current == :home ],
-      # The 3D models view is a Library view; the bar has no place of its own for it. The same key
-      # lights the model pages ModelsController still serves.
-      [ "Library", files_path, :files, %i[library pin models].include?(current) ],
-      [ "Projects", projects_path, :projects, %i[project all_projects].include?(current) ],
-      [ "Tools", tools_path, :tools, %i[tools tool].include?(current) ]
-    ]
-  end
-
-  # THE PHONE TAB BAR'S FIFTH TAB (UX audit A1). Below 720px the rail is display:none, so every rail
-  # destination the four tabs above do not carry lives in a sheet behind "More" — or a phone has no
-  # way to Settings, Trash, Help or Sign out at all (the theme control and Sign out are rendered by
-  # layouts/_tabbar beside these, being a control and a form rather than places). Lit by the same
-  # `sidebar_current` as everything else, so "which link is lit" still has one answer; the More tab
-  # itself lights through CSS (`:has()` on a lit item, shell.css), never a second decision here.
-  # Inventory follows the rail's own rule (`sidebar_inventory?`). The Account page lights Settings,
-  # as it does in the rail (SECTIONS), so its own item here never lights.
-  def tabbar_more_links
-    current = sidebar_current&.first
-    links = []
-    links << [ "Inventory", inventory_items_path, :inventory, current == :inventory ] if sidebar_inventory?
-    links << [ "Trash", trash_index_path, :trash, current == :trash ]
-    links << [ "Settings", settings_path, :settings, current == :settings ]
-    links << [ "Account", edit_user_registration_path, :account, false ]
-    links << [ "Help", help_path, :help, current == :help ]
-    links
-  end
-
-  # THE THEME BUTTON NAMES WHAT A CLICK DOES, NOT WHAT IS ON (UX audit A6): "Theme: light" read as a
-  # label for the page rather than a control. Keyed by the CURRENT theme, so the rail cycles light ->
-  # dark -> system -> light (theme_controller.js#cycle) and each state names its next step. The
-  # controller reads this map from the button's `data-theme-actions-value`, so the words live here
-  # once rather than in Ruby and JavaScript both.
-  THEME_ACTIONS = { "light" => "Switch to dark", "dark" => "Use system theme", "system" => "Switch to light" }.freeze
-
-  def theme_action_label = THEME_ACTIONS.fetch(ui_theme)
-
-  # THE SEARCH SHORTCUT'S HINT, PER PLATFORM (UX audit A7): ⌘K on a Mac, iPhone or iPad and Ctrl+K
-  # elsewhere, read from the user agent the way CalculationsHelper#calculator_shortcut reads it.
-  # rail_controller.js listens for both chords, so a user agent read wrongly costs a label, never the
-  # shortcut; `aria-keyshortcuts` names both, platform-neutrally.
-  SEARCH_KEYS = "Control+K Meta+K".freeze
+  # THE SEARCH SHORTCUTS (spec §11.5): `/` from anywhere not taking typing, and Ctrl/Cmd-K from
+  # anywhere, both focusing the strip's box (shell_controller.js). The box's hint shows `/`; its title
+  # names the chord per platform (⌘K on a Mac, iPhone or iPad, Ctrl+K elsewhere, UX audit A7), read
+  # from the user agent the way CalculationsHelper#calculator_shortcut reads it. The controller
+  # listens for both chords, so a user agent read wrongly costs a word, never the shortcut;
+  # `aria-keyshortcuts` names all three, platform-neutrally.
+  SEARCH_KEYS = "/ Control+K Meta+K".freeze
 
   def search_shortcut
     request.user_agent.to_s.match?(/Macintosh|iPhone|iPad/) ? "⌘K" : "Ctrl+K"
   end
 
+  # THE APP'S LINE GLYPHS, 16px in a 16px box. The name is the rail's, which this helper drew first;
+  # pages draw it too (`.rail-icon` is their class for it), so it keeps the name.
   def rail_icon(name)
     tag.svg(viewBox: "0 0 16 16", class: "rail-icon", "aria-hidden": "true") do
       tag.path(d: ICON_PATHS.fetch(name), fill: "none", stroke: "currentColor",
@@ -311,8 +301,8 @@ module ShellHelper
     end
   end
 
-  # The folder glyph on tiles, list rows, the trash and the folder field: the rail's own `files`
-  # path, so a folder looks the same in the nav and in the grid (design system: no emoji in the
+  # The folder glyph on tiles, list rows, the trash and the folder field: the `files` path, so a
+  # folder looks the same in the Library's place and in the grid (design system: no emoji in the
   # interface; the 📁 it replaces rendered differently on every OS).
   def folder_glyph
     tag.svg(viewBox: "0 0 16 16", class: "folder-glyph", "aria-hidden": "true") do
@@ -321,8 +311,8 @@ module ShellHelper
     end
   end
 
-  # The page's own name for the top bar when it supplies no breadcrumb: the title minus the
-  # " — Tinkerex" suffix every page appends.
+  # The page's own name for the page head's caps path when it supplies no breadcrumb: the title
+  # minus the " — Tinkerex" suffix every page appends.
   def page_title_text
     content_for(:title).to_s.sub(/\s+[—-]\s+Tinkerex\z/, "").presence || "Tinkerex"
   end
@@ -336,6 +326,45 @@ module ShellHelper
     when "dark" then "dark"
     when "system" then "light dark"
     else "light"
+    end
+  end
+
+  private
+
+  # THE PROJECTS COLUMN HAS TWO SHAPES, and the key follows the one on screen: on the index, the
+  # filters the index already understands (All, Archived, a kind); on any other projects page, the
+  # projects themselves. A listed project's own row beats All projects, and one older than the eight
+  # listed lights All projects; New project lights on its own form.
+  def projects_current
+    if controller_path == "projects" && action_name == "index"
+      kind = params[:kind].presence_in(Maker::Project::KINDS) if params[:kind].is_a?(String)
+      return [ :project_kind, kind ] if kind
+
+      return params[:archived] == "1" ? [ :archived_projects ] : [ :all_projects ]
+    end
+    return [ :new_project ] if controller_path == "projects" && %w[new create].include?(action_name)
+
+    id = @project&.id
+    id && sidebar_projects.any? { |p| p.id == id } ? [ :project, id ] : [ :all_projects ]
+  end
+
+  # The Inventory column's rows: the index and its two facets the column carries (low stock, a place,
+  # a supplier — the same `?low=`, `?location=`, `?supplier=` the index already reads), and the
+  # Places and Suppliers pages. An item's own pages light the place and no row.
+  def inventory_current
+    case controller_path
+    when "suppliers" then [ :suppliers ]
+    when "locations" then [ :locations ]
+    else
+      return [ :inventory ] unless action_name == "index"
+
+      supplier = params[:supplier] if params[:supplier].is_a?(String)
+      location = params[:location] if params[:location].is_a?(String)
+      if supplier.present? then [ :supplier, supplier ]
+      elsif location.present? then [ :location, location ]
+      elsif params[:low] == "1" then [ :low_stock ]
+      else [ :inventory_items ]
+      end
     end
   end
 end

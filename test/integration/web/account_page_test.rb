@@ -22,7 +22,7 @@ module Web
 
       assert_response :success
       assert_select "title", "Account — Tinkerex"
-      assert_select ".topbar nav.breadcrumb" do
+      assert_select ".page-path nav.breadcrumb" do
         assert_select "a[href=?]", settings_path, text: "Settings"
         assert_select "[aria-current=page]", "Account"
       end

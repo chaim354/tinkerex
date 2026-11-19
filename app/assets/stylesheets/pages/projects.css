@@ -39,7 +39,7 @@
   .project-card:hover { text-decoration: none; }
   .project-card:hover .thumb { border-color: var(--fg); }
   .project-card .thumb { width: 100%; height: 120px; }
-  /* An empty cover is the rail's projects icon (slice 6; no emoji in the interface), at the size the
+  /* An empty cover is the Projects glyph (slice 6; no emoji in the interface), at the size the
      glyph it replaced was set. `.project-card` qualifies it, so the public explore card (which is a
      `.project-card` too) and the model card (`.project-card.model-card`) draw it the same size. */
   .project-card .project-thumb-empty .rail-icon { width: 36px; height: 36px; color: var(--fg-muted); }

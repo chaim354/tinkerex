@@ -1,8 +1,8 @@
-<%# The same three states the rail's button cycles through, laid out as a choice: on the Settings page
-    and in the phone's More sheet (layouts/_tabbar). Each is a SEPARATE theme controller instance
-    from the rail's own; choose shares cycle's write path (html[data-theme], the cookie, the two
-    metas: design-system.md rule 7) and every instance re-renders on any change (theme_controller.js
-    broadcasts it), so the rail's "Switch to …" label follows a choice made here at once.
+<%# The three theme states, laid out as a choice: on the Settings page and in the strip's account
+    menu (layouts/_strip). Each is a SEPARATE theme controller instance; `choose` is the one write
+    path (html[data-theme], the cookie, the two metas: design-system.md rule 7) and every instance
+    re-renders on any change (theme_controller.js broadcasts it), so the account menu's pressed button
+    follows a choice made here at once, and the other way round.
     aria-pressed is rendered by the server from the cookie on first paint and moved by the
     controller after a click.
 

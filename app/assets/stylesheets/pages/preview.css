@@ -494,7 +494,7 @@
        default, and an element as tall as its containing block has nowhere to stick. A side column
        taller than the window and shorter than the viewer scrolls its foot into view as the main
        column ends, the ordinary sticky-sidebar trade. */
-    .workspace-side { position: sticky; top: calc(var(--topbar-height) + var(--space-4)); align-self: start; }
+    .workspace-side { position: sticky; top: calc(var(--strip-height) + var(--space-4)); align-self: start; }
     /* dl.meta's four-column layout (components.css) keys on a 900px VIEWPORT, which a 340px column
        is not; two columns here. Stacked below 1280px the side column is the full width again and
        the component's own rule is right, so this override lives only at this width. */

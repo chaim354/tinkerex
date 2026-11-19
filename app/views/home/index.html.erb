@@ -1,8 +1,8 @@
 <% content_for :title, "Recent — Tinkerex" %>
 
 <%# THE HEADING ALONE (structural redesign §7, slice 6). This head carried "New project" as the page's
-    one action; the top bar's New menu already has Project, and Recent's one action is the top bar's
-    Upload (HomeController#index calls upload_primary!), so a second primary here would spend it twice. %>
+    one action; the strip's Add already has Project (and Upload, which asks for a folder here). The
+    section ids are the left column's in-page links (layouts/column/_home). %>
 <div class="page-head">
   <h1>Recent</h1>
 </div>
@@ -22,10 +22,10 @@
     dismissal row, nothing stored. It replaces the Recently changed panel rather than sitting inside
     it, which would frame a panel inside a panel around nothing. Its first two steps are the shared
     partial's two halves, so they say what the Library's and the Projects page's empty states say.
-    It points at the top bar's Upload rather than rendering a second upload control, which would
-    duplicate the input's id and the primary; nothing in it is primary (design-system.md rule 13). %>
+    It points at the strip's Upload rather than rendering a second upload control, which would
+    duplicate the input's id; nothing in it is primary (design-system.md rule 13). %>
 <% if @recent_files.empty? %>
-  <section class="panel home-section getting-started">
+  <section class="panel home-section getting-started" id="home-getting-started">
     <div class="panel-head"><h2>Getting started</h2><%= link_to "Help explains all of this", help_path, class: "muted" %></div>
     <p class="getting-started-tour"><%= link_to "Take the tour", welcome_path %>: it walks you through
       what Tinkerex does and sets up your first project.</p>
@@ -46,7 +46,7 @@
     </ol>
   </section>
 <% else %>
-  <section class="panel home-section home-files">
+  <section class="panel home-section home-files" id="home-recent">
     <div class="panel-head"><h2>Recently changed</h2><%= link_to "Library", files_path, class: "muted" %></div>
     <div class="recent-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% @recent_files.each do |node| %>
@@ -58,7 +58,7 @@
 
 <%# ACTIVE PROJECTS, ONLY WHEN THERE ARE ANY: an empty account has one empty state, the getting-started panel above. %>
 <% if @recent_projects.any? %>
-  <section class="panel home-section home-projects">
+  <section class="panel home-section home-projects" id="home-projects">
     <div class="panel-head"><h2>Active projects</h2><%= link_to "All projects", projects_path, class: "muted" %></div>
     <div class="recent-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <% @recent_projects.each do |project| %>
@@ -71,7 +71,7 @@
 <%# NEEDS ATTENTION, ONLY WHEN SOMETHING DOES. A section reading "Nothing needs attention" is a row of
     reassurance on every visit; absent, the page is shorter by exactly what was not news. %>
 <% if @failed_prints.any? || @low_stock.any? %>
-  <section class="panel home-section home-attention">
+  <section class="panel home-section home-attention" id="home-attention">
     <div class="panel-head"><h2>Needs attention</h2></div>
     <ul class="attention-list">
       <%# "LOG A PRINT" OPENS THE PRINT LOG (UX audit 2026-11-01, E6): the model page's Details pane with

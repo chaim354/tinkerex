@@ -52,7 +52,7 @@ module Web
 
     test "the breadcrumb walks to the file's folder and that link reselects the file" do
       get file_path(@file.node_id)
-      assert_select "header.topbar nav.breadcrumb" do
+      assert_select "main .page-path nav.breadcrumb" do
         assert_select "a[href=?]", files_path, text: "Library"
         assert_select "a[href=?]", files_path(folder: @dir.node_id, selected: @file.node_id), text: "legs"
         assert_select "[aria-current='page']", text: "leg.lbrn2"
@@ -66,7 +66,7 @@ module Web
       @dir.update!(parent_node_id: shop.node_id)
 
       get file_path(@file.node_id)
-      assert_select "header.topbar nav.breadcrumb" do
+      assert_select "main .page-path nav.breadcrumb" do
         assert_select "a[href=?]", files_path(folder: shop.node_id), text: "shop"
         assert_select "a[href=?]", files_path(folder: @dir.node_id, selected: @file.node_id), text: "legs"
       end
@@ -78,20 +78,19 @@ module Web
       loose = @user.nodes.create!(node_id: "n-loose", name: "loose.stl", kind: "file", mtime: 1, size: 3)
 
       get file_path(loose.node_id)
-      assert_select "header.topbar nav.breadcrumb" do
+      assert_select "main .page-path nav.breadcrumb" do
         assert_select "a[href=?]", files_path(selected: loose.node_id), text: "Library"
         assert_select "a", count: 1
       end
     end
 
     # NOW INTENDED: @crumbs on the file page is the same ancestor chain #index sets, and
-    # ShellHelper#sidebar_current reads it, so a file inside a pinned folder lights that pin — the
-    # same answer the folder's own listing gives. Exactly one lit link, as everywhere.
-    test "a file inside a pinned folder lights the pin" do
-      @user.maker_pins.create!(node_id: @dir.node_id)
-
+    # ShellHelper#sidebar_current reads it, so a file lights its own folder's row in the Library's
+    # column — the same row the folder's own listing lights. Exactly one lit row, as everywhere.
+    test "a file's page lights its folder in the Library column" do
       get file_path(@file.node_id)
-      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "legs"
+      assert_select "aside.column .column-row[aria-current='page']", count: 1, text: "legs"
+      assert_select "header.strip a.strip-place[aria-current='page']", count: 1, text: "Library"
     end
   end
 end

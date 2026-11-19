@@ -269,49 +269,6 @@ class CssHygieneTest < ActiveSupport::TestCase
                  "the `hidden` attribute has ONE rule, in application.css's base layer; anything else restates it"
   end
 
-  # --- THE ICON RAIL IS ONE CONTAINER QUERY ON `.rail` (F-S20-1, 2026-10-19) -----------------------
-  #
-  # "The rail is icons only" has two triggers, the collapse cookie (`body.rail--collapsed`) and a
-  # viewport below 1100px, and each carried its own copy of the rules: a `.rail--collapsed`-prefixed
-  # one, and an UNSCOPED one in the ≤1099px media query that hid `.brand-name` on every `.brand` on the
-  # page, so the sign-in card lost its wordmark. Both triggers now set only the grid TRACK, and the
-  # icon rail is ONE `@container rail` block that asks the rail's own width. So `.rail` is that
-  # container, the body class names one selector (the track rule), and no rule outside the block
-  # hides what the block hides, draws the family-lit mark, or restyles one of the block's selectors
-  # UNSCOPED inside a media query — the old copy's `.brand { justify-content: center; padding: 4px 0 }`
-  # centred every brand on the page without hiding anything. The parts are DERIVED from the block,
-  # never listed, so a rule added there is covered with no edit here. The browser's half is
-  # shell_test.rb. Mutation-checked: restoring the body-class copy reddens this, and so does
-  # restoring the media query's unscoped copy, or only its `.brand` rule.
-  test "the icon rail is defined once, as a container query on the rail" do
-    in_block = ->(enclosing) { enclosing.any? { |head| head.match?(/\A@container\s+rail\b/) } }
-    shell = rules(read("shell.css"))
-    hides = shell.select { |_, enclosing, declarations| in_block.(enclosing) && declarations.match?(/display:\s*none/) }
-                 .flat_map { |head, _, _| selectors_of(head) }
-    styled = shell.select { |_, enclosing, _| in_block.(enclosing) }.flat_map { |head, _, _| selectors_of(head) }
-    assert_includes hides, ".brand-name", "derived #{hides.inspect} from the `@container rail` block; the scan is vacuous"
-    assert_includes styled, ".brand", "derived #{styled.inspect} from the `@container rail` block; the scan is vacuous"
-    assert shell.any? { |head, _, declarations| head == ".rail" && declarations.match?(%r{container:\s*rail\s*/\s*inline-size}) },
-           "`.rail` is not declared the `rail` inline-size container the icon-rail block asks"
-
-    offenders = (OURS + [ OVERRIDES ]).flat_map do |sheet|
-      rules(read(sheet)).reject { |_, enclosing, _| in_block.(enclosing) }.flat_map do |head, enclosing, declarations|
-        selectors_of(head).filter_map do |sel|
-          if sel.include?("rail--collapsed") && sel != "body.app-shell.rail--collapsed"
-            "#{sheet}: `#{sel}` keys the icon rail on the body class"
-          elsif sel.include?("rail-family-lit")
-            "#{sheet}: `#{sel}` draws the family-lit mark outside the icon-rail block"
-          elsif declarations.match?(/display:\s*none/) && hides.any? { |part| sel == part || sel.end_with?(" #{part}") }
-            "#{sheet}: `#{sel}` hides an icon-rail part outside the icon-rail block"
-          elsif styled.include?(sel) && enclosing.any? { |at| at.start_with?("@media") }
-            "#{sheet}: `#{sel}` restyles an icon-rail selector, unscoped, inside a media query"
-          end
-        end
-      end
-    end
-    assert_empty offenders, "the icon rail has a second definition:\n  #{offenders.join("\n  ")}"
-  end
-
   # --- THE ADD-ON BUNDLES' CLASSES STAY STYLED (design-system.md rule 12, 2026-11-19) -------------
   #
   # The bundles in chaim354/tinkerex-addons ship no stylesheet: they build their markup from this

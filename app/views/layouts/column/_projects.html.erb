@@ -1,0 +1,36 @@
+<%# THE PROJECTS COLUMN (Shop manual spec §7), in two shapes, and ShellHelper#sidebar_current's key
+    follows the one on screen.
+
+    ON THE INDEX, the filters the index already understands: All (the live projects) and Archived
+    (`?archived=1`), then each kind in use (`?kind=`; ProjectsController#index's `@project_kinds`,
+    already loaded for its own chips). Each row is one filter, so the lit one is the filter applied;
+    the page's own chips keep combining a kind with a tag or the archive.
+
+    ON ANY OTHER PROJECTS PAGE (a project, its sub-pages, New project), the projects: the eight most
+    recently updated live ones (ShellHelper#sidebar_projects, one query), then All projects and New
+    project. A project's page lights its row, or All projects when it is older than the eight. A
+    project's own contents column is slice 5's, written by the project page. %>
+<% if controller_path == "projects" && action_name == "index" %>
+  <div class="column-group">
+    <h2 class="column-head">Projects</h2>
+    <%= column_row "All", projects_path, key: [ :all_projects ] %>
+    <%= column_row "Archived", projects_path(archived: 1), key: [ :archived_projects ] %>
+  </div>
+  <% if Array(@project_kinds).any? %>
+    <div class="column-group">
+      <h2 class="column-head">Type</h2>
+      <% @project_kinds.each do |kind| %>
+        <%= column_row Maker::ProjectKind.label(kind), projects_path(kind: kind), key: [ :project_kind, kind ] %>
+      <% end %>
+    </div>
+  <% end %>
+<% else %>
+  <div class="column-group">
+    <h2 class="column-head">Projects</h2>
+    <% sidebar_projects.each do |project| %>
+      <%= column_row project.name, project_path(project), key: [ :project, project.id ] %>
+    <% end %>
+    <%= column_row "All projects", projects_path, key: [ :all_projects ] %>
+    <%= column_row "New project", new_project_path, key: [ :new_project ] %>
+  </div>
+<% end %>

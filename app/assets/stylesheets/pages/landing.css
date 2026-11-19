@@ -14,8 +14,7 @@
   .landing { display: grid; gap: var(--space-8); }
   .landing h2, .landing h3, .landing p { margin: 0; }
 
-  /* NAV. The rail's `.brand`, reused, flush with the page's edge. Nothing to restore: the icon rail
-     is a container query on `.rail` (shell.css), which no `.brand` outside the rail can match. */
+  /* NAV. The shell's `.brand` (shell.css; the strip's wordmark), reused, flush with the page's edge. */
   .landing-nav { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); }
   .landing-nav .brand { padding: 0; }
   .landing-nav-links { display: flex; gap: var(--space-5); font-size: 14px; }

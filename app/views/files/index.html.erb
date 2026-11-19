@@ -24,14 +24,14 @@
   </nav>
 <% end %>
 
-<%# THE PAGE'S ONE PRIMARY ACTION IS UPLOAD, AND IT LIVES IN THE TOP BAR (structural redesign
-    slice 4; layouts/_topbar_upload.html.erb), which uploads into this folder — FilesController#index
-    hands it the validated @folder through FolderDestination, as `primary`. The page head keeps an
+<%# UPLOAD LIVES IN THE SHELL (the top bar since structural redesign slice 4, the strip's Add since
+    Shop manual slice 3; layouts/_strip_add.html.erb), which uploads into this folder —
+    FilesController#index hands it the validated @folder through FolderDestination. The page head keeps an
     overflow menu for the rest of what used to stack above the list — rescan, the folder's own
     actions — rendered only when it would have an item.
 
-    NEW TEXT FILE LIVES IN THE TOP BAR'S New ▾ ONLY (UX audit D5, 2026-11-02). It was a page-head
-    button here as well, one control in two places; New ▾ creates in this same folder
+    NEW TEXT FILE LIVES IN THE STRIP'S ADD ONLY (UX audit D5, 2026-11-02; New ▾ then). It was a
+    page-head button here as well, one control in two places; Add creates in this same folder
     (FolderDestination), so nothing is lost by its going. %>
 <% adoptable_folder = @folder && @folder_project.nil? &&
                       Maker::ProjectDiscovery.adoptable_name?(@folder.name) &&
@@ -120,7 +120,7 @@
     count, the view toggle and the sort — in both views (the list keeps its sortable headers as
     well). %>
 <div class="toolbar files-toolbar">
-  <%# THE FILES PAGE'S OWN SEARCH (spec S2-5), separate from the top bar's sitewide box (which now
+  <%# THE FILES PAGE'S OWN SEARCH (spec S2-5), separate from the strip's sitewide box (which now
       posts to SearchController). This one stays flat-library-and-files-only, exactly what
       FilesController#index's own ?q= has always answered — a plain GET, its own small form so
       the ext-picker form below keeps its one job (choosing a type). `ext` rides along as a

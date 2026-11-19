@@ -26,12 +26,11 @@
   /* A card's permission line already draws the rule above it, so the actions under it do not. */
   .tools-home .addon-card-foot + .tool-card-actions { margin-top: 0; padding-top: 0; border-top: 0; }
   /* THE PIN TOGGLE (tools/home/_pin_toggle). Pressed is drawn in ink by components.css's one
-     pressed rule, the way every toggle button is, and its word changes with it. A phone has no
-     sidebar to pin to, so the control goes with the rail. */
+     pressed rule, the way every toggle button is, and its word changes with it. It shows at every
+     width: a pinned tool is a row in Home's column, which a phone opens as a sheet (Shop manual
+     slice 3; it hid below 720px while the rail, which a phone did not have, held the pins). */
   .tools-home .tool-pin-form { position: relative; z-index: 1; margin: 0; }
-  /* An addon card's action row holds only the toggle, so it goes too; the calculator's keeps Open. */
-  @media (max-width: 719px) { .tools-home .tool-pin-form, .tools-home .tool-card-actions { display: none; } }
-  /* The shortcut, drawn the way the top bar draws its ⌘K (shell.css .topbar-kbd). */
+  /* The shortcut, drawn the way the strip draws its `/` (shell.css .strip-kbd). */
   .calculator-card-keys { white-space: nowrap; }
   .calculator-card-keys kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
   /* `.tool-card` is a built-in tool's card (the calculator): the same face, a different class, so
@@ -41,7 +40,7 @@
   .addon-card.disabled { opacity: .6; }
   .addon-card-head { display: flex; align-items: center; gap: 10px; }
   /* THE TOOL'S MARK: a tile holding a monogram (tools/home/_addon_mark) or, for a built-in tool, its
-     rail glyph. Never the manifest's emoji `icon` (UX audit G1). */
+     line glyph (`rail_icon`). Never the manifest's emoji `icon` (UX audit G1). */
   .addon-icon { display: inline-grid; place-items: center; flex: 0 0 auto; width: 32px; height: 32px; border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--raised); color: var(--fg); font: 600 15px/1 var(--font-ui); }
   /* A RUNNABLE CARD IS A <div> WHOSE TITLE IS THE LINK (tools/home/index), stretched over the card
      so the whole card still opens the tool. Scoped to `.tools-home`: the bundles build their own

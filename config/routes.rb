@@ -167,7 +167,7 @@ root to: "home#index"
   # member route spelled `:id/:action` would swallow this; there is not one, and adding one would.
   namespace :files do
     resources :text_files, only: %i[new create]
-    # A MODEL ZIP UNPACKED BY THE TOP BAR'S UPLOAD (2026-10-21; docs/superpowers/specs/
+    # A MODEL ZIP UNPACKED BY THE STRIP'S UPLOAD (2026-10-21; docs/superpowers/specs/
     # 2026-10-20-zip-upload-unpacks-models-design.md). The browser unzips and uploads each entry
     # through the ordinary doors; these two only make the folders and nudge the catalog, so no zip
     # byte reaches Rails (§15). Two segments, POST only — nothing in `resources :files` matches them.
@@ -224,21 +224,21 @@ root to: "home#index"
     # project without moving: the row's folder_node_id simply points there. A COLLECTION route
     # because there is no project yet — the FOLDER is the subject, and it rides as params[:node_id].
     #
-    # Under `projects/` so ShellHelper::SECTIONS lights the Projects rail item off
+    # Under `projects/` so ShellHelper::SECTIONS lights the Projects place off
     # controller_path's first segment (design-system rule 8) with no map edit. It is a POST and
-    # always redirects, so the rail is never actually rendered for it — stated so the next reader
+    # always redirects, so the shell is never actually rendered for it — stated so the next reader
     # does not go looking for a missing SECTIONS entry.
     post :adopt, on: :collection, to: "projects/adoptions#create"
     # THE OWNER'S PREVIEW OF THEIR PUBLIC PAGE (stage 4, S4-4; story 5.1). A member GET on THIS
     # controller, not a door into Public:: — spec §7: `Public::` never reads the session, so the
     # preview is a session-authed route in the private namespace that renders the public partials
     # with a banner, never a bypass in Public::BaseController. `controller_path` is still
-    # "projects", so ShellHelper::SECTIONS needs no entry and the rail still lights Projects.
+    # "projects", so ShellHelper::SECTIONS needs no entry and the strip still lights Projects.
     get :preview, on: :member
     # THE EDIT AREA'S PUBLISHING TAB (2026-10-26; spec 2026-10-26-project-edit-area §3): what the
     # Publish panel held, on a page of its own beside Details (`edit`) and Page layout (`layout`). A
     # member GET on this controller for `preview`'s reason: `controller_path` is "projects", so the
-    # rail lights Projects with no ShellHelper::SECTIONS entry. Its form posts to #update.
+    # strip lights Projects with no ShellHelper::SECTIONS entry. Its form posts to #update.
     get :publishing, on: :member
     resources :attachments, only: %i[new create destroy], module: :projects, shallow: true do
       # Finish an attach whose auto-move hit a name collision: move the file in under a new name.
@@ -327,7 +327,7 @@ root to: "home#index"
   # Inline photo upload on a build-log entry (share/s3 multipart write). Chunk mode uploads via
   # /files/{begin,finalize}_upload, then POSTs the node_id to entry_photos below. This is
   # Projects::UploadsController's only route: the project-level one went in F-S21-1 (2026-10-19),
-  # because the top bar uploads into a project's folder through FilesController.
+  # because the strip's Upload uploads into a project's folder through FilesController.
   resources :build_log_entries, only: [], module: :projects do
     resources :uploads, only: :create
   end
@@ -451,7 +451,7 @@ root to: "home#index"
   resources :calculations, only: %i[new create update destroy]
 
 
-  # --- Tags and search (stage 2, S2-5). One results page for everything, driven from the top bar;
+  # --- Tags and search (stage 2, S2-5). One results page for everything, driven from the strip's box;
   # a page per tag. A tag name is whatever Maker::Tag normalized (stripped, downcased) and may hold
   # a dot, so the segment constraint is "anything but a slash". ---
   get "search", to: "search#index", as: :search
@@ -520,7 +520,7 @@ root to: "home#index"
   # `tools/:key` below). `generators`, `boxes` and — last — `openscad` have all migrated, so no
   # addon has a controller or routes of its own any more, and adding one needs no edit to this file.
   get "tools", to: "tools/home#index", as: :tools
-  # The New ▾ menu's tool entries, for its lazy frame. ABOVE `tools/:key`, or "new_menu" would be
+  # The strip's Add menu's tool entries, for its lazy frame. ABOVE `tools/:key`, or "new_menu" would be
   # read as an addon key.
   get "tools/new_menu", to: "tools/home#new_menu", as: :tools_new_menu
   # A file page's "Open in <tool>" buttons, for its lazy frame (host level 4). TWO SEGMENTS, so it

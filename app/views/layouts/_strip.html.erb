@@ -1,0 +1,82 @@
+<%# THE STRIP (Shop manual spec §7 and §11.2; design-system.md rules 7 to 9). It replaced the rail and
+    the top bar: the wordmark (Home), the four places, Search, one Add, and the account button.
+
+    THE FOUR PLACES ARE ALWAYS ALL FOUR, and at most one is lit — `ShellHelper#sidebar_current`
+    decides, and the place is derived from its key (`sidebar_place`), so the strip, the column and the
+    phone tab bar cannot disagree. Home, Search, Settings and Help light none.
+
+    Locals: column (whether the page has a left column, so the Contents button that opens it as a
+    sheet below 960px has something to open). %>
+<header class="strip">
+  <% if column %>
+    <%# BELOW 960PX THE COLUMN IS A SHEET, and this opens it (shell_controller.js): focus moves into
+        the sheet, and Escape, the scrim or this button again closes it and hands focus back here. %>
+    <button type="button" class="strip-contents" aria-label="Contents" title="Contents" aria-controls="column" aria-expanded="false"
+            data-shell-target="contents" data-action="shell#toggleColumn">
+      <%= rail_icon(:contents) %><span class="strip-contents-label">Contents</span>
+    </button>
+  <% end %>
+  <%= link_to root_path, class: "brand strip-brand", "aria-label": "Tinkerex home" do %>
+    <span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span>
+  <% end %>
+
+  <nav class="strip-places" aria-label="Main">
+    <% strip_places.each do |place, label, path, _icon| %>
+      <%= link_to label, path, class: "strip-place", "aria-current": place_aria(place) %>
+    <% end %>
+  </nav>
+
+  <%# THE RIGHT-HAND GROUP, pushed to the strip's right edge: Search, Add, the account button. %>
+  <div class="strip-end">
+  <%= form_with url: search_path, method: :get, class: "strip-search", role: "search",
+                data: { turbo: false } do %>
+    <%= rail_icon(:search) %>
+    <%# ALWAYS BLANK, DELIBERATELY -- @q IS ALSO THE NAME FilesController, InventoryItemsController
+        AND SearchController ITSELF GIVE THEIR OWN IVARS, and echoing whichever one the current
+        request happens to carry would leak one page's private local filter (Files', Inventory's)
+        into a box that means something else (search EVERYTHING). SearchController's OWN page has its
+        own big search-toolbar input for that job (search/index.html.erb) -- this is the entry point,
+        not a second display of the last query. shell_controller.js finds this field through its
+        `search` target for `/` and Ctrl/Cmd-K (spec §11.5); the hint shows `/`, and the title names
+        the chord for this platform (ShellHelper#search_shortcut, UX audit A7). %>
+    <input type="search" name="q" placeholder="Search everything" aria-label="Search everything"
+           title="Search everything (/ or <%= search_shortcut %>)"
+           aria-keyshortcuts="<%= ShellHelper::SEARCH_KEYS %>" autocomplete="off" data-shell-target="search">
+    <kbd class="strip-kbd" aria-hidden="true">/</kbd>
+  <% end %>
+  <%# BELOW 720PX THE BOX IS THIS ICON, a link to the Search page, whose own box takes the query. %>
+  <%= link_to search_path, class: "strip-search-link", "aria-label": "Search", title: "Search" do %>
+    <%= rail_icon(:search) %>
+  <% end %>
+
+  <%= render "layouts/strip_add" %>
+
+  <%# THE ACCOUNT BUTTON'S MENU holds what the rail's foot and the phone's More sheet held: Settings,
+      Account and Help (each keeps its page), the theme choice, and Sign out. A `details.menu`, so it
+      opens with no JavaScript; menu_controller.js closes it on an outside click and on Escape,
+      returning focus to the button. None of its links is lit: Settings and Help light no place
+      (spec §11.2), and on their pages the column lights the row. %>
+  <details class="menu strip-account" data-controller="menu">
+    <summary class="strip-account-btn" aria-label="Account: settings, theme, help, sign out"
+             title="<%= current_user.email %>"><%= account_initial %></summary>
+    <div class="menu-list strip-account-menu">
+      <p class="strip-account-email" title="<%= current_user.email %>"><%= current_user.email %></p>
+      <div class="menu-sep" role="separator"></div>
+      <%= link_to settings_path, class: "menu-item" do %><%= rail_icon(:settings) %><span>Settings</span><% end %>
+      <%= link_to edit_user_registration_path, class: "menu-item" do %><%= rail_icon(:account) %><span>Account</span><% end %>
+      <%= link_to help_path, class: "menu-item" do %><%= rail_icon(:help) %><span>Help</span><% end %>
+      <div class="menu-sep" role="separator"></div>
+      <%# The Settings page's own three-way choice (settings/_theme), so the two cannot disagree; every
+          instance follows a change made in another at once (theme_controller.js broadcasts it). %>
+      <div class="strip-account-theme">
+        <span class="strip-account-label">Theme</span>
+        <%= render "settings/theme" %>
+      </div>
+      <div class="menu-sep" role="separator"></div>
+      <%= button_to destroy_user_session_path, method: :delete, class: "menu-item" do %>
+        <%= rail_icon(:sign_out) %><span>Sign out</span>
+      <% end %>
+    </div>
+  </details>
+  </div>
+</header>

@@ -5,7 +5,8 @@ require "application_system_test_case"
 # (test/integration/web/tool_pins_test.rb, calculator_shell_test.rb) see the data each tool carries
 # and what the door does with a POST; only a browser can see the two joined — that a right click on
 # a card opens the menu, that its entry says what it will do, that choosing it pins the tool, and
-# that the same right click on the pinned link in the rail takes it away again.
+# that the same right click on the pinned row in the left column (Home's Pinned group, the Tools
+# column) takes it away again.
 class ToolPinsSystemTest < ApplicationSystemTestCase
   setup do
     @prior = ENV.to_h.slice("ADDON_SOURCE_PATH", "BOXES_SIDECAR_URL")
@@ -24,9 +25,9 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
   # cannot be an <a>. The right-click data is still on the card.
   def card = find(".addon-card", text: "Box Generator")
 
-  test "a right click on an addon's card pins it, and a right click on its rail link unpins it" do
+  test "a right click on an addon's card pins it, and a right click on its pinned row unpins it" do
     visit tools_path
-    assert_no_selector "aside.rail a.rail-tool-pin"
+    assert_no_selector "aside.column a.column-tool-pin"
 
     # `right_click`, NOT `click(:left, ctrl: true)`: through this driver a ctrl+click arrives as a
     # plain left click with no `contextmenu` at all (box_revisions_test.rb measured it).
@@ -36,7 +37,7 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
 
     assert_current_path tools_path
     assert_selector ".flash", text: "Pinned Box Generator to the sidebar."
-    assert_selector "aside.rail a.rail-tool-pin[href=\"#{tools_addon_path("boxes")}\"]", text: "Box Generator"
+    assert_selector "aside.column a.column-tool-pin[href=\"#{tools_addon_path("boxes")}\"]", text: "Box Generator"
     assert_no_selector ".file-menu"
 
     # The card now offers the opposite.
@@ -45,12 +46,12 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
     find("body").send_keys(:escape)
     assert_no_selector ".file-menu"
 
-    visit projects_path
-    find("aside.rail a.rail-tool-pin", text: "Box Generator").right_click
+    visit root_path
+    find("aside.column a.column-tool-pin", text: "Box Generator").right_click
     find(".file-menu button", text: "Unpin from sidebar").click
-    assert_current_path projects_path
+    assert_current_path root_path
     assert_selector ".flash", text: "Unpinned Box Generator from the sidebar."
-    assert_no_selector "aside.rail a.rail-tool-pin"
+    assert_no_selector "aside.column a.column-tool-pin"
     assert_no_console_errors
   end
 
@@ -61,10 +62,10 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
       document.activeElement === document.querySelector(".file-menu button")
     JS
 
-    # A second right click, on a tool in ANOTHER controller's scope (the rail's), replaces the menu.
+    # A second right click, on a tool in ANOTHER controller's scope (the column's), replaces the menu.
     card.right_click
     find(".file-menu button", text: "Pin to sidebar").click
-    find("aside.rail a.rail-tool-pin").right_click
+    find("aside.column a.column-tool-pin").right_click
     find("#calculator").right_click
     assert_selector ".file-menu", count: 1
 
@@ -83,6 +84,6 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
     assert_selector ".file-menu"
     find("h1", text: "Tools").click
     assert_no_selector ".file-menu"
-    assert_no_selector "aside.rail a.rail-tool-pin"
+    assert_no_selector "aside.column a.column-tool-pin"
   end
 end

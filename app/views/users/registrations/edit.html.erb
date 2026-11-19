@@ -1,8 +1,8 @@
 <%#
   THE ACCOUNT PAGE IS A SETTINGS PAGE (UX audit F1). Devise's registrations#edit, rendered in the
   shell like every settings/* sibling: a title, the Settings breadcrumb, one h1, and each part a
-  `.panel` with its own h2 at the settings width. The rail lights Settings for it (ShellHelper's
-  SECTIONS names users/registrations). Saving lands back here with a notice
+  `.panel` with its own h2 at the settings width. It gets the Settings column and lights its row there
+  (ShellHelper's SECTIONS names users/registrations). Saving lands back here with a notice
   (Users::RegistrationsController#after_update_path_for).
 
   THREE FORMS, THREE ERROR PLACES. Devise's update form shows the resource's errors in its own panel;

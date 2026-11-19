@@ -75,7 +75,8 @@ class ToolsAddonPageTest < ApplicationSystemTestCase
     card.find("button.tool-pin[aria-pressed=false]", text: "Pin to sidebar").click
 
     assert_selector ".flash", text: "Pinned Widget Kit to the sidebar."
-    assert_selector "aside.rail a.rail-tool-pin", text: "Widget Kit"
+    # A pinned tool is a row in the Tools column (Shop manual slice 3; the rail carried it before).
+    assert_selector "aside.column a.column-tool-pin", text: "Widget Kit"
     # PINNED IS DRAWN IN INK, beside its word (design-system.md rule 13), by the one pressed rule in
     # components.css; a tool that is not pinned is not.
     assert_equal ink_colour, background_of("button.tool-pin[aria-pressed=true]")
@@ -84,7 +85,7 @@ class ToolsAddonPageTest < ApplicationSystemTestCase
     card.find("button.tool-pin[aria-pressed=true]", text: "Pinned to sidebar").click
 
     assert_selector ".flash", text: "Unpinned Widget Kit from the sidebar."
-    assert_no_selector "aside.rail a.rail-tool-pin"
+    assert_no_selector "aside.column a.column-tool-pin"
     card = find(".addon-card", text: "Widget Kit")
     assert card.has_selector?("button.tool-pin[aria-pressed=false]", text: "Pin to sidebar")
 

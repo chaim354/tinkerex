@@ -53,8 +53,8 @@ class FilesController < ApplicationController
   # #intake_project_folder, called from #create and #finalize_upload below, with the sentences that
   # report both. Shared with Projects::UploadsController, the build-log entries' photo uploader,
   # which takes the loop and the sentences but not the nudge: its photos land at the library root,
-  # which no project owns. The project page's own Upload has been the top bar's, into this
-  # controller, since redesign slice 4. See ProjectFolderIntake's header for why a concern rather
+  # which no project owns. The project page's own Upload has been the shell's (the top bar's, the
+  # strip's Add since Shop manual slice 3), into this controller, since redesign slice 4. See ProjectFolderIntake's header for why a concern rather
   # than a second copy.
   include UploadBatch
   include ProjectFolderIntake
@@ -308,10 +308,10 @@ class FilesController < ApplicationController
       end
       @truncated = false
     end
-    # The top bar's Upload and New create here (FolderDestination). The VALIDATED folder: a stale
+    # The strip's Add creates here, Upload included (FolderDestination). The VALIDATED folder: a stale
     # ?folder= renders the root's listing and must upload to the root it shows. Flat mode has no
     # folder, so it is the root too.
-    use_folder_destination(@folder&.node_id, path: Array(@crumbs).map(&:name).join("/"), primary: true)
+    use_folder_destination(@folder&.node_id, path: Array(@crumbs).map(&:name).join("/"))
     @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
     # AFTER select!, so a node that vanished between the two queries is gone before it can be
@@ -630,8 +630,7 @@ class FilesController < ApplicationController
     parent = @node.parent_node_id &&
              current_user.nodes.present.find_by(node_id: @node.parent_node_id, kind: "dir")
     @crumbs = folder_crumbs(parent)
-    # The top bar's Upload and New create beside this file (FolderDestination) — quietly: the
-    # workspace's one action is the file, not an upload.
+    # The strip's Add creates beside this file, Upload included (FolderDestination).
     use_folder_destination(parent&.node_id, path: @crumbs.map(&:name).join("/"))
   end
 
@@ -1930,7 +1929,7 @@ class FilesController < ApplicationController
   # WHERE THE WIZARD'S UPLOAD GOES BACK TO, or nil for every other upload. `return_to` IS AN
   # ALLOWLISTED FLAG NAMING A TRACK, NEVER A URL (rename_move_landing's rule, below), and the project
   # is found from the folder the bytes went into, so the flag on an upload anywhere else changes
-  # nothing. layouts/_topbar_upload renders it, on WelcomeController#files alone.
+  # nothing. layouts/_strip_add renders it, on WelcomeController#files alone.
   WELCOME_RETURNS = { "welcome_files" => "files", "welcome_models" => "models" }.freeze
 
   def welcome_return_path(parent_node_id)

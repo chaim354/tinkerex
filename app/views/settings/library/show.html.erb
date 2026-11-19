@@ -14,7 +14,7 @@
     reads the same page with no form and no chooser: the folder, its file count and its alerts, each
     alert's next step handed to an admin, and one sentence saying an admin changes it. %>
 <%# The Settings breadcrumb, except on first run: until the folder is confirmed every page brings
-    the maker back here, so a link to Settings would only bounce, and the top bar shows the title. %>
+    the maker back here, so a link to Settings would only bounce, and the caps path shows the title. %>
 <%= render "settings/crumbs", current: "Library folder" unless @pending %>
 
 <div class="page-head">

@@ -3,7 +3,7 @@ import { alertToast, failureReason, notDoneSentence, postJSON, uploadChunkFile, 
 import { extOf, isZip, readZipBundle } from "lib/zip_bundle"
 
 // Import a downloaded model bundle from ONE selection. Unzips any .zip in the browser through
-// lib/zip_bundle.js — the reader the top bar's Upload shares, so the two cannot disagree about what
+// lib/zip_bundle.js — the reader the strip's Upload shares, so the two cannot disagree about what
 // a zip holds (clutter, a wrapper folder, duplicates) — classifies entries by extension, then
 // creates the Model (+ folder map) and uploads every entry through the existing per-backend flow,
 // attaching each. No zip bytes ever reach Rails; §15/§10 untouched.

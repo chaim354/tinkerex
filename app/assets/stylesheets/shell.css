@@ -1,160 +1,155 @@
-/* The application shell (spec §5): the rail, the top bar, the phone tab bar, the content
-   container, the toast stack, the auth card, and the three widths. */
+/* The application shell (Shop manual spec §7, slice 3; design-system.md rules 7 to 11): the strip,
+   the left column and its sheet, the page head's caps path, the phone tab bar, the content
+   container, the toast stack, the auth card, and the three widths — the column beside the page from
+   960px, a sheet below it; the four places in the strip from 720px, the tab bar below it. */
 @layer shell {
-  body.app-shell { display: grid; grid-template-columns: var(--rail-width) minmax(0, 1fr); min-height: 100vh; }
-  /* The calculator's Stimulus host (layouts/_calculator.html.erb) is a child of body.app-shell's grid,
-     and a box there would take a grid cell of its own; its only content is a <dialog>, which is
-     display:none closed and in the top layer open, so the host draws no box at all. */
+  body.app-shell { min-height: 100vh; }
+  /* The calculator's Stimulus host (layouts/_calculator.html.erb) is a child of body. Its only
+     content is a <dialog>, which is display:none closed and in the top layer open, so the host draws
+     no box at all. */
   .calculator-host { display: contents; }
-  /* The collapse cookie sets the rail's TRACK and nothing else; the icon rail below follows the width.
-     Its twin, `rail--expanded`, sets nothing here: it only exempts the body from the ≤1099px track
-     (below), because an explicit choice beats the width default (UX audit A2). */
-  body.app-shell.rail--collapsed { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
 
-  /* THE RAIL IS A SIZE CONTAINER, `rail`, and the icon-rail block below asks its width. That width
-     must stay the grid TRACK's, a length: inline-size containment means the rail's content no longer
-     sizes it, so a content-sized track (`auto`, `min-content`) would collapse it to nothing. It also
-     makes the rail the containing block of any `position: fixed` descendant (it holds none). */
-  .rail {
-    position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: var(--space-4);
-    padding: 14px 8px; background: var(--bg); border-right: 1px solid var(--line); overflow: hidden auto;
-    container: rail / inline-size;
+  /* --- The wordmark, on the strip, the auth card, the visitor's header and the landing: a T in an
+     accent disc, then the name. The letter is drawn, not written, so every page's markup stays the
+     mark span it was and the link's text stays the name. The disc is no control, so it spends no
+     accent (rule 13; accent_spend_test.rb counts controls). --- */
+  .brand { display: flex; align-items: center; gap: 9px; padding: 4px 0; color: var(--fg); font-size: 19px; font-weight: 800; letter-spacing: -0.01em; white-space: nowrap; }
+  .brand:hover { color: var(--fg); text-decoration: none; }
+  .brand-mark {
+    display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 auto;
+    border-radius: 50%; background: var(--accent);
   }
-  .brand { display: flex; align-items: center; gap: 10px; padding: 4px 8px; color: var(--fg); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; white-space: nowrap; }
-  .brand:hover { text-decoration: none; }
-  /* The mark: an orange square with a paper square cut from its centre. */
-  .brand-mark { position: relative; width: 18px; height: 18px; flex: 0 0 auto; border-radius: var(--radius-control); background: var(--accent); }
-  .brand-mark::after { content: ""; position: absolute; left: 5px; top: 5px; width: 8px; height: 8px; border-radius: 1px; background: var(--bg); }
+  .brand-mark::after { content: "T"; color: var(--accent-ink); font: 700 13px/1 var(--font-mono); letter-spacing: 0; }
 
   /* --- The visitor's header (stage 4, S4-5). The anonymous branch's only chrome: the wordmark and,
-     on a maker's page, the maker. Not the rail — a visitor has no library to navigate. It reuses
+     on a maker's page, the maker. Not the strip — a visitor has no library to navigate. It reuses
      `.brand` rather than restyling it, which is why it lives here beside it and not in
      pages/public.css: that sheet is about page CONTENT, and a `pages`-layer rule would outrank
-     `shell` and start a cascade fight over the wordmark.
-     IT NEEDS NO `.brand-name` OVERRIDE, and neither does any `.brand` outside the rail: the icon
-     rail is a container query on `.rail` (below), which matches the rail's descendants and nothing
-     else. Until F-S20-1 the ≤1099px copy of those rules was unscoped, so this header and the
-     landing each restored their wordmark and the sign-in card, which did not, lost it. --- */
+     `shell` and start a cascade fight over the wordmark. --- */
   .public-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
                    max-width: 1360px; margin: 0 auto; padding: 10px 16px;
                    border-bottom: 1px solid var(--line); }
   .public-header .public-author { color: var(--fg-muted); font-size: 12px; }
   .public-header .public-intro { margin: 0; font-size: 12px; }
 
-  .rail-nav ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
-  .rail-link {
-    position: relative; display: flex; align-items: center; gap: 10px; min-height: 34px; padding: 0 10px;
-    border-radius: var(--radius-control); color: var(--fg-muted); font-weight: 500; white-space: nowrap;
+  /* --- THE STRIP (layouts/_strip): 50px, a 2px ink rule under it, sticky at the top. The wordmark,
+     the four places, then Search, Add and the account button at the right. --- */
+  .strip {
+    position: sticky; top: 0; z-index: 20; display: flex; align-items: stretch; gap: 26px;
+    height: var(--strip-height); padding: 0 24px; background: var(--bg); border-bottom: 2px solid var(--fg);
   }
-  .rail-link:hover { color: var(--fg); background: var(--raised); text-decoration: none; }
-  /* The lit link is INK, never accent: the accent is the one action. The marker sits on the rail's
-     edge, -8px being the rail's own padding-inline (8px in every state, collapsed included). */
-  .rail-link[aria-current="page"] { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
-  .rail-link[aria-current="page"]::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
+  .strip > * { flex: 0 0 auto; }
+  .strip-brand { align-self: center; padding: 0; }
+  .strip-end { display: flex; align-items: center; gap: 10px; flex: 0 1 auto; min-width: 0; margin-left: auto; }
+  .strip-end > * { flex: 0 0 auto; }
+  /* THE FOUR PLACES. The lit one is weight 800 with a 3px ink underline (spec §7), INK, never accent:
+     the accent marks. Every place reserves its underline so lighting one moves nothing. */
+  .strip-places { display: flex; gap: 22px; font-size: 14px; }
+  .strip-place {
+    display: flex; align-items: center; padding: 3px 2px 0; border-bottom: 3px solid transparent;
+    color: var(--fg); font-weight: 500; white-space: nowrap;
+  }
+  .strip-place:hover { color: var(--fg); text-decoration: none; border-bottom-color: var(--line); }
+  .strip-place[aria-current="page"] { font-weight: 800; border-bottom-color: var(--fg); }
+  /* SEARCH is 290px when the strip has room, and shrinks before anything else does. A `width`, not
+     only a flex basis: the right-hand group sizes itself from its items' widths, and an input's own
+     is nothing. */
+  .strip-search {
+    display: flex; align-items: center; gap: 8px; flex: 0 1 auto; width: 290px; min-width: 150px; height: var(--control-height); padding: 0 10px;
+    border: 1.5px solid var(--fg); border-radius: var(--radius-control); background: var(--surface); color: var(--fg-muted);
+  }
+  .strip-search:focus-within { outline: 2px solid var(--focus); outline-offset: 1px; }
+  .strip-search input { flex: 1 1 0; width: 0; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--fg); font: 400 14px/20px var(--font-ui); }
+  .strip-search input:focus-visible { outline: none; }
+  .strip-search input::-webkit-search-cancel-button { filter: grayscale(1); }
+  .strip-kbd { padding: 0 6px; border: 1px solid var(--line); border-radius: 0; font: 400 12px/18px var(--font-mono); color: var(--fg-muted); }
+  /* Below 720px the box gives way to this icon, a link to the Search page. */
+  .strip-search-link { display: none; }
+  .strip-contents { display: none; }
+
+  /* ONE ADD (layouts/_strip_add): a menu, then the upload machinery it drives. The Upload BUTTON is
+     hidden at every width — the menu's "Upload…" clicks it — and never `.topbar-upload` itself,
+     which holds the chunk flow's `.upload-status`: an upload started from the menu reports its
+     progress there while the menu is closed (rule 9). */
+  .strip-add { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .strip-add-btn { gap: 7px; font-weight: 700; }
+  .topbar-upload { display: flex; align-items: center; min-width: 0; }
+  .topbar-upload .upload-btn { display: none; }
+  /* THE PROGRESS HANGS UNDER THE STRIP'S RULE at its right edge (the sticky strip is its containing
+     block), so a long "Uploading …" never pushes the account button off a phone or moves the strip. */
+  .topbar-upload .upload-status:not(:empty) {
+    position: absolute; top: calc(100% + 6px); right: 24px; z-index: 21; max-width: min(360px, calc(100% - 24px));
+    padding: 4px 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    border: 1.5px solid var(--fg); background: var(--surface); color: var(--fg); font-size: 12px;
+  }
+  /* Where Add makes things, at the head of its menu. The folder is ink: it is the answer. */
+  .topbar-upload-caption {
+    margin: 0; padding: 6px 10px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: 12px; color: var(--fg-muted);
+  }
+  .topbar-upload-caption strong { color: var(--fg); font-weight: 700; }
+
+  /* THE ACCOUNT BUTTON: the user's initial in a 32px ink ring, and its menu. */
+  .strip-account-btn {
+    display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px;
+    border: 1.5px solid var(--fg); border-radius: 50%; background: var(--surface); color: var(--fg);
+    font: 800 14px/1 var(--font-ui); cursor: pointer;
+  }
+  .strip-account-btn:hover { background: var(--raised); }
+  .strip-account[open] > .strip-account-btn { background: var(--fg); color: var(--bg); }
+  .strip-account-menu { min-width: 240px; }
+  .strip-account-email { margin: 0; padding: 6px 10px 4px; font: 400 12px/16px var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .strip-account-theme { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 6px 10px; }
+  .strip-account-label { font-size: 14px; color: var(--fg); }
   .rail-icon { width: 16px; height: 16px; flex: 0 0 auto; }
 
-  /* The places sidebar's groups (structural redesign, slice 2). A group head is a LABEL: the UI face,
-     uppercase (cohesion decision 4). Project links carry no icon and sit indented under their head;
-     a pin carries the folder glyph. The foot nav takes the auto margin that pushes it and the
-     account foot to the bottom. */
-  .rail-group-head { margin: var(--space-3) 10px 2px; font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
-  .rail-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-  .rail-project { min-height: 30px; padding-left: 36px; font-weight: 400; }
-  .rail-pin, .rail-tool-pin { font-weight: 400; }
-  .rail-nav--foot { margin-top: auto; }
-  /* A PROJECT'S OR A PINNED FOLDER'S MONOGRAM (ShellHelper#rail_monogram): drawn only in the icon rail
-     (the block below shows it), where the name hides. A tile, so a letter is never mistaken for one
-     of the line icons around it; ink-filled when its link is lit, because selection is ink. */
-  .rail-monogram {
-    display: none; align-items: center; justify-content: center; width: 22px; height: 22px; flex: 0 0 auto;
-    border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface);
-    color: var(--fg); font: 600 11px/1 var(--font-ui);
-  }
-  .rail-monogram::before { content: attr(data-monogram); }
-  .rail-link[aria-current="page"] .rail-monogram { background: var(--fg); border-color: var(--fg); color: var(--bg); }
-
-  .rail-foot { margin-top: 0; display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) 0 0; border-top: 1px solid var(--line); }
-  .rail-foot form { margin: 0; }
-  .rail-btn {
-    display: inline-flex; align-items: center; gap: 10px; width: 100%; min-height: 30px; padding: 0 10px;
-    background: none; border: 0; border-radius: var(--radius-control); color: var(--fg-muted);
-    font: 500 13px/1 var(--font-ui); text-align: left; cursor: pointer;
-  }
-  /* text-decoration: none because the Settings link (an <a>) also carries .rail-btn -- the other
-     three rail-foot controls are <button>s, which never picked up base.css's `a:hover` underline. */
-  .rail-btn:hover { color: var(--fg); background: var(--raised); text-decoration: none; }
-  /* The Settings link's lit state, on the hub and its own children (settings/tags) -- mirrors
-     .rail-link[aria-current="page"]'s ink-on-surface; it takes no edge marker, which belongs to the
-     rail's section links alone. */
-  .rail-foot .rail-btn[aria-current="page"] { color: var(--fg); background: var(--surface); }
-  .rail-user { padding: 4px 10px; font: 400 12px/16px var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-  /* THE ICON RAIL, ONCE (F-S20-1): icons only, whichever trigger narrowed the rail, the collapse
-     cookie (`body.app-shell.rail--collapsed`, above) or a viewport below 1100px without the
-     `expanded` cookie (the media block below). Both set only the grid track; this asks the rail's
-     own content width (39px narrow, 199px wide, so any threshold between serves), so it matches the
-     rail's descendants and nothing else.
-     It was two hand-synced copies, a `.rail--collapsed`-prefixed one and an UNSCOPED one in the
-     ≤1099px media query, and every rail edit landed twice. css_hygiene_test.rb refuses a second
-     copy; shell_test.rb draws both triggers and the sign-in card's wordmark. */
-  @container rail (max-width: 120px) {
-    .brand { justify-content: center; padding: 4px 0; }
-    .brand-name, .rail-label, .rail-user, .rail-btn span,
-    .rail-group-head, .rail-tool-pin, .rail-pin .folder-glyph { display: none; }
-    .rail-link, .rail-btn { justify-content: center; padding-inline: 0; }
-    /* PROJECTS AND PINNED FOLDERS STAY, AS MONOGRAMS (UX audit A2). They used to hide with their
-       labels, so at 1024px the eight projects and every pin were simply gone. A pin's folder glyph
-       gives way to its letter: every pin wears the same glyph, so the glyph alone named none. */
-    .rail-monogram { display: inline-flex; }
-    /* The Collapse button's arrow points the way the rail will move: left to collapse, right to expand. */
-    .rail-collapse .rail-icon { transform: scaleX(-1); }
-    /* The lit pinned TOOL just hid, so its family link (ShellHelper#sidebar_family_lit?) wears the lit
-       look instead; otherwise the icon rail shows nothing lit. */
-    .rail-family-lit { color: var(--fg); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line); }
-    .rail-family-lit::before { content: ""; position: absolute; left: -8px; top: 8px; bottom: 8px; width: 3px; border-radius: 0 2px 2px 0; background: var(--fg); }
-  }
-
+  /* --- THE SHELL'S BODY: the left column beside the page from 960px. A page with no column (Search)
+     gives main the width. --- */
+  .shell-body { display: grid; grid-template-columns: minmax(0, 1fr); }
+  .shell-body--column { grid-template-columns: var(--column-width) minmax(0, 1fr); }
   .shell-main { min-width: 0; display: flex; flex-direction: column; }
-  .topbar {
-    position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: var(--space-4);
-    min-height: var(--topbar-height); padding: 0 var(--space-5); background: var(--bg); border-bottom: 1px solid var(--line);
+
+  /* THE LEFT COLUMN (layouts/_column and layouts/column/*): 220px on --raised with a hairline at its
+     right, sticky under the strip and scrolling on its own. Caps-headed groups of 28px rows. */
+  .column {
+    position: sticky; top: var(--strip-height); align-self: start; height: calc(100vh - var(--strip-height));
+    overflow-y: auto; padding: 22px 18px; background: var(--raised); border-right: 1px solid var(--line);
   }
-  .topbar-crumbs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
-  .topbar-title { font-weight: 600; }
-  .topbar-search {
-    display: flex; align-items: center; gap: var(--space-2); flex: 0 1 340px; min-width: 160px; height: var(--control-height); padding: 0 10px;
-    border: 1px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface); color: var(--fg-muted);
+  .column-group + .column-group { margin-top: 24px; }
+  /* The caps label (spec §5): mono 700 12px, tracked, uppercase, muted. */
+  .column-head { margin: 0; padding: 0 0 8px 14px; font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted); }
+  /* A ROW: a 6px square (drawn only on the current row), the name, and a muted mono note. Indented
+     16px a level (ShellHelper#column_row writes --depth). The current row is weight 800 with an
+     accent square before it: a mark, which is what the accent is for (rule 13). */
+  .column-row {
+    display: flex; align-items: center; gap: 8px; height: 28px; padding-left: calc(var(--depth, 0) * 16px);
+    color: var(--fg); font-weight: 500;
   }
-  .topbar-search:focus-within { border-color: var(--fg); outline: 2px solid var(--focus); outline-offset: 1px; }
-  .topbar-search input { flex: 1; min-width: 0; min-height: 0; padding: 0; border: 0; background: transparent; color: var(--fg); font: 400 14px/20px var(--font-ui); }
-  .topbar-search input:focus-visible { outline: none; }
-  .topbar-search input::-webkit-search-cancel-button { filter: grayscale(1); }
-  /* New ▾ sits at the bar's right edge at every width. On a phone the bar wraps and New takes a row
-     of its own; without this it wrapped to the LEFT and its right-anchored menu opened at x≈-185,
-     off-screen (found in slice 2's Task 3; test/system/new_menu_test.rb measures it at 375px). */
-  .topbar-new { margin-left: auto; }
-  /* THE PHONE'S "+" AND ITS UPLOAD ITEM (layouts/_topbar.html.erb) are hidden here and shown in the
-     ≤719px block. THE LAYER ORDER, NOT SPECIFICITY, is what lets this beat `.menu-item`'s own `display:
-     flex`: `shell` comes after `components`, so a single class here wins over any selector there.
-     test/system/phone_topbar_test.rb asserts it by visibility at desktop width. */
-  .topbar-new-plus, .topbar-new-upload { display: none; }
-  /* THE TOP BAR'S UPLOAD (layouts/_topbar_upload.html.erb): the button, then where it saves. The
-     caption is the answer to "where will this go", so its folder is ink, not muted; below 1100px it
-     hides and the button's title carries it. */
-  .topbar-upload { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
-  .topbar-upload .uploader { gap: var(--space-2); }
-  .topbar-upload-caption { max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; color: var(--fg-muted); }
-  .topbar-upload-caption strong { color: var(--fg); font-weight: 600; }
-  .topbar-kbd { padding: 2px 5px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
+  .column-row::before { content: ""; width: 6px; height: 6px; flex: 0 0 auto; }
+  .column-row:hover { color: var(--fg); text-decoration: underline; }
+  .column-row[aria-current] { font-weight: 800; }
+  .column-row[aria-current]::before { background: var(--accent); }
+  .column-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .column-row-note { flex: 0 0 auto; font: 400 12px/1 var(--font-mono); color: var(--fg-muted); }
+  .column-row--more .column-row-name { color: var(--fg-muted); }
+  .column-scrim { display: none; }
+
+  /* --- THE PAGE HEAD'S CAPS PATH (rule 9): the crumbs, or the page's title, above the page. --- */
+  .page-path {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; margin: 0 0 14px;
+    font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--fg-muted);
+    overflow-wrap: anywhere;
+  }
+  .page-path .breadcrumb { font-size: inherit; }
 
   main.container { width: 100%; max-width: var(--container-max); margin: 0 auto; padding: var(--space-5) var(--space-5) var(--space-8); }
   main.container.container-wide { max-width: none; }
 
-  /* THE TOASTS SIT AT THE BOTTOM RIGHT (UX audit A5). They were fixed at the top right, over the top
-     bar's New ▾ and Upload, so the notice after a delete covered the two controls a maker reaches
-     for next. Nothing of the shell lives down here: the top bar and every page head's actions are
-     at the top. On a phone the stack spans the screen just above the tab bar (the ≤719px block).
-     shell_toast_test.rb measures that it never meets New, Upload or the tab bar. */
+  /* THE TOASTS SIT AT THE BOTTOM RIGHT (UX audit A5). They were fixed at the top right, over the
+     controls a maker reaches for next. Nothing of the shell lives down here above 720px: the strip
+     and every page head's actions are at the top. On a phone the stack spans the screen just above
+     the tab bar (the ≤719px block). shell_toast_test.rb measures that it never meets Add or the tab
+     bar. */
   .flash-stack {
     position: fixed; bottom: 16px; right: 16px; z-index: 900; display: flex; flex-direction: column; gap: 8px;
     width: min(420px, calc(100vw - 32px)); pointer-events: none;
@@ -167,7 +162,7 @@
 
   .tabbar { display: none; }
 
-  /* Signed-out pages: the auth card (Task 5 writes the markup). */
+  /* Signed-out pages: the auth card. */
   /* QUALIFIED `main.container.auth-main`, NOT a bare `.auth-main`, and the qualifier is the whole
      rule. Both live in this layer, so specificity decides, and `main.container` (0,1,1) outranks a
      bare `.auth-main` (0,1,0) — so from the day this shipped the auth card computed max-width
@@ -192,72 +187,74 @@
   #error_explanation ul { margin: 0; padding-left: 18px; }
   .account-delete { margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 
-  @media (max-width: 1099px) {
-    /* The narrow viewport's half of the icon rail: the TRACK, unless the maker chose the full rail
-       (`rail--expanded`, UX audit A2: an explicit choice beats the width default). `:where()` keeps
-       this at `body.app-shell`'s own specificity, so the ≤719px block's one-column grid, later in the
-       sheet, still wins on a phone. */
-    body.app-shell:where(:not(.rail--expanded)) { grid-template-columns: var(--rail-collapsed-width) minmax(0, 1fr); }
-    .topbar { padding: 0 16px; }
-    .topbar-upload-caption { display: none; }
+  /* --- NARROWER THAN THE SCREENS (not drawn; decided for slice 3). --- */
+  @media (max-width: 1199px) {
+    .strip { gap: 18px; padding: 0 16px; }
+    .strip-places { gap: 16px; }
+  }
+
+  /* BELOW 960PX THE COLUMN IS A SHEET. It leaves the grid for a fixed panel at the left, off-canvas
+     and `visibility: hidden` (so nothing in it takes focus) until the strip's Contents button opens
+     it (`body.column-open`, shell_controller.js); a scrim behind it closes it. Fixed, so opening it
+     moves nothing on the page. Visibility switches at once (never transitioned), so focus can move
+     into the sheet in the same click that opens it. */
+  @media (max-width: 959px) {
+    .shell-body--column { grid-template-columns: minmax(0, 1fr); }
+    .column {
+      position: fixed; top: 0; bottom: 0; left: 0; z-index: 70; width: min(300px, calc(100vw - 48px)); height: auto;
+      /* `stretch`, not the sticky column's `start`: box alignment applies to a fixed box too, and
+         `start` would size the sheet to its rows instead of the viewport's height. */
+      align-self: stretch;
+      box-shadow: var(--shadow-float); transform: translateX(-100%); visibility: hidden;
+    }
+    body.column-open .column { transform: none; visibility: visible; }
+    body.column-open .column-scrim { display: block; position: fixed; inset: 0; z-index: 65; background: var(--scrim); }
+    .strip-contents {
+      display: inline-flex; align-items: center; gap: 6px; align-self: center; height: var(--control-height); padding: 0 10px;
+      border: 1.5px solid var(--fg); border-radius: var(--radius-control); background: var(--surface); color: var(--fg);
+      font: 700 14px/1 var(--font-ui); cursor: pointer;
+    }
+    .strip-contents[aria-expanded="true"] { background: var(--fg); color: var(--bg); }
+    .strip { gap: 14px; }
+    .strip-kbd, .strip-add-label { display: none; }
+    .strip-search { min-width: 120px; }
+    .strip-add-btn { padding-inline: 8px; }
     main.container { padding: 16px 16px 64px; }
   }
 
+  /* The Contents button's word goes first when the strip runs short, then the box shrinks. */
+  @media (max-width: 799px) {
+    .strip-contents-label { display: none; }
+    .strip-contents { padding-inline: 8px; }
+  }
+
+  /* BELOW 720PX THE FOUR PLACES MOVE TO THE TAB BAR, and the strip keeps the wordmark, the Contents
+     button, a Search icon, the "+" and the account button. No part of it may push the page sideways
+     at 375px (rule 11; shell_test.rb measures the strip, the open sheet and the tab bar). */
   @media (max-width: 719px) {
-    /* ONE COLUMN, WHATEVER THE COOKIE SAYS: the rail is gone, so no track may be kept for it.
-       `body.app-shell.rail--collapsed` is named because it outranks a bare `body.app-shell`, and with
-       the collapse cookie set a phone laid the whole page out in the rail's 56px track. */
-    body.app-shell, body.app-shell.rail--collapsed { grid-template-columns: minmax(0, 1fr); padding-bottom: var(--tabbar-height); }
-    .rail { display: none; }
+    body.app-shell { padding-bottom: var(--tabbar-height); }
+    .strip { gap: 8px; padding: 0 12px; }
+    .strip-places, .strip-search { display: none; }
+    .strip-search-link {
+      display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; color: var(--fg);
+    }
+    .strip-end { gap: 8px; }
+    .topbar-upload .upload-status:not(:empty) { right: 12px; }
     .tabbar {
       position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex;
-      height: var(--tabbar-height); background: var(--surface); border-top: 1px solid var(--line);
+      height: var(--tabbar-height); background: var(--surface); border-top: 2px solid var(--fg);
     }
-    .tabbar-link { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--fg-muted); font-size: 11px; }
+    .tabbar-link { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; color: var(--fg-muted); font-size: 11px; }
     .tabbar-link:hover { text-decoration: none; }
-    .tabbar-link[aria-current="page"] { color: var(--fg); font-weight: 600; }
-    /* MORE, THE FIFTH TAB (UX audit A1; layouts/_tabbar). A `details.menu` made a tab: static, so its
-       list is positioned by the fixed bar and opens UPWARD as a sheet between the gutters, scrolling
-       if a short phone cannot hold it. The tab lights like a place when one of its links is the page
-       (`:has()` on the link's aria-current, which `sidebar_current` decided) or while it is open. */
-    .tabbar .tabbar-more { position: static; display: block; flex: 1; min-width: 0; }
-    .tabbar-more > summary { height: 100%; cursor: pointer; }
-    .tabbar-more[open] > summary,
-    .tabbar-more:has(.tabbar-sheet [aria-current="page"]) > summary { color: var(--fg); font-weight: 600; }
-    .tabbar-more .tabbar-sheet {
-      top: auto; bottom: calc(100% + 8px); left: 8px; right: 8px; min-width: 0;
-      max-height: calc(100vh - var(--tabbar-height) - 24px); overflow-y: auto;
-    }
-    .tabbar-sheet .menu-item[aria-current="page"] { background: var(--raised); font-weight: 600; }
-    .tabbar-theme { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 6px 10px; }
-    .tabbar-sheet-label { font-size: 14px; color: var(--fg); }
-    .tabbar-sheet-user { margin: 0; padding: 6px 10px 2px; font: 400 12px/16px var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    /* The toasts span the phone just above the tab bar, never under it or over the top bar. */
-    body.app-shell .flash-stack { left: 12px; right: 12px; bottom: calc(var(--tabbar-height) + 12px); width: auto; }
-    .topbar { flex-wrap: wrap; gap: 6px 8px; padding: 6px 12px; }
-    /* THE PHONE ROW IS THE BREADCRUMB AND THE "+" (spec §4.3), with search on a full-width row below
-       (slice 7). `order` moves only the search box; the crumbs, New and Upload keep their DOM order. */
-    .topbar-search { flex: 1 1 100%; min-width: 0; order: 1; }
-    /* ON A PHONE THE NEW MENU SPANS THE BAR rather than hanging off New's right edge. Since slice 4
-       put Upload to New's right, a menu anchored to New opened ~14px off the left edge of a 360px
-       phone (and 1px off CI's 375px, whose Linux Chrome spends 15 of them on a scrollbar). A static
-       `.topbar-new` hands the absolutely positioned list to `.topbar`, which is sticky and therefore
-       its containing block, so the list sits under the bar between the gutters wherever New lands.
+    .tabbar-link[aria-current="page"] { color: var(--fg); font-weight: 800; box-shadow: inset 0 3px 0 var(--fg); }
+    /* On a phone the two menus span the strip rather than hanging off their buttons: a static
+       `details` hands its absolutely positioned list to the sticky strip, its containing block, so
+       the list sits under the strip between the gutters wherever the button landed.
        test/system/new_menu_test.rb measures it at 375 and 360. */
-    .topbar-new { position: static; }
-    .topbar-new .menu-list { left: 12px; right: 12px; min-width: 0; }
-    /* ONE "+" FOR NEW AND UPLOAD (structural redesign spec §4.3, slice 7). The summary reads "+", and
-       the top bar's Upload moves inside it as the menu's first item, which clicks the hidden Upload
-       BUTTON (upload_forward_controller.js) so a page with no folder still asks with the chooser. Only
-       the BUTTON hides, never `.topbar-upload`: the chunk flow's `.upload-status` beside it is where an
-       upload started from the menu reports its progress. `revert-layer` hands the item back the
-       display its own component gives it (`.menu-item`'s flex, the separator's block) rather than
-       restating either here. */
-    .topbar-new-label { display: none; }
-    .topbar-new-plus { display: inline; }
-    .topbar-new-upload { display: revert-layer; }
-    .topbar-upload .upload-btn { display: none; }
-    .topbar-kbd { display: none; }
+    .strip-add-menu, .strip-account { position: static; }
+    .strip-add-menu .menu-list, .strip-account .menu-list { left: 12px; right: 12px; min-width: 0; }
+    /* The toasts span the phone just above the tab bar, never under it or over the strip. */
+    body.app-shell .flash-stack { left: 12px; right: 12px; bottom: calc(var(--tabbar-height) + 12px); width: auto; }
     main.container { padding: 12px 12px 72px; }
     .page-head h1 { font-size: 18px; }
   }

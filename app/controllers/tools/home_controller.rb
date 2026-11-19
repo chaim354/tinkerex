@@ -37,17 +37,17 @@ module Tools
       @addon_problems = Rails.env.local? ? Maker::Addons::Registry.problems : []
     end
 
-    # The top bar's New ▾ menu loads this into a lazy frame when it opens (layouts/_topbar.html.erb).
+    # The strip's Add menu loads this into a lazy frame when it opens (layouts/_strip_add.html.erb).
     # Available tools only — an unavailable one would be an entry that opens an apology — and none
     # at all without a configured source, where Source.current would raise and Registry log it.
     #
-    # TOOLS THAT MAKE SOMETHING ONLY: New ▾ makes a thing in the folder it was opened from, so an
+    # TOOLS THAT MAKE SOMETHING ONLY: Add makes a thing in the folder it was opened from, so an
     # inspector or a reference listed there would open a tool that makes nothing in that folder.
     # `generate` and nil — nil because every bundle published before `category` existed is a
     # generator (Generators, Box Generator, OpenSCAD), and the key's absence must change nothing.
     def new_menu
       @addons = available_addons.select { |addon| [ nil, "generate" ].include?(addon.category) }
-      # The folder the menu was opened from (layouts/_topbar.html.erb's frame src), echoed into each
+      # The folder the menu was opened from (layouts/_strip_add.html.erb's frame src), echoed into each
       # tool link as `?in=`. A String only; the tool page validates it
       # (Tools::AddonsController#destination_from_param), so a bad value costs a link to the tool's
       # own default.

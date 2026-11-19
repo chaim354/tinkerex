@@ -72,7 +72,7 @@
   project's folder is in the trash or was removed" with a link to Trash,
   `Maker::AttachToProject#move` returns `:unavailable` and leaves the bytes where they are, and
   `Maker::ProjectFolderListing` answers `available? == false`, so `ProjectsController#show` gives
-  the top bar no destination and its Upload asks with the folder chooser rather than guess the
+  the strip's Add no destination and its Upload asks with the folder chooser rather than guess the
   root. (`Projects::UploadsController#upload_parent` was a fourth answer, landing the file at the
   library root, until F-S21-1 retired that controller's project-level route.) A project whose
   `folder_node_id` was never set — the form path — still mints, which is what
@@ -298,7 +298,7 @@
 - **THE PAGE LISTS THE FOLDER AND NEVER FILES OR MINTS IT.** `Maker::ProjectFolderListing` reads
   `folder_node_id`, answers liveness through the LibraryTree, and creates nothing; the one writer of the FOLDER
   on `projects#show` is the pre-existing best-effort `ensure_library_folder!`, which runs before the
-  listing. The top bar's Upload saves into the LISTING's folder (`FolderDestination`, set only when
+  listing. The strip's Upload saves into the LISTING's folder (`FolderDestination`, set only when
   `available?`), never into what the ensure returned, so the page shows and uploads into one
   folder. A file inside the folder with no attachment row is still listed — the folder is the
   relation the panel shows; `maker_file_attachments` stays the relation detach, cover and addon

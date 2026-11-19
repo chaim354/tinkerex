@@ -17,7 +17,7 @@ import { isZip, reportAndLand, splitSelection, uploadSplit } from "lib/zip_unpac
 //
 // A FAILURE IS SAID, AND A RUN WITH ONE STAYS ON SCREEN (2026-11-02, the UX audit's B8). The status
 // line is a live region, so "Uploading x… (2 of 5)" is announced as well as drawn — set from
-// connect() because the two views that mount this (layouts/_topbar_upload, projects/_upload_control)
+// connect() because the two views that mount this (layouts/_strip_add, projects/_upload_control)
 // render the span bare. What went wrong is an alert in the flash stack, worded by
 // lib/chunk_upload.js#uploadFailureSentence, never `e.message`. A run where something failed does not
 // navigate, lib/zip_unpack.js#reportAndLand's rule: a reload would wipe the one line that says what
@@ -39,9 +39,9 @@ export default class extends Controller {
     const files = Array.from(this.inputTarget.files || [])
     if (files.length === 0) return
     try {
-      // THE TOP BAR UNPACKS A MODEL ZIP (2026-10-21; spec docs/superpowers/specs/
+      // THE STRIP'S UPLOAD UNPACKS A MODEL ZIP (2026-10-21; spec docs/superpowers/specs/
       // 2026-10-20-zip-upload-unpacks-models-design.md). Only where the view passed the unpack doors
-      // — the top bar does, the build log's "Upload & attach" does not — and only for a selection
+      // — the strip's Upload does, the build log's "Upload & attach" does not — and only for a selection
       // holding a .zip, so every other upload takes the loop below exactly as before.
       // NEVER WITH AN ATTACH URL: the unpack skips postAttach and redirectUrl, which that control needs.
       if (this.unpackUrlValue && !this.attachUrlValue && files.some(isZip)) {

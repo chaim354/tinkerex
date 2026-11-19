@@ -534,7 +534,7 @@ module Web
     end
 
     # STAGE 4, S4-4: THE OWNER'S PREVIEW, SIGNED IN — which is the difference worth measuring. It
-    # renders the same partials over the same object, plus the app shell (the rail, the top bar,
+    # renders the same partials over the same object, plus the app shell (the strip, the left column,
     # the flash) that a visitor never pays for. That shell cost is a
     # CONSTANT and must stay one: a preview that grew with the project would grow with it on a page
     # the maker opens to check their work, not on a page a stranger opens once.
@@ -1364,22 +1364,31 @@ module Web
                               "settings#show")
     end
 
-    # THE SIDEBAR IS ON EVERY PAGE, so a per-project or per-pin query here would grow every page in
-    # the app. Settings is the probe because nothing else on it grows with projects or pins.
-    test "the sidebar does not grow with projects or pins" do
+    # THE LEFT COLUMN IS ON EVERY PAGE (Shop manual slice 3), so a query per project, pin, folder,
+    # place or supplier in it would grow every page of its section. Each default column is probed on
+    # a page whose own body does not grow with what is added: Home (the pins), a project's page (the
+    # eight projects), the Library's root (its folders, which the pins' folders are) and Inventory
+    # with no items (the places and suppliers). Mutation-checked (2026-11-19): a per-row
+    # `project.file_attachments.size` in layouts/column/_projects reddens the project page; the
+    # Library's subfolders read one query per folder (`.each` over `nodes.find_by`) reddens /files.
+    test "the left column does not grow with projects, pins, folders, places or suppliers" do
+      project = @user.maker_projects.create!(name: "Probe")
       grow = lambda do |upto|
         (@user.maker_projects.count...upto).each { |i| @user.maker_projects.create!(name: "P#{i}") }
         (@user.maker_pins.count...[ upto, Maker::Pin::CAP ].min).each do |i|
           dir = @user.nodes.create!(node_id: "pin-#{i}", name: "place-#{i}", kind: "dir")
           @user.maker_pins.create!(node_id: dir.node_id)
         end
+        (@user.maker_locations.count...upto).each { |i| @user.maker_locations.create!(name: "Bin #{i}") }
+        (@user.maker_suppliers.count...upto).each { |i| @user.maker_suppliers.create!(name: "Shop #{i}") }
       end
+      paths = [ root_path, project_path(project), files_path, inventory_items_path ]
       grow.call(SMALL)
-      get settings_path
-      small = count_queries { get settings_path }
+      paths.each { |path| get path; assert_response :success }
+      small = paths.to_h { |path| [ path, count_queries { get path } ] }
       grow.call(LARGE)
-      large = count_queries { get settings_path }
-      assert_equal small, large, "the sidebar's queries grew with projects or pins"
+      large = paths.to_h { |path| [ path, count_queries { get path } ] }
+      assert_equal small, large, "the column's queries grew with projects, pins, folders, places or suppliers"
     end
 
     # THE TAGS LIST (S2-6). Each iteration grows a tag AND tags a project with it, so the one

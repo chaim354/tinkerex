@@ -647,10 +647,10 @@ module Web
       assert_select ".attachments-panel .folder-missing a[href=?]", trash_index_path
       # UPLOAD NEVER TARGETS A FOLDER IN THE TRASH, AND NEVER GUESSES THE ROOT FOR ONE. The project
       # upload route answered this case by landing the file at the library root until F-S21-1
-      # retired it. The top bar gets a destination only from a listing that is `available?`, so here
-      # it asks with the folder chooser. The chooser and its caption are the same in both upload flows.
-      assert_select ".topbar-upload[data-controller=?]", "upload-pick", 1,
-                    "no destination: the top bar must ask, not upload into the root"
+      # retired it. The strip's Add gets a destination only from a listing that is `available?`, so
+      # here it asks with the folder chooser. The chooser and its caption are the same in both flows.
+      assert_select ".strip-add[data-controller=?]", "upload-pick", 1,
+                    "no destination: Add's Upload must ask, not upload into the root"
       assert_select ".topbar-upload button.upload-btn[title=?]", "Choose a folder, then files"
     end
 

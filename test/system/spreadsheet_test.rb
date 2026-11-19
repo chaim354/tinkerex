@@ -440,7 +440,7 @@ class SpreadsheetViewerTest < ApplicationSystemTestCase
     open_file("plain.xlsx")
     type_into(1, 1, "12")
 
-    dismiss_confirm(LEAVE) { find(".rail a.rail-link[href='#{files_path}']").click }
+    dismiss_confirm(LEAVE) { find("header.strip a.strip-place[href='#{files_path}']").click }
 
     assert_current_path file_path(@node.node_id)
     assert_equal "12", grid_value(1, 1)
