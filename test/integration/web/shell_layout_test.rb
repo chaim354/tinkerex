@@ -203,8 +203,10 @@ module Web
       @user.maker_projects.create!(name: "Desk Lamp")
 
       get root_path
-      assert_equal [ "Getting started", "Active projects", "laser", "Calculator" ], column_rows
-      assert_equal [ "#home-getting-started", "#home-projects" ],
+      # NUMBERED AS THE PAGE NUMBERS THEM (HomeHelper#home_sections, Shop manual slice 7): the left
+      # stack's Active projects first, then the right stack's Getting started.
+      assert_equal [ "1 Active projects", "2 Getting started", "laser", "Calculator" ], column_rows
+      assert_equal [ "#home-projects", "#home-getting-started" ],
                    css_select("aside.column a.column-row[href^='#']").map { |a| a["href"] }
       assert_select "aside.column a.column-row[href=?] .column-row-note", files_path(folder: "d-laser"), text: "folder"
       assert_equal [], lit_rows

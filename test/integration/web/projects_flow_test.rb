@@ -57,7 +57,9 @@ module Web
     # THE STATUS ON THE CARD (structural redesign §6, slice 6; ONE PER CARD since 2026-11-02, the UX
     # audit's C7): every status is badged, in the words the project page's head uses, beside the
     # other badges and OUTSIDE the link. A planning card used to wear nothing while a discovered one
-    # wore "New" beside its status — two words for one state on some cards, none on others.
+    # wore "New" beside its status — two words for one state on some cards, none on others. Since the
+    # Shop manual's rows (slice 7) the badges sit in the row's facts line under the name, still a
+    # sibling of the link and never inside it.
     test "an index card badges its status beside its link, one badge per card" do
       user = sign_in
       { "Desk Lamp" => "active", "Bench Jig" => "paused", "Old Clock" => "done", "Someday" => "planning" }
@@ -65,10 +67,10 @@ module Web
 
       get projects_path
 
-      assert_select ".project-tile > .badge.status-active", text: "Active"
-      assert_select ".project-tile > .badge.status-paused", text: "Paused"
-      assert_select ".project-tile > .badge.status-done", text: "Done"
-      assert_select ".project-tile > .badge.status-planning", text: "Planning"
+      assert_select ".project-tile > .project-facts > .badge.status-active", text: "Active"
+      assert_select ".project-tile > .project-facts > .badge.status-paused", text: "Paused"
+      assert_select ".project-tile > .project-facts > .badge.status-done", text: "Done"
+      assert_select ".project-tile > .project-facts > .badge.status-planning", text: "Planning"
       css_select(".project-tile").each do |tile|
         assert_equal 1, tile.css(".badge[class*=status-]").size, "one status badge per card: #{tile.text.squish}"
       end

@@ -92,9 +92,24 @@
      `.project-card .project-thumb-empty .rail-icon`: the card carries `.project-card` too. */
   .model-hero-empty .rail-icon { width: 48px; height: 48px; color: var(--fg-muted); }
 
-  /* The 3D models view grouped by project: the head is the .group-head component, and only the
-     space between groups is this page's. */
+  /* THE 3D MODELS VIEW, A PLATE PER GROUP (Shop manual slice 7; the screen `models`). The plate, its
+     head and its grid are components (components.css); the group's head is also the caps-label
+     `.group-head` the tests know it by, so it drops that component's own margin and colour for the
+     plate head's. A model card is drawn as a plate's figure: a 160px frame, the name at 600 on one
+     line, the facts in mono under it, all left-aligned, overriding the project card it also is
+     (pages/projects.css centres a project card's name). */
   .models-group + .models-group { margin-top: var(--space-5); }
+  .models-group .plate-head.group-head { margin: 0; color: var(--fg); }
+  .models-group .plate-head a { color: var(--fg); }
+  .models-group .plate-grid { grid-template-columns: repeat(auto-fill, minmax(min(190px, calc((100% - 4px) / 2)), 1fr)); }
+  .models-group .model-card { position: relative; align-items: stretch; gap: 3px; min-width: 0; padding: 8px 8px 0 0; }
+  .models-group .model-card > .thumb { width: 100%; height: 160px; aspect-ratio: auto; padding: 9px; }
+  .models-group .model-card > .thumb > .thumb { width: 100%; height: 100%; aspect-ratio: auto; padding: 0; border: 0; }
+  .models-group .model-card .model-name { overflow: hidden; font-size: 13.5px; font-weight: 600; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
+  .models-group .model-facts { align-items: flex-start; margin: 0; font-size: 12px; text-align: left; }
+  .models-group .model-facts > span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The flag sits on the figure's frame, at the corner the card's padding leaves above it. */
+  .models-group .model-card .plate-marks { top: 13px; right: 13px; }
 
   .print-log details.composer { margin: 0 0 10px; }
   .print-form { display: grid; gap: 8px; max-width: 480px; }
@@ -111,4 +126,14 @@
   /* A MODEL'S PROJECTS ROW (2026-10-21): on the strip it sits under the head; on the model page, in
      its Details pane under the metadata. */
   .model-strip .model-projects, .model-details .model-projects { margin-top: 8px; }
+}
+
+/* TRASH, THE LIBRARY'S OTHER VIEW BESIDE THE 3D MODELS (Shop manual slice 7; the screen `trash`). The
+   table is `table.files`; this page sets where a row came from and when it went in mono, as data,
+   and gives the one rule a restore can meet its note box under the table. */
+@layer pages {
+  .trash-table .col-folder, .trash-table .col-modified { font: 400 12.5px/16px var(--font-mono); }
+  .trash-table .col-folder a { color: var(--fg-muted); }
+  .trash-table .col-name { font-weight: 600; overflow-wrap: anywhere; }
+  .trash-note { max-width: 620px; margin-top: var(--space-6); }
 }

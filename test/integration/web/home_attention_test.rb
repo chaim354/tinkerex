@@ -31,7 +31,7 @@ module Web
       failed!(Date.current, printer: "MK4")
       get root_path
       assert_select ".home-attention .attention-row--danger", text: /Tetra failed on .* on MK4\./
-      assert_select ".home-attention .attention-row--danger a.btn[href=?]",
+      assert_select ".home-attention .attention-row--danger a.linkbtn[href=?]",
                     model_path(@model, file: "details", log: 1, anchor: "print-log"), text: "Log a print"
 
       # And the link lands there: the Details pane, the composer open, the log's own anchor.

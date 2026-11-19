@@ -70,7 +70,7 @@ class OnboardingSystemTest < ApplicationSystemTestCase
   test "Skip for now leaves the wizard for good" do
     visit root_path
     click_on "Skip for now"
-    assert_selector ".page-head h1", text: "Recent"
+    assert_selector ".page-head h1", text: "Today"
     visit root_path
     assert_current_path root_path
   end

@@ -1,100 +1,135 @@
-<% content_for :title, "Recent — Tinkerex" %>
+<% content_for :title, "Today — Tinkerex" %>
 
-<%# THE HEADING ALONE (structural redesign §7, slice 6). This head carried "New project" as the page's
-    one action; the strip's Add already has Project (and Upload, which asks for a folder here). The
-    section ids are the left column's in-page links (layouts/column/_home). %>
+<%# TODAY (Shop manual spec §7, slice 7): the date as the caps path, the title, a lead built from what
+    the page loaded (HomeHelper#home_lead), the page's two buttons, then the numbered sections in two
+    stacks (HomeHelper#home_sections, which the left column reads too). The route, the `[:home]` key
+    and the section ids the column links to are Recent's, unchanged.
+
+    TWO OUTLINED BUTTONS AND NO PRIMARY: Home spends no ink fill (design-system.md rule 13). "Add
+    files" is the strip's Upload, forwarded (upload_forward_controller.js#open clicks the strip's own
+    button), so this page asks for a folder exactly as Add does and renders no second file input; "New
+    project" is the form the strip's Add also links. %>
+<% content_for :crumbs do %>
+  <span class="page-path-title home-date"><%= time_at(Date.current, style: :date) %></span>
+<% end %>
+
 <div class="page-head">
-  <h1>Recent</h1>
+  <h1>Today</h1>
+  <p class="page-lead"><%= home_lead %></p>
+  <div class="page-actions">
+    <button type="button" class="btn home-add-files" data-controller="upload-forward"
+            data-action="upload-forward#open"><%= rail_icon(:plus) %>Add files</button>
+    <%= link_to "New project", new_project_path, class: "btn" %>
+  </div>
 </div>
 
-<%# RECENTLY CHANGED (structural redesign §7): the newest live files, as tiles that OPEN THE FILE —
-    a link to its file page, never a selection item (this page has no selection controller). A click
-    opens it and a double-click opens it in a new tab (FilesHelper#file_open_data, 2026-10-21);
-    right-click › Details lands in the Library with the file's side panel open. They once opened
-    the file's folder in the Library with the file selected; a click that lands somewhere other
-    than the thing clicked read as a detour, so the owner asked for it to just open (2026-10-20). A
-    wrapping grid, not a row that scrolls sideways: sixteen tiles are a page of their own, and
-    pages/home.css wraps them.
-
-    GETTING STARTED IN ITS PLACE WHILE THERE IS NO LIVE FILE (F onboarding, 2026-10-13), and it is
-    the one empty state on this page. `@recent_files.empty?` is exactly "no live, visible file"
-    (HomeController#index), so the panel leaves on its own once a file exists: no cookie, no
-    dismissal row, nothing stored. It replaces the Recently changed panel rather than sitting inside
-    it, which would frame a panel inside a panel around nothing. Its first two steps are the shared
-    partial's two halves, so they say what the Library's and the Projects page's empty states say.
-    It points at the strip's Upload rather than rendering a second upload control, which would
-    duplicate the input's id; nothing in it is primary (design-system.md rule 13). %>
-<% if @recent_files.empty? %>
-  <section class="panel home-section getting-started" id="home-getting-started">
-    <div class="panel-head"><h2>Getting started</h2><%= link_to "Help explains all of this", help_path, class: "muted" %></div>
-    <p class="getting-started-tour"><%= link_to "Take the tour", welcome_path %>: it walks you through
-      what Tinkerex does and sets up your first project.</p>
-    <ol class="getting-started-steps">
-      <li>
-        <h3>Bring your files in</h3>
-        <%= render "shared/where_files_come_from", projects: false %>
-      </li>
-      <li>
-        <h3>Let your folders become projects</h3>
-        <%= render "shared/where_files_come_from", sources: false %>
-      </li>
-      <li>
-        <h3>Make things with Tools</h3>
-        <p>Tools are small apps that run inside Tinkerex, such as a box generator, and save what
-          they make straight into your library. <%= link_to "Open Tools", tools_path %></p>
-      </li>
-    </ol>
-  </section>
-<% else %>
-  <section class="panel home-section home-files" id="home-recent">
-    <div class="panel-head"><h2>Recently changed</h2><%= link_to "Library", files_path, class: "muted" %></div>
-    <div class="recent-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
-      <% @recent_files.each do |node| %>
-        <%= render "home/file_card", node: node, covers: @covers, origins: @addon_origins %>
-      <% end %>
-    </div>
-  </section>
-<% end %>
-
-<%# ACTIVE PROJECTS, ONLY WHEN THERE ARE ANY: an empty account has one empty state, the getting-started panel above. %>
-<% if @recent_projects.any? %>
-  <section class="panel home-section home-projects" id="home-projects">
-    <div class="panel-head"><h2>Active projects</h2><%= link_to "All projects", projects_path, class: "muted" %></div>
-    <div class="recent-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
-      <% @recent_projects.each do |project| %>
-        <%= render "projects/card", project: project, thumb: @covers.thumb(project.cover_node_id) %>
-      <% end %>
-    </div>
-  </section>
-<% end %>
-
-<%# NEEDS ATTENTION, ONLY WHEN SOMETHING DOES. A section reading "Nothing needs attention" is a row of
-    reassurance on every visit; absent, the page is shorter by exactly what was not news. %>
-<% if @failed_prints.any? || @low_stock.any? %>
-  <section class="panel home-section home-attention" id="home-attention">
-    <div class="panel-head"><h2>Needs attention</h2></div>
-    <ul class="attention-list">
-      <%# "LOG A PRINT" OPENS THE PRINT LOG (UX audit 2026-11-01, E6): the model page's Details pane with
-          its composer open, never the pane the page would choose for itself — which is the first
-          instructions PDF whenever the model has one. Logging that next print is also what takes this
-          row away (HomeController::ATTENTION_WINDOW says how). %>
-      <% @failed_prints.each do |run| %>
-        <li class="attention-row attention-row--danger">
-          <span class="attention-mark" aria-hidden="true"></span>
-          <span class="attention-text"><%= link_to run.model.title, model_path(run.model) %> failed on <%= time_at(run.printed_on, style: :date) %><%= " on #{run.printer}" if run.printer.present? %>.</span>
-          <%= link_to "Log a print", model_path(run.model, file: "details", log: 1, anchor: "print-log"), class: "btn small" %>
+<%# THE TWO STACKS (components.css `.page-columns`). The left holds the projects; the right what needs
+    attention and the files. A stack with nothing in it is not drawn, so a lone stack takes the width. %>
+<% left = home_sections.select { |s| s.column == :left } %>
+<% right = home_sections.select { |s| s.column == :right } %>
+<div class="page-columns home-columns">
+<% [ left, right ].reject(&:empty?).each do |stack| %>
+<div class="page-column">
+<% stack.each do |section| %>
+  <% case section.key %>
+  <% when :projects %>
+    <%# ACTIVE PROJECTS, ONLY WHEN THERE ARE ANY: an empty account has one empty state, the
+        getting-started section. A row per project, as the screen draws it: the cover, the name and
+        its facts, when it last changed. %>
+    <section class="panel home-section home-projects" id="home-projects">
+      <div class="panel-head">
+        <h2><span class="panel-num"><%= section.number %></span> Active projects</h2>
+        <%= link_to "All projects", projects_path, class: "panel-note" %>
+      </div>
+      <div class="recent-grid project-rows" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+        <% @recent_projects.each do |project| %>
+          <%= render "projects/card", project: project, thumb: @covers.thumb(project.cover_node_id) %>
+        <% end %>
+      </div>
+    </section>
+  <% when :attention %>
+    <%# NEEDS ATTENTION, ONLY WHEN SOMETHING DOES. A section reading "Nothing needs attention" is a row
+        of reassurance on every visit; absent, the page is shorter by exactly what was not news.
+        Each row leads with its kind as a caps word in the accent: a mark with its word, never colour
+        alone (rule 13). %>
+    <section class="panel home-section home-attention" id="home-attention">
+      <div class="panel-head">
+        <h2><span class="panel-num"><%= section.number %></span> Needs attention</h2>
+        <span class="panel-note"><%= count_label(section.count, "thing") %></span>
+      </div>
+      <ul class="attention-list">
+        <%# "LOG A PRINT" OPENS THE PRINT LOG (UX audit 2026-11-01, E6): the model page's Details pane
+            with its composer open, never the pane the page would choose for itself — which is the
+            first instructions PDF whenever the model has one. Logging that next print is also what
+            takes this row away (HomeController::ATTENTION_WINDOW says how). %>
+        <% @failed_prints.each do |run| %>
+          <li class="attention-row attention-row--danger">
+            <span class="attention-kind">Print failed</span>
+            <span class="attention-text"><%= link_to run.model.title, model_path(run.model) %> failed on <%= time_at(run.printed_on, style: :date) %><%= " on #{run.printer}" if run.printer.present? %>.</span>
+            <%= link_to "Log a print", model_path(run.model, file: "details", log: 1, anchor: "print-log"), class: "linkbtn" %>
+          </li>
+        <% end %>
+        <%# LOW STOCK, AFTER THE FAILED PRINTS — a second attention source (stage 2, S2-3), sharing
+            the row shape but its own modifier class. Out of stock and low stock say which. %>
+        <% @low_stock.each do |item| %>
+          <li class="attention-row attention-row--warn">
+            <span class="attention-kind"><%= attention_word(item) %></span>
+            <span class="attention-text"><%= link_to item.name, inventory_item_path(item) %>: <%= inventory_quantity(item.quantity_cached) %> <%= item.unit %> left, minimum <%= inventory_quantity(item.min_quantity) %>.</span>
+            <%= link_to "Restock", inventory_item_path(item, reason: "restocked"), class: "linkbtn" %>
+          </li>
+        <% end %>
+      </ul>
+    </section>
+  <% when :recent %>
+    <%# RECENTLY CHANGED (structural redesign §7): the newest live files, as figures that OPEN THE
+        FILE — a link to its file page, never a selection item (this page has no selection
+        controller). A click opens it and a double-click opens it in a new tab
+        (FilesHelper#file_open_data, 2026-10-21); right-click › Details lands in the Library with the
+        file's side panel open. A wrapping grid, never a row that scrolls sideways. %>
+    <section class="panel home-section home-files" id="home-recent">
+      <div class="panel-head">
+        <h2><span class="panel-num"><%= section.number %></span> Recently changed</h2>
+        <%= link_to "Library", files_path, class: "panel-note" %>
+      </div>
+      <div class="recent-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
+        <% @recent_files.each do |node| %>
+          <%= render "home/file_card", node: node, covers: @covers, origins: @addon_origins, facts: true %>
+        <% end %>
+      </div>
+    </section>
+  <% when :getting_started %>
+    <%# GETTING STARTED IN ITS PLACE WHILE THERE IS NO LIVE FILE (F onboarding, 2026-10-13), and it is
+        the one empty state on this page. `@recent_files.empty?` is exactly "no live, visible file"
+        (HomeController#index), so the section leaves on its own once a file exists: no cookie, no
+        dismissal row, nothing stored. Its first two steps are the shared partial's two halves, so
+        they say what the Library's and the Projects page's empty states say. It points at the
+        strip's Upload rather than rendering a second upload control, which would duplicate the
+        input's id; nothing in it is primary (design-system.md rule 13). %>
+    <section class="panel home-section getting-started" id="home-getting-started">
+      <div class="panel-head">
+        <h2><span class="panel-num"><%= section.number %></span> Getting started</h2>
+        <%= link_to "Help explains all of this", help_path, class: "panel-note" %>
+      </div>
+      <p class="getting-started-tour"><%= link_to "Take the tour", welcome_path %>: it walks you through
+        what Tinkerex does and sets up your first project.</p>
+      <ol class="getting-started-steps">
+        <li>
+          <h3>Bring your files in</h3>
+          <%= render "shared/where_files_come_from", projects: false %>
         </li>
-      <% end %>
-      <%# LOW STOCK, AFTER THE FAILED PRINTS — a second attention source (stage 2, S2-3), sharing
-          the row shape but its own modifier class so it can read as a milder warning rather than
-          the danger colour a failed print gets (pages/home.css). %>
-      <% @low_stock.each do |item| %>
-        <li class="attention-row attention-row--warn">
-          <span class="attention-mark" aria-hidden="true"></span>
-          <span class="attention-text"><%= link_to item.name, inventory_item_path(item) %>: <%= inventory_quantity(item.quantity_cached) %> <%= item.unit %> left, minimum <%= inventory_quantity(item.min_quantity) %>.</span>
-          <%= link_to "Restock", inventory_item_path(item, reason: "restocked"), class: "btn small" %>
+        <li>
+          <h3>Let your folders become projects</h3>
+          <%= render "shared/where_files_come_from", sources: false %>
         </li>
-      <% end %>
-    </ul>
-  </section>
+        <li>
+          <h3>Make things with Tools</h3>
+          <p>Tools are small apps that run inside Tinkerex, such as a box generator, and save what
+            they make straight into your library. <%= link_to "Open Tools", tools_path %></p>
+        </li>
+      </ol>
+    </section>
+  <% end %>
 <% end %>
+</div>
+<% end %>
+</div>

@@ -2,26 +2,23 @@
     pinned folders and pinned tools the rail used to carry on every page. Home lights no place and no
     row (spec §11.2): a section link is a place on this page, not a page.
 
-    THE SECTIONS ARE THE ONES HomeController#index RENDERS, asked through the same conditions
-    home/index.html.erb asks, and only on that page (the onboarding wizard is Home's too and shows
-    none of them). shell_layout_test.rb holds every in-page link to an element the page carries, so a
-    section that leaves the page cannot leave its link behind.
+    THE SECTIONS ARE THE ONES HomeController#index RENDERS, NUMBERED AS THE PAGE NUMBERS THEM:
+    HomeHelper#home_sections is the one list both read (Shop manual slice 7), and it is empty on any
+    other Home page (the onboarding wizard is Home's too and shows none of them). A row carries its
+    section's count where it has one. shell_layout_test.rb holds every in-page link to an element the
+    page carries, so a section that leaves the page cannot leave its link behind.
 
     THE PINNED TOOLS keep their right-click Unpin (`toolmenu`) and the calculator keeps its opener: a
     real href all the same, so a modified click, or a page whose script failed, lands on the Tools
     card that opens it. %>
-<% sections = [] %>
-<% if controller_path == "home" && action_name == "index" %>
-  <% sections << (@recent_files.empty? ? [ "Getting started", "home-getting-started" ] : [ "Recently changed", "home-recent" ]) %>
-  <% sections << [ "Active projects", "home-projects" ] if @recent_projects.any? %>
-  <% sections << [ "Needs attention", "home-attention" ] if @failed_prints.any? || @low_stock.any? %>
-<% end %>
+<% sections = home_sections %>
 <% tools = current_user.tool_pins.to_a %>
 <% if sections.any? %>
   <div class="column-group">
     <h2 class="column-head">On this page</h2>
-    <% sections.each do |label, id| %>
-      <%= column_row label, "##{id}" %>
+    <% sections.each do |section| %>
+      <%= column_row safe_join([ tag.span(section.number, class: "column-row-num"), " ", section.label ]),
+                     "##{section.id}", note: section.count %>
     <% end %>
   </div>
 <% end %>

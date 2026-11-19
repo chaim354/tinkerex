@@ -1,6 +1,17 @@
 <% content_for :title, "Tools — Tinkerex" %>
 
-<div class="page-head"><h1>Tools</h1></div>
+<%# THE HEAD SAYS WHAT A TOOL IS (Shop manual slice 7; the screen `tools`), and spends no primary:
+    every tool's card opens it, and none is the one thing this page is for (design-system.md rule 13).
+
+    EACH TOOL IS NUMBERED, in the order the page draws them (the calculator first, then the add-ons
+    section by section), and its card is drawn as a numbered section: the number, the mark and the
+    name over a 2px ink rule, what kind of tool it is at the right. A number is a place on this page,
+    never a stored thing. %>
+<div class="page-head">
+  <h1>Tools</h1>
+  <p class="page-lead">Small apps that run inside Tinkerex and save what they make straight into your library.</p>
+</div>
+<% tool_number = 0 %>
 
 <%# PINNING, TWO WAYS TO ONE DOOR (Tools::PinsController). Every runnable card carries a visible
     Pin to sidebar toggle (tools/home/_pin_toggle), which a keyboard, a touch screen and a first-time
@@ -31,8 +42,10 @@
     <%= tag.div class: "tool-card calculator-card", id: "calculator",
                 data: tool_menu_data(Maker::ToolPins::CALCULATOR, "Calculator") do %>
       <span class="addon-card-head">
+        <span class="panel-num"><%= tool_number += 1 %></span>
         <span class="addon-icon" aria-hidden="true"><%= rail_icon(:calculator) %></span>
         <span class="addon-title" id="tool-title-calculator">Calculator</span>
+        <span class="panel-note addon-kind">built in</span>
       </span>
       <span class="addon-desc muted">Lengths in mm, cm, m, inches and feet, inch fractions, and
         conversions. Save a result to a project. <span class="calculator-card-keys">Opens over any page
@@ -128,13 +141,15 @@
       <% title_id = "tool-title-#{index}" %>
       <%= tag.div class: "addon-card", data: tool_menu_data(addon.key, addon.title) do %>
         <span class="addon-card-head">
+          <span class="panel-num"><%= tool_number += 1 %></span>
           <%= render "tools/home/addon_mark", addon: %>
           <%= link_to addon.title, tools_addon_path(addon.key), class: "addon-title addon-card-link", id: title_id %>
+          <span class="panel-note addon-kind">add-on</span>
         </span>
         <span class="addon-desc muted"><%= addon.description %></span>
         <% if addon.permissions.any? %>
           <span class="addon-permissions addon-card-foot muted">
-            This tool can:
+            <span class="addon-can">This tool can:</span>
             <%= addon.permissions.map { |p| Maker::Addons::Permissions.label_for(p["name"]) }.to_sentence %>
           </span>
         <% end %>
@@ -147,8 +162,10 @@
           (tools/addons/show) rather than mounting a bundle that would fail. %>
       <div class="addon-card disabled" title="<%= addon.unavailable_reason %>">
         <span class="addon-card-head">
+          <span class="panel-num"><%= tool_number += 1 %></span>
           <%= render "tools/home/addon_mark", addon: %>
           <span class="addon-title"><%= addon.title %></span>
+          <span class="panel-note addon-kind">add-on</span>
         </span>
         <span class="addon-desc muted"><%= addon.unavailable_reason %></span>
       </div>

@@ -2,16 +2,26 @@
 
 <%# SUPPLIERS AND LOCATIONS ARE REACHED FROM HERE (UX audit 2026-11-01, E5): they were linked only
     from the Settings hub, while this page and the item form's dropdowns that name them never said
-    where they are kept. Quiet buttons beside the one primary, New item. %>
+    where they are kept. Quiet buttons after the one primary, New item, in the screen's order (Shop
+    manual slice 7), under a lead counted off the rows this page loaded (InventoryHelper#inventory_lead). %>
 <div class="page-head">
   <h1>Inventory</h1>
+  <% if (lead = inventory_lead) %><p class="page-lead"><%= lead %></p><% end %>
   <div class="page-actions">
-    <%= link_to "Suppliers", suppliers_path, class: "btn small" %>
-    <%= link_to "Locations", locations_path, class: "btn small" %>
-    <%= link_to "New item", new_inventory_item_path, class: "btn primary" %>
+    <%= link_to new_inventory_item_path, class: "btn primary" do %><%= rail_icon(:plus) %>New item<% end %>
+    <%= link_to "Locations", locations_path, class: "btn" %>
+    <%= link_to "Suppliers", suppliers_path, class: "btn" %>
   </div>
 </div>
 
+<%# THE STOCK, AS A NUMBERED SECTION (the screen's "Stock"): its head counts the rows and says the sort,
+    then the filters and the table. The screen's To buy and Recent changes are later behaviours (spec
+    §9); they take the numbers above this one when they land. %>
+<section class="panel inventory-stock" id="inventory-stock">
+<div class="panel-head">
+  <h2><span class="panel-num">1</span> Stock</h2>
+  <span class="panel-note">sorted by <%= InventoryHelper::SORT_LABELS.fetch(@sort).downcase %></span>
+</div>
 <form class="toolbar inventory-toolbar" method="get" action="<%= inventory_items_path %>">
   <input type="search" name="q" value="<%= @q %>" placeholder="Name or part number" aria-label="Search inventory">
   <%# EVERY CONTROL BELOW STARTS FROM `filters` (InventoryHelper#inventory_filters, the page's one
@@ -61,7 +71,7 @@
       accessible name, and keeping both leaves two sources for it. %>
   <label class="muted" for="inventory-sort">Sort</label>
   <select name="sort" id="inventory-sort" onchange="this.form.requestSubmit()">
-    <% [ %w[name Name], [ "quantity", "On hand" ], %w[category Category], %w[updated Updated] ].each do |val, label| %>
+    <% InventoryHelper::SORT_LABELS.each do |val, label| %>
       <option value="<%= val %>" <%= "selected" if @sort == val %>><%= label %></option>
     <% end %>
   </select>
@@ -79,7 +89,7 @@
     <thead>
       <tr>
         <%= inventory_sort_header "Name", "name", col: "col-name" %>
-        <th class="col-part">Part #</th>
+        <th class="col-part">Part number</th>
         <%= inventory_sort_header "Category", "category", col: "col-category" %>
         <%= inventory_sort_header "On hand", "quantity", col: "col-onhand" %>
         <th class="col-min">Minimum</th>
@@ -108,3 +118,4 @@
     </tbody>
   </table>
 <% end %>
+</section>

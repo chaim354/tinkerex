@@ -49,7 +49,7 @@ module Web
       @user.update_column(:onboarding_pending, false)
       get root_path
       assert_response :success
-      assert_select ".page-head h1", "Recent"
+      assert_select ".page-head h1", "Today"
       get welcome_path
       assert_response :success
     end
@@ -58,7 +58,7 @@ module Web
       ENV["DEMO_ACCOUNT_EMAIL"] = @user.email
       get root_path
       assert_response :success
-      assert_select ".page-head h1", "Recent"
+      assert_select ".page-head h1", "Today"
     end
 
     test "Skip clears the pending state and goes to Recent" do

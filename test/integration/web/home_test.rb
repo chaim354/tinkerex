@@ -26,10 +26,13 @@ module Web
     test "an empty account sees one empty state, pointing at the strip's Upload" do
       get root_path
       assert_response :success
-      assert_select ".page-head h1", text: "Recent"
-      # The head is the heading alone: the strip's Add already has Project.
-      assert_select ".page-head > *", count: 1
-      assert_select "main a[href=?]", new_project_path, count: 0
+      # TODAY (Shop manual slice 7): the title, a lead, and the screen's two outlined buttons. Neither
+      # is a second upload control: "Add files" forwards to the strip's own Upload button.
+      assert_select ".page-head h1", text: "Today"
+      assert_select ".page-head .page-lead", text: "No project is open. Nothing needs a look."
+      assert_select ".page-head .page-actions button.btn.home-add-files[data-action='upload-forward#open']", text: "Add files"
+      assert_select ".page-head .page-actions a.btn[href=?]", new_project_path, text: "New project"
+      assert_select "main .btn.primary", count: 0
       assert_select ".home-section.getting-started .file-sources", text: /Upload, under Add at the top of the page/
       assert_select ".home-section", count: 1
       assert_select ".home-files", count: 0
@@ -100,7 +103,7 @@ module Web
       assert_select ".home-attention .attention-row", text: /failed/i
       # "LOG A PRINT" OPENS THE PRINT LOG (UX audit 2026-11-01, E6): the Details pane with the composer
       # open, never the pane the model page picks for itself (its instructions PDF, when it has one).
-      assert_select ".home-attention .attention-row a.btn[href=?]",
+      assert_select ".home-attention .attention-row a.linkbtn[href=?]",
                     model_path(model, file: "details", log: 1, anchor: "print-log"), text: "Log a print"
     end
 
@@ -136,7 +139,7 @@ module Web
       assert_select ".home-attention .attention-row.attention-row--warn",
                     text: /M3×8 screw: 12 each left, minimum 50/
       # Restock lands on the item\x27s composer already set to Restocked (`?reason=`), not to Consumed.
-      assert_select ".home-attention .attention-row a.btn[href=?]", inventory_item_path(low, reason: "restocked"), text: "Restock"
+      assert_select ".home-attention .attention-row a.linkbtn[href=?]", inventory_item_path(low, reason: "restocked"), text: "Restock"
       assert_select ".home-attention .attention-row", text: /Aardvark bracket/, count: 0
     end
 
@@ -155,6 +158,30 @@ module Web
       end
       get root_path
       assert_select ".home-attention .attention-row.attention-row--warn", count: HomeController::ATTENTION_STOCK
+    end
+
+    # THE NUMBERS ARE THE PAGE'S READING ORDER, AND THE COLUMN READS THE SAME LIST (HomeHelper
+    # #home_sections, Shop manual slice 7): the left stack's projects, then the right stack's
+    # attention and files, numbered 1, 2, 3 with no gap whatever is absent, each column row the
+    # same number and words as the head it links to, and a lead counted off the same lists. Every
+    # section present, so a numbering that skipped or reordered one would show.
+    #
+    # MUTATION-CHECKED (§15): numbering the sections from 0 in HomeHelper reddened the heads'
+    # assertion ("0 Active projects" for "1 Active projects"), and a column row reading the
+    # section's label without its number reddened the column's.
+    test "the sections are numbered in reading order, and the column numbers them the same way" do
+      @user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      file("lamp.stl", at: 1.hour.ago)
+      low = @user.maker_inventory_items.create!(name: "M3 bolt", unit: "each", min_quantity: 5)
+      Maker::InventoryTransaction.apply!(item: low, user: @user, delta: 2, reason: "initial")
+      get root_path
+
+      heads = css_select("main .home-section .panel-head h2").map { |h| h.text.squish }
+      assert_equal [ "1 Active projects", "2 Needs attention", "3 Recently changed" ], heads
+      rows = css_select("aside.column a.column-row[href^='#']").map { |a| [ a.at_css(".column-row-name").text.squish, a["href"] ] }
+      assert_equal [ [ "1 Active projects", "#home-projects" ], [ "2 Needs attention", "#home-attention" ],
+                     [ "3 Recently changed", "#home-recent" ] ], rows
+      assert_select ".page-head .page-lead", text: "One project is open. One thing needs a look."
     end
   end
 end
