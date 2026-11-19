@@ -105,12 +105,26 @@ module Maker
       def full_status(limit: DEFAULT_STATUS_LIMIT)
         return FullStatus.new(rows: [], truncated_count: 0) unless committable?
 
+        paths = changed_paths
+        rows = paths.first(limit).map { |rel| row_for(rel) }.reject { |r| r.state == :unchanged }
+        FullStatus.new(rows:, truncated_count: [ paths.size - limit, 0 ].max)
+      end
+
+      # Every path git's own status lists as changed, `.gitignore`d ones dropped, SORTED — and nothing
+      # more: no content read, no row. #full_status builds its rows from this list, and the project
+      # page's tidy-up list (Maker::TidyUp) counts it, which is why it is one method rather than the
+      # accumulation written twice.
+      #
+      # A HINT, NOT THE COMMIT BOX'S ANSWER. This is git's status — a stat comparison against the
+      # index, content hashed only where the stat differs — so on a NAS whose attribute cache lies it
+      # can miss a change, and a path it lists may still read `:unchanged` once #row_for compares
+      # content against HEAD's blob ("Compare content against HEAD's blob, never a stat",
+      # docs/invariants/git-editing.md). The tidy-up list counts it and links the commit page, which
+      # compares content and is the authority; nothing here deletes a Maker::RepoEdit on its word.
+      def changed_paths
         paths = []
         rugged.status { |path, flags| paths << path unless flags.include?(:ignored) }
         paths.sort!
-
-        rows = paths.first(limit).map { |rel| row_for(rel) }.reject { |r| r.state == :unchanged }
-        FullStatus.new(rows:, truncated_count: [ paths.size - limit, 0 ].max)
       end
 
       # How many OTHER paths git sees as dirty. Counted, never listed: listing them is the staging

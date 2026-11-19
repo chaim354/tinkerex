@@ -448,6 +448,16 @@ module Web
       @user.maker_file_links.create!(from_node_id: "n-stl", to_node_id: "n-bak", kind: "derived_from")
       @user.maker_file_links.create!(from_node_id: "n-generated", to_node_id: "n-stl", kind: "derived_from")
       @user.maker_file_links.create!(from_node_id: "n-photo", to_node_id: "n-stl", kind: "photo_of")
+      # THE TIDY-UP LIST (the Shop manual's §9, 2026-11-19): an export older than its source inside the
+      # project's folder, or projects/_tidy_up renders on no page here — the plate draws only while it
+      # holds a suggestion. It raises Home's OUT OF DATE row too, so that arm of "Needs attention" is
+      # swept by the "home" page with it.
+      %w[n-tidy-source:tidy.lbrn2:2000 n-tidy-export:tidy.svg:1000].each do |spec|
+        id, name, mtime = spec.split(":")
+        @user.nodes.create!(node_id: id, name:, kind: "file", parent_node_id: folder.node_id, size: 5, mtime: mtime.to_i,
+                            content_hash: "h-#{id}", current_version_id: "v-#{id}")
+      end
+      @user.maker_file_links.create!(from_node_id: "n-tidy-export", to_node_id: "n-tidy-source", kind: "derived_from")
       # A NOTE MATCHING THE SWEEP'S OWN SEARCH QUERY ("lamp"), so the search page renders the NOTE
       # arm of shared/_result_group. Coverage here is per TEMPLATE, so that partial already counted
       # as swept — but a leaked comment lives in ONE `case` arm, and counting which of the seven

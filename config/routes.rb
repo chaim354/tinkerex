@@ -320,6 +320,11 @@ root to: "home#index"
     # page. `mint_unlisted_token` only ever FILLED a nil column, so until now a link handed out
     # once worked forever with no way to withdraw it.
     resource :unlisted_token, only: :create, module: :projects
+    # THE TIDY-UP LIST'S DISMISS (the Shop manual's §9, 2026-11-19). Create-only and nested: a
+    # dismissal is about this project's page, there is nothing to GET, and a dismissed suggestion comes
+    # back by itself when its subject changes (Maker::TidyDismissal), so there is no undo route to
+    # keep either. `controller_path` is "projects/tidy_dismissals", so the strip lights Projects.
+    resources :tidy_dismissals, only: :create, module: :projects
   end
 
   # NON-NESTED ATTACH. The file page attaches via a <select> of projects, and a <select> cannot

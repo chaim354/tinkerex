@@ -111,6 +111,23 @@
             <%= link_to "Restock", inventory_item_path(item, reason: "restocked"), class: "linkbtn" %>
           </li>
         <% end %>
+        <%# THE TIDY-UP LIST'S HOME ROWS (the Shop manual's §9; Maker::TidyUp::Attention), after the stock.
+            NOT COMMITTED counts only what was saved through this app (Home runs no git), and its
+            sentence says so; Review opens the commit box, which asks git. OUT OF DATE is the project
+            page's own check and opens that page's list, where it can be dismissed. %>
+        <% Array(@tidy_attention).each do |row| %>
+          <li class="attention-row attention-row--warn tidy-attention tidy-attention--<%= row.kind.dasherize %>">
+            <% if row.kind == "uncommitted" %>
+              <span class="attention-kind">Not committed</span>
+              <span class="attention-text"><%= link_to row.project.name, project_path(row.project) %>: <%= count_label(row.detail.count, "file") %> saved in Tinkerex <%= row.detail.count == 1 ? "is" : "are" %> not committed<%= " in #{row.detail.name}" unless row.detail.name == row.project.name %>.</span>
+              <%= link_to "Review", repo_commit_path(row.detail.root_node_id), class: "linkbtn" %>
+            <% else %>
+              <span class="attention-kind">Out of date</span>
+              <span class="attention-text"><%= link_to row.project.name, project_path(row.project) %>: <%= row.detail.derived_name %> is older than <%= row.detail.source_name %>.</span>
+              <%= link_to "Open", project_path(row.project, anchor: "tidy-up"), class: "linkbtn" %>
+            <% end %>
+          </li>
+        <% end %>
       </ul>
     </section>
   <% when :recent %>

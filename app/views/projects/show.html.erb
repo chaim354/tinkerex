@@ -117,6 +117,11 @@
     <%= safe_join(hidden_rows.map { |entry| link_to hidden_row_label(entry, @panel_layout), hidden_row_path(@project, entry) }, " · ") %>
   </p>
 <% end %>
+<%# THE TIDY-UP LIST (the Shop manual's §9): full width, under the head and above the panels, and only
+    while it holds an undismissed suggestion. Never in the editor (@tidy is nil there). %>
+<% if @tidy&.any? %>
+  <%= render "projects/tidy_up", tidy: @tidy %>
+<% end %>
 <% end %>
 
 <%= render "projects/move_conflict" %>

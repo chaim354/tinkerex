@@ -96,6 +96,12 @@
   /* "Also in this project" (2026-11-02, the UX audit's C1): the hidden panels that hold rows, one
      line under the head. */
   .project-also { margin: -24px 0 32px; font-size: 13px; }
+  /* THE TIDY-UP LIST (the Shop manual's §9; projects/_tidy_up): a full-width plate of numbered cells
+     (components.css `.plate-cells`) between the head and the panels, as far from the panels as the
+     head is. Its heading is the plate head's caps label, not a section head. */
+  .tidy-up { margin: 0 0 40px; }
+  .tidy-up-head { margin: 0; font: inherit; letter-spacing: inherit; text-transform: inherit; }
+  .tidy-up-more { margin: 0; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 13px; }
   /* --- The hero (stage 4, S4-1): the cover on the project's own page. An image cover is the
      picture, capped like the model page's; any other cover is its thumbnail in a poll cell. --- */
   .project-hero { display: flex; flex-direction: column; gap: 6px; margin: 0 0 20px; }

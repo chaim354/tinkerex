@@ -97,6 +97,9 @@ class User < ApplicationRecord
   # carries no callbacks, so the two are equivalent in effect and the cheaper one buys nothing at
   # these row counts. TenantCleanupTest is what proves the line exists at all.
   has_many :maker_file_links, class_name: "Maker::FileLink", dependent: :destroy
+  # Dismissed tidy-up suggestions (the Shop manual's §9, 2026-11-19). Destroyed with the project too
+  # (Maker::Project#tidy_dismissals); this is the tenant sweep's own door.
+  has_many :maker_tidy_dismissals, class_name: "Maker::TidyDismissal", dependent: :destroy
   has_many :maker_sheets, class_name: "Maker::Sheet", dependent: :destroy
   has_many :maker_models, class_name: "Maker::Model", dependent: :destroy
   has_many :maker_print_runs, through: :maker_models, source: :print_runs

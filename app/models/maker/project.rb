@@ -120,6 +120,9 @@ module Maker
     # `project_belongs_to_user` validation, so a nulled pointer would be an unsaveable row (§14d).
     has_many :releases, -> { order(published_at: :desc, id: :desc) },
              class_name: "Maker::Release", foreign_key: :project_id, dependent: :destroy
+    # DISMISSED TIDY-UP SUGGESTIONS (the Shop manual's §9, 2026-11-19; Maker::TidyDismissal). A row is
+    # about this project's page and means nothing without it, so it goes with the project.
+    has_many :tidy_dismissals, class_name: "Maker::TidyDismissal", foreign_key: :project_id, dependent: :destroy
     # `:nullify`, AND IT IS THE ONLY OPTION THAT WORKS — do not "normalise" it onto the
     # `:destroy` lines above. The ledger outlives the project on purpose: a transaction records
     # that stock actually moved, and `InventoryItem#quantity_cached` was computed from it, so

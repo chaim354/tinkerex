@@ -25,6 +25,15 @@
     <span class="column-row-num" aria-hidden="true"></span>
     <span class="column-row-name">Overview</span>
   <% end %>
+  <%# TIDY UP (the Shop manual's §9), unnumbered like Overview because it is not one of the page's
+      sections, with the plate's own count: @tidy is what the page drew, so this asks nothing. %>
+  <% if @tidy&.any? %>
+    <%= link_to "#tidy-up", class: "column-row column-row--section", data: { action: "click->shell#closeColumn" } do %>
+      <span class="column-row-num" aria-hidden="true"></span>
+      <span class="column-row-name">Tidy up</span>
+      <span class="column-row-note"><%= @tidy.count %></span>
+    <% end %>
+  <% end %>
   <% Array(@page_sections).each_with_index do |key, i| %>
     <% count = @section_counts&.[](key) %>
     <%= link_to "##{section_anchor(key)}", class: "column-row column-row--section", data: { action: "click->shell#closeColumn" } do %>

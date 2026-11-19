@@ -171,6 +171,13 @@ module Web
                                    parent_node_id: folder.node_id, size: 0,
                                    mtime: 1_700_000_000_000_000_000)
       project.update!(panels: { "views" => { "folder:listed-dir" => "list" } })
+      # THE TIDY-UP LIST (the Shop manual's §9, 2026-11-19): `design` is where the svg rule files, so a
+      # root svg whose name it already holds is a LOOSE suggestion, and `add` grows one per iteration
+      # (half of them dismissed, so the dismissal lookup is under measurement with rows to match) and
+      # an export older than its source per iteration. The plate renders at both sizes, capped at
+      # Maker::TidyUp::SHOWN cells, which LARGE passes: a per-cell read shows as 3 against 12.
+      design = @user.nodes.create!(node_id: "design-dir", name: "design", kind: "dir",
+                                   parent_node_id: folder.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
@@ -210,6 +217,18 @@ module Web
           @user.nodes.create!(node_id: "#{id}-loose", name: "#{id}-loose.txt", kind: "file",
                               parent_node_id: folder.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
                               content_hash: "h-#{id}-loose", current_version_id: "v-#{id}-loose")
+          # THE TIDY-UP LIST: a loose svg the next pass cannot file (its name is taken in `design`),
+          # every other one dismissed in its current state, and an export older than its source.
+          @user.nodes.create!(node_id: "#{id}-taken", name: "#{id}.svg", kind: "file", parent_node_id: design.node_id,
+                              size: 1, mtime: 1_700_000_000_000_000_000)
+          @user.nodes.create!(node_id: "#{id}-blocked", name: "#{id}.svg", kind: "file", parent_node_id: folder.node_id,
+                              size: 1, mtime: 1_700_000_000_000_000_000)
+          if i.even?
+            project.tidy_dismissals.create!(user: @user, kind: "loose", subject: "#{id}-blocked", state: "design/#{id}.svg")
+          end
+          @user.nodes.create!(node_id: "#{id}-source", name: "#{id}.scad", kind: "file", parent_node_id: sub.node_id,
+                              size: 1, mtime: 1_800_000_000_000_000_000)
+          @user.maker_file_links.create!(from_node_id: "#{id}-file", to_node_id: "#{id}-source", kind: "derived_from")
           # STAGE 5, THE FOLDER PANELS (2026-09-08): A PLAIN DEPTH-ONE FOLDER PER ITERATION, AND IT
           # IS WHAT MAKES N THE NUMBER OF PANELS ON THIS PAGE. `sub` above carries a `.git` marker,
           # so every panel IT grows opens in the BROWSER — one empty div, no tiles, no rows, no
@@ -304,6 +323,10 @@ module Web
       # and 86 at the large one".
       assert_operator css_select("aside.column .project-contents a.column-row").size, :>, LARGE,
                       "the contents column must list the sections the page drew"
+      # THE TIDY-UP PLATE WAS UNDER MEASUREMENT (the Shop manual's §9): full at the large size, so its
+      # checks ran over every growing row and its cells rendered. MUTATION-CHECKED in the report that
+      # landed it: a per-suggestion dismissal lookup in Maker::TidyUp reddens the budget above.
+      assert_select "#tidy-up li.plate-cell", Maker::TidyUp::SHOWN
     ensure
       Maker::Addons::Source.reset!
     end
@@ -1088,6 +1111,23 @@ module Web
           # already rely on to catch a per-row query the LIMIT alone would hide.
           inv = @user.maker_inventory_items.create!(name: "Inv #{id}", unit: "each", min_quantity: 10)
           Maker::InventoryTransaction.apply!(item: inv, user: @user, delta: 1, reason: "initial")
+          # THE TIDY-UP ROWS (the Shop manual's §9): an export older than its source in each project's
+          # folder, and a repository there with one save not committed, so both of
+          # Maker::TidyUp::Attention's lists grow past ATTENTION_TIDY between the two sizes. Every
+          # other export is dismissed, so the dismissals it reads grow too.
+          folder = project_folder_rows!(@user, project)
+          @user.nodes.create!(node_id: "#{id}-src", name: "#{id}.lbrn2", kind: "file", parent_node_id: folder.node_id,
+                              size: 1, mtime: 2_000)
+          @user.nodes.create!(node_id: "#{id}-svg", name: "#{id}.svg", kind: "file", parent_node_id: folder.node_id,
+                              size: 1, mtime: 1_000)
+          @user.maker_file_links.create!(from_node_id: "#{id}-svg", to_node_id: "#{id}-src", kind: "derived_from")
+          if i.even?
+            project.tidy_dismissals.create!(user: @user, kind: "export_older", subject: "#{id}-svg>#{id}-src", state: "2000")
+          end
+          repo = @user.nodes.create!(node_id: "#{id}-repo", name: "firmware", kind: "dir", parent_node_id: folder.node_id,
+                                     size: 0, mtime: 1)
+          @user.nodes.create!(node_id: "#{id}-c", name: "main.c", kind: "file", parent_node_id: repo.node_id, size: 1, mtime: 1)
+          Maker::RepoEdit.record!(user: @user, repo_root_node_id: repo.node_id, node_id: "#{id}-c")
         end
       end
       assert_constant_queries(root_path,
@@ -1097,6 +1137,9 @@ module Web
       # THE STRADDLE, MEASURED RATHER THAN ASSUMED: the large size renders the capped count, so the
       # files query really was cut by its LIMIT while the per-row work stayed flat.
       assert_select ".home-files .grid-card", count: HomeController::RECENT_FILES
+      # THE TIDY-UP ROWS WERE UNDER MEASUREMENT: at the large size Needs attention holds the capped
+      # count of them, so both lists were read past their limit.
+      assert_select ".home-attention .tidy-attention", count: HomeController::ATTENTION_TIDY
       assert_operator large, :>, HomeController::RECENT_FILES
       assert_operator small, :<, HomeController::RECENT_FILES
     end
