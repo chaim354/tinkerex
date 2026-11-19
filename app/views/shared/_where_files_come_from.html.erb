@@ -31,12 +31,12 @@
     <% if capabilities.scannable? %>
       <% if capabilities.presignable? %>
         <p><strong>The storage this server uses</strong> is your library. Files another program
-          puts there appear here within 15 minutes, or right away with Rescan library, under More
-          actions (⋯) on the <%= link_to "Library", files_path %> page.</p>
+          puts there appear here within 15 minutes, or right away with Rescan library, at the top
+          of the <%= link_to "Library", files_path %> page.</p>
       <% else %>
         <p><strong><%= library_root_label %></strong> is your library. Anything put there,
           over a NAS share, by another program or by a plain copy, appears here within 15 minutes,
-          or right away with Rescan library, under More actions (⋯) on the
+          or right away with Rescan library, at the top of the
           <%= link_to "Library", files_path %> page.</p>
       <% end %>
     <% end %>

@@ -33,21 +33,28 @@ module Web
       assert_select ".workspace .workspace-main .preview-row"
       assert_select ".workspace .workspace-side dl.meta"
       assert_select ".workspace .workspace-side section.connections-panel"
-      assert_select ".workspace .workspace-side section.notes-panel#notes"
+      assert_select ".workspace .workspace-main section.notes-panel#notes"
       # The page head stays ABOVE the wrapper, unchanged.
       assert_select ".workspace .page-head", count: 0
     end
 
-    # The side column reads facts, the rename/move composer under the facts it changes (F,
-    # 2026-10-13 — a file outside a git working tree only), projects, connections, notes —
-    # outward-in, the order the page already had. A project exists so the attach block renders at
-    # all (it is absent with none).
-    test "the side column holds its five blocks in order" do
+    # THE TWO COLUMNS AS THE SHOP MANUAL'S FILE SCREEN LAYS THEM OUT (slice 6): under the picture what
+    # the file belongs to (Used in, the attach control) and what was written about it (Notes); beside
+    # it the facts, the rename/move composer under the facts it changes (F, 2026-10-13 — a file
+    # outside a git working tree only), then the connections. Until slice 6 every block but the
+    # picture sat in the side column, read outward-in. A project exists so the attach block renders
+    # at all (it is absent with none).
+    test "the two columns hold their blocks in order" do
       @user.maker_projects.create!(name: "Shop Stool")
 
       get file_path(@file.node_id)
-      side = css_select(".workspace-side > *").map { |el| el["class"].to_s.split.first }
-      assert_equal %w[meta rename-move attach-to-project connections-panel notes-panel], side
+      main = css_select(".workspace-main > *").map { |el| el["id"] }
+      assert_equal %w[preview projects notes], main
+      assert_select ".workspace-main > #projects .attach-to-project"
+      side = css_select(".workspace-side > *").map { |el| el["id"] }
+      assert_equal %w[details connections], side
+      details = css_select(".workspace-side > #details > *").map { |el| el["class"].to_s.split.first }
+      assert_equal %w[file-section-head meta rename-move], details
     end
 
     test "the breadcrumb walks to the file's folder and that link reselects the file" do

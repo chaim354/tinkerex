@@ -1,11 +1,11 @@
 require "test_helper"
 
 module Web
-  # The Files page's controls (spec §8, PR 2): Upload is the page's primary action and has lived in
-  # the top bar since redesign slice 4 (topbar_upload_test.rb owns it), rescan and the folder's own
-  # actions live in an overflow menu, and everything else —
-  # the type filter, the dot-file switch, the count, the view toggle and the sort — sits on ONE
-  # toolbar row in both views. Nodes are created directly, as files_type_filter_test.rb does.
+  # The Files page's controls (spec §8, PR 2): Upload has lived in the strip since redesign slice 4
+  # (topbar_upload_test.rb owns it) and the head reaches it by Add files since Shop manual slice 6,
+  # Rescan is a head button, the folder's own actions live in an overflow menu, and everything else —
+  # the search, the type filter, the dot-file switch, the count, the view toggle and the sort — sits on
+  # ONE toolbar, in two rows, in both views. Nodes are created directly, as files_type_filter_test.rb does.
   class FilesToolbarTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -54,14 +54,35 @@ module Web
       assert_select "header.strip a.menu-item[href=?]", new_files_text_file_path(parent_node_id: "dir-cad")
     end
 
-    test "rescan lives in the overflow menu on a scannable backend" do
-      get files_path
+    # RESCAN IS A PAGE-HEAD BUTTON SINCE SHOP MANUAL SLICE 6 (it sat in the overflow menu), and
+    # still only on a scannable backend. It is not in the menu as well: one control, one place.
+    # Asked on a FOLDER view, whose ⋯ menu always renders (Pin): at the root there is no menu, so
+    # "in no menu" would hold there whatever the menu held.
+    test "rescan is a page-head button on a scannable backend, and in no menu" do
+      get files_path(folder: "dir-cad")
+      assert_select ".page-actions details.menu", count: 1
       if FileLayer.current.capabilities.scannable?
-        assert_select ".page-actions details.menu[data-controller='menu'] summary.btn"
-        assert_select ".page-actions details.menu form[action=?] button.menu-item", rescan_files_path, text: /rescan/i
+        assert_select ".library-head .library-head-actions form[action=?] button.linkbtn",
+                      rescan_files_path(folder: "dir-cad"), text: "Rescan library"
+        assert_select "details.menu form[action^=?]", rescan_files_path, count: 0
       else
-        assert_select "form[action=?]", rescan_files_path, count: 0
+        assert_select "form[action^=?]", rescan_files_path, count: 0
       end
+    end
+
+    # ADD FILES AND NEW FOLDER IN THE HEAD ARE THE STRIP'S ADD BY A SECOND DOOR (slice 6): Add files
+    # forwards a click to the strip's hidden Upload button (no uploader of its own, the assertion at
+    # the top of this file), and New folder posts Add's form with this folder as its parent.
+    test "the head's Add files and New folder reach the strip's upload and the folder door" do
+      get files_path(folder: "dir-cad")
+      assert_select ".library-head button.library-add-files[data-controller=?][data-action=?]",
+                    "upload-forward", "upload-forward#open", text: "Add files"
+      assert_select ".library-head details.library-new-folder form[action=?][method=post]", library_folders_path do
+        assert_select "input[type=hidden][name=parent_node_id][value=?]", "dir-cad"
+        assert_select "input[type=text][name=name][required]"
+      end
+      get files_path
+      assert_select ".library-head details.library-new-folder input[type=hidden][name=parent_node_id][value=?]", ""
     end
 
     test "the toolbar carries the search box, the filter, the dot-file switch, the count, the view toggle and the sort, in both views" do
@@ -72,7 +93,7 @@ module Web
         assert_select ".files-toolbar .ext-picker select#ext-add"
         assert_select ".files-toolbar p.hidden-toggle a.chip[href*=?]", "hidden=1", text: "Show dot-files"
         assert_select ".files-toolbar .toolbar-count", text: "4 items"
-        assert_select ".files-toolbar .view-toggle a.toggle.active", text: view.capitalize
+        assert_select ".files-toolbar .view-toggle a.toggle.active", text: { "list" => "Rows", "grid" => "Tiles" }.fetch(view)
         assert_select ".files-toolbar form.sort-form select[name='sort']"
         assert_select ".files-toolbar form.sort-form select[name='dir']"
       end
@@ -85,15 +106,13 @@ module Web
       assert_select ".files-toolbar .toolbar-count", text: "3 matches"
     end
 
-    # The scannable arm is asserted too, so this run is not a test that reports success having
-    # asserted nothing on the backend it happens to be running against (§15).
+    # THE ROOT HOLDS NO FOLDER, so the menu has nothing to offer there on any backend since Rescan
+    # left it for the page head (slice 6); a folder view always has one (Pin, below).
     test "no menu renders when it would be empty" do
       get files_path
-      if FileLayer.current.capabilities.scannable?
-        assert_select ".page-actions details.menu", count: 1
-      else
-        assert_select ".page-actions details.menu", count: 0
-      end
+      assert_select ".page-actions details.menu", count: 0
+      get files_path(folder: "dir-cad")
+      assert_select ".page-actions details.menu", count: 1
     end
 
     test "grid tiles carry a size-and-type line" do

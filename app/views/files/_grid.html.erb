@@ -11,6 +11,20 @@
   card reads what it always did. The actions draw as icons with a title, since a 160px card has no
   room for three words; each one's accessible name says which file it acts on.
 %>
+<%# THE TILES ARE A PLATE (Shop manual spec §6, slice 6): a 2px ink box, its head a caps label naming
+    what it holds at the left and the order at the right, then the figures. `.plate` is the
+    component; `.files-grid` stays the grid inside it, the one the poll, the file menu and the
+    selection all read. A figure carries no number: figure numbers wait for spec §9. %>
+<% plate_order = case @sort
+                 when "modified" then @dir == "desc" ? "Newest first" : "Oldest first"
+                 when "type" then @dir == "desc" ? "By type, Z to A" : "By type, A to Z"
+                 else @dir == "desc" ? "Z to A" : "A to Z"
+                 end %>
+<section class="plate files-plate" aria-label="Files">
+  <div class="plate-head">
+    <span>Plate · <%= @flat ? "Matches" : (@folder ? @folder.name : "Library") %></span>
+    <span class="plate-count"><%= plate_order %></span>
+  </div>
 <div class="files-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
   <% @nodes.each do |node| %>
     <% info = @info_by_node[node.node_id] %>
@@ -71,3 +85,4 @@
     </div>
   <% end %>
 </div>
+</section>
