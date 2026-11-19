@@ -221,22 +221,18 @@ stylesheet or script tag goes in `_head`, never in either layout, or the two hea
     number (`.fig-num`), the current row's square, a selected figure's outline, a warning word or
     flag (the flag `.badge`s: a failed print, low stock, changed since a release) and the focus ring,
     and never a control's fill. **The one primary action per screen is an INK fill** (`.btn.primary`:
-    `--fg` with `--bg` text); every other button is outlined in ink. On the Library, Recent and a
-    project hub the primary is the top bar's Upload. The Library and
-    the hub show a folder and say so through `FolderDestination`'s `primary`, and Upload names where
-    it saves. Recent shows none, so it calls `upload_primary!`, **which changes Upload's weight and
-    never its destination**: Upload there still asks with the chooser. It is a flag of its own
-    because a `Destination` with a nil `node_id` would mean the library ROOT, not "ask". Everywhere
-    else Upload is a quiet `.btn`. No secondary control
-    is filled. The project hub is the one page the 2026-09-10 cohesion spec's
-    decision 3 allows two, and since 2026-10-26 it spends one (Upload): its second, Save publishing,
-    moved with the Publish panel to the edit area's Publishing tab. Each of that area's three tabs
-    (Details, Publishing, Page layout) spends it on its own Save, with Upload quiet on all three
-    (`ProjectsController#show` passes `primary:` false in edit mode, and the YAML drawer's Apply is
-    a quiet `.btn`). `accent_spend_test.rb` pins every page by RESOLVED background: exactly its ink
+    `--fg` with `--bg` text); every other button is outlined in ink. **The strip's Add is outlined on every page** and is never
+    a primary (Shop manual slice 3): it replaced the top bar's Upload, which was the Library's, Recent's
+    and the hub's primary, and `FolderDestination` lost its `primary` flag and `upload_primary!` with
+    it, so a destination says where things land and nothing about weight. Home, the Library and a
+    project page spend nothing today. No secondary control is filled. The project hub is the one page the 2026-09-10 cohesion spec's
+    decision 3 allows two; since 2026-10-26 its second, Save publishing, has lived with the Publish
+    panel in the edit area's Publishing tab, and since slice 3 its first (Upload) is Add's. Each of
+    that area's three tabs (Details, Publishing, Page layout) spends it on its own Save (the YAML
+    drawer's Apply is a quiet `.btn`). `accent_spend_test.rb` pins every page by RESOLVED background: exactly its ink
     primaries, and no control anywhere filled with the accent. **Selection is ink too**: a filter
     chip is underlined in ink, a pressed toggle, a segmented control's lit part, the chosen tag and
-    the file-chooser selection are filled with it, and tabs and the lit rail item use `--fg`. A lit
+    the file-chooser selection are filled with it, and tabs and the lit strip place use `--fg`. A lit
     part SAYS it is lit (`aria-pressed`, `aria-current`, `aria-selected`), which is how the guard
     tells a selection from a second primary. Status carries its word, never colour alone
     (`.flash::before`, badge labels, a flag's word). Text on an accent fill is

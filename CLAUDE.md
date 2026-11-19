@@ -1200,11 +1200,11 @@ walk is ALWAYS capped and `stopped` reaches the view; restore writes a pending e
 ### 14m. The web shell and design system → **`docs/invariants/design-system.md`**
 
 **Read that file before touching** `app/assets/stylesheets/`, `app/views/layouts/`,
-`app/helpers/shell_helper.rb`, the `theme`/`rail`/`toast` Stimulus controllers, or any template's
+`app/helpers/shell_helper.rb`, the `theme`/`shell`/`toast` Stimulus controllers, or any template's
 class names. Fifteen rules there; the ones most often undone: the `@layer` order opens
 `application.css` and every rule of ours is layered, `vendor-overrides.css` alone is not; a
-component selector is defined in `components.css` and nowhere else; theme and rail state are
-cookies the layout renders, never an inline script; the classes the tests pin and the 101 the addon
+component selector is defined in `components.css` and nowhere else; the theme is a
+cookie the layout renders, never an inline script; the classes the tests pin and the 101 the addon
 bundles build markup with keep their names through any restyle. Guard: `test/css_hygiene_test.rb`.
 
 ## 15. Working agreements for the coding agent

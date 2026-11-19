@@ -75,7 +75,7 @@
   .linkbtn.danger { color: var(--danger); text-decoration-color: currentColor; }
   .linkbtn.small { font-size: 12.5px; }
   .upload-btn { display: inline-flex; cursor: pointer; }
-  /* UPLOAD IS A <button> (UX audit I), in the top bar and in projects/_upload_control, so a keyboard
+  /* UPLOAD IS A <button> (UX audit I), beside the strip's Add and in projects/_upload_control, so a keyboard
      reaches it; its face is still the `.upload-btn span` above, so the button itself is only a
      frame: no padding, border or fill of its own, and its corners match the span's so the focus
      ring (base layer's `:focus-visible`) sits on the face. HERE, beside `.upload-btn`, and not in
@@ -239,7 +239,7 @@
   .panel-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
 
   /* --- The page editor (2026-09-09, spec 2026-09-09-page-editor §5): the slot, the strip along
-     a panel's top edge, the ghost state, the top bar and the YAML drawer. Components, so they hold
+     a panel's top edge, the ghost state, the layout bar and the YAML drawer. Components, so they hold
      in both themes and the page sheet keeps only the grid rule (design-system rules 2 and 3).
      `panel--full` / `panel--half` stay in pages/projects.css: they are the GRID's business (a
      column span inside `.project-panels`' own media query), not a component's.
@@ -469,7 +469,7 @@
   /* A FAILED RENDER KEEPS ITS TYPE ICON AND GAINS A MARK, so "no preview for this type" and "the
      render failed" stop looking identical (F onboarding). thumbs_controller.js adds the class, with
      the icon's title, when the poll answers `failed`; an unsupported file gets neither. A STATE OF
-     THE COMPONENT, so it lives here and not in a page sheet: the poll runs on Recent, Projects, the
+     THE COMPONENT, so it lives here and not in a page sheet: the poll runs on Home, Projects, the
      project page and the model pages as well as the Library. The mark is a glyph, not colour alone
      (design-system.md rule 13), painted in the stage's own pair, `--thumb-ink` and `--thumb-stage`,
      which flip together (rule 5), so it keeps its contrast on the card in both themes. The second `content` hides the
@@ -479,7 +479,7 @@
     position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 14px; height: 14px;
     border-radius: var(--radius-pill); background: var(--thumb-ink); color: var(--thumb-stage); font: 700 10px/1 var(--font-mono);
   }
-  /* The folder glyph (ShellHelper#folder_glyph): the rail's `files` icon, inline beside a name. */
+  /* The folder glyph (ShellHelper#folder_glyph): the `files` glyph, inline beside a name. */
   .folder-glyph, .file-glyph { width: 16px; height: 16px; flex: 0 0 auto; vertical-align: -3px; }
   .filechooser-row .folder-glyph, .filechooser-row .file-glyph { margin-right: 6px; }
   .grid-card { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--fg); text-decoration: none; }
@@ -777,7 +777,7 @@
   .filechooser-actions { display: flex; align-items: center; gap: 8px; }
   /* ON A PHONE THE FOOT WRAPS (redesign slice 7). One row inside the panel's `overflow: hidden` put
      Cancel and Choose past its right edge at 375px, so an upload started from a page with no folder
-     could not be finished there. test/system/phone_topbar_test.rb clicks Choose at 375px. */
+     could not be finished there. test/system/phone_strip_test.rb clicks Choose at 375px. */
   @media (max-width: 640px) {
     .filechooser-foot { flex-wrap: wrap; }
     .filechooser-actions { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
@@ -797,8 +797,7 @@
 
   /* --- Shell: the skip link and the unreachable-library banner (F onboarding, 2026-10-13) --- */
   /* THE SKIP LINK is the first element in <body> (layouts/application.html.erb) and jumps to
-     main#main. ABSOLUTELY POSITIONED, so it takes no cell of body.app-shell's grid and the rail
-     keeps the first column; translated above the viewport until it has focus. `:focus` rather than
+     main#main. ABSOLUTELY POSITIONED, so it takes no part in the shell's layout; translated above the viewport until it has focus. `:focus` rather than
      `:focus-visible`, so it shows for any focus that lands on it. */
   .skip-link {
     position: absolute; top: var(--space-2); left: var(--space-2); z-index: 100;
