@@ -2,10 +2,14 @@
     It tells a visitor who to ask and nothing operational (UX audit F5): no environment variable and no
     console task, which are the operator's and live in docs/INSTALL.md. %>
 <% content_for :title, "Sign-ups are closed — Tinkerex" %>
-<div class="auth-card">
-  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
-  <h1>Sign-ups are closed</h1>
-  <p>This server is not taking new accounts. This server's administrator adds accounts, so if someone
-    runs it for you, ask them for one.</p>
+<%= render layout: "users/shared/door" do %>
+  <section class="auth-box" aria-labelledby="auth-title">
+    <h1 class="auth-box-head" id="auth-title">Sign-ups are closed</h1>
+    <div class="auth-box-body">
+      <p>This server is not taking new accounts. This server's administrator adds accounts, so if someone
+        runs it for you, ask them for one.</p>
+    </div>
+  </section>
+
   <%= render "users/shared/links" %>
-</div>
+<% end %>

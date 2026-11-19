@@ -25,12 +25,24 @@
      on a maker's page, the maker. Not the strip — a visitor has no library to navigate. It reuses
      `.brand` rather than restyling it, which is why it lives here beside it and not in
      pages/public.css: that sheet is about page CONTENT, and a `pages`-layer rule would outrank
-     `shell` and start a cascade fight over the wordmark. --- */
-  .public-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
-                   max-width: 1360px; margin: 0 auto; padding: 10px 16px;
-                   border-bottom: 1px solid var(--line); }
-  .public-header .public-author { color: var(--fg-muted); font-size: 12px; }
-  .public-header .public-intro { margin: 0; font-size: 12px; }
+     `shell` and start a cascade fight over the wordmark.
+     SHOP MANUAL (slice 8; the `public-project` and `public-explore` screens): the strip's frame, 50px
+     over a 2px ink rule across the window, holding the wordmark, Explore, the maker, and Sign in at
+     the right, outlined. --- */
+  .public-header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px; min-height: var(--strip-height);
+    padding: 0 24px; background: var(--bg); border-bottom: 2px solid var(--fg);
+  }
+  .public-header .brand { padding: 0; }
+  .public-header .public-explore { color: var(--fg); font-size: 14px; font-weight: 500; }
+  .public-header .public-author { color: var(--fg); font-size: 14px; font-weight: 600; }
+  .public-header .public-intro { flex: 1 1 260px; min-width: 0; margin: 0; font-size: 13.5px; color: var(--fg-muted); }
+  .public-header .public-sign-in { margin-left: auto; }
+  @media (max-width: 719px) {
+    .public-header { gap: 6px 16px; padding: 9px 12px; }
+    /* The sentence takes a line of its own under the links, so Sign in stays on the first. */
+    .public-header .public-intro { order: 1; flex-basis: 100%; padding-bottom: 3px; font-size: 12.5px; }
+  }
 
   /* --- THE STRIP (layouts/_strip): 50px, a 2px ink rule under it, sticky at the top. The wordmark,
      the four places, then Search, Add and the account button at the right. --- */
@@ -131,6 +143,9 @@
   .column-row[aria-current]::before { background: var(--accent); }
   .column-row-name { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .column-row-note { flex: 0 0 auto; font: 400 12px/1 var(--font-mono); color: var(--fg-muted); }
+  /* A NUMBERED ROW (slice 8: Help's sections, the wizard's steps): the number mono 700 in an 18px slot
+     between the square and the name, as the screens number a manual's parts. */
+  .column-row-num { flex: 0 0 18px; font: 700 13.5px/1 var(--font-mono); }
   .column-row--more .column-row-name { color: var(--fg-muted); }
   .column-scrim { display: none; }
 
@@ -162,23 +177,8 @@
 
   .tabbar { display: none; }
 
-  /* Signed-out pages: the auth card. */
-  /* QUALIFIED `main.container.auth-main`, NOT a bare `.auth-main`, and the qualifier is the whole
-     rule. Both live in this layer, so specificity decides, and `main.container` (0,1,1) outranks a
-     bare `.auth-main` (0,1,0) — so from the day this shipped the auth card computed max-width
-     1360px and padding-top 20px, i.e. neither declaration here ever applied and every sign-in and
-     sign-up page rendered full width. `container-wide` three lines up is the same shape written
-     correctly and is why that one has always worked. Measured on /users/sign_up at 1440px; guarded
-     by test/system/shell_test.rb, which reads the COMPUTED value — a static check on this file
-     cannot see a specificity loss. */
-  main.container.auth-main { max-width: 440px; padding-top: var(--space-7); }
-  .auth-card { padding: var(--space-5); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
-  .auth-card .brand { padding: 0; margin-bottom: 18px; }
-  .auth-card h2 { font-size: 18px; margin: 0 0 16px; }
-  .auth-card .field input { max-width: none; }
-  .auth-card .actions { margin-top: 8px; }
-  .auth-hint { font-size: 12px; color: var(--fg-muted); }
-  .auth-links { list-style: none; margin: 16px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; font-size: 12px; }
+  /* Signed-out pages: the door (Devise's pages, users/shared/_door) is drawn by pages/landing.css,
+     the front door's sheet, since Shop manual slice 8; only the error box below stays here. */
   #error_explanation {
     margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radius-control);
     border: 1px solid var(--danger); background: var(--danger-soft); color: var(--fg); font-size: 13px;

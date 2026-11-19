@@ -13,14 +13,17 @@
   session says), which is the honest preview; adding "signed in as…" here would be the session read
   §14d forbids on this surface. It lives under app/views/layouts/ rather than app/views/public/, so
   the seam guard's Public scan does not reach it — what keeps it honest is that it names no session
-  helper at all: `public_shell?` and the two ivars the public controllers set.
+  helper at all: `public_shell?` and the two ivars the public controllers set. "Sign in" is a plain
+  link to the sign-in page, the same for everyone, so it reads nothing either (Shop manual slice 8,
+  the `public-project` screen: the wordmark, Explore, the maker, and Sign in at the right).
 
-  `.brand` IS THE RAIL'S OWN MARKUP, reused rather than restyled — shell.css defines it once.
+  `.brand` IS THE STRIP'S OWN MARKUP, reused rather than restyled — shell.css defines it once.
 %>
 <header class="public-header">
   <%= link_to public_explore_path, class: "brand", "aria-label": "Tinkerex — explore" do %>
     <span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span>
   <% end %>
+  <%= link_to "Explore", public_explore_path, class: "public-explore" %>
   <%# THE AUTHOR, when the page has one. @owner on /u/:handle, @pub on a project page — both are
       set by the controller that renders them, and `defined?` is what keeps this partial usable on
       /explore, which has neither. %>
@@ -32,4 +35,5 @@
   <% else %>
     <p class="public-intro muted"><%= content_for(:public_intro).presence || "Projects makers have published — the files, the photos and the build log." %></p>
   <% end %>
+  <%= link_to "Sign in", new_user_session_path, class: "btn public-sign-in" %>
 </header>

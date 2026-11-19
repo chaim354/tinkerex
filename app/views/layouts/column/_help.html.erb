@@ -1,13 +1,22 @@
-<%# THE HELP COLUMN: the page's own sections as in-page links (help/show.html.erb's headings carry the
-    ids). Help lights no place and no row (spec §11.2). shell_layout_test.rb holds every in-page link
-    to an element the page carries. %>
+<%# THE HELP COLUMN (Shop manual slice 8; the `help` screen): the page's own sections as in-page links
+    (help/show.html.erb's headings carry the ids), numbered as the page numbers its section heads, then
+    the two places a reader goes from here. Help lights no place and no row (spec §11.2), so no row
+    here says aria-current. shell_layout_test.rb holds every in-page link to an element the page
+    carries. The rows are written out rather than through ShellHelper#column_row, which has no slot
+    for a number; they are the same `.column-row` it draws. %>
+<% sections = [ [ "Your library", "library" ], [ "Projects", "projects" ], [ "3D models", "models" ],
+                [ "Inventory", "inventory" ], [ "Tools", "tools" ], [ "Your account", "account" ] ] %>
 <div class="column-group">
-  <h2 class="column-head">On this page</h2>
-  <%= column_row "Your library", "#library" %>
-  <%= column_row "Projects", "#projects" %>
-  <%= column_row "3D models", "#models" %>
-  <%= column_row "Inventory", "#inventory" %>
-  <%= column_row "Tools", "#tools" %>
-  <%= column_row "Your account", "#account" %>
+  <h2 class="column-head">Help</h2>
+  <% sections.each_with_index do |(label, id), i| %>
+    <%= link_to "##{id}", class: "column-row" do %>
+      <span class="column-row-num"><%= i + 1 %></span><span class="column-row-name"><%= label %></span>
+    <% end %>
+  <% end %>
   <%= column_row "Running this server", "#server" %>
+</div>
+<div class="column-group">
+  <h2 class="column-head">Also</h2>
+  <%= column_row "Take the tour", welcome_path %>
+  <%= column_row "Settings", settings_path %>
 </div>

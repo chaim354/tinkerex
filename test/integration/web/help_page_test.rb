@@ -163,14 +163,21 @@ module Web
     end
 
     # HELP LIGHTS NO PLACE (Shop manual spec §11.2), and its column links its own sections, which the
-    # page carries (shell_layout_test.rb holds every in-page link to an element on the page).
+    # page carries (shell_layout_test.rb holds every in-page link to an element on the page), then
+    # the two places a reader goes from here (slice 8, the `help` screen's "Also"). The six sections
+    # are numbered in the column as the page numbers their heads (a CSS counter there, so the
+    # browser alone sees the page's half). Mutation-checked (2026-11-19): numbering the rows from 0
+    # printed `Actual: ["0", "1", "2", "3", "4", "5"]`; dropping the Also group printed `Actual: []`.
     test "the Help page lights no place, and its column links its sections" do
       sign_in_as(make_owner!(handle: "ada"))
       get help_path
       assert_select "header.strip a.strip-place[aria-current]", 0
       assert_select "aside.column [aria-current]", 0
       assert_equal %w[#library #projects #models #inventory #tools #account #server],
-                   css_select("aside.column a.column-row").map { |a| a["href"] }
+                   css_select("aside.column a.column-row[href^='#']").map { |a| a["href"] }
+      assert_equal %w[1 2 3 4 5 6], css_select("aside.column a.column-row .column-row-num").map { |n| n.text.strip }
+      assert_equal [ welcome_path, settings_path ],
+                   css_select("aside.column a.column-row:not([href^='#'])").map { |a| a["href"] }
     end
 
     test "the Tools page speaks to the maker, not the operator" do

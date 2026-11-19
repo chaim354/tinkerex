@@ -2,28 +2,30 @@
     the way that works, as passwords/new does: an administrator's new password confirms the account
     too (Settings::UsersController#reset_password). Nothing operational for a visitor (UX audit F5). %>
 <% content_for :title, "Resend the confirmation link — Tinkerex" %>
-<div class="auth-card">
-  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
-  <h1>Resend the confirmation link</h1>
+<%= render layout: "users/shared/door" do %>
+  <section class="auth-box" aria-labelledby="auth-title">
+    <h1 class="auth-box-head" id="auth-title">Resend the confirmation link</h1>
+    <div class="auth-box-body">
+      <% unless Tinkerex::MailSettings.deliverable? %>
+        <p class="auth-hint">This server can't send email yet, so nothing will arrive. An administrator can
+          confirm your account by setting a new password for it under Settings → Users.</p>
+      <% end %>
 
-  <% unless Tinkerex::MailSettings.deliverable? %>
-    <p class="auth-hint">This server can't send email yet, so nothing will arrive. An administrator can
-      confirm your account by setting a new password for it under Settings → Users.</p>
-  <% end %>
+      <%= form_for(resource, as: resource_name, url: confirmation_path(resource_name), html: { method: :post }) do |f| %>
+        <%= render "users/shared/error_messages", resource: resource %>
 
-  <%= form_for(resource, as: resource_name, url: confirmation_path(resource_name), html: { method: :post }) do |f| %>
-    <%= render "users/shared/error_messages", resource: resource %>
+        <div class="field">
+          <%= f.label :email %>
+          <%= f.email_field :email, autofocus: true, autocomplete: "email",
+                            value: (resource.pending_reconfirmation? ? resource.unconfirmed_email : resource.email) %>
+        </div>
 
-    <div class="field">
-      <%= f.label :email %>
-      <%= f.email_field :email, autofocus: true, autocomplete: "email",
-                        value: (resource.pending_reconfirmation? ? resource.unconfirmed_email : resource.email) %>
+        <div class="actions">
+          <%= f.submit "Resend the link", class: "primary" %>
+        </div>
+      <% end %>
     </div>
-
-    <div class="actions">
-      <%= f.submit "Resend the link", class: "primary" %>
-    </div>
-  <% end %>
+  </section>
 
   <%= render "users/shared/links" %>
-</div>
+<% end %>
