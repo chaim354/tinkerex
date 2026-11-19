@@ -170,17 +170,9 @@ class ProjectsController < ApplicationController
     @panel_layout = @project.panel_layout(folders: @listing.panel_folders,
                                           blocks: @blocks.map { |b| [ b.key, b.kind ] },
                                           root_repo: @listing.root_repo?)
-    # WHAT THE CHOOSER CALLS EACH PANEL. The twelve fixed labels plus one per folder — its own name,
-    # which is the only label a folder key could honestly carry. Built here rather than in the
-    # chooser because the chooser has no listing of its own, and a label map assembled in a view
-    # would be a second definition the panels door could not reuse. A key with no entry cannot
-    # reach the chooser: the layout is total against exactly these folders.
-    # A BLOCK'S LABEL IS WHAT IT IS PLUS WHAT IT SAYS (content blocks): the strip has no folder name
-    # and no fixed label to fall back on, and "Text block" alone on eight of them names none of
-    # them. The heading, where there is one, is the only thing that tells two apart at a glance.
-    @panel_labels = Maker::Project::PANEL_LABELS.merge(
-      @listing.tree.to_h { |dir| [ Maker::ProjectKind.folder_key(dir.node_id), dir.name ] }
-    ).merge(@blocks.to_h { |b| [ b.layout_key, helpers.block_label(b) ] })
+    # WHAT THE CHOOSER CALLS EACH PANEL — #panel_labels, shared with the Publishing tab since
+    # 2026-11-19 so the two cannot name one panel two ways.
+    @panel_labels = panel_labels(@listing, @blocks)
 
     # EDIT MODE (2026-09-09, the page editor; spec §5). `editing` arrives only as the DEFAULT of the
     # two `layout` routes; it turns on the chrome and nothing else — every load below is the same,
@@ -601,10 +593,14 @@ class ProjectsController < ApplicationController
   # THE FOLDER PATH COMES FROM THE TREE, NOT FROM ROOT + SLUG, for the reason projects/_publish
   # names it at all: permission is granted from the folder NODE (Maker::PublicProject#permits?), and
   # a discovered project keeps its folder's own name (`Projects/Desk Lamp`) where the slug is
-  # `desk-lamp`. ONE query (Maker::LibraryTree loads the dirs), and no listing: this page shows no
-  # files, so a Maker::ProjectFolderListing would walk and count a folder for one string. nil when
-  # the project has no folder or it is in the trash — the partial then says "the project's library
-  # folder", as the panel always did.
+  # `desk-lamp`. nil when the project has no folder or it is in the trash — the partial then says
+  # "the project's library folder", as the panel always did.
+  #
+  # A LISTING NOW, WHERE IT WAS ONE TREE QUERY (2026-11-19, the published view): the tab lists the
+  # page's panels to leave off the public page, and the folder panels among them are the listing's
+  # depth-one folders. The SAME vocabulary Maker::PublicProject builds its layout from, so the tab
+  # cannot offer a folder the visitor's page never draws or miss one it does. Its path is the
+  # tree's path the tab always named.
   def publishing
     load_publishing
   end
@@ -615,6 +611,7 @@ class ProjectsController < ApplicationController
   # after save, Maker::Taggable).
   def update
     @project.assign_attributes(project_params)
+    assign_public_panels
     # THE PUBLISHING TAB POSTS HERE TOO (stage 4, S4-4; its own page since 2026-10-26), and it is not
     # the Details form — a refusal that re-rendered :edit would bounce a maker off the tab they
     # clicked on, into a form whose visibility field does not exist. So it says where it came from,
@@ -678,11 +675,63 @@ class ProjectsController < ApplicationController
   end
 
   # What the Publishing tab reads beyond the project — #publishing's own comment says why it is the
-  # tree's path — loaded by both renders of the tab: the GET, and #update's refusal.
+  # tree's path — loaded by both renders of the tab: the GET, and #update's refusal. The refusal's
+  # layout reads the column as ASSIGNED, so the boxes come back as the maker ticked them (the B3
+  # rule the visibility radios already follow).
   def load_publishing
-    id = @project.folder_node_id.presence
-    tree = id && Maker::LibraryTree.new(current_user)
-    @folder_path = tree&.dir?(id) ? tree.path_for(id) : nil
+    @folder_path = publishing_listing.path
+    @publishing_layout = publishing_layout
+    @publishing_labels = panel_labels(publishing_listing, publishing_blocks)
+  end
+
+  # WHAT THE CHOOSER, THE EDITOR'S STRIP AND THE PUBLISHING TAB CALL EACH PANEL. The twelve fixed
+  # labels plus one per folder — its own name, which is the only label a folder key could honestly
+  # carry — plus one per block. Built here rather than in a view because a label map assembled in a
+  # view would be a second definition the panels door could not reuse. A key with no entry cannot
+  # reach either page: the layout is total against exactly these folders.
+  # A BLOCK'S LABEL IS WHAT IT IS PLUS WHAT IT SAYS (content blocks): the strip has no folder name
+  # and no fixed label to fall back on, and "Text block" alone on eight of them names none of
+  # them. The heading, where there is one, is the only thing that tells two apart at a glance.
+  def panel_labels(listing, blocks)
+    Maker::Project::PANEL_LABELS.merge(listing.tree.to_h { |dir| [ Maker::ProjectKind.folder_key(dir.node_id), dir.name ] })
+                                .merge(blocks.to_h { |b| [ b.layout_key, helpers.block_label(b) ] })
+  end
+
+  def publishing_listing = @publishing_listing ||= Maker::ProjectFolderListing.new(current_user, @project)
+  def publishing_blocks = @publishing_blocks ||= @project.blocks.to_a
+
+  # NOT MEMOISED, for Maker::Project#panel_layout's reason: #update asks it before assigning the
+  # choice and #load_publishing after, and the second must see what the first wrote.
+  def publishing_layout
+    @project.panel_layout(folders: publishing_listing.panel_folders,
+                          blocks: publishing_blocks.map { |b| [ b.key, b.kind ] },
+                          root_repo: publishing_listing.root_repo?)
+  end
+
+  # THE PUBLISHING TAB'S "SHOW ON THE PUBLIC PAGE" BOXES (2026-11-19, the published view; the Shop
+  # manual's spec §3, §9). Every panel the tab offers (Maker::PublicProject.keepable, the same list
+  # it rendered) and the maker left unticked is stored in `panels["unpublished"]`, which
+  # Maker::ProjectKind.layout_for reads and Maker::PublicProject#layout applies. The list is the
+  # WHOLE answer for what it offers, so ticking a box again publishes the panel again, and anything
+  # a crafted request names outside it is ignored — it can never put a key the layout does not know
+  # in the column.
+  #
+  # A FORM THAT DOES NOT CARRY THE LIST LEAVES THE CHOICE ALONE. Details posts here too, and so does
+  # the Publishing tab's handle-less branch; neither is about panels. The tab's own form always
+  # carries it, through a blank hidden entry that makes "every box unticked" an answer rather than
+  # an absence. A value that is not a list of strings is read as no answer, never a 500.
+  #
+  # STORED BESIDE THE ARRANGEMENT, NOT IN IT: the editor's Save carries it through
+  # (Maker::LayoutDocument#column) and Reset keeps it (Projects::PanelsController#destroy), because
+  # a layout write that dropped it would publish what the maker kept private.
+  def assign_public_panels
+    shown = params.dig(:project, :public_panels)
+    return unless shown.is_a?(Array)
+
+    offered = Maker::PublicProject.keepable(publishing_layout)
+    kept = offered - shown.grep(String)
+    stored = @project.panels.is_a?(Hash) ? @project.panels : {}
+    @project.panels = kept.any? ? stored.merge("unpublished" => kept) : stored.except("unpublished").presence
   end
 
   # THE SHARED DEMO PUBLISHES NOTHING (Tinkerex::Demo), so this server never hosts a visitor's project
@@ -880,8 +929,12 @@ class ProjectsController < ApplicationController
   # every project save.
 
   def project_params
+    # `public_panels` IS PERMITTED AND DROPPED: it is no column — #assign_public_panels reads it and
+    # writes `panels` — and permitting it keeps the unpermitted-parameter log from naming it on
+    # every Publishing save.
     attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
-                                            :visibility, :license, :autofile, :kind)
+                                            :visibility, :license, :autofile, :kind, public_panels: [])
+    attrs.delete(:public_panels)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
     # ARCHIVING IS A BUTTON, NOT A FORM VALUE (stage 4, S4-6). The form's own select never offers
     # `archived`, and #destroy is the door that archives, with the sentence that says what that

@@ -3,4 +3,5 @@
 <% content_for :title, "Publishing #{@project.name_in_database} — Tinkerex" %>
 <%= render "projects/edit_crumbs", project: @project %>
 <%= render "projects/edit_head", project: @project, current: :publishing %>
-<%= render "projects/publish", project: @project, folder_path: @folder_path %>
+<%= render "projects/publish", project: @project, folder_path: @folder_path,
+                                layout: @publishing_layout, labels: @publishing_labels %>

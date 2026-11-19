@@ -149,7 +149,7 @@ module Web
 
     # THE README IS A PANEL OF THE LAYOUT (2026-11-05, live regions; spec §2): it used to be pinned
     # above the hero outside the panel loop, whatever the maker's order said, and a hidden README was
-    # not hidden from a visitor at all. Now it is in the `public_panels` map like every other panel
+    # not hidden from a visitor at all. Now it is in Maker::PublicProject::PANEL_PARTIALS like every panel
     # with a public face — ordered, headed, and gone when hidden.
     test "the README is a panel in the layout's order, headed, and leaves the page when hidden" do
       get path

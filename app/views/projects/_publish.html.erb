@@ -19,8 +19,10 @@
   `maker_project[...]`, which ProjectsController's `params.require(:project)` rejects and every
   save would silently drop (§14d, shipped twice). Asserted as RENDERED in publishing_test.rb.
 
-  Locals: project; folder_path — the project folder's path from the LISTING (nil when the project
-  has no folder yet), named in the warning because permission is granted from the folder NODE
+  Locals: project; layout and labels — the panels the public page can draw, for
+  projects/_public_panels (2026-11-19, the published view); folder_path — the project folder's path
+  from the LISTING (nil when the project has no folder yet), named in the warning because
+  permission is granted from the folder NODE
   (Maker::PublicProject#permits?) and a path rebuilt from ROOT + slug can name a folder that is
   not it: Maker::ProjectDiscovery keeps the folder's own name (`Projects/Desk Lamp`) and slugifies
   the slug (`desk-lamp`) — project_folders.rb records the same trap for ProjectIntake#place.
@@ -86,15 +88,20 @@
                                         project.license) %>
       </label>
 
+      <%= render "projects/public_panels", layout: layout, labels: labels %>
+
       <%# EVERYTHING IN THE FOLDER, NOT JUST WHAT IS ON THE PAGE — AND THE ATTACHMENTS OUTSIDE IT.
           Permission is by ANCESTRY of the folder node plus every file attached to the project or
           to a build-log entry (Maker::PublicProject#permits?), so a file past the listing's cap is
           downloadable and so is an attachment that lives elsewhere in the library. A consent
           sentence that named only the folder asked consent for part of it (found in review).
-          Said before the button, not in the flash afterwards. %>
+          Said before the button, not in the flash afterwards. A FOLDER LEFT OFF THE PUBLIC PAGE is
+          the one exception (2026-11-19, the published view): Maker::PublicProject#permits? refuses
+          its files, so the sentence says so rather than asking consent for more than is given. %>
       <p class="muted publish-warning">Publishing makes every visible file in
         <% if folder_path.present? %><span class="mono"><%= folder_path %></span><% else %>the project's library folder<% end %>,
-        and every file attached to the project or its build log, downloadable by anyone who can open the page.</p>
+        and every file attached to the project or its build log, downloadable by anyone who can open the page,
+        except in a folder you leave off it.</p>
 
       <%# THE EDIT AREA'S THREE TABS END ALIKE (2026-11-02, the UX audit's C6): a Save that names
           what it saves, then the same Cancel back to the project. %>

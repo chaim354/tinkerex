@@ -226,7 +226,7 @@ starts by writing the real list down where rule 12 can point at it, then correct
 | folder tree in the Library | only in the choosers, through `library_children` | the same tree as the left column, remembering what is open | medium |
 | grouped search | `/search`, where the top bar's box submits, already groups by kind: Files, Folders, Projects, 3D models, Notes, Inventory, Tags (`SearchController`) | stacks inside the Files group. **Built** (2026-11-19): one row per stack, linking its latest, and the group counts figures and the files they stand for | small, once stacks exist |
 | index of files, and the find box | nothing | every file with its figure number, filtered as you type | small |
-| published view | the public page shares the working layout | choose the panels a visitor never sees, in `Maker::PublicProject#layout` | small to medium |
+| published view | built 2026-11-19: the Publishing tab leaves panels off the public page, and `Maker::PublicProject#layout` is the layout with them hidden | design-system.md rule 14 says how it is chosen and what it reaches | small to medium |
 
 Stacks come first: figure numbers, the Library and Search build on them. The grouping test must
 carry the catan names and keep "game box" and "game box 2" apart: they are different parts. Three
@@ -305,5 +305,9 @@ Every guard is broken once on purpose before it is trusted (`CLAUDE.md` §15).
 6. **The public page is the published view.** Already decided in §3. What it reaches is the open
    part: `Maker::PublicProject#layout` also feeds the public page's feed, its bundle and its BOM CSV
    (rule 14), so a panel left out there is left out of all four.
+   Settled 2026-11-19: the maker unticks panels on the edit area's Publishing tab, the choice is
+   `panels["unpublished"]`, and `Layout#published` hides it from all four. A folder left out also
+   stops delivering its files (`#permits?`), which a panel the maker merely hid does not. Files and
+   Photos cannot be left out: publishing a project publishes its folder's root.
 
 Proposals 1 and 2 block slices 2 and 3. Each is settled in the pull request that rewrites the rule.

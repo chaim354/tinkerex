@@ -510,6 +510,69 @@ module Web
       assert_equal pub_small, pub_large, "the visitor's page grew with tabs (#{pub_small} → #{pub_large})"
     end
 
+    # THE PUBLISHED VIEW IS ONE LAYOUT, NOT A QUESTION PER PANEL (2026-11-19). What could grow it:
+    # `permits?` now asks every file whether it sits under a folder kept off the page — a walk up the
+    # tree in memory, and the build log's own set — and the Publishing tab lists every panel. N is the
+    # number of folders kept back, each holding files the sweep attached to the project (the shape a
+    # real folder has) and a build-log photo, so the BOM's design-file lines, the photo arm and the
+    # attachment arm are all asked about kept-back files. Measured on the visitor's page, the bundle
+    # the page's button fetches, and the tab, signed out and signed in as the earlier tests here are.
+    test "keeping folders off the public page grows neither the page, the bundle nor the Publishing tab" do
+      @user.update!(handle: "keptbudget")
+      project = @user.maker_projects.create!(name: "Kept", visibility: "public")
+      folder = project_folder_rows!(@user, project)
+      bom = project.boms.create!(user: @user)
+      kept = []
+      add = lambda do |prefix, count|
+        count.times do |i|
+          id = "#{prefix}-#{i}"
+          dir = @user.nodes.create!(node_id: "#{id}-dir", name: "kept-#{id}", kind: "dir",
+                                    parent_node_id: folder.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
+          2.times do |j|
+            file = @user.nodes.create!(node_id: "#{id}-#{j}", name: "#{id}-#{j}.stl", kind: "file",
+                                       parent_node_id: dir.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                                       content_hash: "h-#{id}-#{j}", current_version_id: "v-#{id}-#{j}")
+            project.file_attachments.create!(user: @user, node_id: file.node_id, role: "model")
+          end
+          @user.nodes.create!(node_id: "#{id}-shot", name: "#{id}-shot.png", kind: "file",
+                              parent_node_id: dir.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
+                              content_hash: "hs-#{id}", current_version_id: "vs-#{id}")
+          entry = project.build_log_entries.create!(user: @user, body: "entry #{id}", logged_at: Time.current)
+          entry.file_attachments.create!(user: @user, node_id: "#{id}-shot", role: "image", position: 0)
+          bom.lines.create!(user: @user, node_id: "#{id}-0", quantity: 1, unit: "each")
+          project.blocks.create!(user: @user, kind: "text", heading: "Block #{id}", body: "See [it](kept-#{id}/#{id}-1.stl).")
+          kept << Maker::ProjectKind.folder_key(dir.node_id)
+        end
+        project.update!(panels: { "unpublished" => kept })
+      end
+      sign_out = -> { delete destroy_user_session_path }
+      sign_in = -> { sign_in_web!(@user, password: PASSWORD) }
+      page = public_project_path("keptbudget", project.slug)
+      bundle = public_bundle_path("keptbudget", project.slug)
+
+      measure = lambda do
+        sign_out.call
+        get page
+        assert_response :success, "the visitor's page must render before it can be budgeted"
+        on_page = count_queries { get page }
+        get bundle
+        in_bundle = count_queries { get bundle }
+        sign_in.call
+        get publishing_project_path(project)
+        assert_response :success
+        [ on_page, in_bundle, count_queries { get publishing_project_path(project) } ]
+      end
+
+      add.call("s", 1)
+      page_small, bundle_small, tab_small = measure.call
+      add.call("l", 5)
+      page_large, bundle_large, tab_large = measure.call
+
+      assert_equal page_small, page_large, "the visitor's page grew with folders kept back (#{page_small} → #{page_large})"
+      assert_equal bundle_small, bundle_large, "the bundle grew with folders kept back (#{bundle_small} → #{bundle_large})"
+      assert_equal tab_small, tab_large, "the Publishing tab grew with panels (#{tab_small} → #{tab_large})"
+    end
+
     # STAGE 3, S3-4: THE SAME PROJECT, READ BY A STRANGER. Not a duplicate of the budget above: the
     # public page is a DIFFERENT reader over the same rows (Maker::PublicProject, not
     # ProjectsController#show's ivars), and the two share no eager load — every panel it renders is
