@@ -149,7 +149,7 @@ module Web
 
     # THE README IS A PANEL OF THE LAYOUT (2026-11-05, live regions; spec §2): it used to be pinned
     # above the hero outside the panel loop, whatever the maker's order said, and a hidden README was
-    # not hidden from a visitor at all. Now it is in Maker::PublicProject::PANEL_PARTIALS like every panel
+    # not hidden from a visitor at all. Now it is in the `public_panels` map like every other panel
     # with a public face — ordered, headed, and gone when hidden.
     test "the README is a panel in the layout's order, headed, and leaves the page when hidden" do
       get path
@@ -580,11 +580,9 @@ module Web
 
     # --- 7. the BOM: three columns, and what is absent ------------------------------
 
-    # FIG. CITES THE FIGURE A FILE LINE NAMES ON THIS PAGE (the Shop manual spec §9), a number the
-    # visitor's page draws; it says nothing about stock or supply.
-    test "the public BOM has exactly Fig., Ref, Part and Qty" do
+    test "the public BOM has exactly Ref, Part and Qty" do
       get path
-      assert_equal %w[Fig. Ref Part Qty], css_select("table.public-bom thead th").map(&:text)
+      assert_equal %w[Ref Part Qty], css_select("table.public-bom thead th").map(&:text)
     end
 
     test "the public BOM names the item but never its stock level or its supplier" do
@@ -900,17 +898,17 @@ module Web
       project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
                                         logged_at: Time.zone.local(2026, 5, 1, 12, 0, 0))
       folder_key = Maker::ProjectKind.folder_key(models.node_id)
-      # BOTH WIDTHS ARE THE OPPOSITE OF THEIR DEFAULT (ProjectKind.default_width: every panel is half
-      # since the Shop manual, a plain folder included, and the README full), so each assertion below
-      # fails if the width class is written from the default rather than from the maker's own layout.
+      # BOTH WIDTHS ARE THE OPPOSITE OF THEIR DEFAULT (ProjectKind.default_width: a folder is full,
+      # build_log is half), so each assertion below fails if the width class is written from the
+      # default rather than from the maker's own layout.
       project.update!(panels: { "titles" => { folder_key => "Prints", "build_log" => "Diary" },
                                 "intros" => { folder_key => "Sliced." },
-                                "widths" => { folder_key => "full", "build_log" => "full" } })
+                                "widths" => { folder_key => "half", "build_log" => "full" } })
 
       get public_project_path("ada", project.slug)
 
       assert_response :success
-      assert_select "div.project-panels > div.panel-slot.panel--full > section.folder-panel h2", text: "Prints"
+      assert_select "div.project-panels > div.panel-slot.panel--half > section.folder-panel h2", text: "Prints"
       assert_select "section.folder-panel p.panel-intro", text: "Sliced."
       assert_select "div.panel-slot.panel--full > section.build-log-panel h2", text: "Diary"
       assert_select "div.panel-slot > section.photos-panel", { count: 0 }, "no photos, no slot"

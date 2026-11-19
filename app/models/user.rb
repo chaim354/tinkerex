@@ -97,9 +97,6 @@ class User < ApplicationRecord
   # carries no callbacks, so the two are equivalent in effect and the cheaper one buys nothing at
   # these row counts. TenantCleanupTest is what proves the line exists at all.
   has_many :maker_file_links, class_name: "Maker::FileLink", dependent: :destroy
-  # Dismissed tidy-up suggestions (the Shop manual's §9, 2026-11-19). Destroyed with the project too
-  # (Maker::Project#tidy_dismissals); this is the tenant sweep's own door.
-  has_many :maker_tidy_dismissals, class_name: "Maker::TidyDismissal", dependent: :destroy
   has_many :maker_sheets, class_name: "Maker::Sheet", dependent: :destroy
   has_many :maker_models, class_name: "Maker::Model", dependent: :destroy
   has_many :maker_print_runs, through: :maker_models, source: :print_runs
@@ -226,7 +223,7 @@ class User < ApplicationRecord
   def handle_locked? = maker_projects.published.exists?
 
   # The tools pinned to the sidebar, in pinned order (Maker::ToolPins; `pinned_tools`, 2026-10-22).
-  # Memoised on the user, so the left column and the Tools page read the one row the request loaded.
+  # Memoised on the user, so the rail and the Tools page read the one row the request loaded.
   def tool_pins = @tool_pins ||= Maker::ToolPins.new(self)
 
   # THE ONE SPELLING OF "when did a library scan last finish" (stage 4, S4-3). The page renders it

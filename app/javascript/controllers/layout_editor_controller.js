@@ -48,7 +48,7 @@ import Sortable from "sortablejs"
 //   * LEAVING BY A LINK. `isDirty()` compares the draft with the one the page loaded with, so a drag
 //     that lands where it started, or a Hide undone by Show, is not a change. While it differs,
 //     `turbo:before-visit` asks LEAVE_QUESTION — which covers Done, Cancel, the edit area's other
-//     two tabs, the strip and every other Turbo link with one listener rather than a confirm per
+//     two tabs, the rail and every other Turbo link with one listener rather than a confirm per
 //     control. Reset is the one exit that already asks its own question, so its form marks the
 //     draft discarded once that question is answered (`discard`).
 //   * LEAVING THE DOCUMENT — a reload, a closed tab, a typed address, AND BROWSER BACK. The guard

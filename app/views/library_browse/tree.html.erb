@@ -1,8 +1,0 @@
-<%# ONE FOLDER OF THE LIBRARY COLUMN'S TREE, OPENED IN PLACE (LibraryBrowseController#tree): the frame
-    the closed folder's row carries, now holding its level. The frame's own attributes stay the page's;
-    Turbo takes only what is inside. Empty for a folder that is gone or not this user's. %>
-<%= turbo_frame_tag folder_tree_frame_id(@frame_node_id), class: "column-tree-frame", target: "_top" do %>
-  <% if @tree %>
-    <%= folder_tree_level(@tree.branches, parent_id: @frame_node_id, depth: @depth, more: @tree.more?) %>
-  <% end %>
-<% end %>

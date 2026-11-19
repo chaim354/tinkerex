@@ -11,31 +11,24 @@
      data-theme="light", and :root carries the complete Paper set. Graphite redefines the SAME names
      below; a colour declared only inside a theme block never applies in the other state
      (design-system.md rule 4). Token names are the pre-redesign names on purpose, so every page
-     sheet keeps working. Values: the Shop manual light set (2026-11-18, spec
-     docs/superpowers/specs/2026-11-18-shop-manual-redesign-design.md §5); Graphite below is the same
-     manual printed light-on-dark (slice 4, 2026-11-19), since the screens draw no dark theme. */
+     sheet keeps working. Values: the Tinkerex Design System artifact. */
   :root {
     color-scheme: light;
-    --bg: #ffffff;
-    --surface: #ffffff;
-    --raised: #f4f4f1;
-    --line: #c9ccd1;
-    /* Ink and the strong line are ONE colour in Shop manual: a rule is drawn in ink. */
-    --line-strong: #0f1113;
-    --fg: #0f1113;
-    --fg-muted: #555b63;
-    /* Text tokens (fg-muted, accent-text, ok, warn, danger, info) clear 4.5:1 on every light ground
-       a text sits on: white (--bg and --surface are one colour now), --raised (the left column) and
-       --accent-soft (a selected row). The lowest is --accent-text on --accent-soft, 4.58:1.
-       test/theme_contrast_test.rb holds every pair, in both themes. */
-    /* RED MARKS AND NEVER FILLS A CONTROL (design-system.md rule 13): a figure number, the current
-       row's square, a selected figure's outline, a warning word, a focus ring. The one primary
-       action is an INK fill; selection, tabs, links and the lit nav item are ink too. */
-    --accent: #d42a20;
+    --bg: #f4f2ed;
+    --surface: #fcfbf8;
+    --raised: #ebe8e1;
+    --line: #dcd8cf;
+    --line-strong: #878276;
+    --fg: #1b1c19;
+    --fg-muted: #5b5c55;
+    /* Text tokens (fg-muted, accent-text, ok, warn, danger, info) clear 4.5:1 on BOTH --bg and
+       --surface: the rail and page heads sit on --bg, panels on --surface. */
+    /* THE ACCENT IS SPENT ONCE PER SCREEN: the one primary action, and the destination it lands
+       in. Selection, tabs, links and the active nav item are INK (--fg), never accent. */
+    --accent: #c2410c;
     --accent-ink: #ffffff;
-    /* The accent clears 4.5:1 as text on its own (5.06 on white), so the text token IS the accent. */
-    --accent-text: #d42a20;
-    --accent-soft: #fdf1ef;
+    --accent-text: #ad3a0b;
+    --accent-soft: rgba(194, 65, 12, .12);
     --ok: #206b3a;
     --ok-soft: rgba(36, 115, 63, .14);
     --warn: #835500;
@@ -45,16 +38,11 @@
     --info: #1c5d99;
     --info-soft: rgba(28, 93, 153, .14);
     --focus: var(--accent);
-    --shadow-float: 0 8px 24px rgba(15, 17, 19, .14), 0 1px 2px rgba(15, 17, 19, .10);
-    --shadow-toggle: 0 1px 2px rgba(15, 17, 19, .12);
-    --scrim: rgba(15, 17, 19, .45);
-    /* THE SELECT'S CHEVRON IS A TOKEN, because a colour inside a data: URI cannot read a custom
-       property: the picture itself is redefined per theme, here and in both Graphite blocks below
-       (rule 4's three places). Each theme draws it in its own ink, near-black here and near-white in
-       Graphite, where Paper's ink would vanish. components.css's select names only the token. */
-    --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%230f1113' stroke-width='1.5'/></svg>");
+    --shadow-float: 0 8px 24px rgba(27, 28, 25, .14), 0 1px 2px rgba(27, 28, 25, .10);
+    --shadow-toggle: 0 1px 2px rgba(27, 28, 25, .12);
+    --scrim: rgba(27, 28, 25, .45);
     /* A user's PHOTO is not a render: it sits on a neutral matte, never on the paper card. */
-    --photo-stage: #f4f4f1;
+    --photo-stage: #ebe8e1;
     /* EVERY THUMBNAIL IS INK ON PAPER (design-system.md rule 5, 2026-10-21). A render keeps a
        pure-white ground (ours, LightBurn's own, a PDF page) and is MULTIPLIED onto this card, so
        white becomes the card and ink stays ink. The card is light in BOTH themes because the ink is
@@ -62,17 +50,16 @@
        Graphite it is a dimmed paper rather than a white square. --thumb-ink is what the app paints
        on the card itself (the type label, the spinner, the failed mark) and flips with it. The
        Measure stage is this card too: it draws the same file colours. */
-    --thumb-stage: #ffffff;
-    --thumb-ink: #555b63;
+    --thumb-stage: #fcfbf8;
+    --thumb-ink: #5b5c55;
     /* ONE MESH MATERIAL for the STL and F3D thumbnailers (Maker::Previews::Palette::MATERIAL, which
        test/services/maker/previews/palette_test.rb holds equal to this) and the 3D viewer's
        default colour. Deliberately NOT redefined per theme: it clears 3:1 on the viewer's --raised
-       in Paper (3.82) and Graphite (3.97) and, multiplied, on the card in both (4.21, 3.54), so a
-       live theme switch has only the viewer's background to repaint. */
+       in Paper (3.44) and Graphite (3.61) and on the card in both (4.18, 3.58), so a live theme
+       switch has only the viewer's background to repaint. */
     --model-material: #7f7b73;
     /* Syntax colours for the code viewers (lib/codemirror_theme.js's HighlightStyle). Every one
-       clears 4.5:1 on --surface and --raised in its theme; --code-comment is the lowest, 4.82:1 on
-       Paper's --raised and 5.46:1 on Graphite's. */
+       clears 4.5:1 on --surface in its theme; --code-comment is the lowest, 5.13:1 in both. */
     --code-keyword: #9a3412;
     --code-string: #2f6b2a;
     --code-number: #8a5300;
@@ -85,8 +72,8 @@
     /* Aliases for rules migrated from the pre-2026-09 sheets. New rules use the names above. */
     --muted: var(--fg-muted);
     --soft: var(--raised);
-    --font-ui: "Libre Franklin", system-ui, -apple-system, "Segoe UI", sans-serif;
-    --font-mono: "Courier Prime", ui-monospace, Menlo, monospace;
+    --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
     --space-1: 4px;
     --space-2: 8px;
     --space-3: 12px;
@@ -95,8 +82,8 @@
     --space-6: 32px;
     --space-7: 48px;
     --space-8: 64px;
-    --radius-control: 2px;
-    --radius-panel: 0;
+    --radius-control: 3px;
+    --radius-panel: 5px;
     --radius-float: 8px;
     --radius-pill: 999px;
     --control-height: 32px;
@@ -104,34 +91,24 @@
     --row-height: 44px;
     --container-max: 1360px;
     --prose-measure: 72ch;
-    /* The shell (Shop manual spec §7): the strip is 50px and its 2px ink rule, and the left column
-       220px. A sticky page part sits under --strip-height. */
-    --strip-height: 52px;
-    --column-width: 220px;
+    --rail-width: 216px;
+    --rail-collapsed-width: 56px;
+    --topbar-height: 48px;
     --tabbar-height: 56px;
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
-    /* GRAPHITE IS THE SHOP MANUAL PRINTED LIGHT-ON-DARK (slice 4, 2026-11-19): the same page, rules
-       and red, inverted. Neutral, like Paper since slice 1 (it was a warm olive set before): a
-       near-black page that IS its surface, --raised one step lighter (1.11:1, Paper's step is 1.10),
-       a cool hairline, and ink and the strong line one near-white colour. Every text token clears
-       4.5:1 on the page, --raised and --accent-soft; test/theme_contrast_test.rb holds each pair. */
-    --bg: #111316;
-    --surface: #111316;
-    --raised: #1b1e22;
-    --line: #383c43;
-    --line-strong: #e6e8eb;
-    --fg: #e6e8eb;
-    --fg-muted: #9ba2ab;
-    /* The red brightened until it reads as TEXT on all three grounds (5.80 on the page, 5.21 on
-       --raised, 5.07 on --accent-soft), so the text token is the accent here too. The ink on an
-       accent fill (.fig-num, the wordmark's disc) is the page itself, as Paper's is its white: 5.80. */
-    --accent: #ff5245;
-    --accent-ink: #111316;
-    --accent-text: #ff5245;
-    /* The accent at 12% on the page, solid like Paper's: a selected row, a search match. */
-    --accent-soft: #2e1b1c;
+    --bg: #141512;
+    --surface: #1b1c19;
+    --raised: #252622;
+    --line: #32332d;
+    --line-strong: #74756c;
+    --fg: #ecebe5;
+    --fg-muted: #a3a299;
+    --accent: #ff7a33;
+    --accent-ink: #1d0c02;
+    --accent-text: #ff8f52;
+    --accent-soft: rgba(255, 122, 51, .14);
     --ok: #56c27f;
     --ok-soft: rgba(86, 194, 127, .14);
     --warn: #e3a73d;
@@ -140,46 +117,38 @@
     --danger-soft: rgba(243, 108, 92, .14);
     --info: #6fb2f0;
     --info-soft: rgba(111, 178, 240, .14);
-    /* A shadow cannot darken a near-black page much, so a float is told apart by its border (every
-       menu has one) and the shadow only deepens the edge. */
-    --shadow-float: 0 10px 30px rgba(0, 0, 0, .6), 0 1px 2px rgba(0, 0, 0, .5);
+    --shadow-float: 0 10px 30px rgba(0, 0, 0, .55), 0 1px 2px rgba(0, 0, 0, .4);
     --shadow-toggle: 0 1px 2px rgba(0, 0, 0, .5);
     --scrim: rgba(0, 0, 0, .6);
-    /* Graphite's own ink, as Paper's chevron is Paper's (15.16:1 on the page). */
-    --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23e6e8eb' stroke-width='1.5'/></svg>");
-    /* A photo's matte is --raised, as Paper's is. */
-    --photo-stage: #1b1e22;
-    /* The dimmed paper (rule 5), neutral like the page: 9.54:1 against it where white would be
-       18.6:1, so a grid of tiles does not out-shine the text (15.16:1). Multiplied onto it, black ink
-       reads 10.76:1, a LightBurn blue layer 6.14:1 and red 3.60:1; --thumb-ink on it 5.44:1. */
-    --thumb-stage: #b6babf;
-    --thumb-ink: #3a3f46;
+    --photo-stage: #0e0f0c;
+    /* The dimmed paper (rule 5): 9.6:1 against Graphite's page where white was ~19:1, so a grid
+       of tiles no longer out-shines the text; black ink 11:1, a LightBurn blue layer 6.7:1 on it. */
+    --thumb-stage: #bfbbb2;
+    --thumb-ink: #3d3e38;
     --code-keyword: #ff9a66;
     --code-string: #93c97c;
     --code-number: #e3b45a;
-    --code-comment: #8d949d;
+    --code-comment: #8e8d85;
     --code-function: #82b9ee;
     --code-type: #c4a5ee;
     --code-property: #dfb98c;
-    --code-meta: #9ba2ab;
+    --code-meta: #a3a299;
     --code-invalid: #f36c5c;
   }
-  /* The OS's dark, when the choice is System: the SAME declarations, value for value
-     (theme_contrast_test.rb compares the two blocks). */
   @media (prefers-color-scheme: dark) {
     :root[data-theme="system"] {
       color-scheme: dark;
-      --bg: #111316;
-      --surface: #111316;
-      --raised: #1b1e22;
-      --line: #383c43;
-      --line-strong: #e6e8eb;
-      --fg: #e6e8eb;
-      --fg-muted: #9ba2ab;
-      --accent: #ff5245;
-      --accent-ink: #111316;
-      --accent-text: #ff5245;
-      --accent-soft: #2e1b1c;
+      --bg: #141512;
+      --surface: #1b1c19;
+      --raised: #252622;
+      --line: #32332d;
+      --line-strong: #74756c;
+      --fg: #ecebe5;
+      --fg-muted: #a3a299;
+      --accent: #ff7a33;
+      --accent-ink: #1d0c02;
+      --accent-text: #ff8f52;
+      --accent-soft: rgba(255, 122, 51, .14);
       --ok: #56c27f;
       --ok-soft: rgba(86, 194, 127, .14);
       --warn: #e3a73d;
@@ -188,21 +157,22 @@
       --danger-soft: rgba(243, 108, 92, .14);
       --info: #6fb2f0;
       --info-soft: rgba(111, 178, 240, .14);
-      --shadow-float: 0 10px 30px rgba(0, 0, 0, .6), 0 1px 2px rgba(0, 0, 0, .5);
+      --shadow-float: 0 10px 30px rgba(0, 0, 0, .55), 0 1px 2px rgba(0, 0, 0, .4);
       --shadow-toggle: 0 1px 2px rgba(0, 0, 0, .5);
       --scrim: rgba(0, 0, 0, .6);
-      --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23e6e8eb' stroke-width='1.5'/></svg>");
-      --photo-stage: #1b1e22;
-      --thumb-stage: #b6babf;
-      --thumb-ink: #3a3f46;
+      --photo-stage: #0e0f0c;
+      /* The dimmed paper (rule 5): 9.6:1 against Graphite's page where white was ~19:1, so a grid
+         of tiles no longer out-shines the text; black ink 11:1, a LightBurn blue layer 6.7:1 on it. */
+      --thumb-stage: #bfbbb2;
+      --thumb-ink: #3d3e38;
       --code-keyword: #ff9a66;
       --code-string: #93c97c;
       --code-number: #e3b45a;
-      --code-comment: #8d949d;
+      --code-comment: #8e8d85;
       --code-function: #82b9ee;
       --code-type: #c4a5ee;
       --code-property: #dfb98c;
-      --code-meta: #9ba2ab;
+      --code-meta: #a3a299;
       --code-invalid: #f36c5c;
     }
   }
@@ -211,24 +181,21 @@
 @layer base {
   /* Self-hosted (app/assets/fonts, SIL OFL 1.1): the CSP's font_src is :self, and a self-hosted
      app does not call Google. Propshaft rewrites these url()s to the fingerprinted paths. */
-  /* Libre Franklin is ONE variable file per style (100-900; the screens use 400-800). Courier Prime
-     has 400 and 700 only, so a mono rule asking for 500 renders at 400. Both are fontsource's latin
-     subsets, @fontsource-variable/libre-franklin@5.3.0 and @fontsource/courier-prime@5.3.0. */
   @font-face {
-    font-family: "Libre Franklin"; font-style: normal; font-weight: 100 900; font-display: swap;
-    src: url("libre-franklin.woff2") format("woff2");
+    font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400 600; font-display: swap;
+    src: url("ibm-plex-sans.woff2") format("woff2");
   }
   @font-face {
-    font-family: "Libre Franklin"; font-style: italic; font-weight: 100 900; font-display: swap;
-    src: url("libre-franklin-italic.woff2") format("woff2");
+    font-family: "IBM Plex Sans"; font-style: italic; font-weight: 400; font-display: swap;
+    src: url("ibm-plex-sans-italic.woff2") format("woff2");
   }
   @font-face {
-    font-family: "Courier Prime"; font-style: normal; font-weight: 400; font-display: swap;
-    src: url("courier-prime-400.woff2") format("woff2");
+    font-family: "IBM Plex Mono"; font-style: normal; font-weight: 400; font-display: swap;
+    src: url("ibm-plex-mono-400.woff2") format("woff2");
   }
   @font-face {
-    font-family: "Courier Prime"; font-style: normal; font-weight: 700; font-display: swap;
-    src: url("courier-prime-700.woff2") format("woff2");
+    font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap;
+    src: url("ibm-plex-mono-500.woff2") format("woff2");
   }
   /* KiCanvas's icon font (Apache-2.0, LICENSE-material-symbols.txt), written by bin/build-kicanvas,
      which also deletes the Google Fonts <link> upstream injected; its labels inherit --font-ui. This
@@ -254,8 +221,7 @@
   html { -webkit-text-size-adjust: 100%; }
   body {
     margin: 0; background: var(--bg); color: var(--fg);
-    /* The Shop manual body (spec §5): 13.5px at 1.4. */
-    font: 400 13.5px/1.4 var(--font-ui);
+    font: 400 14px/21px var(--font-ui);
   }
   /* Links are INK, not accent (the accent is spent on the one action). Navigation links (file
      names, crumbs) underline on hover; links inside prose are always underlined (.prose a). */
@@ -266,10 +232,9 @@
   h2 { font-size: 16px; line-height: 22px; font-weight: 600; }
   h3 { font-size: 14px; line-height: 20px; font-weight: 600; }
   p { margin: 0 0 8px; }
-  /* DATA IS MONO AT 12.5px (spec §5); a caption's own rule takes it to 12. */
-  code, kbd, pre, .mono { font-family: var(--font-mono); font-size: 12.5px; line-height: 18px; }
+  code, kbd, pre, .mono { font-family: var(--font-mono); font-size: 13px; line-height: 20px; }
   .muted { color: var(--fg-muted); }
-  .num { text-align: right; font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+  .num { text-align: right; font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
   .prose { max-width: var(--prose-measure); font-size: 15px; line-height: 24px; }
   .prose h2 { margin: var(--space-5) 0 var(--space-2); }
   .prose a { text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }

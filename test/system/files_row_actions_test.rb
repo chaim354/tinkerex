@@ -86,21 +86,21 @@ class FilesRowActionsSystemTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  test "the commit page's Commit is the page's ink primary" do
+  test "the commit page's Commit wears the accent" do
     root = make_repo!(name: "demo", files: { "notes.md" => "hello\n" })
     File.write(File.join(library_root, "demo", "notes.md"), "hello world\n")
     visit repo_commit_path(root.node_id)
     colours = page.evaluate_script(<<~JS)
       (() => {
         const probe = document.createElement("span");
-        probe.style.background = "var(--fg)";
+        probe.style.background = "var(--accent)";
         document.body.appendChild(probe);
-        const ink = getComputedStyle(probe).backgroundColor;
+        const accent = getComputedStyle(probe).backgroundColor;
         probe.remove();
-        return { ink, commit: getComputedStyle(document.querySelector(".editor-bar input[type=submit]")).backgroundColor };
+        return { accent, commit: getComputedStyle(document.querySelector(".editor-bar input[type=submit]")).backgroundColor };
       })()
     JS
-    assert_equal colours["ink"], colours["commit"], "Commit is not the page's primary (an ink fill, design-system.md rule 13)"
+    assert_equal colours["accent"], colours["commit"], "Commit is not the page's accent"
     assert_no_console_errors
   end
 end

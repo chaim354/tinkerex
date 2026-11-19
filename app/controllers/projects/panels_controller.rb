@@ -37,14 +37,8 @@ module Projects
     # would freeze this release's defaults onto the row and stop the project following its own kind
     # — including after the maker changes that kind on the edit form. Views, widths, titles and
     # intros go with it, by the same argument: they are the arrangement, not a separate setting.
-    #
-    # WHAT THE PUBLIC PAGE LEAVES OUT STAYS (2026-11-19, the published view). That IS a separate
-    # setting — the Publishing tab's — and a reset that cleared it would publish every panel the
-    # maker kept private, files and all, from a button that says it resets the layout. The column
-    # keeps that one key, or goes back to nil when there is nothing kept back.
     def destroy
-      kept = Array(stored["unpublished"])
-      @project.update!(panels: kept.any? ? { "unpublished" => kept } : nil)
+      @project.update!(panels: nil)
       redirect_to project_path(@project), notice: "Reset the page layout to the #{kind_label} defaults."
     end
 
@@ -224,16 +218,11 @@ module Projects
     #
     # THE EDITOR'S COPY OF THE BUTTONS SENDS NO `in_place` and keeps the plain redirect: its slots
     # hold a draft view, and a stream replacing the panel under one would leave the two disagreeing.
-    #
-    # `figures` SAYS THE PAGE'S FIGURE NUMBERS MOVED (the Shop manual spec §9 and §11.3): a folder
-    # going into the browser draws no figure, and one coming out draws them again, so every figure
-    # after it, every citation and the index of files renumber. A switch between tiles and list
-    # draws the same figures in the same order and moves none.
     def in_place(key, view)
       return {} unless params[:in_place] == "1"
 
       browsed = (current_layout.view_for(key) == "browser") != (view == "browser")
-      browsed ? { panel: key, files: "1", figures: "1" } : { panel: key }
+      browsed ? { panel: key, files: "1" } : { panel: key }
     end
 
     # ONE PANEL'S VERSION STACKS ON OR OFF (Shop manual spec §9, "a toggle per panel"): the shape and
@@ -250,9 +239,7 @@ module Projects
       return redirect_to(project_path(@project)) unless key && Maker::ProjectKind.stacks?(key) && %w[0 1].include?(value.to_s)
 
       back = if params[:in_place] == "1"
-        # A STACK SWITCH ALWAYS RENUMBERS (`figures`, #in_place): a stack is one figure and its
-        # versions standing alone are several.
-        (current_layout.folder?(key) ? { panel: key, files: "1" } : { panel: key }).merge(figures: "1", pressed: "stack")
+        (current_layout.folder?(key) ? { panel: key, files: "1" } : { panel: key }).merge(pressed: "stack")
       else
         {}
       end

@@ -638,7 +638,7 @@
   AWAY.** No action in `Tools::AddonsController` gates on `available?`. Every reader of it is
   cosmetic: the gallery card (`app/views/tools/home/index.html.erb`), the addon page, which draws
   `unavailable_reason` instead of mounting the bundle (`app/views/tools/addons/show.html.erb`,
-  2026-11-02), the strip's Add menu's list (`Tools::HomeController#new_menu`) and the pin door's refusal
+  2026-11-02), the New menu's list (`Tools::HomeController#new_menu`) and the pin door's refusal
   (`Tools::PinsController`). So a listed-but-unavailable addon is still
   `Registry.find`-able, still resolves through `load_addon`, and still serves `@addon.states_key`
   from `#states` and `#create`. Greying an unreciprocated claim out would **look closed while

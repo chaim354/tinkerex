@@ -137,10 +137,6 @@ class TenantCleanupTest < ActiveSupport::TestCase
       u.maker_project_blocks.create!(project: u.maker_projects.first, kind: "text", body: "x")
     },
 
-    "maker_tidy_dismissals" => ->(u) {
-      u.maker_projects.first.tidy_dismissals.create!(user: u, kind: "export_older", subject: "a>b", state: "1")
-    },
-
     "maker_releases" => ->(u) {
       u.maker_projects.first.releases.create!(user: u, version: "v0.1.0", published_at: Time.current)
     },
@@ -172,7 +168,6 @@ class TenantCleanupTest < ActiveSupport::TestCase
     maker_print_runs maker_taggings maker_file_attachments maker_collection_items maker_repo_edits
     maker_build_log_entries maker_sheets maker_boms maker_inventory_items
     maker_inventory_transactions maker_bom_lines maker_connections maker_calculations maker_project_blocks
-    maker_tidy_dismissals
     maker_releases maker_release_files maker_pins maker_stack_exclusions
   ].freeze
 

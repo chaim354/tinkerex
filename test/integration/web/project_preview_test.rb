@@ -23,10 +23,10 @@ module Web
 
       assert_response :success
       assert_select ".preview-banner", /Not published/
-      assert_select "header.strip"
+      assert_select "aside.rail"
       assert_select "nav.tabbar"
       assert_select ".public-files"
-      # ONE breadcrumb landmark, the visitor's own (`@ada / Desk Lamp`). The shell's caps path yields a
+      # ONE breadcrumb landmark, the visitor's own (`@ada / Desk Lamp`). The shell's topbar yields a
       # `content_for :crumbs` on the signed-in branch, which the public page never takes — so a
       # crumbs block in preview.html.erb rendered a SECOND `nav.breadcrumb` with the same accessible
       # name above the first (measured in review: two on the preview, one on the public page).

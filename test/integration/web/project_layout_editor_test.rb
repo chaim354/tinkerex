@@ -120,7 +120,7 @@ module Web
       @project.tasks.create!(user: @user, title: "Cut the base")
       get project_path(@project)
 
-      # EVERY PANEL HALF BY DEFAULT, FILES AND FOLDERS INCLUDED (the Shop manual, 2026-11-19).
+      # EVERY PANEL HALF BY DEFAULT, FILES AND FOLDERS INCLUDED (2026-11-19).
       assert_select "div.project-panels > div.panel-slot.panel--half > section.attachments-panel", 1
       assert_select "div.project-panels > div.panel-slot.panel--half > section.tasks-panel", 1
       assert_select "div.project-panels > div.panel-slot.panel--half > section.folder-panel", 1
@@ -144,7 +144,7 @@ module Web
       assert_select "a[href=?]", edit_layout_project_path(@project), 0
     end
 
-    # A PANEL STAYS FULL WHILE IT HOLDS A REPOSITORY (the Shop manual, 2026-11-19; its spec §4): a
+    # A PANEL STAYS FULL WHILE IT HOLDS A REPOSITORY (2026-11-19; the Shop manual spec §4): a
     # folder panel that is a working tree, and Files while the project's folder is one, because the
     # card and the browser are where half a column stops being usable. Through the real listing — a
     # `.git` directory node is what makes a folder a working tree (Maker::ProjectFolderListing) — so a

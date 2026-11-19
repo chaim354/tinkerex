@@ -10,7 +10,7 @@ class LandingsController < ActionController::Base
 
   def show
     # A find_by and a COUNT, what the sign-in card pays (Tinkerex::Demo.available?): the demo button exists only
-    # while there is an account to sign into, and Install takes the primary when there is none.
+    # while there is an account to sign into, and Install takes the accent when there is none.
     @demo_available = Tinkerex::Demo.available?
   end
 end

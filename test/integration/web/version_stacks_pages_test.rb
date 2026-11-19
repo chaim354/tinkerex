@@ -61,8 +61,8 @@ module Web
       %w[game\ box.lbrn2 game\ box\ v1.lbrn2].each do |name|
         assert_select "tr.stack-member[hidden] a[href=?]", file_path(file("laser/#{name}").node_id), 1
       end
-      # 22 files make 17 figures: four stacks hold nine files, so five fold away.
-      assert_select ".toolbar-count", text: "22 items in 17 figures"
+      # 22 files make 17 entries: four stacks hold nine files, so five fold away.
+      assert_select ".toolbar-count", text: "22 items in 17 entries"
     end
 
     test "a stack row opens its own members and names them latest and older" do
@@ -121,7 +121,7 @@ module Web
       assert_response :success
       # The cnc pair and the laser three are two stacks: a stack never crosses a folder.
       assert_equal [ "edge test", "edge test" ], stack_names("tr.stack-row")
-      assert_select ".toolbar-count", text: "5 matches in 2 figures"
+      assert_select ".toolbar-count", text: "5 matches in 2 entries"
     end
 
     # A PAGED FOLDER PAGES FIGURES (FilesController#index): every member but the one the name order
@@ -139,8 +139,8 @@ module Web
       figures = css_select("table.files tbody > tr:not(.stack-member)")
       assert_equal per, figures.size, "page one draws a full page of figures"
       assert_equal 5, css_select("tr.stack-row").size, "the first five stacks fill page one"
-      assert_select ".toolbar-count", text: "#{per + 25} items in #{per + 5} figures"
-      assert_select ".pager-status", text: /Page 1 of 2\s+\(#{per + 5} figures\)/
+      assert_select ".toolbar-count", text: "#{per + 25} items in #{per + 5} entries"
+      assert_select ".pager-status", text: /Page 1 of 2\s+\(#{per + 5} entries\)/
       # Every stack on the page holds its three members, whichever of them the query kept.
       assert_equal 15, css_select("tr.stack-member").size
 
@@ -214,21 +214,10 @@ module Web
     test "a panel's switch is answered in place, and the editor's Save keeps it" do
       key = Maker::ProjectKind.folder_key(laser.node_id)
       patch project_panels_path(@project), params: { stack: { key => "0" }, in_place: "1" }
-      assert_redirected_to project_path(@project, panel: key, files: "1", figures: "1", pressed: "stack", anchor: key)
-      # Turbo follows with the stream type: the panel, the Files panel (its Backups changed), and,
-      # because a stack is one figure and its versions several (spec §9), every other panel that
-      # shows a figure number and the index of files, renumbered.
-      get project_path(@project, panel: key, files: "1", figures: "1", pressed: "stack"), headers: { "Accept" => "text/vnd.turbo-stream.html, text/html" }
-      numbered = %w[cnc design docs images models].map { |name| Maker::ProjectKind.folder_key(@dirs.fetch(name).node_id) }
-      assert_equal [ key, "attachments", *numbered, "photos", "project-index" ], css_select("turbo-stream[action=replace]").map { |t| t["target"] }
-      # The laser panel's versions now stand alone, each with its own number, and the index agrees.
-      game_box = file("laser/game box.lbrn2")
-      game_box_v1 = file("laser/game box v1.lbrn2")
-      streamed = ->(target) { Nokogiri::HTML5.fragment(css_select("turbo-stream[target='#{target}'] template").sole.inner_html) }
-      tiles = streamed.call(key).css(".attachment-tile[data-fig]").to_h { |el| [ el.at_css("a.file-cell")["href"], el["data-fig"] ] }
-      assert_not_equal tiles.fetch(file_path(game_box.node_id)), tiles.fetch(file_path(game_box_v1.node_id))
-      index = streamed.call("project-index").css(".files-index-entry").to_h { |li| [ li.at_css("a.files-index-name")["href"], li["data-entry-fig"] ] }
-      assert_equal tiles[file_path(game_box.node_id)], index[file_path(game_box.node_id)]
+      assert_redirected_to project_path(@project, panel: key, files: "1", pressed: "stack", anchor: key)
+      # Turbo follows with the stream type: the panel and the Files panel (its Backups changed).
+      get project_path(@project, panel: key, files: "1", pressed: "stack"), headers: { "Accept" => "text/vnd.turbo-stream.html, text/html" }
+      assert_equal [ key, "attachments" ], css_select("turbo-stream[action=replace]").map { |t| t["target"] }
       assert_select "turbo-stream[target=?] .stack-panel-switch input[autofocus]", key
 
       draft = { layout: 1, panels: [ { key: "tasks", hidden: true, width: "full" } ] }
@@ -248,11 +237,11 @@ module Web
     test "Search draws one row per stack inside the Files group" do
       get search_path(q: "harbor")
       assert_response :success
-      assert_select "#search-file" do
+      assert_select ".result-group--file" do
         assert_select ".result-row.stack-result", 1
         assert_select ".result-row.stack-result", text: /harbor-number\s+4 versions/
         assert_select ".result-row.stack-result a[href=?]", file_path(file("design/harbor-number-v5.svg").node_id)
-        assert_select ".panel-note", text: "5 results · 8 files"
+        assert_select "h2 .muted", text: "5 · 8 files"
       end
     end
   end

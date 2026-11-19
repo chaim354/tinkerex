@@ -4,9 +4,8 @@ require_relative "../../support/fake_addon_source"
 module Web
   # ANY TOOL PINS TO THE SIDEBAR, BY ITS CARD'S TOGGLE OR A RIGHT CLICK (2026-10-22, the toggle
   # 2026-11-02; Maker::ToolPins, Tools::PinsController, toolmenu_controller.js). The calculator's own
-  # pin is calculator_shell_test.rb's; this is the addons: what the gallery offers, what the door
-  # refuses, what the left column draws and lights (Home's Pinned group and the Tools column, since
-  # the rail left in Shop manual slice 3), and that the layout still never reads the addon registry. The menu opening on a right click, which only a
+  # pin is calculator_shell_test.rb's; this is the addons: what the gallery offers, what the door refuses, what the rail draws and lights, and that
+  # the rail still never reads the addon registry. The menu opening on a right click, which only a
   # browser can see, is test/system/tool_pins_test.rb's.
   class ToolPinsTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
@@ -97,27 +96,23 @@ module Web
       assert_match(/Unpin Widget Kit/, toggle["title"])
     end
 
-    test "pinning an addon puts a row for it in Home's Pinned and the Tools column, by the title it had" do
+    test "pinning an addon puts a link to it under Tools on every page, by the title it had" do
       post tools_pin_path("widgetkit"), headers: { "Referer" => tools_url }
       assert_redirected_to tools_url
       assert_equal "Pinned Widget Kit to the sidebar.", flash[:notice]
       assert_equal [ { "key" => "widgetkit", "title" => "Widget Kit" } ], @user.reload.pinned_tools
 
-      [ root_path, tools_path ].each do |path|
+      [ root_path, files_path, tools_path ].each do |path|
         get path
-        assert_select "aside.column .column-group[data-controller=toolmenu] a.column-tool-pin[href=?]",
-                      tools_addon_path("widgetkit"), { count: 1 }, path
-        assert_select "aside.column a.column-tool-pin .column-row-name", "Widget Kit"
-        assert_select "aside.column a.column-tool-pin .column-row-note", "tool"
-        # The column's Unpin is the same right click.
-        assert_select "aside.column a.column-tool-pin[data-action=?][data-tool-pin-url=?][data-tool-pinned=true]",
+        assert_select "aside.rail .rail-nav--foot[data-controller=toolmenu] a.rail-tool-pin[href=?][title=?]",
+                      tools_addon_path("widgetkit"), "Widget Kit", { count: 1 }, path
+        assert_select "aside.rail a.rail-tool-pin .rail-label", "Widget Kit"
+        # The rail's Unpin is the same right click.
+        assert_select "aside.rail a.rail-tool-pin[data-action=?][data-tool-pin-url=?][data-tool-pinned=true]",
                       "contextmenu->toolmenu#open", tools_pin_path("widgetkit")
       end
-      # The Tools column: the gallery, then the pins.
-      assert_equal [ "All tools", "Widget Kit" ], css_select("aside.column .column-row-name").map { |e| e.text.strip }
-      # A Library page has the Library's column, which pins no tool.
-      get files_path
-      assert_select "aside.column a.column-tool-pin", 0
+      foot = css_select("aside.rail .rail-nav--foot li a").map { |a| a["title"] }
+      assert_equal foot.index("Tools") + 1, foot.index("Widget Kit"), "pinned tools sit under Tools"
 
       get tools_path
       assert_select "div.addon-card[data-tool-pin-url=?][data-tool-pinned=true]", tools_pin_path("widgetkit")
@@ -133,8 +128,8 @@ module Web
                    @user.reload.pinned_tools
 
       get root_path
-      rows = css_select("aside.column a.column-row").map { |a| a["class"] }
-      assert_operator rows.index { |c| c.include?("column-tool-pin") }, :<, rows.index { |c| c.include?("column-calculator") }
+      foot = css_select("aside.rail .rail-nav--foot li a").map { |a| a["class"] }
+      assert_operator foot.index { |c| c.include?("rail-tool-pin") }, :<, foot.index { |c| c.include?("rail-calculator") }
     end
 
     test "a greyed-out addon and an unknown key are refused, and nothing is pinned" do
@@ -146,50 +141,51 @@ module Web
       assert_equal [], @user.reload.pinned_tools
     end
 
-    test "a pinned addon's page lights the Tools place and its own row in the Tools column" do
+    test "a pinned addon's page lights its own link, and Tools lights for it in the icon rail and the tab bar" do
       post tools_pin_path("widgetkit")
       get tools_addon_path("widgetkit")
       assert_response :success
-      assert_select "aside.column a.column-tool-pin[aria-current=page]", 1
-      assert_select "aside.column [aria-current='page']", 1
-      assert_select "header.strip a.strip-place[aria-current=page]", text: "Tools"
+      assert_select "aside.rail a.rail-tool-pin[aria-current=page]", 1
+      assert_select "aside.rail [aria-current='page']", 1
+      # Collapsed, the pinned link hides (shell.css), so its family link wears the mark instead.
+      assert_select "aside.rail a.rail-link.rail-family-lit[title=Tools]", 1
       assert_select "nav.tabbar a.tabbar-link[aria-current=page]", text: "Tools"
 
-      get tools_path # the gallery itself lights All tools
-      assert_select "aside.column a.column-row[href=?][aria-current=page]", tools_path, text: "All tools"
-      assert_select "aside.column a.column-tool-pin[aria-current]", 0
+      get tools_path # the gallery itself is still Tools
+      assert_select "aside.rail a[title=Tools][aria-current=page]", 1
+      assert_select "aside.rail a.rail-tool-pin[aria-current]", 0
     end
 
-    test "an addon that is not pinned lights the Tools place on its page, and no row" do
+    test "an addon that is not pinned lights Tools on its page, as before" do
       get tools_addon_path("widgetkit")
-      assert_select "header.strip a.strip-place[aria-current=page]", text: "Tools"
-      assert_select "aside.column [aria-current]", 0
+      assert_select "aside.rail a[title=Tools][aria-current=page]", 1
+      assert_select "aside.rail .rail-family-lit", 0
     end
 
     # THE LAYOUT NEVER READS THE ADDON REGISTRY (docs/invariants/addons.md), pinned addons included:
-    # the column draws from the user row. Counted, with the pin itself as the proof the count is live.
-    test "Home's column draws a pinned addon without reading the registry; pinning reads it" do
+    # the rail draws from the user row. Counted, with the pin itself as the proof the count is live.
+    test "the rail draws a pinned addon without reading the registry; pinning reads it" do
       counting_registry_reads do |calls|
         post tools_pin_path("widgetkit")
         assert_operator calls.call, :>=, 1, "pinning must ask the registry whether the tool is real"
 
         before = calls.call
-        get files_path
         get root_path
-        assert_select "aside.column a.column-tool-pin", 1
+        get files_path
+        assert_select "aside.rail a.rail-tool-pin", 1
         assert_equal before, calls.call, "a page render read the addon registry"
       end
     end
 
     # A PIN OUTLIVES ITS ADDON, AND UNPINNING NEVER ASKS THE REGISTRY, so a tool the source stopped
-    # serving (or a source that is down) can still be taken out of the column.
+    # serving (or a source that is down) can still be taken out of the rail.
     test "an addon the source stopped serving stays pinned by its old title and can still be unpinned" do
       post tools_pin_path("widgetkit")
       Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [])
       Rails.cache.clear
 
       get root_path
-      assert_select "aside.column a.column-tool-pin .column-row-name", "Widget Kit"
+      assert_select "aside.rail a.rail-tool-pin[title=?]", "Widget Kit"
 
       counting_registry_reads do |calls|
         delete tools_pin_path("widgetkit"), headers: { "Referer" => root_url }
@@ -199,7 +195,7 @@ module Web
       assert_equal "Unpinned Widget Kit from the sidebar.", flash[:notice]
       assert_equal [], @user.reload.pinned_tools
       get root_path
-      assert_select "aside.column a.column-tool-pin", 0
+      assert_select "aside.rail a.rail-tool-pin", 0
     end
 
     test "unpinning what is not pinned changes nothing and still answers" do
@@ -214,8 +210,8 @@ module Web
                                            { "key" => "widgetkit", "title" => "Duplicate" } ])
       get root_path
       assert_response :success
-      assert_select "aside.column a.column-tool-pin", 1
-      assert_select "aside.column a.column-tool-pin .column-row-name", "Widget Kit"
+      assert_select "aside.rail a.rail-tool-pin", 1
+      assert_select "aside.rail a.rail-tool-pin[title=?]", "Widget Kit"
 
       # A write rewrites the column from what was readable, so the junk goes with it.
       post tools_pin_path("calculator")
@@ -230,7 +226,7 @@ module Web
       delete destroy_user_session_path
       sign_in_web!(other, password: PASSWORD)
       get root_path
-      assert_select "aside.column a.column-tool-pin", 0
+      assert_select "aside.rail a.rail-tool-pin", 0
     end
 
     test "signed out, the pin door goes to sign-in" do

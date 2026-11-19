@@ -19,7 +19,7 @@ lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface)
    above covers only `lexxy-editor`; this covers the read-only rendering. Inherit, so it follows
    whatever the surrounding page colour is in either theme. */
 .lexxy-content { color: inherit; }
-/* Links are ink (design-system.md rule 13): red marks and never fills, and the one action is an ink fill. */
+/* Links are ink (design-system.md rule 13): the accent is spent on the one action. */
 .lexxy-content a { color: var(--fg); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
 
 /* CodeMirror 6 (the source viewer, the editor, diffs, history blobs, the README editor).
@@ -129,7 +129,7 @@ lexxy-toolbar { border-bottom: 1px solid var(--line); background: var(--surface)
 .spreadsheet-grid .jss_worksheet .copying-bottom { border-bottom-color: var(--fg); }
 .spreadsheet-grid .jss_corner { background-color: var(--fg); border-color: var(--surface); }
 .spreadsheet-grid .jcontextmenu { background: var(--surface); color: var(--fg); border: 1px solid var(--line);
-                                  border-radius: var(--radius-panel); box-shadow: var(--shadow-float); }
+                                  border-radius: var(--radius-panel); box-shadow: 0 6px 18px color-mix(in srgb, var(--fg) 18%, transparent); }
 .spreadsheet-grid .jcontextmenu > div { font: 400 13px/18px var(--font-ui); padding-left: 12px; }
 .spreadsheet-grid .jcontextmenu > div a { color: var(--fg); }
 .spreadsheet-grid .jcontextmenu > div:hover { background: var(--raised); }

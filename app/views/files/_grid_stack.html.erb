@@ -1,11 +1,11 @@
 <%# locals: (stack:) %>
 <%#
-  ONE VERSION STACK IN THE LIBRARY'S TILES (Shop manual spec §9; the screen `library-tiles`): one
-  figure, drawn as the `.stack` component (its latest member's picture with two copies behind it,
-  the name at 800, a count chip), standing for every member.
+  ONE VERSION STACK IN THE LIBRARY'S GRID (Shop manual spec §9): one card, drawn as the `.stack`
+  component (its latest member's picture with two copies behind it, the name in bold, a count chip),
+  standing for every member.
 
   THE FIGURE OPENS IN PLACE, NEVER NAVIGATES. It is a button (stack_controller.js#toggle, on the
-  grid) controlling the panel after it, an opened figure spanning the plate (`.plate-open`), which
+  grid) controlling the panel after it, an opened stack spanning the grid (`.stack-open`), which
   holds Open latest, Download latest and Close, then every member as the card a file standing alone
   would be (files/_grid_item). A stack is not a file, so the figure is not a selection item and has
   no file menu; its members are and do. The picture, the facts and the doors are the LATEST
@@ -27,7 +27,7 @@
     <% else %>
       <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
     <% end %>
-    <span class="plate-marks"><span class="badge stack-count"><%= count %></span></span>
+    <span class="stack-marks"><span class="badge stack-count"><%= count %></span></span>
     <span class="grid-name stack-name"><%= stack.name %></span>
     <span class="grid-sub"><%= latest.name %></span>
   <% end %>
@@ -39,10 +39,10 @@
                 aria: { label: "Download #{latest.name}" } do %><%= row_action_content(:download, "Download") %><% end %>
   </div>
 </div>
-<section class="plate-open stack-open" id="<%= dom %>-open" hidden aria-label="<%= stack.name %>, <%= count %>">
+<section class="stack-open" id="<%= dom %>-open" hidden aria-label="<%= stack.name %>, <%= count %>">
   <div class="stack-open-head">
     <h3 class="stack-name"><%= stack.name %></h3>
-    <span class="plate-facts">opened · <%= count %><%= " in #{@folder_paths[latest.node_id].presence || "Library"}" if @flat %></span>
+    <span class="muted stack-facts">opened · <%= count %><%= " in #{@folder_paths[latest.node_id].presence || "Library"}" if @flat %></span>
   </div>
   <div class="stack-open-actions">
     <%= link_to "Open latest", file_path(latest.node_id), class: "btn",

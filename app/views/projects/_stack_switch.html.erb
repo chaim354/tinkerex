@@ -1,7 +1,7 @@
 <%# locals: (key:, label:) %>
 <%#
-  ONE PANEL'S VERSION-STACK SWITCH (Shop manual spec §9, "a toggle per panel"; the screens' words,
-  "Stack versions and backups"), under the panel's head as the screen draws it.
+  ONE PANEL'S VERSION-STACK SWITCH (Shop manual spec §9, "a toggle per panel"), "Stack versions and
+  backups", under the panel's head.
 
   A WRITE, AND SAVED WHERE THE PANEL'S VIEW IS: on the project row, under `panels["unstacked"]`
   (Projects::PanelsController#update_stack; Maker::ProjectKind::Layout#stacked?). A checkbox that
@@ -13,7 +13,7 @@
   NOT IN THE EDITOR: the switch is a way of reading a panel, not part of the layout the editor drafts,
   and a press there would leave the draft for the saved page.
 
-  The note beside it is the panel's "N files in M figures" when its stacks fold anything
+  The note beside it is the panel's "N files in M entries" when its stacks fold anything
   (ProjectsController#load_version_stacks' @stack_counts).
 %>
 <% unless @editing %>
@@ -30,7 +30,7 @@
       Stack versions and backups
     </label>
     <% if stacked && files && figures < files %>
-      <span class="panel-note"><%= pluralize(files, "file") %> in <%= pluralize(figures, "figure") %></span>
+      <span class="muted"><%= pluralize(files, "file") %> in <%= pluralize(figures, "entry", plural: "entries") %></span>
     <% end %>
   <% end %>
 <% end %>

@@ -51,7 +51,7 @@ module Web
       assert_select ".auth-card form[action=?]", user_session_path
     end
 
-    test "on, the sign-in page offers the demo above the form, says what it is once, and keeps its primary on Sign in" do
+    test "on, the sign-in page offers the demo above the form, says what it is once, and keeps its accent on Sign in" do
       demo_on!
       ENV["REGISTRATION"] = "closed"
       get new_user_session_path
@@ -68,7 +68,7 @@ module Web
       assert_equal 1, response.body.scan(SENTENCE).size
       assert_select "ul.auth-links a[href=?]", new_user_registration_path, count: 0
 
-      # ONE PRIMARY: on Sign in, as every auth card spends it on its own form's submit
+      # THE ACCENT IS SPENT ONCE: on Sign in, as every auth card spends it on its own form's submit
       # (auth_pages_test.rb). The demo button is a plain .btn.
       assert_select ".auth-card .primary", 1
       assert_select ".auth-card input[type=submit][value=?].primary", "Sign in"

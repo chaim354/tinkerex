@@ -1,4 +1,4 @@
-<%# locals: (thumb:, ext_label:, url:, photo: false, name: nil, fig: nil) %>
+<%# locals: (thumb:, ext_label:, url:, photo: false, name: nil) %>
 <%#
   Shared thumbnail box for a renderable file, used by both the list and grid views. The poll
   controller (thumbs_controller.js) finds `.thumb` inside a `.file-cell` and swaps the spinner for
@@ -27,15 +27,10 @@
   the registry (a pure lookup, no route and no query) and draws the terminal badge instead. A caller
   that passes no name is one that already asked before rendering this (the Library's grid, list
   and inspector) or only ever shows images, and gets the ring as before.
-
-  `fig` IS A FIGURE NUMBER'S DISC, drawn first inside the box (`.plate-figure .thumb > .fig-num`,
-  components.css): a project page's figures (ProjectsHelper#fig_num_tag) and the visitor's. The poll
-  keeps it when it swaps the spinner for the picture (thumbs_controller.js#clear).
 %>
 <% failed = thumb&.failed? %>
 <% never = thumb.nil? && name.present? && Maker::Previews::Registry.for_filename(name).blank? %>
 <span class="thumb<%= " photo" if photo %><%= " thumb-failed" if failed %>" data-thumbs-target="thumb">
-  <%= fig %>
   <% if thumb&.showable? %>
     <img src="<%= url %>" alt="" loading="lazy">
   <% elsif !never && (thumb.nil? || thumb.in_flight?) %>

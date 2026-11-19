@@ -697,55 +697,5 @@ test "groups keeps a non-empty top group beside the tabs, and an empty tab betwe
   tail = Maker::Project::PANELS - %w[attachments photos tasks publish]
   assert_equal [ [ tk(TAB_A), [] ], [ tk(TAB_B), [ "tasks", *tail ] ] ], g.tabs.map { |t| [ t.key, t.keys ] }
 end
-
-    # --- the published view (2026-11-19) --------------------------------------------------------
-
-    # `unpublished` IS READ LIKE `hidden`: against the folders that exist now, minus ALWAYS, minus
-    # the tab keys — and NO PRESET supplies one, so a column that names none keeps nothing back.
-    test "unpublished reads the column against the vocabulary, never Files or Photos, and no preset adds any" do
-      layout = Maker::ProjectKind.layout_for(kind: "laser", folders: FOLDERS, overrides: {
-        "order" => [ "attachments", tk(TAB_A) ],
-        "unpublished" => [ "bom", key(MODELS), key("gone"), "attachments", "photos", tk(TAB_A), "../etc" ]
-      })
-      assert_equal [ "bom", key(MODELS) ], layout.unpublished
-      assert layout.unpublished?(key(MODELS))
-      assert layout.unpublished?(:bom), "a Symbol asks what a String does"
-      refute layout.unpublished?("attachments")
-
-      assert_empty Maker::ProjectKind.layout_for(kind: "laser", overrides: nil, folders: FOLDERS).unpublished,
-                   "a kind's preset arranges a page; it never decides what is published"
-      assert_empty Maker::ProjectKind::Layout.new(order: [], hidden: [], views: {}, widths: {}, titles: {}, intros: {},
-                                                  repo_ids: [], block_kinds: {}).unpublished
-    end
-
-    # THE TWO QUESTIONS STAY APART: the maker's layout shows an unpublished panel, the published view
-    # hides it, and a panel the maker hid is hidden on both — while `unpublished` itself still says
-    # which of the two hidden panels was a publishing choice (Maker::PublicProject#permits? asks it).
-    test "the published view hides what is hidden or unpublished, and the maker's layout only what is hidden" do
-      layout = Maker::ProjectKind.layout_for(kind: "other", folders: FOLDERS,
-                                             overrides: { "hidden" => %w[tasks], "unpublished" => [ "bom", key(MODELS) ] })
-      assert layout.visible?("bom")
-      assert layout.visible?(key(MODELS))
-      refute layout.visible?("tasks")
-
-      published = layout.published
-      refute published.visible?("bom")
-      refute published.visible?(key(MODELS))
-      refute published.visible?("tasks")
-      assert published.visible?("build_log")
-      assert_equal layout.order, published.order
-      assert_equal [ "bom", key(MODELS) ], published.unpublished, "the choice rides along for #permits?"
-      refute published.unpublished?("tasks"), "a hidden panel is not an unpublished one"
-    end
-
-    # A COLUMN HOLDING ONLY THE CHOICE IS A LAYOUT NEVER SAVED: the preset still hides and orders.
-    test "a column holding only the choice still reads the kind's preset for everything else" do
-      only = Maker::ProjectKind.layout_for(kind: "laser", folders: FOLDERS, overrides: { "unpublished" => %w[build_log] })
-      never = Maker::ProjectKind.layout_for(kind: "laser", folders: FOLDERS, overrides: nil)
-      assert_equal never.order, only.order
-      assert_equal never.hidden, only.hidden
-      assert_equal never.widths, only.widths
-      assert_equal never.hidden, Maker::ProjectKind.preset_hidden(kind: "laser", overrides: { "unpublished" => %w[build_log] })
-    end
   end
 end

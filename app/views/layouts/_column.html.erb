@@ -1,8 +1,0 @@
-<%# THE DEFAULT LEFT COLUMN FOR THIS PAGE'S SECTION (Shop manual spec §7; ShellHelper::COLUMNS), for a
-    page that supplies none through `content_for :column`. A section with no default (Search) renders
-    nothing, and the layout then draws no column at all. The defaults are deliberately plain — every
-    row a real link to a page that exists — and a page-specific column (a file's "On this page", a
-    project's contents) is a later slice's, written by that page. %>
-<% if (name = ShellHelper::COLUMNS[shell_section]) %>
-  <%= render "layouts/column/#{name}" %>
-<% end %>

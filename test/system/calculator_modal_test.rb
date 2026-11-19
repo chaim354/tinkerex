@@ -2,7 +2,7 @@ require "application_system_test_case"
 
 # THE CALCULATOR MODAL IN A BROWSER (2026-10-21; plan 2026-10-21-calculator-modal.md). What only a
 # browser can see (test/system/README.md): that the delegated `data-calculator-open` door actually
-# opens the native <dialog> from the Tools card, the pinned column row and a saved row; that Enter
+# opens the native <dialog> from the Tools card, the pinned rail link and a saved row; that Enter
 # evaluates through lib/calc.js and Esc closes with focus handed back; that history and the inch
 # display survive a reload through localStorage; that the lazy Save frame loads, preselects the
 # page's project, fills its four hidden fields from the answer on screen and lands its stream in an
@@ -82,7 +82,7 @@ class CalculatorModalTest < ApplicationSystemTestCase
   # back to the input rather than doing nothing; and Esc still hands focus back to where it began.
   test "Alt+C opens the modal from the page, and pressed inside it puts focus back in the input" do
     visit tools_path
-    focus("header.strip .strip-account > summary")
+    focus("aside.rail .rail-help")
     press_alt_c
     assert_selector "dialog.calculator[open]"
     assert_equal "calculator-input", focused, "focus lands in the input"
@@ -97,7 +97,7 @@ class CalculatorModalTest < ApplicationSystemTestCase
 
     find("#calculator-input").send_keys(:escape)
     refute dialog_open?
-    assert_includes focused.to_s, "strip-account-btn", "focus goes back to where the shortcut was pressed"
+    assert_includes focused.to_s, "rail-help", "focus goes back to where the shortcut was pressed"
 
     # A REAL MAC'S ⌥C ARRIVES AS key "ç" with code "KeyC", which no driver here synthesises (both send
     # "c"), so that event is dispatched by hand. The letter wins over the key's position wherever the
@@ -132,13 +132,13 @@ class CalculatorModalTest < ApplicationSystemTestCase
       rich.textContent = "notes"
       main.prepend(area, rich)
     JS
-    [ ".strip-search input[type=search]", "#probe-textarea", "#probe-editable" ].each do |field|
+    [ ".topbar-search input[type=search]", "#probe-textarea", "#probe-editable" ].each do |field|
       find(field).click
       press_alt_c
       refute dialog_open?, "#{field}: the shortcut fired while typing"
     end
 
-    focus("header.strip .strip-account > summary")
+    focus("aside.rail .rail-help")
     press_alt_c
     assert_selector "dialog.calculator[open]"
   end
@@ -336,26 +336,25 @@ class CalculatorModalTest < ApplicationSystemTestCase
     assert_selector ".calculator-fraction button[aria-pressed=true]", text: "1/16"
   end
 
-  # PINNED, IT IS A ROW IN HOME'S COLUMN AND THE TOOLS COLUMN (Shop manual slice 3).
-  test "pinned, the column's Calculator row opens the modal without navigating" do
+  test "pinned, the rail link opens the modal over any page without navigating" do
     visit tools_path
     # A RIGHT CLICK ON THE CARD, not a button (2026-10-22; toolmenu_controller.js).
     find("#calculator").right_click
     find(".file-menu button", text: "Pin to sidebar").click
-    assert_selector "aside.column a.column-calculator"
+    assert_selector "aside.rail a.rail-calculator"
     find("#calculator").right_click
     assert_selector ".file-menu button", text: "Unpin from sidebar"
     find(".file-menu button").send_keys(:escape)
 
-    [ root_path, tools_path ].each do |path|
+    [ files_path, project_path(@project) ].each do |path|
       visit path
-      find("aside.column a.column-calculator").click
+      find("aside.rail a.rail-calculator").click
       assert_selector "dialog.calculator[open]"
       assert_current_path path
       calculate("2 * pi")
       assert_selector ".calculator-result", text: "6.283185307"
       find("#calculator-input").send_keys(:escape)
-      assert_includes focused.to_s, "column-calculator"
+      assert_includes focused.to_s, "rail-calculator"
     end
   end
 

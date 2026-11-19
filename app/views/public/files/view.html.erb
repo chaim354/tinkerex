@@ -18,7 +18,7 @@
 <% content_for :title, "#{@node.name} — #{@pub.project.name} — @#{@pub.handle} — Tinkerex" %>
 <% content_for :container_class, "public-main" %>
 
-<%# A REAL BREADCRUMB IN THE PAGE, NOT `content_for :crumbs` — the layout renders the caps path
+<%# A REAL BREADCRUMB IN THE PAGE, NOT `content_for :crumbs` — the layout renders layouts/topbar
     (which consumes :crumbs) only on the signed-in branch. public/projects/show.html.erb's own rule. %>
 <nav class="breadcrumb" aria-label="File path">
   <%= link_to "@#{@pub.handle}", public_user_path(@pub.handle) %>

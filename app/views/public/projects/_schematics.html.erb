@@ -23,12 +23,10 @@
     <ul class="schematics-list">
       <% pub.kicad_rows.each do |row| %>
         <% ext = File.extname(row.node.name).downcase.delete(".") %>
-        <% number = pub.figure_number(row.node_id) %>
-        <%= tag.li data: (number ? { fig: number } : {}) do %>
-          <%= fig_num_tag(number) %>
+        <li>
           <%= link_to row.node.name, pub.file_url_for(row.node_id, download: true) %>
           <span class="badge"><%= ext == "kicad_sch" ? "schematic" : "board" %></span>
-        <% end %>
+        </li>
       <% end %>
     </ul>
     <% preview = pub.kicad_rows.first %>

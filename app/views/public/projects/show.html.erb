@@ -47,7 +47,7 @@
   <% end %>
 <% end %>
 
-<%# A REAL BREADCRUMB IN THE PAGE, NOT `content_for :crumbs`. The layout renders the caps path
+<%# A REAL BREADCRUMB IN THE PAGE, NOT `content_for :crumbs`. The layout renders `layouts/topbar`
     (which is what consumes :crumbs) only on the SIGNED-IN branch, and a public page renders the
     visitor's shell by design — so a content_for here would be markup nothing ever yields. %>
 <%= render "public/projects/page", pub: @pub %>

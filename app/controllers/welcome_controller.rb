@@ -9,9 +9,7 @@ class WelcomeController < ApplicationController
   # "Edit in <Addon>" on Done's file tiles, as Recent's tiles have it.
   include AddonOrigins
 
-  # The five steps as the left column lists them (welcome/_steps). The Shop manual's `welcome` screen
-  # names them this way (2026-11-19): each the question or the thing its page is about.
-  STEPS = { choose: "What for", tour: "The tour", project: "Your first project", files: "Bring files in", done: "Ready" }.freeze
+  STEPS = { choose: "Choose", tour: "Tour", project: "Project", files: "Files", done: "Done" }.freeze
 
   # THE FILES TRACK OFFERS EVERY KIND BUT `print`, which is the 3D track's — stated there, not asked.
   FILES_KINDS = (Maker::Project::KINDS - %w[print]).freeze
@@ -59,7 +57,8 @@ class WelcomeController < ApplicationController
   def files
     @folder = project_folder
     if @folder
-      use_folder_destination(@folder.node_id, path: Maker::LibraryTree.new(current_user).path_for(@folder.node_id))
+      use_folder_destination(@folder.node_id, path: Maker::LibraryTree.new(current_user).path_for(@folder.node_id),
+                                              primary: true)
       use_upload_return("welcome_#{track}", url: welcome_done_path(track:, project: @project.slug))
     end
     rules = Maker::FilingRules.for(current_user)

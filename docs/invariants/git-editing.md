@@ -194,15 +194,6 @@ port"), never `File.read` against `LocalRepo#workdir`: a README is a catalog fil
 not git's own working-tree read, and it is read on EVERY backend (share, s3, chunk_remote), not
 gated on `local_worktree?` at all — only the commit/tag facts are.
 
-**A FOURTH reader, outside the guard for the same reason: `Maker::TidyUp`** (the Shop manual's
-tidy-up list, 2026-11-19), which counts a repository's uncommitted changes for the project page. It
-asks `capabilities.local_worktree?` before it opens anything, and `TidyUp.repos_in` asks again before
-it looks a repository up. What it counts is `LocalRepo#changed_paths` — git's own status, a stat
-comparison, no content read — so it is a HINT that links the commit page and never an answer anything
-acts on: it deletes no `Maker::RepoEdit` and decides nothing about a path ("Compare content against
-HEAD's blob, never a stat", below, still binds the commit box). `#full_status` reads the same method,
-so the status accumulation exists once.
-
 ## `index.clear` is never written — and the index is never left untouched either
 
 `Maker::Git::CommitPaths` seeds its builder from **HEAD's tree** and inserts only the selected paths;

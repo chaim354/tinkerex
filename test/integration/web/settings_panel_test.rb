@@ -122,7 +122,7 @@ module Web
       assert_response :success
       assert_select ".workspace.has-recipe"
       assert_select ".workspace-main .lbrn-settings", count: 0
-      assert_select ".workspace-side > .lbrn-settings:first-child + .file-details > dl.meta"
+      assert_select ".workspace-side > .lbrn-settings:first-child + dl.meta"
     end
 
     test "a page with no recipe keeps the ordinary side column" do
@@ -133,7 +133,7 @@ module Web
       assert_response :success
       assert_select ".workspace"
       assert_select ".workspace.has-recipe", count: 0
-      assert_select ".workspace-side > .file-details:first-child > dl.meta"
+      assert_select ".workspace-side > dl.meta:first-child"
     end
 
     # THE TEXT STARTS CLOSED (2026-10-25, at the user's request): a sheet of labels has dozens of text

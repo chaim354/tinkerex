@@ -72,7 +72,7 @@ module Web
     end
 
     # ONE COMPOSER PATTERN (2026-11-02, the UX audit's C4): "Add…" opens it and the submit names the
-    # thing, so the two never carry one label; the submit is a quiet `.btn` (the hub's primary is
+    # thing, so the two never carry one label; the submit is a quiet `.btn` (the hub's accent is
     # the top bar's Upload).
     test "the composer's field names" do
       get project_path(@project, add: "wiring")

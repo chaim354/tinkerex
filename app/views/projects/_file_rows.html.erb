@@ -39,14 +39,9 @@
     members beneath it (stack_controller.js, on the panel). Without it, every row stands alone. %>
 <% figures = local_assigns.fetch(:figures, rows) %>
 <% actions = rows.any?(&:linked?) %>
-<%# THE FIGURE NUMBER (spec §9), the list view's callout: a first column reading each row's number in
-    mono, the stack's on a stack's row and none on its members, which its row stands for. On the page
-    only: the editor numbers nothing (ProjectsController#show sets no @figures there). %>
-<% numbered = !@figures.nil? %>
 <table class="table project-files">
   <thead>
     <tr>
-      <% if numbered %><th class="col-fig">Fig.</th><% end %>
       <th class="col-name">Name</th>
       <th class="col-section">Section</th>
       <th class="num col-size">Size</th>
@@ -62,8 +57,7 @@
         <% latest = figure.latest.node %>
         <% dom = stack_dom_id(stack) %>
         <% member_ids = figure.rows.each_index.map { |i| "#{dom}-#{i}" } %>
-        <%= tag.tr class: "stack-row", data: figure_data(latest.node_id) do %>
-          <% if numbered %><td class="col-fig mono"><%= figure_number(latest.node_id) %></td><% end %>
+        <tr class="stack-row">
           <td class="col-name">
             <%= tag.button(type: "button", id: "#{dom}-toggle", class: "stack-toggle",
                            aria: { expanded: "false", controls: member_ids.join(" ") },
@@ -74,15 +68,13 @@
           <td class="muted col-modified"><%= latest.mtime ? time_at(time_from_nanos(latest.mtime)) : "—" %></td>
           <td class="muted col-origin">—</td>
           <% if actions %><td class="col-actions"></td><% end %>
-        <% end %>
+        </tr>
       <% end %>
       <% (figure.is_a?(ProjectsHelper::StackFigure) ? figure.rows.each_with_index.to_a : [ [ figure, nil ] ]).each do |row, member_index| %>
       <% node = row.node %>
       <% origin = @addon_origins[row.node_id] %>
       <% member = member_index && { id: member_ids[member_index], role: member_index.zero? ? "latest" : "older" } %>
-      <%= tag.tr(id: member&.dig(:id), class: ("stack-member" if member), hidden: member.present?,
-                 data: file_menu_data(node, origin).merge(member ? {} : figure_data(row.node_id))) do %>
-        <% if numbered %><td class="col-fig mono"><%= figure_number(row.node_id) unless member %></td><% end %>
+      <%= tag.tr(id: member&.dig(:id), class: ("stack-member" if member), hidden: member.present?, data: file_menu_data(node, origin)) do %>
         <td class="col-name">
           <%= link_to node.name, file_path(row.node_id), data: file_open_data %>
           <% if (note = notes[row.node_id]) %><span class="row-note muted"><%= note %></span><% end %>

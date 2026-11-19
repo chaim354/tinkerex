@@ -9,7 +9,7 @@
      the tests pin by computed style. Measure's literal layer colours (#2b7, #d40, the rgba tints,
      #888) STAY literal: they are the file's own colours, not the theme's. */
   .preview { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 16px; }
-  .preview-image { max-width: 100%; height: auto; display: block; border-radius: 0; }
+  .preview-image { max-width: 100%; height: auto; display: block; border-radius: 6px; }
   .preview-pdf { width: 100%; height: 80vh; border: 1px solid var(--line); border-radius: 6px; }
   .preview-text {
     margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono);
@@ -163,17 +163,12 @@
      page ON PURPOSE. "No changes to this file in the last 250 commits" is not a warning and must not
      be dressed as one — it is the ordinary answer for a file in a busy repository, and styling it as
      an error would teach makers to read a normal result as a fault. */
-  /* The section head every file-page section opens on (Shop manual slice 6; pages/files.css draws it
-     for the others): 800 20px over a 2px ink rule. */
-  .history-panel { margin: 0; }
-  .history-panel h2 {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; margin: 0 0 12px; padding-bottom: 6px;
-    border-bottom: 2px solid var(--line-strong); font-size: 20px; line-height: 1.2; font-weight: 800; letter-spacing: -.01em;
-  }
+  .history-panel { margin-top: 28px; }
+  .history-panel h2 { margin-bottom: 8px; }
   /* The way to the repository-wide list, beside the heading rather than under the rows: it is about
      the repository, not about what this walk happened to find, so it must not move or disappear with
      the rows below it. */
-  .history-repo-link { margin-left: auto; font: 400 13px/1.2 var(--font-mono); letter-spacing: 0; }
+  .history-repo-link { font-size: 13px; font-weight: 400; margin-left: 10px; }
   .history-list { list-style: none; margin: 0; padding: 0; }
   .history-list > li { border: 1px solid var(--line); border-radius: var(--radius-panel); margin-bottom: 8px; }
   .history-row-head {
@@ -207,10 +202,10 @@
      recovers. `background` is also read from here, by getComputedStyle, because the engine's
      renderer has no alpha channel and would paint black behind a transparent clear colour. */
   .model-viewer-stage {
-    width: 100%; height: 60vh; min-height: 320px; border-radius: 0;
+    width: 100%; height: 60vh; min-height: 320px; border-radius: 6px;
     background: var(--raised); display: none; touch-action: none;
   }
-  .model-viewer-stage canvas { display: block; border-radius: 0; }
+  .model-viewer-stage canvas { display: block; border-radius: 6px; }
   /* The engine appends its own unclassed <div> ("Loading model…", "Importing model…", and the
      import error text) beside the canvas. We cannot give it a class, so it is selected
      structurally — without this it renders as unstyled black text in the stage's top-left. */
@@ -219,13 +214,13 @@
     height: 100%; color: var(--fg-muted); font-size: 14px; text-align: center; padding: 16px;
   }
   .model-viewer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 8px; flex-wrap: wrap; }
-  .model-viewer-source { font: inherit; padding: 4px 8px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); background-color: var(--bg); max-width: 60%; }
+  .model-viewer-source { font: inherit; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); max-width: 60%; }
   .mv-launch { display: inline-flex; gap: 8px; }
   /* WRAPS, because the 3D viewer's bar outgrew one line on a phone: "Use this view as preview"
      (2026-10-20) took the open viewer's buttons to 435px against a 375px viewport, and nowrap
      pushed the whole page sideways (design-system.md rule 11; o3dv_test.rb measures it). */
   .mv-actions { display: none; gap: 8px; flex-wrap: wrap; }
-  .model-viewer-dims { color: var(--fg-muted); font: 400 12.5px/1.4 var(--font-mono); font-variant-numeric: tabular-nums; }
+  .model-viewer-dims { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
   /* "Use this view as preview"'s answer. Outside .mv-actions and never hidden by --ready: a status
      line must be readable while the viewer is open, which is when the button is pressed. */
   .mv-status { font-size: 12px; }
@@ -351,16 +346,9 @@
      column until 2026-10-25; the side column is its home now, and `.workspace.has-recipe` below
      widens that column for these pages only. Below 1280px the column stacks and the panel takes
      the full width like every other side block. --- */
-  /* NO BOX (Shop manual slice 6): the panel opens on the section head the file page's other
-     sections wear, the app version a mono note at its right, then a table whose head is the caps
-     label over a 2px ink rule and whose numbers are mono, as the screens set Laser settings. */
-  .lbrn-settings { min-width: 0; }
-  .lbrn-head {
-    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px var(--space-3);
-    margin-bottom: 0; padding-bottom: 6px; border-bottom: 2px solid var(--line-strong);
-  }
-  .lbrn-head h2 { margin: 0; font-size: 20px; line-height: 1.2; font-weight: 800; letter-spacing: -.01em; }
-  .lbrn-head .muted { font: 400 13px/1.2 var(--font-mono); }
+  .lbrn-settings { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 14px 16px; }
+  .lbrn-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); margin-bottom: 10px; }
+  .lbrn-head h2 { margin: 0; font-size: 16px; }
   /* A recipe table keeps its width (nowrap headers, a layer name that may be one unbroken run), so it
      scrolls inside its own container rather than the page (design-system.md rule 11; UX audit J). */
   .lbrn-table-scroll { overflow-x: auto; }
@@ -372,28 +360,23 @@
   .markdown.markdown-rendered { max-height: none; overflow: visible; margin-top: 0; font-size: 14px; overflow-wrap: anywhere; }
   .markdown.markdown-rendered table { display: block; max-width: 100%; overflow-x: auto; }
   .markdown-note { margin: 0 0 8px; font-size: 12px; }
-  .lbrn-layers { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  .lbrn-layers th {
-    text-align: left; color: var(--fg-muted); padding: 12px 8px 7px; border-bottom: 2px solid var(--line-strong); white-space: nowrap;
-    font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
-  }
-  .lbrn-layers td { height: 36px; padding: 0 8px; border-bottom: 1px solid var(--line); }
-  .lbrn-layers .num { text-align: right; font: 400 12.5px/16px var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .lbrn-layers { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .lbrn-layers th { text-align: left; color: var(--fg-muted); font-weight: 600; padding: 5px 5px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  .lbrn-layers td { padding: 5px 5px; border-bottom: 1px solid var(--raised); }
+  .lbrn-layers .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
   /* The unit a numeric column is in, written once in its heading rather than in every cell. */
-  .lbrn-unit { font-weight: 400; text-transform: none; letter-spacing: 0; }
+  .lbrn-unit { font-weight: 400; }
   /* MillMage's tool, as a second line under its operation: its own names run long, so it wraps
      (anywhere, for a name with no spaces) instead of truncating. */
   .lbrn-tool { display: block; font-size: 12px; overflow-wrap: anywhere; }
   .lbrn-swatch { display: inline-block; width: 11px; height: 11px; border-radius: 2px; vertical-align: middle; margin-right: 7px; }
-  /* The summary under the table: facts as rows, the term muted at the left, the value at 600 at the
-     right, a hairline under each (the shape `dl.meta` draws). */
-  .lbrn-summary { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0; margin: 12px 0 0; font-size: 13.5px; }
-  .lbrn-summary dt { padding: 6px 16px 6px 0; border-bottom: 1px solid var(--line); color: var(--fg-muted); }
-  .lbrn-summary dd { margin: 0; padding: 6px 0; border-bottom: 1px solid var(--line); font-weight: 600; text-align: right; overflow-wrap: anywhere; }
+  .lbrn-summary { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; margin: 12px 0 0; font-size: 13px; }
+  .lbrn-summary dt { color: var(--fg-muted); }
+  .lbrn-summary dd { margin: 0; font-weight: 600; }
   /* The text shapes' strings, closed until asked for. The summary keeps the browser's own
      disclosure triangle — `display: flex` on a <summary> removes it in Chrome (the releases
      panel's note) — so it is styled as a plain line. */
-  .lbrn-text { margin: 12px 0 0; font-size: 13.5px; }
+  .lbrn-text { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; }
   .lbrn-text > summary { cursor: pointer; font-weight: 600; }
   .lbrn-text > summary .muted { font-weight: 400; }
   .lbrn-text-list { display: flex; flex-wrap: wrap; gap: 4px; margin: 8px 0 0; padding: 0; list-style: none; }
@@ -492,36 +475,29 @@
      The side column's own grid gap spaces its blocks, so the margins they carry on their own
      (dl.meta's bottom, .attach-to-project's, .notes-panel's and .connections-panel's tops) are
      zeroed here rather than added to it. */
-  .workspace { display: grid; gap: 40px; grid-template-columns: minmax(0, 1fr); }
-  /* THE MAIN COLUMN IS A STACK OF SECTIONS 40px apart, as the screens space them: the picture, the
-     history, Used in and the notes. The gap spaces them, so their own margins are zero. */
-  .workspace-main { display: flex; flex-direction: column; gap: 40px; min-width: 0; }
+  .workspace { display: grid; gap: var(--space-5); grid-template-columns: minmax(0, 1fr); }
   /* ONE `minmax(0, 1fr)` TRACK, as `.workspace` has, and not the implicit `auto` one: an auto track
      takes its floor from its widest block's min-content, so a recipe table meant to scroll inside
      its panel (`.lbrn-table-scroll`) widened the whole column past a 375px phone instead (UX audit J,
      measured; test/system/narrow_names_test.rb). */
-  .workspace-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: 40px; align-content: start; min-width: 0; }
+  .workspace-side { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-4); align-content: start; min-width: 0; }
   .workspace-side dl.meta { margin: 0; }
   .workspace-side .attach-to-project,
   .workspace-side .notes-panel,
   .workspace-side .connections-panel { margin-top: 0; }
   @media (min-width: 1280px) {
-    .workspace { grid-template-columns: minmax(0, 1fr) 400px; }
-    /* A laser or CNC file's recipe panel heads the side column, and the screens give that page two
-       equal columns (the drawing at the left, the recipe, the facts and the connections at the
-       right); every other file page keeps the viewer wide and the facts narrower. */
-    .workspace.has-recipe { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+    .workspace { grid-template-columns: minmax(0, 1fr) 340px; }
+    /* A laser or CNC file's recipe panel heads the side column, and its five-column table needs
+       more than 340px; every other file page keeps the narrower column. */
+    .workspace.has-recipe { grid-template-columns: minmax(0, 1fr) 380px; }
     /* `align-self: start` IS WHAT LETS STICKY WORK AT ALL: a grid item stretches to its row by
        default, and an element as tall as its containing block has nowhere to stick. A side column
        taller than the window and shorter than the viewer scrolls its foot into view as the main
        column ends, the ordinary sticky-sidebar trade. */
-    .workspace-side { position: sticky; top: calc(var(--strip-height) + var(--space-4)); align-self: start; }
-    /* dl.meta's four-column layout (components.css) keys on a 900px VIEWPORT, which a side column
+    .workspace-side { position: sticky; top: calc(var(--topbar-height) + var(--space-4)); align-self: start; }
+    /* dl.meta's four-column layout (components.css) keys on a 900px VIEWPORT, which a 340px column
        is not; two columns here. Stacked below 1280px the side column is the full width again and
        the component's own rule is right, so this override lives only at this width. */
     .workspace-side dl.meta { grid-template-columns: max-content minmax(0, 1fr); }
-    /* and so the four-column gutter after a left-hand value comes off too, or every other value
-       stops 32px short of the column's right edge. */
-    .workspace-side dl.meta dd:nth-of-type(odd) { padding-right: 0; }
   }
 }

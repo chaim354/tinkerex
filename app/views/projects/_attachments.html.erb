@@ -60,13 +60,10 @@
 <section class="panel attachments-panel" id="attachments">
   <div class="panel-head">
     <h2><%= panel_title(@panel_layout, "attachments") %></h2>
-    <%# THE FOLDER'S COUNT, the one "At a glance" and the contents column give for Files: every file
-        under the project folder, as the stats line counted it before (2026-11-19). %>
-    <%= section_note("attachments", @listing.total, pluralize(@listing.total, "file")) %>
     <%# "OPEN FOLDER →" (structural redesign §6, slice 6): the door to this folder in the Library,
         where the inspector answers for each file. The path rides in the link's `title`, so the
         panel still says WHERE it is showing on hover. Nothing to link to when the folder ensure
-        failed this render (an unmounted NAS, a bucket blip) — the strip's Upload degrades the
+        failed this render (an unmounted NAS, a bucket blip) — the top bar's Upload degrades the
         same way for the same reason: with no available folder, ProjectsController#show sets no
         destination and it asks with the folder chooser. %>
     <%= link_to "Open folder →", files_path(folder: @listing.folder_id), class: "panel-path muted", title: @listing.path if @listing.available? %>
@@ -93,8 +90,8 @@
           the UX audit's C7): "Scan folder" promised a narrower thing than it does. %>
       <%= button_to "Rescan library", project_scan_path(@project), method: :post, class: "linkbtn" %>
       <%= link_to "Attach existing", new_project_attachment_path(@project), class: "linkbtn" %>
-      <%# NO UPLOADER HERE (redesign slice 4): the strip's Add › Upload saves into this folder, so the
-          panel adding its own would be a second door to one place. %>
+      <%# NO UPLOADER HERE (redesign slice 4): the top bar's Upload saves into this folder and is the
+          hub's primary action, so the panel adding its own would be a second door to one place. %>
     </div>
   </div>
   <%= panel_intro(@panel_layout, "attachments") %>
@@ -206,20 +203,15 @@
           the minimal folder Row the listing itself builds — a recent file past FILE_CAP is still a
           folder file, never Linked. Always tiles, whatever this panel's view, because a row of
           tiles is what the row is. Each opens the file (projects/_file_tile).
-          ITS NUMBERS ARE CITED, NOT TAKEN (spec §9): this row sits at the top of the Files panel and
-          would otherwise number the eight newest files before every panel below, so a manual's plates
-          would read 11, 2, 4. A recent file no panel draws carries no number.
         %>
         <% if @recent_files.any? %>
-          <div class="recent-files plate">
-            <div class="plate-head"><h3 class="recent-files-head">Recently changed</h3> <span class="plate-count"><%= pluralize(@recent_files.size, "file") %></span></div>
+          <div class="recent-files">
+            <h3 class="recent-files-head">Recently changed</h3>
             <div class="attachments-grid">
               <% @recent_files.each do |node| %>
                 <% row = @listing.row_for(node.node_id) ||
                          Maker::ProjectFolderListing::Row.new(node: node, attachment: nil, linked: false, section: "") %>
-                <%# A SECOND LOOK, NUMBERING NOTHING (spec §9; Maker::ProjectFigures): each tile shows the
-                    number its file carries where it is filed. %>
-                <%= render "file_tile", row: row, repeat: true %>
+                <%= render "file_tile", row: row %>
               <% end %>
             </div>
           </div>

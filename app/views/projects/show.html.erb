@@ -17,115 +17,123 @@
 <% end %>
 
 <%#
-  THE HUB'S HEAD, AS THE SHOP MANUAL DRAWS IT (2026-11-19; its spec §5, §7 and §8's slice 5): the
-  title at 60px, the description as the lead, the state and the page's buttons on one line, then —
-  beside it on a wide screen — the cover as Fig. 1 and "At a glance". `#overview` is what the contents
-  column's Overview row links to.
+  THE HUB'S HEAD (structural redesign §6, slice 6): the cover, a PROJECT eyebrow, the name, then the
+  badges and links that were always here. STILL TWO SLOTS — `.page-title` and `.head-actions` — which
+  is what `.page-head` lays out (template_hygiene_test.rb); the cover and the text column are both
+  inside `.page-title`. The eyebrow sits OUTSIDE the h1, whose exact text a test pins.
 
-  `.page-head` STILL PASSES EXACTLY TWO SLOTS, `.page-title` and `.head-actions`
-  (template_hygiene_test.rb): the cover and the facts are the head's NEIGHBOURS in `.project-top`,
-  never children of it. On this page `.page-title` is `display: contents` (pages/projects.css), so the
-  state chip that closes it and the buttons after it share one line, which is how the screens draw
-  them, without a third slot.
+  The hero partial is unchanged and still decides whether there is a cover at all (no cover renders
+  nothing, so the head is the text column alone); pages/projects.css places it on the photo stage
+  and sizes it for the head. The text column is its own div because a cover beside a wrapping row
+  of name, badges and links is two boxes, not one flex row.
 
   ONE WAY INTO EDITING (2026-10-26, the edit area; spec 2026-10-26-project-edit-area §2). The owner
   asked for every customisation "condensed to one button": Customise page, the Publish link, the ⋯
   menu (Publish settings, Archive, Not a project) and the Publish panel all moved behind Edit, which
   opens the edit area's Details tab. What stays in this head is STATE — the badges — plus the Public
-  page link (a way out, not a setting), the folder (another way out) and "+ Add panel", which the
-  owner kept as day-to-day use. project_page_test.rb pins the one door.
-
-  THE PROJECT EYEBROW IS GONE (2026-11-19): it said PROJECT above a name the caps path just above it
-  already places under Projects.
+  page link (a way out, not a setting) and "+ Add panel", which the owner kept as day-to-day use.
+  project_page_test.rb pins the one door.
 %>
-<div class="project-top" id="overview">
-  <div class="page-head project-head">
-    <div class="page-title">
+<div class="page-head project-head">
+  <div class="page-title">
+    <%= render "hero" %>
+    <div class="project-head-text">
+      <span class="eyebrow">Project</span>
       <h1><%= @project.name %></h1>
-      <% if @project.description.present? %>
-        <%# PLAIN TEXT WHOSE LINE BREAKS ARE CONTENT (projects/_page_intro), so `pre-wrap` stays. %>
-        <p class="page-lead project-description"><%= @project.description %></p>
+      <% if @project.status == "archived" %>
+        <span class="badge status-archived">Archived</span>
       <% end %>
-      <%= tag_chips(@project) %>
       <%#
-        THE STATUS, WHERE IT CAN BE SEEN (stage 4, S4-6; story 1.6). `planning` is the column default
-        and badging a default is noise — the same argument S4-1's quiet panels make about a zero.
-        `archived` has its own badge; this covers active, paused and done, and a published project
-        says how (public or unlisted).
+        THE STATUS, WHERE IT CAN BE SEEN (stage 4, S4-6; story 1.6). The form can set it again, and a
+        value nobody can see is a field nobody will use. `planning` is the column default and badging a
+        default is noise — the same argument S4-1's quiet panels make about a zero. `archived` keeps its
+        own badge above; this covers active, paused and done.
       %>
-      <% if @project.status == "archived" || @project.status.in?(%w[active paused done]) || @project.published? %>
-        <span class="project-state">
-          <% if @project.status == "archived" %>
-            <span class="badge status-archived">Archived</span>
-          <% elsif @project.status.in?(%w[active paused done]) %>
-            <span class="badge status-<%= @project.status %>"><%= @project.status.humanize %></span>
-          <% end %>
-          <% if @project.published? %>
-            <span class="badge visibility-<%= @project.visibility %>"><%= @project.visibility.humanize %></span>
-          <% end %>
-        </span>
+      <% if @project.status.in?(%w[active paused done]) %>
+        <span class="badge status-<%= @project.status %>"><%= @project.status.humanize %></span>
       <% end %>
-    </div>
-    <div class="head-actions">
-      <%= link_to "Edit", edit_project_path(@project), class: "btn edit-link" %>
       <% if @project.published? %>
+        <span class="badge visibility-<%= @project.visibility %>"><%= @project.visibility.humanize %></span>
         <%# An unlisted project's link carries ?k=<token>, which IS the credential for that page --
             a public one needs none. %>
         <%= link_to "Public page",
                     public_project_path(@project.user.handle, @project.slug,
                                         **(@project.unlisted? ? { k: @project.unlisted_token } : {})),
-                    class: "btn public-link" %>
-      <% end %>
-      <%# THE FOLDER, a way out like the Public page: the Files panel's own "Open folder →" says the
-          same thing where the files are. Nothing to open when the folder is unavailable this render. %>
-      <% if @listing.available? %>
-        <%= link_to "Open the folder", files_path(folder: @listing.folder_id), class: "linkbtn open-folder", title: @listing.path %>
-      <% end %>
-      <% if Array(@absent_panels).any? %>
-        <%#
-          "+ ADD PANEL" (structural redesign §6, slice 6): the on-demand panels absent because they are
-          empty (ProjectsController#show's @absent_panels, never set in the editor). Each link opens its
-          panel for this visit (?add=), empty and with its composer, and lands on the panel's own anchor
-          (ProjectsHelper::PANEL_ANCHORS); it stays on its own once it holds a row. Nothing is saved.
-          Labelled as the panel is headed, so a maker's own title reads the same in both places.
-        %>
-        <details class="menu add-panel" data-controller="menu">
-          <summary class="btn">+ Add panel</summary>
-          <div class="menu-list">
-            <% @absent_panels.each do |key| %>
-              <%= link_to panel_title(@panel_layout, key),
-                          project_path(@project, add: key, anchor: ProjectsHelper::PANEL_ANCHORS.fetch(key)),
-                          class: "menu-item" %>
-            <% end %>
-          </div>
-        </details>
+                    class: "linkbtn small public-link" %>
       <% end %>
     </div>
   </div>
-  <%= render "projects/hero" %>
-  <%= render "projects/glance" %>
+  <div class="head-actions">
+    <%= link_to "Edit", edit_project_path(@project), class: "btn small edit-link" %>
+    <% if Array(@absent_panels).any? %>
+      <%#
+        "+ ADD PANEL" (structural redesign §6, slice 6): the on-demand panels absent because they are
+        empty (ProjectsController#show's @absent_panels, never set in the editor). Each link opens its
+        panel for this visit (?add=), empty and with its composer, and lands on the panel's own anchor
+        (ProjectsHelper::PANEL_ANCHORS); it stays on its own once it holds a row. Nothing is saved.
+        Labelled as the panel is headed, so a maker's own title reads the same in both places.
+      %>
+      <details class="menu add-panel" data-controller="menu">
+        <summary class="btn small">+ Add panel</summary>
+        <div class="menu-list">
+          <% @absent_panels.each do |key| %>
+            <%= link_to panel_title(@panel_layout, key),
+                        project_path(@project, add: key, anchor: ProjectsHelper::PANEL_ANCHORS.fetch(key)),
+                        class: "menu-item" %>
+          <% end %>
+        </div>
+      </details>
+    <% end %>
+  </div>
 </div>
+<% end %>
 
+<%= render "projects/move_conflict" %>
+
+<% if @project.description.present? %>
+  <p class="project-description"><%= @project.description %></p>
+<% end %>
+<%= tag_chips(@project) %>
+
+<%# THE STATS LINE reads collections ProjectsController#show already loaded — @listing, @tasks,
+    @entries, @sheets, @linked_rows — and nothing else, so page_query_budget_test.rb's "does not
+    grow with attachments, tasks or build-log entries" holds without a counter cache. The file
+    count is the FOLDER's (@listing.total), not maker_file_attachments — an attachment to a node
+    living elsewhere in the library (Linked) is counted separately, right here, rather than folded
+    into the first number.
+
+    IT COUNTS ONLY WHAT THE PAGE SHOWS (2026-11-02, the UX audit's C1/C7). "0 of 0 tasks done · 0
+    sheets" sat above a page with no Tasks and no Sheets panel, and a laser project's "1 sheet"
+    named a panel its preset hides. A panel that is absent (empty, on demand) or hidden says
+    nothing here; one the project's type hid while it holds rows is named on the line below
+    instead, with a way to it. %>
+<% hidden_rows = @editing ? [] : project_hidden_rows %>
+<% done = @tasks.count { |t| t.status == "done" } %>
+<p class="project-stats">
+  <span><b><%= @listing.total %></b> <%= "file".pluralize(@listing.total) %></span>
+  <% if @linked_rows.any? %>
+    <span><b><%= @linked_rows.size %></b> linked</span>
+  <% end %>
+  <% if panel_on_page?(@panel_layout, "tasks", @absent_panels) %>
+    <span><b><%= done %> of <%= @tasks.size %></b> <%= "task".pluralize(@tasks.size) %> done</span>
+  <% end %>
+  <% if panel_on_page?(@panel_layout, "build_log", @absent_panels) %>
+    <span><b><%= @entries.size %></b> log <%= "entry".pluralize(@entries.size) %></span>
+  <% end %>
+  <% if panel_on_page?(@panel_layout, "sheets", @absent_panels) %>
+    <span><b><%= @sheets.size %></b> <%= "sheet".pluralize(@sheets.size) %></span>
+  <% end %>
+</p>
 <%# "ALSO IN THIS PROJECT" (C1): the panels the project's TYPE hides that hold rows, each linked
     to its own page where it has one (the BOM page, a lone sheet) and otherwise to the layout editor
     at that panel, whose strip carries its Show control. Never in the editor, which draws every
     panel. Maker::ProjectHiddenRows decides; ProjectsHelper words and links. %>
-<% hidden_rows = project_hidden_rows %>
 <% if hidden_rows.any? %>
   <p class="project-also muted">
     Also in this project:
     <%= safe_join(hidden_rows.map { |entry| link_to hidden_row_label(entry, @panel_layout), hidden_row_path(@project, entry) }, " · ") %>
   </p>
 <% end %>
-<%# THE TIDY-UP LIST (the Shop manual's §9): full width, under the head and above the panels, and only
-    while it holds an undismissed suggestion. Never in the editor (@tidy is nil there). %>
-<% if @tidy&.any? %>
-  <%= render "projects/tidy_up", tidy: @tidy %>
-<% end %>
-<% end %>
-
-<%= render "projects/move_conflict" %>
-
 
 <%#
   THE PANELS, AS DATA (stage 4, S4-7; story 6.5). Ten hard-coded renders became one loop over
@@ -215,23 +223,4 @@
                        layout: @panel_layout, tail: nil } do |key| %>
     <%= render "projects/panel_slot", key: key, extra: panel_locals.fetch(key, {}) %>
   <% end %>
-  <%# THE INDEX OF FILES (the Shop manual spec §9), the page's last section whenever it numbers a
-      figure: full width, numbered after every panel, in its own box below the panels and any tabs,
-      so it is on view whichever tab is open. NOT A PANEL OF THE LAYOUT — projects/_files_index says
-      why — but a SECTION like one: its number rides on its slot (ProjectsHelper#section_number!) and
-      the contents column lists it. %>
-  <% if @index_rows.any? %>
-    <% index_body = render("projects/files_index") %>
-    <% n = section_number!(ProjectsHelper::FILES_INDEX_KEY) %>
-    <div class="files-index-grid">
-      <%= tag.div index_body, class: "panel-slot panel--full", data: { section: n }, style: ("--section: '#{n}'" if n) %>
-    </div>
-  <% end %>
-  <%# THE PAGE'S OWN LEFT COLUMN (the Shop manual, slice 5; its spec §7): Overview, each section with
-      its number and count, then the projects. LAST, AND THAT IS THE MECHANISM: the layout renders the
-      column after this view, and by now every slot has taken its number (@page_sections) and every
-      head has recorded its count (@section_counts), so the column is one walk over what the page
-      drew and asks the database nothing (page_query_budget_test.rb). The editor keeps the section's
-      default column: its order is a draft. %>
-  <% content_for :column, render("projects/contents") %>
 <% end %>

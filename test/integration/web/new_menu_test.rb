@@ -28,10 +28,9 @@ module Web
       @dir = create_node!(@user, node_id: "dir-laser", name: "laser", kind: "dir")
     end
 
-    # THE STRIP'S ADD HOLDS WHAT NEW ▾ HELD (Shop manual spec §7, slice 3), beside Upload.
-    test "the strip's Add offers a folder, a text file, a project and an inventory item" do
+    test "the top bar's New menu offers a folder, a text file, a project and an inventory item" do
       get projects_path
-      assert_select "header.strip details.menu.strip-add-menu" do
+      assert_select "header.topbar details.menu.topbar-new" do
         assert_select "form[action=?] input[name='name']", library_folders_path
         assert_select "a.menu-item[href=?]", new_files_text_file_path, text: "Text file"
         assert_select "a.menu-item[href=?]", new_project_path, text: "Project"
@@ -39,27 +38,26 @@ module Web
       end
     end
 
-    # ADD'S UPLOAD, AT EVERY WIDTH (Shop manual slice 3; the phone's "+" since the structural
-    # redesign's slice 7): after the line saying where things land, the menu's first item is Upload,
-    # wired to the controller that forwards its click to the hidden Upload BUTTON beside the menu (a
-    # <label> until the UX audit, a <button> since). This pins the markup and the wiring, and that it
-    # is a button, so a tap never navigates; test/system/new_menu_test.rb drives it.
-    test "Add carries Upload, wired to forward to the strip's Upload button" do
+    # THE PHONE'S "+" (spec §4.3, slice 7): the menu's first item is Upload, wired to the controller that
+    # forwards its click to the top bar's Upload control (a <label> until the UX audit, a <button> since). shell.css shows it at 719px and below only —
+    # which a browser sees (test/system/phone_topbar_test.rb); this pins the markup and the wiring, and
+    # that it is a button, so a tap never navigates. The summary's name says the "+" carries both.
+    test "the New menu carries the phone's Upload item, wired to forward to the top bar's label" do
       get root_path
-      assert_select "header.strip details.menu.strip-add-menu" do
-        assert_select "summary[aria-label='Add'] .strip-add-label", text: "Add"
-        assert_select ".menu-list > .topbar-upload-caption:first-child + button.menu-item.strip-add-upload[type=button][data-controller='upload-forward'][data-action='upload-forward#open']",
+      assert_select "header.topbar details.menu.topbar-new" do
+        assert_select "summary[aria-label='New'] .topbar-new-plus", text: "+"
+        assert_select ".menu-list > button.menu-item.topbar-new-upload[type=button][data-controller='upload-forward'][data-action='upload-forward#open']:first-child",
                       text: "Upload…"
       end
       # A <button> since the UX audit (A1 item 6, "Upload is a button"), so a keyboard reaches it.
-      assert_select "header.strip .topbar-upload button.upload-btn[type=button]", 1
+      assert_select "header.topbar .topbar-upload button.upload-btn[type=button]", 1
     end
 
     test "on a folder's page, New creates in that folder" do
       get files_path(folder: @dir.node_id)
-      assert_select "header.strip form[action=?] input[name='parent_node_id'][value=?]",
+      assert_select "header.topbar form[action=?] input[name='parent_node_id'][value=?]",
                     library_folders_path, @dir.node_id
-      assert_select "header.strip a.menu-item[href=?]",
+      assert_select "header.topbar a.menu-item[href=?]",
                     new_files_text_file_path(parent_node_id: @dir.node_id)
     end
 
@@ -70,9 +68,9 @@ module Web
       file = create_node!(@user, node_id: "n-sheet", name: "sheet.svg", kind: "file", parent_node_id: @dir.node_id)
       get file_path(file.node_id)
       assert_response :success
-      assert_select "header.strip form[action=?] input[name='parent_node_id'][value=?]",
+      assert_select "header.topbar form[action=?] input[name='parent_node_id'][value=?]",
                     library_folders_path, @dir.node_id
-      assert_select "header.strip a.menu-item[href=?]",
+      assert_select "header.topbar a.menu-item[href=?]",
                     new_files_text_file_path(parent_node_id: @dir.node_id)
     end
 
@@ -88,13 +86,13 @@ module Web
 
       # A page with no folder: `in: nil` is dropped by url_for, so this is the plain path.
       get projects_path
-      assert_select "header.strip .strip-add-menu turbo-frame#new-menu-tools[src=?][loading='lazy'][target='_top']",
+      assert_select "header.topbar .topbar-new turbo-frame#new-menu-tools[src=?][loading='lazy'][target='_top']",
                     tools_new_menu_path(in: nil)
 
       # A folder's page: the frame carries the folder, and each tool link it serves echoes it as
       # `in=`, so New ▸ <tool> starts its save where the maker is standing (Tools::HomeController).
       get files_path(folder: @dir.node_id)
-      assert_select "header.strip .strip-add-menu turbo-frame#new-menu-tools[src=?]",
+      assert_select "header.topbar .topbar-new turbo-frame#new-menu-tools[src=?]",
                     tools_new_menu_path(in: @dir.node_id)
 
       get tools_new_menu_path

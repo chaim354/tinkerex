@@ -1,9 +1,9 @@
 <%# locals: (figure:) %>
 <%#
-  ONE VERSION STACK AMONG A PROJECT PANEL'S TILES (Shop manual spec §9; the screen
-  `project-organized`): one figure for every member, drawn as the `.stack` component — the latest
-  member's picture with two copies behind it, the name at 800, a count chip — that OPENS IN PLACE
-  (stack_controller.js, on the panel's files) onto an opened figure spanning the grid: Open latest,
+  ONE VERSION STACK AMONG A PROJECT PANEL'S TILES (Shop manual spec §9): one tile for every member,
+  drawn as the `.stack` component — the latest member's picture with two copies behind it, the name
+  in bold, a count chip — that OPENS IN PLACE (stack_controller.js, on the panel's files) onto an
+  opened stack spanning the grid: Open latest,
   Download latest, Close, then every member as the tile it would be alone (projects/_file_tile),
   each saying whether it is the latest or older and offering Pull out.
 
@@ -17,23 +17,20 @@
 <% ext = File.extname(latest.name).delete(".").upcase.first(4) %>
 <% count = stack_count_label(stack) %>
 <% thumb = @page_thumbs.thumb(latest.node_id) %>
-<%# THE STACK'S NUMBER (spec §9): one figure, so one number, which every member shares in the index. %>
-<% number = figure_number(latest.node_id) %>
-<%= tag.div class: "attachment-tile plate-figure stack-item", data: figure_data(latest.node_id) do %>
+<div class="attachment-tile stack-item">
   <%= tag.button(type: "button", id: "#{dom}-toggle", class: "grid-card file-cell stack stack-toggle",
                  aria: { expanded: "false", controls: "#{dom}-open", label: "#{stack.name}, #{count}" },
                  data: thumb_cell_data(latest.node_id, ext).merge(action: "stack#toggle")) do %>
-    <%= render "files/thumb", thumb: thumb, ext_label: ext, url: preview_src(thumb), fig: fig_num_tag(number) %>
-    <span class="plate-marks"><span class="badge stack-count"><%= count %></span></span>
-    <span class="grid-name plate-name stack-name" title="<%= stack.name %>"><%= stack.name %></span>
-    <span class="plate-facts" title="<%= latest.name %>"><%= latest.name %></span>
+    <%= render "files/thumb", thumb: thumb, ext_label: ext, url: preview_src(thumb) %>
+    <span class="stack-marks"><span class="badge stack-count"><%= count %></span></span>
+    <span class="grid-name stack-name" title="<%= stack.name %>"><%= stack.name %></span>
+    <span class="muted grid-sub" title="<%= latest.name %>"><%= latest.name %></span>
   <% end %>
-<% end %>
-<section class="plate-open stack-open" id="<%= dom %>-open" hidden aria-label="<%= stack.name %>, <%= count %>">
+</div>
+<section class="stack-open" id="<%= dom %>-open" hidden aria-label="<%= stack.name %>, <%= count %>">
   <div class="stack-open-head">
-    <%= fig_num_tag(number) %>
     <h3 class="stack-name"><%= stack.name %></h3>
-    <span class="plate-facts">opened · <%= count %><%= " in #{figure.latest.section}" if figure.latest.section.present? %></span>
+    <span class="muted stack-facts">opened · <%= count %><%= " in #{figure.latest.section}" if figure.latest.section.present? %></span>
   </div>
   <div class="stack-open-actions">
     <%= link_to "Open latest", file_path(latest.node_id), class: "btn", aria: { label: "Open #{latest.name}" } %>

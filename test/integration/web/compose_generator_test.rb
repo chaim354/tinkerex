@@ -34,7 +34,7 @@ module Web
         assert_select "h1", text: "Make a docker-compose.yml"
         assert_select "main#main.container.public-main", 1
         assert_select ".public-header .public-intro", text: /written in this browser tab/
-        assert_select "button.btn.primary", { count: 1, text: "Download" }, "Download is the page's one primary"
+        assert_select "button.btn.primary", { count: 1, text: "Download" }, "Download is the page's one accent"
       end
     end
 

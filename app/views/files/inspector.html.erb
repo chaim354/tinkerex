@@ -2,17 +2,17 @@
     selected file, loaded into the `inspector` frame on files/index.html.erb. `target="_top"` so
     Open, a project link and every form's redirect replace the Library, never just this panel.
 
-    DRAWN AS THE SCREENS' SELECTED PANEL (Shop manual slice 6): the picture, the name at 800 over a
-    mono line, the facts as rows, then Open as the panel's one ink primary beside Download, then
-    the quieter doors (Rename or move, the project control, the notes) and Delete last, a muted
-    link. The order is the screen's; every control is the one this panel always had.
-
     THE PREVIEW POLLS IN SWAP MODE (no reload value): a reload-mode thumbs controller here would
     reload the whole Files page when the render lands. files/show.html.erb's preview row owns
     reload mode. %>
 <% addon_origin = @addon_origins[@node.node_id] %>
 <% ext = File.extname(@node.name).delete(".").upcase %>
 <turbo-frame id="inspector" target="_top">
+  <div class="inspector-head">
+    <span class="eyebrow"><%= ext.present? ? "#{ext} file" : "File" %></span>
+    <h2 class="inspector-name"><%= @node.name %></h2>
+  </div>
+
   <div class="inspector-stage" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
     <% if Maker::FileAttachment.inline_image?(@node.name) %>
       <span class="thumb<%= " photo" if Maker::FileAttachment.photo?(@node.name) %>"><img src="<%= blob_file_path(@node.node_id) %>" alt=""></span>
@@ -26,17 +26,14 @@
     <% end %>
   </div>
 
-  <div class="inspector-head">
-    <h2 class="inspector-name"><%= @node.name %></h2>
-    <span class="eyebrow"><%= ext.present? ? "#{ext} file" : "File" %></span>
+  <div class="inspector-actions">
+    <%= link_to "Open", file_path(@node.node_id), class: "btn small" %>
+    <%= link_to "Download", blob_file_path(@node.node_id, download: 1), class: "btn small", data: { turbo: false } %>
+    <%= button_to "Delete", file_path(@node.node_id), method: :delete, class: "btn small danger",
+          form: { data: { turbo_confirm: delete_confirm(@node.name, kind: @node.kind) } } %>
   </div>
 
   <%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>
-
-  <div class="inspector-actions">
-    <%= link_to "Open", file_path(@node.node_id), class: "btn small primary" %>
-    <%= link_to blob_file_path(@node.node_id, download: 1), class: "btn small", data: { turbo: false } do %><%= action_icon(:download) %><span>Download</span><% end %>
-  </div>
 
   <%# THE FILE PAGE'S CONDITION, VERBATIM: files only, and not inside a git working tree
       (FilesController#inspector's @repo_root, the walk #rename and #move refuse on). The panel only
@@ -60,9 +57,4 @@
     <%= link_to pluralize(@note_count, "note"), file_path(@node.node_id, anchor: "notes") %>
     · <%= link_to "Add a note", file_path(@node.node_id, anchor: "notes") %>
   </p>
-
-  <%# DESTRUCTIVE LAST, as the file menu and the file page put it, and quiet: the screens draw it as
-      a muted word under the doors, never a red button beside Open. %>
-  <%= button_to "Delete", file_path(@node.node_id), method: :delete, class: "linkbtn muted inspector-delete",
-        form: { data: { turbo_confirm: delete_confirm(@node.name, kind: @node.kind) } } %>
 </turbo-frame>

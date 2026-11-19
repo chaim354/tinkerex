@@ -3,11 +3,8 @@
     2026-11-01, E1): the sweep makes one model per file on a shelf, so tetra.stl and tetra.obj in one
     folder are two "tetra" cards, and only the formats and the folder say which is which. No status
     badge (2026-10-20, the owner's call: it covered the picture); the chips above the grid filter by
-    status and the model's page shows it — save the one warning the 3D models view's plates draw:
-    `marks: true` puts a FAILED flag at the figure's corner (Shop manual slice 7, the screen
-    `models`), outside the cell thumbs_controller.js redraws, so a poll never takes it away. %>
+    status and the model's page shows it. %>
 <% facts = local_assigns[:facts] %>
-<% marks = local_assigns.fetch(:marks, false) %>
 <%= link_to model_path(model), class: "project-card model-card" do %>
   <% if model.cover_node_id %>
     <span class="thumb file-cell" data-thumbs-target="cell"
@@ -16,9 +13,6 @@
     </span>
   <% else %>
     <span class="thumb project-thumb-empty" aria-hidden="true"><%= rail_icon(:models) %></span>
-  <% end %>
-  <% if marks && model.print_status == "failed" %>
-    <span class="plate-marks"><span class="badge mstatus-failed"><%= model.print_status_label %></span></span>
   <% end %>
   <span class="project-name model-name"><%= model.title %></span>
   <% if facts && (facts.extensions.any? || facts.folder) %>

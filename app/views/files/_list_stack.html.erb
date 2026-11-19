@@ -1,6 +1,6 @@
 <%# locals: (stack:) %>
 <%#
-  ONE VERSION STACK IN THE LIBRARY'S LIST (Shop manual spec §9; the screen `library-rows`): one row
+  ONE VERSION STACK IN THE LIBRARY'S LIST (Shop manual spec §9): one row
   that stands for every member, then the members beneath it, hidden until the row is opened.
 
   THE ROW OPENS IN PLACE, NEVER NAVIGATES. Its name is a button (stack_controller.js#toggle, on the
@@ -25,8 +25,6 @@
       <% if renderable %>
         <% thumb = @thumb_by_node.thumb(latest.node_id) %>
         <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: Maker::FileAttachment.photo?(latest.name) %>
-      <% else %>
-        <span class="thumb stack-blank" aria-hidden="true"></span>
       <% end %>
       <%# The name and its chip in one box, so a narrow column wraps them as words rather than
           squeezing the name to a letter a line beside a chip that cannot shrink. %>

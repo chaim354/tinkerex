@@ -32,9 +32,7 @@ module Web
 
       get search_path(q: "lamp")
       assert_response :success
-      # THE TERM IS THE TITLE (Shop manual slice 7); the caps path above it still says Search.
-      assert_select "h1", text: "“lamp”"
-      assert_select ".page-path", text: "Search"
+      assert_select "h1", text: "Search"
       assert_select ".search-toolbar input[name='q'][value='lamp']"
 
       assert_select ".result-group--file", count: 1

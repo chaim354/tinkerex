@@ -19,22 +19,19 @@
 <% if kicad_rows.any? %>
   <%# ONE PANEL-HEAD SHAPE (2026-11-02, the UX audit's C10): this was the one panel with a bare
       `<h2>`, so `.panel-head`'s alignment and spacing missed it. %>
-  <%# `project-schematics` IS THE CONTENTS COLUMN'S ANCHOR (ProjectsHelper::SECTION_ANCHORS). %>
-  <section class="panel schematics-panel" id="project-schematics">
+  <section class="panel schematics-panel">
     <div class="panel-head">
       <h2><%= panel_title(@panel_layout, "schematics") %></h2>
-      <%= section_note("schematics", kicad_rows.size, pluralize(kicad_rows.size, "file")) %>
+      <span class="mono muted"><%= pluralize(kicad_rows.size, "file") %></span>
     </div>
     <%= panel_intro(@panel_layout, "schematics") %>
     <ul class="schematics-list">
       <% kicad_rows.each do |row| %>
         <% ext = File.extname(row.node.name).downcase.delete(".") %>
-        <%# EACH IS A FIGURE (spec §9): the disc before its name, numbered where the page first draws it. %>
-        <%= tag.li data: figure_data(row.node_id) do %>
-          <%= fig_num_tag(figure_number(row.node_id)) %>
+        <li>
           <%= link_to row.node.name, file_path(row.node_id), data: file_open_data %>
           <span class="badge"><%= ext == "kicad_sch" ? "schematic" : "board" %></span>
-        <% end %>
+        </li>
       <% end %>
     </ul>
     <%# ONE inline preview, controls="basic" — the file page's own is "full". Same kicanvas

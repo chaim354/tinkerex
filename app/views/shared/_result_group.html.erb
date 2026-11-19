@@ -21,20 +21,12 @@
                             (FilesHelper#result_folders), drawn under the name so three
                             "tetra.stl" rows can be told apart (UX audit D11, 2026-11-02). An
                             absent key draws nothing; "" is the library root, named "Library".
-    number      Integer  -- optional. THE SEARCH PAGE'S SECTION NUMBER (Shop manual slice 7): the
-                            group is drawn as a numbered section, its head a `.panel-head`, and
-                            `id` is its anchor for the page's left column. The tag page passes
-                            neither and keeps its plain heading.
-    id          String   -- optional, the section's id.
     files       Integer  -- optional. THE :file ARM ON SEARCH WITH STACKS ON: how many files the
-                            group's `total` figures stand for, said beside it ("5 results ·
-                            8 files") when stacks fold any (SearchController#add_stacked_files).
-                            A :file record may then be a SearchController::StackHit — a stack
-                            and its latest node — drawn as one row naming the stack and its
-                            count, linking the latest (Shop manual spec §9).
-    query       String   -- optional. The search term: a name that holds it marks it (`<mark>`,
-                            TextHelper#highlight), as the screen does. Names only — a note's
-                            excerpt stays plain text (search_test.rb refuses markup in it).
+                            group's `total` entries stand for, said beside it ("5 · 8 files")
+                            when stacks fold any (SearchController#add_stacked_files). A :file
+                            record may then be a SearchController::StackHit — a stack and its
+                            latest node — drawn as one row naming the stack and its count,
+                            linking the latest.
 
   A FILE ROW IS A NAME LINK, DELIBERATELY NOT thumb_cell_data — this list has no polling cell to
   seed (docs/invariants/files-preview.md), just a name and an extension label. It and the :note
@@ -50,31 +42,21 @@
   <% more_path = local_assigns.fetch(:more_path, nil) %>
   <% more_label = local_assigns.fetch(:more_label, "See all") %>
   <% folders = local_assigns.fetch(:folders, {}) %>
-  <% number = local_assigns[:number] %>
-  <% query = local_assigns[:query].presence %>
-  <% name = ->(text) { query ? highlight(text, query) : text } %>
-  <%= tag.section class: class_names("result-group", "result-group--#{kind}", "panel": number), id: local_assigns[:id] do %>
-    <% if number %>
-      <div class="panel-head">
-        <h2><span class="panel-num"><%= number %></span> <%= title %></h2>
-        <% files = local_assigns[:files] %>
-        <span class="panel-note"><%= total > records.size ? "#{records.size} of #{total}" : count_label(total, "result") %><%= " · #{count_label(files, "file")}" if files && files > total %></span>
-      </div>
-    <% else %>
-      <h2><%= title %> <span class="muted"><%= total %></span></h2>
-    <% end %>
+  <% files = local_assigns[:files] %>
+  <section class="result-group result-group--<%= kind %>">
+    <h2><%= title %> <span class="muted"><%= total %><%= " · #{count_label(files, "file")}" if files && files > total %></span></h2>
     <ul class="result-list">
       <% records.each do |record| %>
         <li class="<%= class_names("result-row", "stack-result": record.respond_to?(:stack)) %>">
           <% case kind
              when :project %>
-            <%= link_to name.(record.name), project_path(record) %>
+            <%= link_to record.name, project_path(record) %>
             <% if record.description.present? %>
               <span class="result-sub"><%= truncate(record.description, length: 80) %></span>
             <% end %>
           <% when :model %>
             <span class="result-name">
-              <%= link_to name.(record.title), model_path(record) %>
+              <%= link_to record.title, model_path(record) %>
               <%= render "shared/result_folder", where: folders[record.id] %>
             </span>
             <%# A badge only for a status that says something — the model page's and the strip's rule
@@ -83,7 +65,7 @@
               <span class="badge mstatus-<%= record.print_status %>"><%= record.print_status_label %></span>
             <% end %>
           <% when :inventory_item %>
-            <%= link_to name.(record.name), inventory_item_path(record) %>
+            <%= link_to record.name, inventory_item_path(record) %>
             <span class="result-sub"><%= [
               "#{number_with_precision(record.quantity_cached, precision: 3, strip_insignificant_zeros: true)} #{record.unit}",
               record.location&.name
@@ -91,17 +73,17 @@
           <% when :file %>
             <% if record.respond_to?(:stack) %>
               <%# A VERSION STACK: its name, its count chip and where it is, linking the latest
-                  member, which the sub-line names (the screen `search`). %>
+                  member, which the sub-line names. %>
               <% stack = record.stack %>
               <% node = record.node %>
               <span class="result-name">
-                <span class="stack-result-name"><%= link_to name.(stack.name), file_path(node.node_id), data: file_open_data %> <span class="badge stack-count"><%= stack_count_label(stack) %></span></span>
+                <span class="stack-result-name"><%= link_to stack.name, file_path(node.node_id), data: file_open_data %> <span class="badge stack-count"><%= stack_count_label(stack) %></span></span>
                 <%= render "shared/result_folder", where: folders[record.id] %>
               </span>
               <span class="result-sub">latest <%= node.name %></span>
             <% else %>
             <span class="result-name">
-              <%= link_to name.(record.name), file_path(record.node_id), data: file_open_data %>
+              <%= link_to record.name, file_path(record.node_id), data: file_open_data %>
               <%= render "shared/result_folder", where: folders[record.id] %>
             </span>
             <span class="result-sub"><%= File.extname(record.name).delete(".").upcase.first(4) %></span>
@@ -114,7 +96,7 @@
               with no type.
             %>
             <span class="result-name">
-              <%= link_to name.(record.name), files_path(folder: record.node_id) %>
+              <%= link_to record.name, files_path(folder: record.node_id) %>
               <%= render "shared/result_folder", where: folders[record.id] %>
             </span>
             <span class="result-sub">Folder</span>
@@ -140,5 +122,5 @@
     <% if more_path && total > records.size %>
       <p class="result-more"><%= link_to "#{more_label} #{total}", more_path %></p>
     <% end %>
-  <% end %>
+  </section>
 <% end %>

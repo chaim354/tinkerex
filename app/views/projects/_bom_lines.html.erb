@@ -16,18 +16,13 @@
     bom       — the current Maker::Bom, or nil before the first line exists
     more_path — project_bom_path(project) on the panel (renders "Showing N of M"); nil on the
                 full page, which already shows every line
-    figures   — optional, true on the project page's panel: a first FIG. column citing the figure
-                number a file line's target carries on that page (the Shop manual spec §9; the
-                screens' Parts list). The full BOM page has no figures to cite, so it has no column.
 %>
-<% numbered = local_assigns.fetch(:figures, false) %>
 <% if lines.empty? %>
   <p class="muted">No lines yet.</p>
 <% else %>
   <table class="table bom-lines">
     <thead>
       <tr>
-        <% if numbered %><th class="col-fig">Fig.</th><% end %>
         <th class="col-ref">Ref</th>
         <th class="col-target">Target</th>
         <th class="num col-qty">Qty</th>
@@ -42,9 +37,6 @@
         <% node = line.target_kind == :design_file ? nodes[line.node_id] : nil %>
         <% short = item && item.quantity_cached < line.quantity %>
         <tr class="<%= "short" if short %>">
-          <% if numbered %>
-            <%= tag.td class: "col-fig", data: (node ? figure_cite_data(node.node_id) : {}) do %><%= fig_num_tag(node && figure_number(node.node_id)) %><% end %>
-          <% end %>
           <td class="col-ref mono"><%= line.reference %></td>
           <td class="col-target">
             <% case line.target_kind %>

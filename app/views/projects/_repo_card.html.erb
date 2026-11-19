@@ -17,13 +17,7 @@
 
   Local: card (Maker::RepoCard).
 %>
-<%# A PLATE SINCE THE SHOP MANUAL (2026-11-19): a 2px ink box headed "Repository · <name>" in the caps
-    label, the facts below. The visitor's card (public/projects/_repo_card) keeps its own look. %>
-<div class="repo-card plate">
-  <div class="plate-head">
-    <span>Repository · <%= card.dir.name %></span>
-    <% if card.head && card.tags.any? %><span class="plate-count">at <%= card.tags.first %></span><% end %>
-  </div>
+<div class="repo-card">
   <div class="repo-facts">
     <% if card.head %>
       <%= link_to card.head.short_oid, repo_commit_path(card.dir.node_id), class: "mono", data: { turbo_prefetch: false } %>

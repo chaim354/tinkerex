@@ -1,5 +1,15 @@
 # Shop manual: one look for the whole app — design
 
+> **REVERTED, 2026-11-19, except two pieces.** The whole design shipped as #528–#541 and was then
+> reverted to the look before it at the owner's request. Two pieces were kept and put back on the old
+> look: **version stacks** (§9; `Maker::VersionStacks`, the Library's, Search's and each project
+> panel's "Stack versions and backups" switch, Pull out and Put back) and **every project panel half a
+> column by default, full while it holds a repository** (§8 slice 5; `Maker::ProjectKind.default_width`).
+> Everything else here — the white page, Graphite, the fonts, figure numbers, plates, the
+> four-place strip, the contents column, the folder tree, next steps, the tidy-up list, the
+> published view, the index of files and the find box — is not in the app. Code comments that cite
+> "spec §9" for the stacks point here.
+
 **Date:** 2026-11-18 · **Status:** direction, screens and roadmap approved in conversation; the six
 proposals in §11 stand as written until Charles says otherwise; awaiting spec review
 

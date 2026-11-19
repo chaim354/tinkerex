@@ -1,6 +1,5 @@
-# TODAY (structural redesign spec §7, slice 6; the app's front door at `/`): each open project's next
-# step, your active projects, what needs attention and the files you changed lately, each section
-# only when it holds anything (with no file, Getting started stands in for the files).
+# RECENT (structural redesign spec §7, slice 6; the app's front door at `/`): the files you changed
+# lately, your active projects, and what needs attention — the last two only when they hold anything.
 # EVERY LIST HERE IS BOUNDED AND ORDERED BY A COLUMN THAT ALREADY EXISTS — there is no activity table
 # and no counter, and page_query_budget_test.rb asserts the count is constant in N.
 class HomeController < ApplicationController
@@ -23,9 +22,6 @@ class HomeController < ApplicationController
   # Stage 2, S2-3: how many low-stock inventory items land in "Needs attention" — the same
   # bounded-list shape as RECENT_PROJECTS/RECENT_FILES/ATTENTION_PRINTS above, not a second pattern.
   ATTENTION_STOCK = 5
-  # THE TIDY-UP LIST'S TWO HOME ROWS (the Shop manual's §9, 2026-11-19): NOT COMMITTED and OUT OF DATE,
-  # across every project, from Maker::TidyUp::Attention in a constant number of queries and no git.
-  ATTENTION_TIDY = 5
   # "THE MODEL'S LATEST RUN", Maker::PrintRun#sync_model_status's own ordering (printed_on, then id),
   # as one correlated NOT EXISTS so the list stays a single query: a run with any later run of the
   # same model is history, not something to attend to.
@@ -50,20 +46,10 @@ class HomeController < ApplicationController
     # (page_query_budget_test.rb's small seed sits under it, the large one over it). Mirrors
     # ProjectsController#index, which eager-loads the same association for the same reason.
     # ACTIVE MEANS NOT FINISHED (slice 6 review): the section is "Active projects", so a done project is
-    # left out as an archived one is — it showed under that heading with a "Done" badge. That set is
-    # Maker::Project.open, the one Maker::ToBuy and the next steps read too.
-    @recent_projects = current_user.maker_projects.open
+    # left out as an archived one is — it showed under that heading with a "Done" badge.
+    @recent_projects = current_user.maker_projects.where.not(status: %w[archived done])
                                    .includes(:file_attachments)
                                    .order(updated_at: :desc).limit(RECENT_PROJECTS).to_a
-    # CARRY ON (Shop manual spec §9, "next step on Home"): the next step of each project Active projects
-    # lists, in its order, and "N of M done" beside it; a project with no open task has no row. One
-    # query each for the whole set (Maker::Task.next_steps_for / .progress_for), never one per
-    # project: page_query_budget_test.rb holds it constant as projects and tasks grow. The projects are
-    # the bounded list above, so Carry on is bounded by RECENT_PROJECTS too; the Projects index shows
-    # every project's step.
-    @next_steps = Maker::Task.next_steps_for(@recent_projects)
-    @progress = Maker::Task.progress_for(@recent_projects)
-    @carry_on = @recent_projects.filter_map { |project| (step = @next_steps[project.id]) && [ project, step ] }
     @recent_files = current_user.nodes.present.where(kind: "file").visible_entries(false)
                                 .order(updated_at: :desc).limit(RECENT_FILES).to_a
     @failed_prints = current_user.maker_print_runs.includes(:model)
@@ -76,13 +62,12 @@ class HomeController < ApplicationController
     # (at or below a minimum the maker set; a minimum of 0 is none), bounded and ordered by name the
     # same way every other list on this page is bounded (this class's own header).
     @low_stock = current_user.maker_inventory_items.low_stock.order(:name).limit(ATTENTION_STOCK).to_a
-    # A THIRD source: what the projects' tidy-up lists would raise that Home can know without running
-    # git per project — exports older than their source, and files saved here but not committed —
-    # less what the maker dismissed on a project's page (Maker::TidyUp::Attention says how).
-    @tidy_attention = Maker::TidyUp::Attention.for(current_user, limit: ATTENTION_TIDY, capabilities:)
     @covers = Maker::Previews::ThumbnailMap.for(
       current_user, @recent_projects.filter_map(&:cover_node_id) + @recent_files.map(&:node_id)
     )
     @addon_origins = addon_origins_for(@recent_files.map(&:node_id))
+    # Recent shows no folder, so Upload asks with the chooser — but it is this page's one action
+    # (spec §4.2).
+    upload_primary!
   end
 end

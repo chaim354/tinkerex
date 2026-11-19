@@ -57,7 +57,7 @@ class RepoBrowserTest < ApplicationSystemTestCase
 
   # OPEN A NESTED SECTION BY ITS NAME, AT THE SUMMARY'S LEFT EDGE. A nested repository's summary
   # also holds its Commits and History links, and in a half-width folder panel (every plain folder
-  # since the Shop manual, 2026-11-19) the summary's middle, where a bare `click` lands, is the
+  # since 2026-11-19) the summary's middle, where a bare `click` lands, is the
   # History link: the click left the page for /repos/:id/history. The offset is from the centre.
   def open_section(name)
     summary = find("summary", text: name)

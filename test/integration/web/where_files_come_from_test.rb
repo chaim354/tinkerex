@@ -68,7 +68,7 @@ module Web
       assert_select ".home-files", 0
 
       sources = text_of(".getting-started .file-sources")
-      assert_match(/Upload, under Add at the top of the page/, sources)
+      assert_match(/Upload, in the top bar/, sources)
       assert_match(/library folder on the server.*within 15 minutes.*Rescan library/, sources)
       refute_match(/desktop app|storage this server uses/, sources, "a share library has neither")
 
@@ -102,7 +102,7 @@ module Web
       with_capabilities(FileLayer::ChunkRemote::CAPABILITIES) { get root_path }
       assert_response :success
       sources = text_of(".getting-started .file-sources")
-      assert_match(/Upload, under Add at the top of the page/, sources)
+      assert_match(/Upload, in the top bar/, sources)
       assert_match(/desktop app/, sources)
       # Nothing polls a chunk_remote library and there is no Rescan door (require_scannable!).
       refute_match(/15 minutes|Rescan library|library folder|storage this server uses/, sources)
@@ -149,7 +149,7 @@ module Web
       assert_select ".library-main .empty", 1
       empty = text_of(".library-main .empty")
       assert_match(/Your library is empty/, empty)
-      assert_match(/Upload, under Add at the top of the page/, empty)
+      assert_match(/Upload, in the top bar/, empty)
       assert_match(/library folder on the server.*within 15 minutes/, empty)
       assert_match(/becomes a project/, empty)
       assert_select ".library-main .empty .projects-intake a[href=?]", settings_shelves_path

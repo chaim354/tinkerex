@@ -6,7 +6,7 @@ import { Controller } from "@hotwired/stimulus"
 // after a stack figure — and the button's `aria-expanded` says whether it is open. Nothing is
 // fetched: the server drew the members, hidden, beside the stack, so opening is showing them.
 //
-// NOT A <details>: a row's members are sibling rows of a table and a figure's panel spans the plate
+// NOT A <details>: a row's members are sibling rows of a table and a card's panel spans the grid
 // after it, and neither can sit inside the element that opens it.
 export default class extends Controller {
   toggle(event) {
@@ -29,6 +29,6 @@ export default class extends Controller {
       const el = id && document.getElementById(id)
       if (el) el.hidden = !open
     }
-    button.closest("tr, .grid-item, .plate-figure")?.classList.toggle("is-open", open)
+    button.closest("tr, .grid-item, .stack-item")?.classList.toggle("is-open", open)
   }
 }

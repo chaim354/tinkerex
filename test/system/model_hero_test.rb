@@ -14,7 +14,7 @@ require "application_system_test_case"
 # the card's `width: 100%` does not: a flex `.thumb` in a block cell fills it anyway. Outputs in
 # this task's report.
 class ModelHeroTest < ApplicationSystemTestCase
-  CARD = { "light" => "rgb(255, 255, 255)", "dark" => "rgb(182, 186, 191)" }.freeze
+  CARD = { "light" => "rgb(252, 251, 248)", "dark" => "rgb(191, 187, 178)" }.freeze
 
   setup do
     @root = use_fresh_share_library!

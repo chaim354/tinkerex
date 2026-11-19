@@ -649,44 +649,5 @@ test "a tab name collapses whitespace before the length check, and a repeated ta
   r = tabbed.parse("layout: 1\npanels:\n  - tab: Build\n    id: #{TAB_A}\n  - tab: build\n")
   assert_equal [ "Entry 2 names the tab a second time." ], r.errors
 end
-
-    # --- the published view rides through Save (2026-11-19) ---------------------------------------
-
-    # THE COLUMN IS THE WHOLE OF WHAT SAVE WRITES, so a key it did not carry would be dropped — and a
-    # dropped key publishes the panel. It carries the layout's choice for the keys the draft still
-    # holds, from a draft OR a pasted text, and it is ABSENT when nothing is kept back, so every
-    # other project's column is what it always was.
-    test "the column carries what the public page leaves out, and nothing when nothing is" do
-      d = doc({ "unpublished" => [ key(MODELS), "bom" ], "hidden" => %w[tasks] })
-      assert_equal [ key(MODELS), "bom" ], d.column(d.draft)["unpublished"]
-
-      applied = d.parse("layout: 1\npanels:\n  - panel: bom\n    hidden: true\n")
-      assert applied.ok?
-      column = d.column(applied.draft)
-      assert_equal [ key(MODELS), "bom" ], column["unpublished"], "a pasted layout cannot publish a panel"
-      assert_equal %w[bom tasks].sort, column["hidden"].sort
-
-      refute doc.column(doc.draft).key?("unpublished")
-      round = Maker::ProjectKind.layout_for(kind: "other", overrides: d.column(d.draft), folders: FOLDERS)
-      assert_equal [ key(MODELS), "bom" ], round.unpublished, "the column reads back as the same choice"
-    end
-
-    # A BLOCK DELETED IN THE EDITOR TAKES ITS KEY WITH IT: the draft no longer names it.
-    test "a block the draft no longer holds leaves the choice with its key" do
-      d = bdoc({ "unpublished" => [ bkey("aaaaaaaaaaaa"), bkey("bbbbbbbbbbbb") ] })
-      draft = d.draft.merge("panels" => d.draft["panels"].reject { |e| e["key"] == bkey("aaaaaaaaaaaa") })
-      assert_equal [ bkey("bbbbbbbbbbbb") ], d.column(draft)["unpublished"]
-    end
-
-    # NOT THE ARRANGEMENT: neither the draft the browser holds nor the YAML a maker shares says it,
-    # and the YAML grammar refuses it like any other unknown attribute.
-    test "neither the draft nor the YAML carries the choice" do
-      d = doc({ "unpublished" => [ key(MODELS) ] })
-      refute d.draft["panels"].any? { |e| e.key?("unpublished") || e.key?("public") }
-      refute_includes d.to_yaml(project_name: "Desk Lamp"), "public"
-      refute_includes d.to_yaml(project_name: "Desk Lamp"), "unpublished"
-      assert_equal [ "Entry 1: unknown attribute “unpublished”." ],
-                   d.parse("layout: 1\npanels:\n  - panel: bom\n    unpublished: true\n").errors
-    end
   end
 end

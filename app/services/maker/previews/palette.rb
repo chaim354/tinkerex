@@ -30,7 +30,7 @@ module Maker
     # ship both or neither).
     module Palette
       PAPER = "#ffffff".freeze
-      INK = "#0f1113".freeze
+      INK = "#1b1c19".freeze
       MATERIAL = "#7f7b73".freeze
     end
   end

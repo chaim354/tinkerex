@@ -72,7 +72,7 @@
   project's folder is in the trash or was removed" with a link to Trash,
   `Maker::AttachToProject#move` returns `:unavailable` and leaves the bytes where they are, and
   `Maker::ProjectFolderListing` answers `available? == false`, so `ProjectsController#show` gives
-  the strip's Add no destination and its Upload asks with the folder chooser rather than guess the
+  the top bar no destination and its Upload asks with the folder chooser rather than guess the
   root. (`Projects::UploadsController#upload_parent` was a fourth answer, landing the file at the
   library root, until F-S21-1 retired that controller's project-level route.) A project whose
   `folder_node_id` was never set — the form path — still mints, which is what
@@ -298,7 +298,7 @@
 - **THE PAGE LISTS THE FOLDER AND NEVER FILES OR MINTS IT.** `Maker::ProjectFolderListing` reads
   `folder_node_id`, answers liveness through the LibraryTree, and creates nothing; the one writer of the FOLDER
   on `projects#show` is the pre-existing best-effort `ensure_library_folder!`, which runs before the
-  listing. The strip's Upload saves into the LISTING's folder (`FolderDestination`, set only when
+  listing. The top bar's Upload saves into the LISTING's folder (`FolderDestination`, set only when
   `available?`), never into what the ensure returned, so the page shows and uploads into one
   folder. A file inside the folder with no attachment row is still listed — the folder is the
   relation the panel shows; `maker_file_attachments` stays the relation detach, cover and addon
@@ -349,10 +349,6 @@
   is not listed under the Files panel's Loose group — Loose is "what the next pass will file", and
   this file never is — while a second README-named file at the root stays listed, its row saying
   it stays (`Maker::LooseFilingNotes`). Guard: `project_repo_card_test.rb`.
-  **The tidy-up list reads the same prediction** (`Maker::TidyUp`, 2026-11-19): its "Loose file"
-  cell is `LooseFilingNotes.blocked`, never a second copy of the rule, so the cell and the Files
-  panel's row cannot disagree about which file the next pass will not file. It suggests only where
-  filing runs (autofile on, not inside a working tree, not a model's bundle file) and files nothing.
 
 - **ROOT = INBOX, PLUS WHAT `other/` NO LONGER HOLDS — AND IT IS STATELESS.** Files at a project
   folder's own root are filed; anything in any other subfolder — including one filed "wrong" by

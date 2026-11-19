@@ -1,9 +1,8 @@
 import { Controller } from "@hotwired/stimulus"
 import { chooseFolder } from "lib/file_chooser"
 
-// THE STRIP'S UPLOAD ON A PAGE THAT SHOWS NO FOLDER (structural redesign spec §4.2 and §8, slice 4; in
-// the strip's Add since Shop manual slice 3). Home, Tools, Settings and Search have no "folder you're
-// in", so a click on Upload asks for one with
+// THE TOP BAR'S UPLOAD ON A PAGE THAT SHOWS NO FOLDER (structural redesign spec §4.2 and §8, slice 4).
+// Recent, Tools, Settings and Search have no "folder you're in", so a click on Upload asks for one with
 // the library's own chooser, writes it where the upload flow reads its destination, and only then
 // opens the file picker. It never guesses: a cancelled chooser uploads nothing.
 //
@@ -12,7 +11,7 @@ import { chooseFolder } from "lib/file_chooser"
 // upload went to the first one's folder unasked. Now each click asks again, opening on the folder
 // chosen last, so the same folder is one Choose away and a different one is never a surprise.
 //
-// TWO FLOWS, TWO PLACES TO WRITE (layouts/_strip_add.html.erb): the share/s3 form's hidden
+// TWO FLOWS, TWO PLACES TO WRITE (layouts/_topbar_upload.html.erb): the share/s3 form's hidden
 // `parent_node_id` (the `parent` target) or the chunk uploader's `data-uploader-parent-node-id-value`
 // (the `uploader` target), which uploader_controller.js reads at upload time.
 //
@@ -22,7 +21,7 @@ import { chooseFolder } from "lib/file_chooser"
 //
 // THE FILE PICKER OPENS FROM THE CHOOSER'S OWN CLICK. `input.click()` needs a user activation, and the
 // chooser resolves inside its Choose button's click handler, so the activation is still live here.
-// The system tests count the click the input receives (topbar_upload_test.rb, phone_strip_test.rb),
+// The system tests count the click the input receives (topbar_upload_test.rb, phone_topbar_test.rb),
 // which proves the call; that a real browser then shows its dialog is the manual check, because
 // headless Chrome shows none and Capybara's `attach_file` sets the input's files directly.
 export default class extends Controller {

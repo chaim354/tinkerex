@@ -1,38 +1,27 @@
 <%#
-  THE HERO (stage 4, S4-1): the cover on the project's own page — until then `cover_node_id`
+  THE HERO (stage 4, S4-1): the cover on the project's own page — until now `cover_node_id`
   reached only the index card and Home. Reads @cover_node (a LIVE node from the page's one
   PageNodes union; nil when the cover is unset or tombstoned) and @page_thumbs. An image-role
   cover is the picture itself through the blob route; any other cover is its server thumbnail in
   a poll cell, the model page's hero-poster rule; no cover renders NOTHING — a project page is not
   a card, and an empty box under the title would read as a broken image.
-
-  A FIGURE SINCE THE SHOP MANUAL (2026-11-19; its spec §5): the picture in a hairline frame beside the
-  head, captioned "Fig. 1" and the file's name.
-  AND ITS CALLOUT SINCE FIGURE NUMBERS (spec §9 and §11.3): the cover is the page's first figure
-  (Maker::ProjectFigures), so it carries the 26px disc at the frame's top left and the caption reads
-  the number the walk gave it, which is 1; the same file keeps it wherever a panel draws it again.
 %>
-<% number = @cover_node && figure_number(@cover_node.node_id) %>
 <% if @cover_node %>
   <% ext = File.extname(@cover_node.name).delete(".").upcase.first(4) %>
-  <%= tag.figure class: "project-hero", data: { controller: "thumbs", thumbs_url_value: thumbnails_files_path }.merge(figure_data(@cover_node.node_id)) do %>
+  <div class="project-hero" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
     <%# `inline_image?`, NOT the role (tinkerex#285): a .heic cover is an image by role and a broken
         picture as raw bytes; the thumbnail branch below is what shows it. %>
     <% if Maker::FileAttachment.inline_image?(@cover_node.name) %>
-      <%= link_to file_path(@cover_node.node_id), class: "project-hero-frame", data: file_open_data do %>
-        <%= fig_num_tag(number, size: :hero) %>
+      <%= link_to file_path(@cover_node.node_id), data: file_open_data do %>
         <%= image_tag blob_file_path(@cover_node.node_id), class: "project-hero-img", alt: @cover_node.name %>
       <% end %>
     <% else %>
       <%= link_to file_path(@cover_node.node_id), class: "file-cell project-hero-thumb", "aria-label": @cover_node.name,
                   data: file_open_data(thumb_cell_data(@cover_node.node_id, ext)) do %>
         <%= render "files/thumb", thumb: @page_thumbs.thumb(@cover_node.node_id), ext_label: ext,
-                   url: preview_src(@page_thumbs.thumb(@cover_node.node_id)), fig: fig_num_tag(number, size: :hero) %>
+                   url: preview_src(@page_thumbs.thumb(@cover_node.node_id)) %>
       <% end %>
     <% end %>
-    <figcaption class="project-hero-caption">
-      <% if number %><span class="project-hero-fig">Fig. <%= number %></span><% end %>
-      <span class="project-hero-name mono muted"><%= @cover_node.name %></span>
-    </figcaption>
-  <% end %>
+    <span class="project-hero-name mono muted"><%= @cover_node.name %></span>
+  </div>
 <% end %>

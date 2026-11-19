@@ -7,60 +7,47 @@
   <%= render "users/registrations/owner_card" %>
 <% else %>
   <% content_for :title, "Sign in — Tinkerex" %>
-  <%= render layout: "users/shared/door" do %>
+  <div class="auth-card">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
+    <h1>Sign in</h1>
+
     <%# THE PUBLIC DEMO'S DOOR (Tinkerex::Demo): one click into the shared account, above the form a
         stranger cannot use, and only while there is an account to sign into -- a button that answered
-        404 would be a broken page. A plain .btn: the card's primary stays on Sign in, the way every auth
-        card spends it on its own form's submit, and this one is found by coming first
-        (demo_session_test.rb pins the order and reads the bare `class="demo-entry"`). Its head is a
-        caps label, not a heading, so the page's one h1 is Sign in. %>
+        404 would be a broken page. A plain .btn: the card's accent stays on Sign in, the way every auth
+        card spends it on its own form's submit, and this one is found by coming first. %>
     <% if Tinkerex::Demo.available? %>
-      <section class="demo-entry" aria-label="Just looking?">
-        <div class="auth-box-head" aria-hidden="true">Just looking?</div>
-        <div class="auth-box-body">
-          <p class="auth-hint">A shared account that resets every night; nothing you do here is private.</p>
-          <%= button_to "Try the demo", demo_session_path, class: "btn" %>
-        </div>
-      </section>
+      <div class="demo-entry">
+        <%= button_to "Try the demo", demo_session_path, class: "btn" %>
+        <p class="auth-hint">A shared account that resets every night; nothing you do here is private.</p>
+      </div>
     <% end %>
 
-    <section class="auth-box" aria-labelledby="auth-title">
-      <h1 class="auth-box-head" id="auth-title">Sign in</h1>
-      <div class="auth-box-body">
-        <%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
-          <div class="field">
-            <%= f.label :email %>
-            <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
-          </div>
-
-          <div class="field">
-            <%= f.label :password %>
-            <%= f.password_field :password, autocomplete: "current-password" %>
-          </div>
-
-          <%# THE LABEL NAMES ITS CHECKBOX BY `for` AS WELL AS BY WRAPPING IT (UX audit F4): the wrap
-              alone left the box's accessible name as "1", its value. f.label derives the same id
-              f.check_box gives the box, user_remember_me. %>
-          <% if devise_mapping.rememberable? %>
-            <%= f.label :remember_me, class: "field-inline" do %>
-              <%= f.check_box :remember_me %>
-              <span>Remember me</span>
-            <% end %>
-          <% end %>
-
-          <div class="actions">
-            <%= f.submit "Sign in", class: "primary" %>
-          </div>
-        <% end %>
+    <%= form_for(resource, as: resource_name, url: session_path(resource_name)) do |f| %>
+      <div class="field">
+        <%= f.label :email %>
+        <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
       </div>
-    </section>
+
+      <div class="field">
+        <%= f.label :password %>
+        <%= f.password_field :password, autocomplete: "current-password" %>
+      </div>
+
+      <%# THE LABEL NAMES ITS CHECKBOX BY `for` AS WELL AS BY WRAPPING IT (UX audit F4): the wrap
+          alone left the box's accessible name as "1", its value. f.label derives the same id
+          f.check_box gives the box, user_remember_me. %>
+      <% if devise_mapping.rememberable? %>
+        <%= f.label :remember_me, class: "field-inline" do %>
+          <%= f.check_box :remember_me %>
+          <span>Remember me</span>
+        <% end %>
+      <% end %>
+
+      <div class="actions">
+        <%= f.submit "Sign in", class: "primary" %>
+      </div>
+    <% end %>
 
     <%= render "users/shared/links" %>
-    <%# WHO MAKES ACCOUNTS, while sign-ups are closed: the links above offer no "Sign up" then, and a
-        visitor who has none should learn whom to ask rather than meet a form with no way past it.
-        The closed sign-up page says the same (users/registrations/closed). %>
-    <% unless Tinkerex::Registration.open? %>
-      <p class="auth-note">Accounts on this server are added by its admin.</p>
-    <% end %>
-  <% end %>
+  </div>
 <% end %>

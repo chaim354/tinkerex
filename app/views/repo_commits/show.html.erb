@@ -132,7 +132,7 @@
     <% end %>
 
     <%# A VISIBLE LABEL, NOT THE PLACEHOLDER ALONE (UX audit D6/I, 2026-11-02), and the Commit button
-        is the page's one primary: `.editor-bar`'s reset in pages/preview.css used to cancel
+        carries the page's one accent: `.editor-bar`'s reset in pages/preview.css used to cancel
         `.primary` here, so the page's whole action read like any other button. %>
     <label class="commit-message-label" for="message">Commit message</label>
     <%= text_area_tag :message, nil, rows: 3, placeholder: "What changed?", class: "commit-message" %>

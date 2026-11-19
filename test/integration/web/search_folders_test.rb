@@ -52,7 +52,7 @@ module Web
       foldered = @user.maker_models.create!(title: "tetra", folder_node_id: "d-catan")
       loose = @user.maker_models.create!(title: "tetra twin")
       get search_path(q: "tetra")
-      assert_select ".result-group--model h2", text: /\A\d+ 3D models\z/
+      assert_select ".result-group--model h2", text: /\A3D models/
       assert_equal "Projects/catan", path_under(:model, model_path(foldered)).text
       assert_nil path_under(:model, model_path(loose)), "a model with no folder must not claim the root"
     end

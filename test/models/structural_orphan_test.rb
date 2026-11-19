@@ -75,11 +75,6 @@ class StructuralOrphanTest < ActiveSupport::TestCase
       p = u.maker_projects.create!(name: "Lamp")
       [ p, p.blocks.create!(user: u, kind: "text", body: "Why a printed shade") ]
     },
-    # A DISMISSED TIDY-UP SUGGESTION GOES WITH ITS PROJECT (the Shop manual's §9, 2026-11-19).
-    "maker_tidy_dismissals.project_id" => ->(u) {
-      p = u.maker_projects.create!(name: "Lamp")
-      [ p, p.tidy_dismissals.create!(user: u, kind: "loose", subject: "n-1", state: "design/x.svg") ]
-    },
     "maker_releases.project_id" => ->(u) {
       p = u.maker_projects.create!(name: "Lamp")
       [ p, p.releases.create!(user: u, version: "v0.1.0", published_at: Time.current) ]

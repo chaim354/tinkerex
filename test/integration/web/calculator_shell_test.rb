@@ -3,8 +3,8 @@ require "support/public_fixture"
 
 module Web
   # THE CALCULATOR IN THE SHELL (2026-10-21; plan 2026-10-21-calculator-modal.md): the modal rendered
-  # once on every signed-in page and on no other, the pinned row in the left column (Home's Pinned
-  # group and the Tools column), and the Tools card with its right-click pin. What a browser alone can see — opening, Enter, Esc, focus, saving — is
+  # once on every signed-in page and on no other, the rail's pinned link, and the Tools card with its right-click
+  # pin. What a browser alone can see — opening, Enter, Esc, focus, saving — is
   # test/system/calculator_modal_test.rb's.
   class CalculatorShellTest < ActionDispatch::IntegrationTest
     include PublicFixture
@@ -15,13 +15,13 @@ module Web
       @project = @user.maker_projects.create!(name: "Desk Lamp")
     end
 
-    test "every signed-in page renders the modal exactly once, closed, with no primary in it" do
+    test "every signed-in page renders the modal exactly once, closed, with nothing accent in it" do
       [ root_path, files_path, projects_path, project_path(@project), tools_path, settings_path, help_path ].each do |path|
         get path
         assert_response :success, path
         assert_select "body > .calculator-host[data-controller=calculator] > dialog.calculator", 1, path
         assert_select "dialog.calculator[open]", 0, "#{path}: the modal must render closed"
-        assert_select "dialog.calculator .primary", 0, "#{path}: a screen has one primary"
+        assert_select "dialog.calculator .primary", 0, "#{path}: the accent is spent once per screen"
         assert_select "dialog.calculator input#calculator-input", 1
       end
     end
@@ -48,9 +48,9 @@ module Web
       assert_select "dialog.calculator", 0
     end
 
-    test "unpinned, no column has a Calculator row and the Tools card offers the pin, by button and right click" do
+    test "unpinned, the rail has no Calculator link and the Tools card offers the pin, by button and right click" do
       get tools_path
-      assert_select "aside.column a.column-calculator", 0
+      assert_select "aside.rail a.rail-calculator", 0
       assert_select "#calculator.calculator-card button[data-calculator-open]", text: "Open calculator"
       # THE PIN WAS A RIGHT CLICK ONLY (2026-10-22) AND IS A VISIBLE TOGGLE AS WELL SINCE 2026-11-02
       # (UX audit G2): the card still carries the menu's data, and its one form is the toggle, after
@@ -64,31 +64,29 @@ module Web
                    css_select("#calculator button").map { |b| (b["class"].split & %w[calculator-card-open tool-pin]).first }
     end
 
-    # PINNED, THE CALCULATOR IS A ROW IN HOME'S PINNED GROUP AND IN THE TOOLS COLUMN (Shop manual
-    # slice 3; the rail carried it on every page before). It opens the modal, so it never lights.
-    test "pinning puts a Calculator row in Home's column and the Tools column; it opens the modal and lights nothing" do
+    test "pinning puts a Calculator link in the rail on every page; it opens the modal and lights nothing" do
       post tools_pin_path("calculator")
       assert_redirected_to tools_path
       assert @user.reload.tool_pins.pinned?("calculator")
 
-      [ root_path, tools_path ].each do |path|
+      [ root_path, project_path(@project), tools_path ].each do |path|
         get path
-        assert_select "aside.column .column-group[data-controller=toolmenu] a.column-calculator[data-calculator-open][href=?]",
+        assert_select "aside.rail .rail-nav--foot a.rail-calculator[data-calculator-open][href=?]",
                       tools_path(anchor: "calculator"), 1
-        assert_select "aside.column a.column-calculator[aria-current]", 0
-        # The phone tab bar keeps its four places.
+        assert_select "aside.rail a.rail-calculator[aria-current]", 0
+        # STILL EXACTLY ONE LIT LINK (design-system.md rule 8).
+        assert_select "aside.rail [aria-current='page']", 1
+        # The phone tab bar keeps its four destinations.
         assert_select "nav.tabbar a.tabbar-link", 4
       end
-      # In the Tools column, after the gallery.
-      assert_equal [ "All tools", "Calculator" ], css_select("aside.column .column-row-name").map { |e| e.text.strip }
-      # A project page has the Projects column, which pins no tool.
-      get project_path(@project)
-      assert_select "aside.column a.column-calculator", 0
+      # Under Tools, which is the tool family it belongs to.
+      foot = css_select("aside.rail .rail-nav--foot li a").map { |a| a["title"] }
+      assert_equal foot.index("Tools") + 1, foot.index("Calculator (Alt+C)")
 
-      # Both doors now offer the UNPIN: the card, and the row itself.
+      # Both doors now offer the UNPIN: the card, and the rail link itself.
       get tools_path
       assert_select "#calculator.calculator-card[data-tool-pinned=true]", 1
-      assert_select "aside.column a.column-calculator[data-action=?][data-tool-pin-url=?][data-tool-pinned=true]",
+      assert_select "aside.rail a.rail-calculator[data-action=?][data-tool-pin-url=?][data-tool-pinned=true]",
                     "contextmenu->toolmenu#open", tools_pin_path("calculator")
     end
 
@@ -104,7 +102,7 @@ module Web
         get tools_path, headers: { "User-Agent" => agent }
         assert_select "#calculator .calculator-card-keys kbd", { text: keys, count: 1 }, agent
         assert_select "#calculator button.calculator-card-open[aria-keyshortcuts='Alt+C']", 1
-        assert_select "aside.column a.column-calculator[title=?][aria-keyshortcuts='Alt+C']", "Calculator (#{keys})"
+        assert_select "aside.rail a.rail-calculator[title=?][aria-keyshortcuts='Alt+C']", "Calculator (#{keys})"
 
         get project_path(@project, add: "calculations"), headers: { "User-Agent" => agent }
         assert_select "section.calculations-panel button[data-calculator-open][title=?][aria-keyshortcuts='Alt+C']",
@@ -118,16 +116,16 @@ module Web
       assert_redirected_to tools_path
       refute @user.reload.tool_pins.pinned?("calculator")
       get root_path
-      assert_select "aside.column a.column-calculator", 0
+      assert_select "aside.rail a.rail-calculator", 0
     end
 
-    test "the pin is per user: pinning for one account leaves another's column alone" do
+    test "the pin is per user: pinning for one account leaves another's rail alone" do
       post tools_pin_path("calculator")
       other = make_owner!(handle: "other-#{SecureRandom.hex(3)}")
       delete destroy_user_session_path
       sign_in_as(other)
       get root_path
-      assert_select "aside.column a.column-calculator", 0
+      assert_select "aside.rail a.rail-calculator", 0
     end
 
     test "a pin saves even when the account carries a handle a later rule now reserves" do

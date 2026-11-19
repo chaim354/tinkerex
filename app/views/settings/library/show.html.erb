@@ -6,7 +6,7 @@
     share states: shared/_folder_field over Settings::LibraryController#children, with no create_url
     (a folder is made on the host, not here), writing the path relative to the mount into `relative`.
 
-    ONE PRIMARY (design-system.md rule 13): "Use this folder", or with a catalog to keep
+    THE ACCENT IS SPENT ONCE (design-system.md rule 13): "Use this folder", or with a catalog to keep
     "Switch to this folder". "Start over" is a quiet button behind a confirmation that says what it
     forgets and that nothing on disk is touched, because "start over" otherwise reads as "delete".
 
@@ -14,7 +14,7 @@
     reads the same page with no form and no chooser: the folder, its file count and its alerts, each
     alert's next step handed to an admin, and one sentence saying an admin changes it. %>
 <%# The Settings breadcrumb, except on first run: until the folder is confirmed every page brings
-    the maker back here, so a link to Settings would only bounce, and the caps path shows the title. %>
+    the maker back here, so a link to Settings would only bounce, and the top bar shows the title. %>
 <%= render "settings/crumbs", current: "Library folder" unless @pending %>
 
 <div class="page-head">

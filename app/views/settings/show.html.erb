@@ -1,74 +1,46 @@
 <% content_for :title, "Settings — Tinkerex" %>
 
-<%# THE HUB AS NUMBERED SECTIONS (Shop manual slice 7; the screen `settings`): each setting a section
-    head — its number, its name, its fact at the right over a 2px ink rule — then one sentence on what
-    it holds, two to a row. Each name opens its own page, where the setting is changed; the theme is
-    chosen here. The lead says where this server keeps the library, from the same answer the Library
-    folder's fact reads. Nothing here is a primary (design-system.md rule 13). %>
-<% kept = if Tinkerex::LibraryRoot.share? then "as ordinary files in a folder"
-          elsif capabilities.presignable? then "in object storage"
-          else "on a sync server"
-          end %>
 <div class="page-head">
   <h1>Settings</h1>
-  <p class="page-lead">This server keeps its library <%= kept %>.</p>
 </div>
 
-<% number = 0 %>
 <ul class="settings-list settings-hub">
   <li>
-    <span class="panel-num"><%= number += 1 %></span>
     <%= link_to "Library folder", settings_library_path, class: "settings-name" %>
     <span class="settings-fact"><%= @library_fact %></span>
-    <p class="settings-about">Where the library's files live.</p>
   </li>
   <li>
-    <span class="panel-num"><%= number += 1 %></span>
     <%= link_to "Shelves", settings_shelves_path, class: "settings-name" %>
     <span class="settings-fact"><%= pluralize(@shelf_count, "shelf") %></span>
-    <p class="settings-about">The folders inside each project, and the kinds of file each one takes.</p>
   </li>
   <li>
-    <span class="panel-num"><%= number += 1 %></span>
     <%= link_to "Suppliers", suppliers_path, class: "settings-name" %>
     <span class="settings-fact"><%= pluralize(@supplier_count, "supplier") %></span>
-    <p class="settings-about">Where the things in your inventory come from.</p>
   </li>
   <li>
-    <span class="panel-num"><%= number += 1 %></span>
     <%= link_to "Locations", locations_path, class: "settings-name" %>
     <span class="settings-fact"><%= pluralize(@location_count, "location") %></span>
-    <p class="settings-about">Where the things in your inventory are kept.</p>
   </li>
   <li>
-    <span class="panel-num"><%= number += 1 %></span>
     <%= link_to "Tags", settings_tags_path, class: "settings-name" %>
     <span class="settings-fact"><%= pluralize(@tag_count, "tag") %></span>
-    <p class="settings-about">Every tag in use, and how many things carry it.</p>
   </li>
   <%# Users (2026-10-21): admins only, by the same answer the page's own gate asks. %>
   <% if current_user.can_manage_accounts? %>
     <li>
-      <span class="panel-num"><%= number += 1 %></span>
       <%= link_to "Users", settings_users_path, class: "settings-name" %>
       <span class="settings-fact"><%= pluralize(@user_count, "user") %></span>
-      <p class="settings-about">The accounts on this server, and adding one.</p>
     </li>
   <% end %>
   <li>
-    <span class="panel-num"><%= number += 1 %></span>
     <%= link_to "Account", edit_user_registration_path, class: "settings-name" %>
     <span class="settings-fact"><%= current_user.email %></span>
-    <p class="settings-about">Your email, your password and the handle your published projects live under.</p>
   </li>
   <li>
-    <span class="panel-num"><%= number += 1 %></span>
     <%= link_to "Devices", settings_devices_path, class: "settings-name" %>
     <span class="settings-fact"><%= pluralize(@device_count, "connected app") %></span>
-    <p class="settings-about">The desktop apps and assistants signed in to your library.</p>
   </li>
-  <li class="settings-theme">
-    <span class="panel-num"><%= number += 1 %></span>
+  <li>
     <span class="settings-name">Theme</span>
     <%= render "theme" %>
   </li>

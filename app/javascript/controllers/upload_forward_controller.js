@@ -2,13 +2,12 @@ import { Controller } from "@hotwired/stimulus"
 
 // FORWARDS A CLICK TO A FILE PICKER, by one of two doors.
 //
-// `open` — THE STRIP'S ADD MENU CARRIES UPLOAD (Shop manual spec §7, slice 3; on a phone since the
-// structural redesign's slice 7). Its "Upload…" item forwards a click to the hidden Upload BUTTON in
-// the strip's `.topbar-upload` (layouts/_strip_add) — never to the file input: on a page with no
-// folder the button's click is what upload_pick_controller.js handles to ask for a folder first, and
-// an input-targeted click would skip it and upload to the library root unasked. It closes its menu
-// first, so the chooser or the upload's progress under the strip is not covered by it. Runs inside the
-// click's own handler, so the user activation the file picker needs is still live.
+// `open` — THE PHONE'S "+" CARRIES UPLOAD TOO (structural redesign spec §4.3, slice 7). At ≤719px the
+// top bar's Upload button hides and the New menu offers "Upload…", which forwards a click to that
+// BUTTON — never to the file input: on a page with no folder the button's click is what
+// upload_pick_controller.js handles to ask for a folder first, and an input-targeted click would skip
+// it and upload to the library root unasked. Runs inside the tap's own click, so the user activation
+// the file picker needs is still live.
 //
 // `choose` — AN UPLOAD BUTTON OPENS ITS OWN HIDDEN INPUT (UX audit I: Upload was a <label> over the
 // input and took no focus, so no keyboard could upload). The button and the input are siblings inside
@@ -17,8 +16,7 @@ import { Controller } from "@hotwired/stimulus"
 // control per entry. A page with no folder never wires this; its button asks first (upload-pick).
 export default class extends Controller {
   open() {
-    this.element.closest("details")?.removeAttribute("open")
-    document.querySelector("header.strip .topbar-upload .upload-btn")?.click()
+    document.querySelector("header.topbar .topbar-upload .upload-btn")?.click()
   }
 
   choose() {

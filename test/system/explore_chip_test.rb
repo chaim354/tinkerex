@@ -28,21 +28,4 @@ class ExploreChipTest < ApplicationSystemTestCase
     assert_equal ink_colour, background_of(chosen)
     assert_not_equal ink_colour, page.evaluate_script("getComputedStyle(document.querySelector(#{chosen.to_json})).color")
   end
-
-  # A PROJECT ROW KEEPS ITS TEXT COLUMN ON A PHONE (Shop manual slice 8; pages/public.css). The list is
-  # a grid of number, cover, text and side, and below 480px the cover leaves so the name and its
-  # sentence take the row. A row that kept its cover there put the text in the 22px number track, one
-  # letter a line, with nothing scrolling sideways, so shell_test.rb's 375px overflow sweep read it
-  # green; a screenshot found it. Read as a measured width.
-  # Mutation-checked (2026-11-19): `.card-cover { display: block }` moved back below the phone rules
-  # reddened this as "the name has 22px of a 375px row".
-  test "on a phone a project row gives its name the row, not the number's track" do
-    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride", width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
-    visit public_explore_path
-    assert_selector ".project-card-grid .project-card h2.card-title", text: "Desk Lamp"
-    width = page.evaluate_script("document.querySelector('.project-card-grid .card-title').getBoundingClientRect().width").round
-    assert_operator width, :>=, 250, "the name has #{width}px of a 375px row"
-  ensure
-    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
-  end
 end

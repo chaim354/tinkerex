@@ -18,7 +18,6 @@
            data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
     <div class="panel-head">
       <h2><%= panel_title(@panel_layout, "models") %></h2>
-      <%= section_note("models", @project_models.models.size, pluralize(@project_models.models.size, "model")) %>
       <%= link_to "Add model", new_project_model_path(@project), class: "btn small" %>
     </div>
     <%= panel_intro(@panel_layout, "models") %>

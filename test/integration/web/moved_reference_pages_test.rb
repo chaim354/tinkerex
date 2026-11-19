@@ -60,24 +60,24 @@ module Web
       end
     end
 
-    test "the strip lights the place each page serves, and the URL now agrees with it" do
-      # THE POINT OF THE MOVE, asserted on the rendered strip rather than on SECTIONS — the map being
+    test "the rail lights the section each page serves, and the URL now agrees with it" do
+      # THE POINT OF THE MOVE, asserted on the rendered rail rather than on SECTIONS — the map being
       # right was never in question; what was wrong was a URL that disagreed with it.
       { suppliers_path => "Inventory", locations_path => "Inventory" }.each do |path, section|
         get path
-        assert_select "header.strip a.strip-place[aria-current=page]", 1 do |links|
-          assert_equal section, links.first.text.strip, "#{path} lights the wrong place"
+        assert_select "aside.rail a.rail-link[aria-current=page]", 1 do |links|
+          assert_equal section, links.first.text.strip, "#{path} lights the wrong rail item"
         end
       end
     end
 
-    # SHELVES IS A SETTINGS PAGE, AND LIGHTS NO PLACE. The second assertion is the half that catches
-    # the page still lighting the Library (3D models) — which is what it did while it lived at
-    # /models/shelves; its own row in the Settings column is the first.
-    test "the shelves page lights its Settings row, not the Library" do
+    # SHELVES LIGHT SETTINGS, AND NOTHING AMONG THE PLACES. Settings is the rail FOOT's link
+    # (`.rail-settings`), not a `.rail-link`, so the second assertion is the half that catches the
+    # page still lighting 3D models — which is what it did while it lived at /models/shelves.
+    test "the shelves page lights Settings, not 3D models" do
       get settings_shelves_path
-      assert_select "aside.column .column-row[aria-current=page]", count: 1, text: "Shelves"
-      assert_select "header.strip a.strip-place[aria-current=page]", 0
+      assert_select "aside.rail .rail-foot a.rail-btn.rail-settings[aria-current=page]", 1
+      assert_select "aside.rail a.rail-link[aria-current=page]", 0
     end
   end
 end

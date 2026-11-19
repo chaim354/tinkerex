@@ -448,16 +448,6 @@ module Web
       @user.maker_file_links.create!(from_node_id: "n-stl", to_node_id: "n-bak", kind: "derived_from")
       @user.maker_file_links.create!(from_node_id: "n-generated", to_node_id: "n-stl", kind: "derived_from")
       @user.maker_file_links.create!(from_node_id: "n-photo", to_node_id: "n-stl", kind: "photo_of")
-      # THE TIDY-UP LIST (the Shop manual's §9, 2026-11-19): an export older than its source inside the
-      # project's folder, or projects/_tidy_up renders on no page here — the plate draws only while it
-      # holds a suggestion. It raises Home's OUT OF DATE row too, so that arm of "Needs attention" is
-      # swept by the "home" page with it.
-      %w[n-tidy-source:tidy.lbrn2:2000 n-tidy-export:tidy.svg:1000].each do |spec|
-        id, name, mtime = spec.split(":")
-        @user.nodes.create!(node_id: id, name:, kind: "file", parent_node_id: folder.node_id, size: 5, mtime: mtime.to_i,
-                            content_hash: "h-#{id}", current_version_id: "v-#{id}")
-      end
-      @user.maker_file_links.create!(from_node_id: "n-tidy-export", to_node_id: "n-tidy-source", kind: "derived_from")
       # A NOTE MATCHING THE SWEEP'S OWN SEARCH QUERY ("lamp"), so the search page renders the NOTE
       # arm of shared/_result_group. Coverage here is per TEMPLATE, so that partial already counted
       # as swept — but a leaked comment lives in ONE `case` arm, and counting which of the seven
@@ -569,9 +559,6 @@ module Web
         # the frame reaches the attach chips and the thumbnail cell. Its 404 sibling,
         # files/inspector_gone, is in UNSWEPT_TEMPLATES — this sweep asserts :success.
         "file inspector" => inspector_file_path("n-stl"),
-        # Shop manual §9: one folder of the Library column's tree, opened in place (a frame
-        # fragment, LibraryBrowseController#tree). `d-pcb` holds a subfolder, so the level has rows.
-        "folder tree frame" => library_tree_path(parent: "d-pcb", depth: 2),
         # 2026-09-10: the "New text file" door's own form (Files::TextFilesController#new). Its
         # comment quotes `f.text_field` and `fields_for`, which is the §14d shape this file exists
         # for, and no other page renders it.
@@ -723,49 +710,41 @@ module Web
       end
     end
 
-    # `.page-head` IS A COLUMN SINCE THE SHOP MANUAL (components.css, slice 2): the title, then at most
-    # one lead sentence, then at most one row of the page's controls. It was `space-between`, which
-    # laid out exactly two slots and put a third in the CENTRE of the page — /models floated its
-    # primary "Import model" mid-page with "Shelves" hard right, and the public project page centred
-    # its byline — which is why this read "exactly the two slots" until slice 7. A column centres
-    # nothing; its failure is different and just as quiet: two bare controls in the head are two
-    # ROWS, each a full-width line of one button, because a column stacks what a row would have
-    # set side by side. So the head is anatomy, in order: a title (an `h1`, or the `.page-title`
-    # that holds one beside its flag, or a plain box holding it), an optional lead (`.page-lead`, or `.page-subtitle`, its older
-    # name), and one more child at most, which holds the controls (`.page-actions`, a form).
+    # `.page-head` IS `display: flex; justify-content: space-between`, WHICH LAYS OUT EXACTLY TWO
+    # SLOTS. With two children that reads title-left / actions-right, which is what fourteen of the
+    # sixteen pages do. A THIRD child does not overflow or wrap — `space-between` puts it in the
+    # CENTRE of the page, which is a plausible-looking layout and therefore invisible in review:
+    # /models (now /files/models) floated its primary action "Import model" mid-page with "Shelves"
+    # hard right, and the public project page centred its byline between the name and the download
+    # button. One mechanism, two pages, and an unwritten contract nothing enforced.
     #
     # THIS RIDES THE `pages` SWEEP RATHER THAN NAMING ROUTES, so a page added to that list is
     # covered here with no edit — and the sweep already carries a coverage assertion tying it to the
-    # templates on disk. It asserts the RENDERED DOM: the defects were structural in ERB whose
+    # templates on disk. It asserts the RENDERED DOM: the two defects were structural in ERB whose
     # `.page-head` class was correct on every one of them, so nothing short of the built tree could
     # tell a compliant head from a broken one.
     #
-    # MUTATION-CHECKED (§15), both directions, on the rewrite (slice 7):
-    #   - Unwrapping inventory_items/index's three buttons back to bare children of the head:
-    #       inventory index: .page-head is ["h1", "p.page-lead", "a.btn.primary", "a.btn", "a.btn"];
-    #       it takes a title, at most one lead after it, and at most one child of controls after that
+    # MUTATION-CHECKED (§15), both directions:
+    #   - Unwrapping the two links in models/index.html.erb (files/models/index since slice 5) back
+    #       to bare children:
+    #       models index: .page-head passes 3 slots, not 2 — [h1 "Models", a.btn.primary
+    #       "Import model", a.btn "Shelves"]. `.page-head` is space-between: the MIDDLE one lands
+    #       in the centre of the page.
     #   - Setting the non-vacuity floor to `> 500` (a count no sweep reaches) reddens it at the
-    #       floor instead, confirming `seen` really is counting: "only 74 .page-head elements were
-    #       examined across 78 pages".
-    test "every .page-head is a title, at most a lead, and at most one row of controls" do
+    #       floor instead, confirming `seen` really is counting: "only 50 .page-head elements were
+    #       examined across 50 pages" — one head per page, which is itself worth knowing.
+    test "every .page-head passes exactly the two slots it lays out" do
       seen = 0
       offenders = []
-      lead = ->(el) { el.classes.intersect?(%w[page-lead page-subtitle]) }
       pages.each do |name, path|
         get path
         assert_response :success, "#{name} (#{path}) did not render"
         css_select(".page-head").each do |head|
           seen += 1
           kids = head.element_children
-          shape = kids.map { |k| [ k.name, *k.classes ].join(".") }
-          title, *rest = kids
-          titled = title && (title.name == "h1" || title.classes.include?("page-title") || title.at_css("> h1"))
-          leads, controls = rest.partition(&lead)
-          in_order = rest.take_while(&lead).size == leads.size
-          next if titled && leads.size <= 1 && controls.size <= 1 && in_order
-
-          offenders << "#{name}: .page-head is #{shape.inspect}; it takes a title, at most one lead after it, " \
-                       "and at most one child of controls after that"
+          next if kids.size <= 2
+          shape = kids.map { |k| [ k.name, k["class"] ].compact.join(".") }
+          offenders << "#{name}: .page-head passes #{kids.size} slots, not 2 — #{shape.inspect}"
         end
       end
 

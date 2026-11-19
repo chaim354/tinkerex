@@ -85,12 +85,6 @@ class ProjectsController < ApplicationController
     @projects = @archived_view ? archived : live
     @archived_count = archived.size
     @covers = Maker::Previews::ThumbnailMap.for(current_user, @projects.filter_map(&:cover_node_id))
-    # EACH ROW'S NEXT STEP AND "N OF M STEPS DONE" (Shop manual spec §9, "next step on Home and
-    # Projects"): one query each for the whole list, never one per row (page_query_budget_test.rb).
-    # Only an OPEN project (Maker::Project.open: planning, active, paused) has a next step: a task left
-    # open on a done or archived project is not what comes next, and its row shows its progress alone.
-    @next_steps = Maker::Task.next_steps_for(@projects.select { |p| p.status.in?(Maker::Project::OPEN_STATUSES) })
-    @progress = Maker::Task.progress_for(@projects)
     # Tags in use across the user's projects, for the filter chips below the toolbar -- ONE query,
     # not one per candidate tag. Mirrors InventoryItemsController#index's @item_tags.
     @project_tags = current_user.maker_tags.joins(:taggings)
@@ -124,7 +118,7 @@ class ProjectsController < ApplicationController
     # path, an ensure that failed at create time) gets one here; a port failure leaves the page
     # rendering with no folder rather than a 500. AND IT RUNS BEFORE THE LISTING BELOW, which reads
     # the folder_node_id this (re)writes — looking at a folder must never be what mints it
-    # (docs/invariants/project-intake.md). Its answer is no longer kept: the strip's Upload reads
+    # (docs/invariants/project-intake.md). Its answer is no longer kept: the top bar's Upload reads
     # the LISTING's folder (use_folder_destination below), so the page shows and uploads into one
     # folder by construction.
     # nil IS AN ANSWER (decision 2, stage 4, S4-6): a project whose folder is in the trash gets nil
@@ -150,10 +144,14 @@ class ProjectsController < ApplicationController
     # every load that a hidden panel skips (@bom/@releases/@connections below), which is the
     # property that mattered about being early — being FIRST was never the point.
     @listing = Maker::ProjectFolderListing.new(current_user, @project)
-    # The strip's Add uploads and creates in the project's folder (spec §6). A folder in the trash or
-    # unreachable this render gives no destination, and Add's Upload asks with the chooser rather
-    # than guess the root.
-    use_folder_destination(@listing.folder_id, path: @listing.path) if @listing.available?
+    # Upload targets the project's folder (spec §6). A folder in the trash or unreachable this render
+    # gives no destination, and the top bar asks with the chooser rather than guess the root.
+    # PRIMARY ON THE PAGE, QUIET IN THE EDITOR (2026-10-26, the edit area): edit mode is the edit
+    # area's Page layout tab, whose one primary is Save, so Upload keeps its destination and gives up
+    # the accent there (design-system.md rule 13; accent_spend_test.rb pins both renders). The path
+    # parameter is read here directly because @editing is set further down, after the layout.
+    use_folder_destination(@listing.folder_id, path: @listing.path,
+                           primary: request.path_parameters[:editing] != "1") if @listing.available?
 
     # THE PAGE'S PANEL LIST (stage 4, S4-7; story 6.5): this project's kind's preset with its own
     # overrides on top, over a vocabulary that now includes this folder's own depth-one subfolders
@@ -170,9 +168,17 @@ class ProjectsController < ApplicationController
     @panel_layout = @project.panel_layout(folders: @listing.panel_folders,
                                           blocks: @blocks.map { |b| [ b.key, b.kind ] },
                                           root_repo: @listing.root_repo?)
-    # WHAT THE CHOOSER CALLS EACH PANEL — #panel_labels, shared with the Publishing tab since
-    # 2026-11-19 so the two cannot name one panel two ways.
-    @panel_labels = panel_labels(@listing, @blocks)
+    # WHAT THE CHOOSER CALLS EACH PANEL. The twelve fixed labels plus one per folder — its own name,
+    # which is the only label a folder key could honestly carry. Built here rather than in the
+    # chooser because the chooser has no listing of its own, and a label map assembled in a view
+    # would be a second definition the panels door could not reuse. A key with no entry cannot
+    # reach the chooser: the layout is total against exactly these folders.
+    # A BLOCK'S LABEL IS WHAT IT IS PLUS WHAT IT SAYS (content blocks): the strip has no folder name
+    # and no fixed label to fall back on, and "Text block" alone on eight of them names none of
+    # them. The heading, where there is one, is the only thing that tells two apart at a glance.
+    @panel_labels = Maker::Project::PANEL_LABELS.merge(
+      @listing.tree.to_h { |dir| [ Maker::ProjectKind.folder_key(dir.node_id), dir.name ] }
+    ).merge(@blocks.to_h { |b| [ b.layout_key, helpers.block_label(b) ] })
 
     # EDIT MODE (2026-09-09, the page editor; spec §5). `editing` arrives only as the DEFAULT of the
     # two `layout` routes; it turns on the chrome and nothing else — every load below is the same,
@@ -318,16 +324,6 @@ class ProjectsController < ApplicationController
       Maker::RepoCard.for(user: current_user, dir:, root_node: repo_roots[dir.node_id],
                           listing: @listing, capabilities:)
     end
-    # THE TIDY-UP LIST (the Shop manual's §9, 2026-11-19; Maker::TidyUp): loose files the filing pass
-    # cannot file, repositories with uncommitted changes, exports older than their source. Read-only,
-    # constant in queries (page_query_budget_test.rb), and its repositories' Nodes are the batch the
-    # cards above already loaded, so it costs no `nodes` query of its own. NOT IN THE EDITOR, whose
-    # head is the edit area's and draws no plate, and not for a panel's in-place view switch, which
-    # renders that one panel: neither draws the list, so neither pays a git status for it.
-    @tidy = unless @editing || @switched_panel
-      Maker::TidyUp.for(user: current_user, project: @project, listing: @listing, capabilities:,
-                        repos: Maker::TidyUp.repos_in(current_user, @listing, @project, nodes: repo_roots, capabilities:))
-    end
     # THE ROOT'S OWN CARD (stage 4, S4-1). A project whose folder IS the working tree had no card
     # and no Commits/History anywhere on its page — every real repository on the share deployment
     # is one (measured 2026-09-07). The root is a synthetic Dir: its files are the loose rows, its
@@ -451,13 +447,6 @@ class ProjectsController < ApplicationController
     # half is every live build-log photo, exactly what projects/_log_entry paints. In memory over
     # @listing, @entries and @page_nodes, all loaded above, so nothing here queries.
     @photo_rows = Maker::ProjectPhotos.rows(listing: @listing, entries: @entries, page_nodes: @page_nodes)
-    # FIGURE NUMBERS (the Shop manual spec §9 and §11.3): every figure this render draws, numbered by
-    # panel order and then file order, a stack as one, the cover as Fig. 1 — ONE walk over what is
-    # loaded above (Maker::ProjectFigures), so it costs no query and every callout, citation and index
-    # row on the page reads the same answer. HERE, ABOVE THE README, whose `files` tables cite them.
-    # The editor numbers nothing, as it numbers no section: its order is a draft.
-    @figures = load_figures unless @editing
-    @index_rows = @figures&.any? ? files_index_rows : []
     # THE PICKERS' OWN ROWS, IN EDIT MODE ONLY (content blocks; spec §2): the image block's picker
     # and the page intro's cover picker both draw the FOLDER'S images as thumbnails. They need no
     # union term: they are exactly the folder half of @photo_rows, which the union already holds.
@@ -485,7 +474,7 @@ class ProjectsController < ApplicationController
     # entry to — so an origin resolved for one would be work nothing reads. That is why the photo
     # rows join the thumbnail union above and not this one.
     @addon_origins = addon_origins_for((recent_ids + tile_ids).uniq)
-    @tasks = @project.tasks.in_panel_order.to_a
+    @tasks = @project.tasks.order(:position, :created_at).to_a
     @sheets = @project.sheets.to_a
     # THE README, RENDERED (2026-11-05, live regions; spec §5) — after @page_thumbs, which its pictures
     # read, and after @tasks, which its `tasks` region reads. The context carries what this page loaded;
@@ -493,7 +482,7 @@ class ProjectsController < ApplicationController
     @readme = if @readme_source
       context = Maker::Readme::Live::Context.new(user: current_user, project: @project, listing: @listing,
                                                  bom_lines: (bom_shown ? @bom_lines : nil), tasks: @tasks,
-                                                 entries: @entries, thumbs: @page_thumbs, figures: @figures)
+                                                 entries: @entries, thumbs: @page_thumbs)
       Maker::Readme.render(@readme_source, base_path: @listing.path, index: @listing.path_index,
                            link: Maker::RepoCard::DEFAULT_LINK,
                            image_link: helpers.maker_image_link(@listing, @page_thumbs), context:)
@@ -600,14 +589,10 @@ class ProjectsController < ApplicationController
   # THE FOLDER PATH COMES FROM THE TREE, NOT FROM ROOT + SLUG, for the reason projects/_publish
   # names it at all: permission is granted from the folder NODE (Maker::PublicProject#permits?), and
   # a discovered project keeps its folder's own name (`Projects/Desk Lamp`) where the slug is
-  # `desk-lamp`. nil when the project has no folder or it is in the trash — the partial then says
-  # "the project's library folder", as the panel always did.
-  #
-  # A LISTING NOW, WHERE IT WAS ONE TREE QUERY (2026-11-19, the published view): the tab lists the
-  # page's panels to leave off the public page, and the folder panels among them are the listing's
-  # depth-one folders. The SAME vocabulary Maker::PublicProject builds its layout from, so the tab
-  # cannot offer a folder the visitor's page never draws or miss one it does. Its path is the
-  # tree's path the tab always named.
+  # `desk-lamp`. ONE query (Maker::LibraryTree loads the dirs), and no listing: this page shows no
+  # files, so a Maker::ProjectFolderListing would walk and count a folder for one string. nil when
+  # the project has no folder or it is in the trash — the partial then says "the project's library
+  # folder", as the panel always did.
   def publishing
     load_publishing
   end
@@ -618,7 +603,6 @@ class ProjectsController < ApplicationController
   # after save, Maker::Taggable).
   def update
     @project.assign_attributes(project_params)
-    assign_public_panels
     # THE PUBLISHING TAB POSTS HERE TOO (stage 4, S4-4; its own page since 2026-10-26), and it is not
     # the Details form — a refusal that re-rendered :edit would bounce a maker off the tab they
     # clicked on, into a form whose visibility field does not exist. So it says where it came from,
@@ -682,63 +666,11 @@ class ProjectsController < ApplicationController
   end
 
   # What the Publishing tab reads beyond the project — #publishing's own comment says why it is the
-  # tree's path — loaded by both renders of the tab: the GET, and #update's refusal. The refusal's
-  # layout reads the column as ASSIGNED, so the boxes come back as the maker ticked them (the B3
-  # rule the visibility radios already follow).
+  # tree's path — loaded by both renders of the tab: the GET, and #update's refusal.
   def load_publishing
-    @folder_path = publishing_listing.path
-    @publishing_layout = publishing_layout
-    @publishing_labels = panel_labels(publishing_listing, publishing_blocks)
-  end
-
-  # WHAT THE CHOOSER, THE EDITOR'S STRIP AND THE PUBLISHING TAB CALL EACH PANEL. The twelve fixed
-  # labels plus one per folder — its own name, which is the only label a folder key could honestly
-  # carry — plus one per block. Built here rather than in a view because a label map assembled in a
-  # view would be a second definition the panels door could not reuse. A key with no entry cannot
-  # reach either page: the layout is total against exactly these folders.
-  # A BLOCK'S LABEL IS WHAT IT IS PLUS WHAT IT SAYS (content blocks): the strip has no folder name
-  # and no fixed label to fall back on, and "Text block" alone on eight of them names none of
-  # them. The heading, where there is one, is the only thing that tells two apart at a glance.
-  def panel_labels(listing, blocks)
-    Maker::Project::PANEL_LABELS.merge(listing.tree.to_h { |dir| [ Maker::ProjectKind.folder_key(dir.node_id), dir.name ] })
-                                .merge(blocks.to_h { |b| [ b.layout_key, helpers.block_label(b) ] })
-  end
-
-  def publishing_listing = @publishing_listing ||= Maker::ProjectFolderListing.new(current_user, @project)
-  def publishing_blocks = @publishing_blocks ||= @project.blocks.to_a
-
-  # NOT MEMOISED, for Maker::Project#panel_layout's reason: #update asks it before assigning the
-  # choice and #load_publishing after, and the second must see what the first wrote.
-  def publishing_layout
-    @project.panel_layout(folders: publishing_listing.panel_folders,
-                          blocks: publishing_blocks.map { |b| [ b.key, b.kind ] },
-                          root_repo: publishing_listing.root_repo?)
-  end
-
-  # THE PUBLISHING TAB'S "SHOW ON THE PUBLIC PAGE" BOXES (2026-11-19, the published view; the Shop
-  # manual's spec §3, §9). Every panel the tab offers (Maker::PublicProject.keepable, the same list
-  # it rendered) and the maker left unticked is stored in `panels["unpublished"]`, which
-  # Maker::ProjectKind.layout_for reads and Maker::PublicProject#layout applies. The list is the
-  # WHOLE answer for what it offers, so ticking a box again publishes the panel again, and anything
-  # a crafted request names outside it is ignored — it can never put a key the layout does not know
-  # in the column.
-  #
-  # A FORM THAT DOES NOT CARRY THE LIST LEAVES THE CHOICE ALONE. Details posts here too, and so can a
-  # hand-made or API-shaped PATCH; neither is about panels. The tab's own form always carries it,
-  # through a blank hidden entry that makes "every box unticked" an answer rather than an absence.
-  # A value that is not a list of strings is read as no answer, never a 500.
-  #
-  # STORED BESIDE THE ARRANGEMENT, NOT IN IT: the editor's Save carries it through
-  # (Maker::LayoutDocument#column) and Reset keeps it (Projects::PanelsController#destroy), because
-  # a layout write that dropped it would publish what the maker kept private.
-  def assign_public_panels
-    shown = params.dig(:project, :public_panels)
-    return unless shown.is_a?(Array)
-
-    offered = Maker::PublicProject.keepable(publishing_layout)
-    kept = offered - shown.grep(String)
-    stored = @project.panels.is_a?(Hash) ? @project.panels : {}
-    @project.panels = kept.any? ? stored.merge("unpublished" => kept) : stored.except("unpublished").presence
+    id = @project.folder_node_id.presence
+    tree = id && Maker::LibraryTree.new(current_user)
+    @folder_path = tree&.dir?(id) ? tree.path_for(id) : nil
   end
 
   # THE SHARED DEMO PUBLISHES NOTHING (Tinkerex::Demo), so this server never hosts a visitor's project
@@ -811,25 +743,6 @@ class ProjectsController < ApplicationController
     rows.each { |row| @stack_counts[owner[row.node.parent_node_id]][0] += 1 if !row.backup? || @stacks.stacked?(row.node_id) }
     @stacks.stacks.each { |stack| @stack_counts[owner[stack.parent_node_id]][1] += stack.size - 1 }
     @stack_counts.transform_values! { |files, folded| [ files, files - folded ] }
-  end
-
-  # THE PAGE'S FIGURE NUMBERS (#show's own comment says why here). The cover counts only where the
-  # head draws it.
-  def load_figures
-    Maker::ProjectFigures.new(layout: @panel_layout, listing: @listing, cover_id: @cover_node&.node_id,
-                              generated: @generated, readme_row_id: @readme_row&.node_id, stacks: @stacks,
-                              stacked_backups: @stacked_backups, linked_rows: @linked_rows,
-                              photo_rows: @photo_rows, blocks_by_key: @blocks_by_key, page_nodes: @page_nodes).numbers
-  end
-
-  # THE INDEX OF FILES (the Shop manual spec §9; the `project-organized` screen's last section): every
-  # file of the project — the folder's listing, backups and the README included, then each file
-  # Linked from elsewhere — A TO Z, as an index reads, each with the number it carries on this page
-  # or none where no panel draws it (a browsed folder, a nested repository, a hidden panel). In
-  # memory over the listing; capped where the listing is (FILE_CAP), and the index says so.
-  def files_index_rows
-    (@listing.all_rows + @linked_rows).uniq(&:node_id)
-                                      .sort_by { |row| [ row.node.name.downcase, row.section.to_s, row.node_id ] }
   end
 
   # A folder panel's dir and every dir beneath it whose files draw as tiles: not a repository nested
@@ -908,29 +821,10 @@ class ProjectsController < ApplicationController
   # #dirs_without_tiles, which a folder going into or out of the browser alters. AFTER the switched
   # panel, because Turbo hands the focus to the first marked element in the streams and that is
   # the pressed button (projects/_view_toggle).
-  #
-  # EVERY PANEL THAT SHOWS A FIGURE NUMBER COMES TOO WHEN THE NUMBERS MOVED (`figures=1`, the Shop
-  # manual spec §9; Projects::PanelsController#in_place): a stack switch, or a folder going into or
-  # out of the browser, renumbers every figure after it, so the panels that draw one, the panels
-  # that cite one (the Recently changed row, a build-log photo, a BOM line, a README table) and the
-  # index of files are redrawn from this render's one numbering, after the switched panel. A
-  # browser draws no figure, so another panel's browser keeps the folder it was in.
   def switched_panel_streams
     keys = [ @switched_panel ]
     keys << "attachments" if params[:files] == "1" && @panel_layout.folder?(@switched_panel)
-    keys |= numbered_panel_keys if params[:figures] == "1"
-    streams = keys.map { |key| turbo_stream.replace(key, partial: "projects/panel_body", locals: { key: key, extra: {} }) }
-    streams << turbo_stream.replace("project-index", partial: "projects/files_index") if params[:figures] == "1" && @index_rows.any?
-    streams
-  end
-
-  # The panels on this page that show a figure number: every one the walk drew a figure in, and the
-  # ones that cite one, where they are on the page — the README only when there is one to render.
-  CITING_PANELS = %w[attachments build_log bom].freeze
-
-  def numbered_panel_keys
-    on_page = @panel_layout.visible - Array(@absent_panels)
-    on_page & ((@figures&.drawn_places || []) + CITING_PANELS + (@readme ? [ "readme" ] : []))
+    keys.map { |key| turbo_stream.replace(key, partial: "projects/panel_body", locals: { key: key, extra: {} }) }
   end
 
   # [[dir name, dir node_id, [tag names]]] for the release composer's picker (stage 3, S3-5), over
@@ -974,12 +868,8 @@ class ProjectsController < ApplicationController
   # every project save.
 
   def project_params
-    # `public_panels` IS PERMITTED AND DROPPED: it is no column — #assign_public_panels reads it and
-    # writes `panels` — and permitting it keeps the unpermitted-parameter log from naming it on
-    # every Publishing save.
     attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
-                                            :visibility, :license, :autofile, :kind, public_panels: [])
-    attrs.delete(:public_panels)
+                                            :visibility, :license, :autofile, :kind)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
     # ARCHIVING IS A BUTTON, NOT A FORM VALUE (stage 4, S4-6). The form's own select never offers
     # `archived`, and #destroy is the door that archives, with the sentence that says what that

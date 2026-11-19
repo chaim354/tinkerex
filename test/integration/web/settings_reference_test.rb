@@ -193,12 +193,12 @@ module Web
     # ============================================================ Shell chrome
 
     # Back to Inventory through the breadcrumb, not a ghost button in the head (UX audit A4/F8).
-    test "both pages light the Inventory place and link back to Inventory" do
+    test "both pages light the rail's Inventory link and link back to Inventory" do
       [ suppliers_path, locations_path ].each do |path|
         get path
 
-        assert_select "header.strip a.strip-place[aria-current='page'][href=?]", inventory_items_path
-        assert_select ".page-path nav.breadcrumb a[href=?]", inventory_items_path, text: "Inventory"
+        assert_select "aside.rail a.rail-link[aria-current='page'][href=?]", inventory_items_path
+        assert_select ".topbar nav.breadcrumb a[href=?]", inventory_items_path, text: "Inventory"
       end
     end
 
