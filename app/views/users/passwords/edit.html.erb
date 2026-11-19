@@ -10,7 +10,7 @@
         <div class="field">
           <%= f.label :password, "New password" %>
           <%= f.password_field :password, autofocus: true, autocomplete: "new-password" %>
-          <span class="auth-hint"><%= @minimum_password_length || Devise.password_length.min %> characters minimum</span>
+          <span class="field-hint auth-hint"><%= @minimum_password_length || Devise.password_length.min %> characters minimum</span>
         </div>
 
         <div class="field">

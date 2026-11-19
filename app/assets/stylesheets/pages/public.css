@@ -78,6 +78,10 @@
   .project-card-grid .project-card::before {
     counter-increment: card; content: counter(card); font: 700 22px/1.1 var(--font-mono); color: var(--fg);
   }
+  /* THE COVER SLOT (stage 4, S4-5) is a fixed 132px box, so the trap the private card's `.project-tile`
+     comment records (a shrink-to-fit anchor starving `.thumb`'s 100%) cannot reach it. Declared BEFORE
+     the phone rules below, which hide it: the same specificity later in the sheet would show it again. */
+  .project-card-grid .card-cover { display: block; }
   .project-card-grid .card-cover .thumb { width: 132px; height: 96px; padding: 6px; }
   .project-card-grid .card-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .project-card-grid .card-title { margin: 0; font-size: 24px; line-height: 1.05; font-weight: 800; letter-spacing: -.02em; overflow-wrap: anywhere; }
@@ -103,10 +107,6 @@
      component's bottom margin is the wrong side: a qualified override (design-system.md rule 3),
      not a second component. */
   .public-main .pager { margin: 16px 0 0; }
-  /* THE COVER SLOT (stage 4, S4-5) is a fixed 132px box in the row above, so the trap the private
-     card's `.project-tile` comment records (a shrink-to-fit anchor starving `.thumb`'s 100%) cannot
-     reach it. */
-  .project-card-grid .card-cover { display: block; }
 
   /* The chosen chip is drawn by components.css, from the `aria-current` its link carries. */
   .explore-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -8px 0 28px; }

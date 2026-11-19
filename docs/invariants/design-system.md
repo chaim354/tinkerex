@@ -335,7 +335,13 @@ pins what the page does with it.
     never on `ApplicationController` with a skip (`architecture_invariants_test.rb`'s default-deny),
     and outside `Public::` because its demo button's CSRF token writes the session. The primary, an
     ink fill, is Try the demo while `Tinkerex::Demo.available?`, else Install — exactly once either way (rule 13; the Try the demo state in
-    `accent_spend_test.rb`, both states in `landing_test.rb`). `/users/sign_in` is the plain card everywhere. **The wall's twelve tiles
+    `accent_spend_test.rb`, both states in `landing_test.rb`). `/users/sign_in` is the plain card everywhere. **The card is a door** (Shop manual
+    slice 8): every signed-out Devise page renders inside `users/shared/_door`: the product's name and one of
+    the wall's renders (hex tiles.lbrn2, as Fig. 1) on the left, the page's ink-framed boxes on the
+    right; and `.auth-card` names the WHOLE door, so every test reading the card's brand, form, links and
+    primary still finds them. One sentence and one figure, no wall, no features and no demo pitch, is
+    what keeps it the plain card and not the landing (`test/system/landing_test.rb` pins the two halves
+    and the phone's stack). **The wall's twelve tiles
     are the app's own renders** of twelve files of the owner's `catan` project, which `db/seeds/demo`
     holds whole (the seed's 70 MB budget is that decision, `demo_reset_test.rb`), written by `bin/rails landing:wall`
     (`Tinkerex::Landing`, which refuses rather than skips); **the four feature crops are the app
