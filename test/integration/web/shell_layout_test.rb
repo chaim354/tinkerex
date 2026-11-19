@@ -13,7 +13,7 @@ module Web
   #      "/files?folder=d-laser lights 2 column rows".
   #   3. The tab bar lighting from its own rule (the 3D models view lighting nothing there):
   #      "/files/models: the tab bar lights [] where the strip lights [\"Library\"]".
-  #   4. `home-recent` dropped from Home's section id: "/ links #home-recent, which the page does not carry".
+  #   4. Home's "Recently changed" section id renamed (`home-files`): "/ links #home-recent, which the\n  #      page does not carry".
   class ShellLayoutTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
     PLACES = %w[Library Projects Tools Inventory].freeze
@@ -94,7 +94,7 @@ module Web
         assert_equal lit_places, lit_tabs, "#{path}: the tab bar lights #{lit_tabs.inspect} where the strip lights #{lit_places.inspect}"
         css_select("aside.column a.column-row[href^='#']").each do |a|
           id = a["href"].delete_prefix("#")
-          assert_select "##{id}", { minimum: 1 }, "#{path} links #{a["href"]}, which the page does not carry"
+          assert css_select("##{id}").any?, "#{path} links #{a["href"]}, which the page does not carry"
         end
       end
     end
