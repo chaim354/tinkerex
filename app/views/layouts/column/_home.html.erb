@@ -1,0 +1,36 @@
+<%# HOME'S COLUMN (Shop manual spec §7): the page's own sections as in-page links, then Pinned — the
+    pinned folders and pinned tools the rail used to carry on every page. Home lights no place and no
+    row (spec §11.2): a section link is a place on this page, not a page.
+
+    THE SECTIONS ARE THE ONES HomeController#index RENDERS, asked through the same conditions
+    home/index.html.erb asks, and only on that page (the onboarding wizard is Home's too and shows
+    none of them). shell_layout_test.rb holds every in-page link to an element the page carries, so a
+    section that leaves the page cannot leave its link behind.
+
+    THE PINNED TOOLS keep their right-click Unpin (`toolmenu`) and the calculator keeps its opener: a
+    real href all the same, so a modified click, or a page whose script failed, lands on the Tools
+    card that opens it. %>
+<% sections = [] %>
+<% if controller_path == "home" && action_name == "index" %>
+  <% sections << (@recent_files.empty? ? [ "Getting started", "home-getting-started" ] : [ "Recently changed", "home-recent" ]) %>
+  <% sections << [ "Active projects", "home-projects" ] if @recent_projects.any? %>
+  <% sections << [ "Needs attention", "home-attention" ] if @failed_prints.any? || @low_stock.any? %>
+<% end %>
+<% tools = current_user.tool_pins.to_a %>
+<% if sections.any? %>
+  <div class="column-group">
+    <h2 class="column-head">On this page</h2>
+    <% sections.each do |label, id| %>
+      <%= column_row label, "##{id}" %>
+    <% end %>
+  </div>
+<% end %>
+<% if sidebar_pins.any? || tools.any? %>
+  <div class="column-group" data-controller="toolmenu">
+    <h2 class="column-head">Pinned</h2>
+    <% sidebar_pins.each do |pin, name| %>
+      <%= column_row name, files_path(folder: pin.node_id), note: "folder" %>
+    <% end %>
+    <%= render "layouts/column/tool_pins", tools: tools %>
+  </div>
+<% end %>

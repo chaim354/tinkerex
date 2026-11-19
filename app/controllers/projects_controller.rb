@@ -118,7 +118,7 @@ class ProjectsController < ApplicationController
     # path, an ensure that failed at create time) gets one here; a port failure leaves the page
     # rendering with no folder rather than a 500. AND IT RUNS BEFORE THE LISTING BELOW, which reads
     # the folder_node_id this (re)writes — looking at a folder must never be what mints it
-    # (docs/invariants/project-intake.md). Its answer is no longer kept: the top bar's Upload reads
+    # (docs/invariants/project-intake.md). Its answer is no longer kept: the strip's Upload reads
     # the LISTING's folder (use_folder_destination below), so the page shows and uploads into one
     # folder by construction.
     # nil IS AN ANSWER (decision 2, stage 4, S4-6): a project whose folder is in the trash gets nil
@@ -144,14 +144,10 @@ class ProjectsController < ApplicationController
     # every load that a hidden panel skips (@bom/@releases/@connections below), which is the
     # property that mattered about being early — being FIRST was never the point.
     @listing = Maker::ProjectFolderListing.new(current_user, @project)
-    # Upload targets the project's folder (spec §6). A folder in the trash or unreachable this render
-    # gives no destination, and the top bar asks with the chooser rather than guess the root.
-    # PRIMARY ON THE PAGE, QUIET IN THE EDITOR (2026-10-26, the edit area): edit mode is the edit
-    # area's Page layout tab, whose one primary is Save, so Upload keeps its destination and gives up
-    # the primary there (design-system.md rule 13; accent_spend_test.rb pins both renders). The path
-    # parameter is read here directly because @editing is set further down, after the layout.
-    use_folder_destination(@listing.folder_id, path: @listing.path,
-                           primary: request.path_parameters[:editing] != "1") if @listing.available?
+    # The strip's Add uploads and creates in the project's folder (spec §6). A folder in the trash or
+    # unreachable this render gives no destination, and Add's Upload asks with the chooser rather
+    # than guess the root.
+    use_folder_destination(@listing.folder_id, path: @listing.path) if @listing.available?
 
     # THE PAGE'S PANEL LIST (stage 4, S4-7; story 6.5): this project's kind's preset with its own
     # overrides on top, over a vocabulary that now includes this folder's own depth-one subfolders

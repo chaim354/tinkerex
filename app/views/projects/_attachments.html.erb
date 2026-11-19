@@ -63,7 +63,7 @@
     <%# "OPEN FOLDER →" (structural redesign §6, slice 6): the door to this folder in the Library,
         where the inspector answers for each file. The path rides in the link's `title`, so the
         panel still says WHERE it is showing on hover. Nothing to link to when the folder ensure
-        failed this render (an unmounted NAS, a bucket blip) — the top bar's Upload degrades the
+        failed this render (an unmounted NAS, a bucket blip) — the strip's Upload degrades the
         same way for the same reason: with no available folder, ProjectsController#show sets no
         destination and it asks with the folder chooser. %>
     <%= link_to "Open folder →", files_path(folder: @listing.folder_id), class: "panel-path muted", title: @listing.path if @listing.available? %>
@@ -90,8 +90,8 @@
           the UX audit's C7): "Scan folder" promised a narrower thing than it does. %>
       <%= button_to "Rescan library", project_scan_path(@project), method: :post, class: "linkbtn" %>
       <%= link_to "Attach existing", new_project_attachment_path(@project), class: "linkbtn" %>
-      <%# NO UPLOADER HERE (redesign slice 4): the top bar's Upload saves into this folder and is the
-          hub's primary action, so the panel adding its own would be a second door to one place. %>
+      <%# NO UPLOADER HERE (redesign slice 4): the strip's Add › Upload saves into this folder, so the
+          panel adding its own would be a second door to one place. %>
     </div>
   </div>
   <%= panel_intro(@panel_layout, "attachments") %>

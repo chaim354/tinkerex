@@ -220,7 +220,7 @@ class User < ApplicationRecord
   def handle_locked? = maker_projects.published.exists?
 
   # The tools pinned to the sidebar, in pinned order (Maker::ToolPins; `pinned_tools`, 2026-10-22).
-  # Memoised on the user, so the rail and the Tools page read the one row the request loaded.
+  # Memoised on the user, so the left column and the Tools page read the one row the request loaded.
   def tool_pins = @tool_pins ||= Maker::ToolPins.new(self)
 
   # THE ONE SPELLING OF "when did a library scan last finish" (stage 4, S4-3). The page renders it

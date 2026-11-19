@@ -1,0 +1,13 @@
+<%# THE HELP COLUMN: the page's own sections as in-page links (help/show.html.erb's headings carry the
+    ids). Help lights no place and no row (spec §11.2). shell_layout_test.rb holds every in-page link
+    to an element the page carries. %>
+<div class="column-group">
+  <h2 class="column-head">On this page</h2>
+  <%= column_row "Your library", "#library" %>
+  <%= column_row "Projects", "#projects" %>
+  <%= column_row "3D models", "#models" %>
+  <%= column_row "Inventory", "#inventory" %>
+  <%= column_row "Tools", "#tools" %>
+  <%= column_row "Your account", "#account" %>
+  <%= column_row "Running this server", "#server" %>
+</div>

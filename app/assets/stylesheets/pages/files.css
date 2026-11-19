@@ -46,11 +46,11 @@
   table.files tr:has(.is-selected) { background: var(--raised); }
   @media (min-width: 1100px) {
     .library.has-inspector { grid-template-columns: minmax(0, 1fr) 300px; }
-    .inspector { position: sticky; top: calc(var(--topbar-height) + var(--space-4)); align-self: start;
-                 max-height: calc(100vh - var(--topbar-height) - var(--space-6)); overflow-y: auto; }
+    .inspector { position: sticky; top: calc(var(--strip-height) + var(--space-4)); align-self: start;
+                 max-height: calc(100vh - var(--strip-height) - var(--space-6)); overflow-y: auto; }
   }
   @media (max-width: 1099px) {
-    .inspector { position: fixed; z-index: 40; top: var(--topbar-height); right: 0; bottom: 0;
+    .inspector { position: fixed; z-index: 40; top: var(--strip-height); right: 0; bottom: 0;
                  width: 340px; max-width: 100%; overflow-y: auto; border-radius: 0; box-shadow: var(--shadow-float); }
   }
   @media (max-width: 719px) {

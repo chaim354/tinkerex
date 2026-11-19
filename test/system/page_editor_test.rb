@@ -237,7 +237,7 @@ class PageEditorTest < ApplicationSystemTestCase
 
   # --- the draft is not dropped without a question (the UX audit's B1, 2026-11-02) --------------
 
-  # THE GUARD IS ONE turbo:before-visit LISTENER, so the rail (a link this page did not render),
+  # THE GUARD IS ONE turbo:before-visit LISTENER, so the strip (a link this page did not render),
   # the edit area's own tabs and Done all meet it. Dismissed, the page and the draft stay; accepted,
   # the visit goes and nothing was written. Mutation-checked: deleting the listener in connect()
   # turns the first dismiss_confirm red (Capybara::ModalNotFound).
@@ -245,7 +245,7 @@ class PageEditorTest < ApplicationSystemTestCase
     open_editor
     within(slot("tasks")) { click_on "Hide" }
 
-    dismiss_confirm(LEAVE) { find(".rail a.rail-link[href='#{files_path}']").click }
+    dismiss_confirm(LEAVE) { find("header.strip a.strip-place[href='#{files_path}']").click }
     assert_current_path edit_layout_project_path(@project)
     assert_selector "#{slot('tasks')}.panel-slot--hidden"
 

@@ -266,7 +266,7 @@ module Maker
           # THE GALLERY'S SECTION (host level 4): one of CATEGORIES, exactly spelled, or nil for
           # anything else including absent — `layout`'s rule, for `layout`'s reason. COSMETIC:
           # `Tools::HomeController` groups the gallery by it and keeps inspectors and references out of
-          # the New menu, and nothing gates on it.
+          # the strip's Add menu, and nothing gates on it.
           category: CATEGORIES.include?(manifest["category"]) ? manifest["category"] : nil
         )
       end
@@ -319,7 +319,7 @@ module Maker
       # broken deploy. That argument does not reach here, because no action in
       # `Tools::AddonsController` gates on `available?` at all. Every reader of it is cosmetic: the
       # gallery card (`app/views/tools/home/index.html.erb`), the addon page, which draws the reason
-      # instead of mounting the bundle (`app/views/tools/addons/show.html.erb`), the New menu's list
+      # instead of mounting the bundle (`app/views/tools/addons/show.html.erb`), the Add menu's list
       # and the pin door's refusal. A listed-but-unavailable addon is still `Registry.find`-able,
       # `load_addon` still succeeds, and `#states`/`#create` still serve `@addon.states_key` exactly
       # as if nothing were wrong. Greying this out would leave the hole wide open while LOOKING

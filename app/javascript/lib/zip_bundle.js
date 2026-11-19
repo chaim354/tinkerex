@@ -2,11 +2,11 @@ import JSZip from "jszip"
 
 // A ZIP'S CONTENTS AS THE LIBRARY SHOULD RECEIVE THEM, read in the browser (§15: no zip byte
 // reaches Rails). ONE READER for the two pages that unpack a zip — the Import page
-// (importer_controller.js) and the top bar's Upload (lib/zip_unpack.js) — so they cannot disagree
+// (importer_controller.js) and the strip's Upload (lib/zip_unpack.js) — so they cannot disagree
 // about what a zip holds.
 //
 // LISTED FIRST, INFLATED ON DEMAND. `listZipBundle` reads the archive's index and answers names and
-// folders only; an entry's bytes are decompressed when its `load()` is called. The top bar asks
+// folders only; an entry's bytes are decompressed when its `load()` is called. The strip's Upload asks
 // "does this zip hold a model?" of EVERY zip in a selection, and most answer no (firmware, Gerbers,
 // a source archive) — those are uploaded whole, so inflating them first was memory and time spent
 // for nothing. `readZipBundle` is the eager form, for the Import page, which keeps every entry.

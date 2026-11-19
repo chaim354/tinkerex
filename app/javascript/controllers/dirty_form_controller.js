@@ -11,7 +11,7 @@ import { Controller } from "@hotwired/stimulus"
 // which fires neither event, and a change it missed would be lost without a question.
 //
 // WHILE DIRTY, LEAVING ASKS: a Turbo visit (`turbo:before-visit`) — which is Done, Cancel, the edit
-// area's other two tabs, the rail and every other link, with one listener rather than a confirm per
+// area's other two tabs, the strip and every other link, with one listener rather than a confirm per
 // control — gets one confirm, and a full navigation (a reload, a closed tab, a typed address) gets
 // the browser's own `beforeunload` prompt.
 //

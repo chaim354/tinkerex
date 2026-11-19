@@ -1,0 +1,16 @@
+<%# THE SETTINGS COLUMN: the hub and its pages, the Account page among them (it is a Settings page,
+    UX audit F1). Settings lights no place (spec §11.2); its page lights its row here
+    (ShellHelper::SETTINGS_ROWS). Places and Suppliers are Inventory's and live in its column. Users
+    shows only to an account that can manage accounts, by the same answer its page's gate asks. %>
+<div class="column-group">
+  <h2 class="column-head">Settings</h2>
+  <%= column_row "Settings", settings_path, key: [ :settings, :hub ] %>
+  <%= column_row "Library folder", settings_library_path, key: [ :settings, :library ] %>
+  <%= column_row "Shelves", settings_shelves_path, key: [ :settings, :shelves ] %>
+  <%= column_row "Tags", settings_tags_path, key: [ :settings, :tags ] %>
+  <% if current_user.can_manage_accounts? %>
+    <%= column_row "Users", settings_users_path, key: [ :settings, :users ] %>
+  <% end %>
+  <%= column_row "Account", edit_user_registration_path, key: [ :settings, :account ] %>
+  <%= column_row "Devices", settings_devices_path, key: [ :settings, :devices ] %>
+</div>

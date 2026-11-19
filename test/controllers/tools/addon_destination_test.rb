@@ -356,13 +356,13 @@ module Tools
         get path
         assert_response :success
         if FileLayer.current.capabilities.port_writable?
-          assert_select "header.topbar .topbar-upload form.uploader input[name='parent_node_id'][value=?]", node_id
+          assert_select "header.strip .topbar-upload form.uploader input[name='parent_node_id'][value=?]", node_id
         else
-          assert_select "header.topbar .topbar-upload section.uploader[data-uploader-parent-node-id-value=?]", node_id
+          assert_select "header.strip .topbar-upload section.uploader[data-uploader-parent-node-id-value=?]", node_id
         end
-        assert_select "header.topbar .topbar-upload button.upload-btn:not(.primary)"
-        assert_select "header.topbar .topbar-upload-caption", text: "Saves to #{caption}"
-        assert_select "header.topbar .topbar-upload[data-controller]", 0
+        assert_select "header.strip .topbar-upload button.upload-btn:not(.primary)"
+        assert_select "header.strip .topbar-upload-caption", text: "Saves to #{caption}"
+        assert_select "header.strip .topbar-upload[data-controller]", 0
       end
     end
   end

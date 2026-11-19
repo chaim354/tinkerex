@@ -185,7 +185,7 @@ module Web
       notes = css_select("main p.muted").map { |p| p.text.squish }
       assert_match(/\AThe apps and assistants connected to your account/, notes.first)
       assert_match(/\ASigning a device out ends its access to this server/, notes.second)
-      assert_select ".topbar nav.breadcrumb [aria-current=page]", "Devices"
+      assert_select ".page-path nav.breadcrumb [aria-current=page]", "Devices"
     end
 
     test "the account page with no devices says so" do

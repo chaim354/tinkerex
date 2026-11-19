@@ -9,9 +9,9 @@
   projects/_log_entry.html.erb, and it does not pass it — a log row's upload is not what the page
   exists for. The Files page's current-project uploader and Home's hero went first, and the project
   page's Files panel — the one caller that passed true — went when Upload moved into the top bar
-  (redesign slice 4; layouts/_topbar_upload.html.erb), which is now the hub's primary.
+  (redesign slice 4; the strip's Add since Shop manual slice 3, layouts/_strip_add.html.erb).
 
-  THE CONTROL IS A <button> BESIDE ITS HIDDEN FILE INPUT, the top bar's shape (UX audit I): it was a
+  THE CONTROL IS A <button> BESIDE ITS HIDDEN FILE INPUT, the strip's Upload's shape (UX audit I): it was a
   <label> wrapping the input, which a keyboard cannot reach. upload_forward_controller.js#choose
   opens the input in the same `.uploader`, so the input keeps its own change handling unchanged.
 %>

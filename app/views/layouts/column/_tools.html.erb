@@ -1,0 +1,9 @@
+<%# THE TOOLS COLUMN (Shop manual spec §7): the gallery, then the tools the maker pinned. THE LAYOUT
+    NEVER READS THE ADDON REGISTRY (docs/invariants/addons.md: a manifest fetch whose outage must
+    cost a page nothing), so the column lists the pins, which the user row already holds; the gallery
+    lists every tool. An addon's page lights its row when it is pinned, and no row when it is not. %>
+<div class="column-group" data-controller="toolmenu">
+  <h2 class="column-head">Tools</h2>
+  <%= column_row "All tools", tools_path, key: [ :tools ] %>
+  <%= render "layouts/column/tool_pins", tools: current_user.tool_pins.to_a %>
+</div>

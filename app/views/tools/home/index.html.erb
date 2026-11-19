@@ -20,9 +20,9 @@
   test/controllers/tools/home_controller_test.rb counts. Its own grid and heading keep the two
   kinds apart; the inner head/icon/title/description classes are shared for their look.
 
-  The card OPENS the modal (`data-calculator-open`); its Pin toggle, or a right click, pins it. At phone width,
-  where the tab bar keeps its four destinations and there is no rail, this card IS the way to the
-  calculator (the Tools tab). `id="calculator"` is where the pinned rail link's href lands when its
+  The card OPENS the modal (`data-calculator-open`); its Pin toggle, or a right click, pins it, and a
+  pinned calculator is a row in Home's column and the Tools column. Unpinned, this card IS the way to
+  the calculator (besides Alt+C). `id="calculator"` is where the pinned row's href lands when its
   click is not the controller's to handle (a modified click).
 %>
 <section class="tools-section" aria-labelledby="tools-built-in">

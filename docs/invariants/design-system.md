@@ -1,7 +1,7 @@
 # Invariants — the web shell and design system (CLAUDE.md §14m)
 
 §14d material for the web layer's styling and chrome. Read this before touching
-`app/assets/stylesheets/`, `app/views/layouts/`, `app/helpers/shell_helper.rb`, the `theme` / `rail` /
+`app/assets/stylesheets/`, `app/views/layouts/`, `app/helpers/shell_helper.rb`, the `theme` / `shell` /
 `toast` Stimulus controllers, any template's class names, or which panels `ProjectsController#show`
 renders (rule 14). Spec:
 `docs/superpowers/specs/2026-09-03-web-shell-and-design-system-design.md`; the story is the arc that
@@ -94,68 +94,79 @@ theme: black on white, at true scale (measure-view.md).
 
 ## The shell
 
-7. **Theme and rail state are cookies (`theme` ∈ light|dark|system, `rail` ∈ expanded|collapsed, or
-   absent = the width default: the full rail from 1100px, icons below),
-   rendered by `ShellHelper` into the first byte of HTML — never an inline script.** Both `rail`
-   values are explicit choices that BEAT the width: `expanded` keeps the full rail at 1024px, and
-   the Collapse button reads the rail as drawn and writes the other state, so it is never a no-op
-   (UX audit A2, `shell_rail_test.rb`). The CSP nonces
-   `script-src`, and a pre-paint script is the thing not to add. The JS writes them with `path=/`,
-   a one-year `max-age` and `samesite=lax`; the server trusts nothing beyond the enum.
-8. **The sidebar lights exactly one link, and `ShellHelper#sidebar_current` alone decides which.**
-   The first place is **Recent** (`/`, a clock icon), and it keeps the `[:home]` key, the `home`
-   `SECTIONS` entry and the route: slice 6 changed its label and icon in the sidebar and the phone
-   tab bar, never the key the lit test reads.
-   `rail_section` still maps `controller_path`'s FIRST segment — or, for a `SECTIONS` entry holding a
-   `/`, the whole path (`users/registrations` lights Settings, so the Account page is a Settings
-   page) — (a new web controller needs a `SECTIONS` entry or its pages light nothing), and `sidebar_current` refines it: the deepest
-   pinned folder on the breadcrumb (the Files page's or a file page's — both set `@crumbs`) beats
-   Library, a listed project's own link beats All projects, and an unlisted one lights All
-   projects. **The Library's 3D models view (`files/models`, slice 5) lights the 3D models place,
-   not Library**, although its first segment is `files`: `sidebar_current`'s files arm checks
-   `controller_path == "files/models"` before the pin walk. The phone tab bar has no place of its
-   own for it, so it lights Library for `[:models]`, on the view and on the model pages
-   (`models/*`, which `SECTIONS` still maps to 3D models); `models_redirects_test.rb` pins both
-   lights on the view. `SECTIONS`' `models` entry no longer names `shelves`, so `settings/shelves`
-   lights Settings. The sidebar and the phone tab bar both read `sidebar_current`;
-   `shell_layout_test.rb` pins one lit link per page. **In the icon rail (collapsed, or below 1100px with no
-   `expanded` cookie) a project or a pinned folder shows as a MONOGRAM tile** (`ShellHelper#rail_monogram`:
-   the first letter or digit, drawn from `data-monogram` by `::before` so the link's text stays its
-   name and its `title` the accessible name), so it stays visible and carries the lit mark itself. A
-   pinned addon still hides there, and `sidebar_family_lit?` marks Tools for it with
-   `.rail-family-lit`, a CLASS and not a second aria-current, which shell.css draws only in the icon
-   rail. **The phone tab bar's fifth tab, More, carries every rail place the four tabs do not**
-   (`tabbar_more_links`: Inventory, Trash, Settings, Account, Help, the theme control, Sign out) and
-   lights through `:has()` on its lit item — `sidebar_current` still makes the only decision. **The icon rail is ONE container query
-   on `.rail`** (`@container rail`): the collapse cookie and the ≤1099px media query each set only
-   the grid track (the `expanded` cookie exempts the body from that media query), so both triggers
-   draw one rule block, and nothing outside the rail can match it
-   (its unscoped viewport copy hid the sign-in card's wordmark). The rail's width must stay the grid
-   track's, a length, because inline-size containment stops its content from sizing it
-   (`css_hygiene_test.rb`, `shell_test.rb`). **The top bar's Upload and New ▾
-   create in `FolderDestination`'s folder, set by the action that renders a folder** and by nothing
-   else, never from session or user state (the current project it replaced is guarded out by
-   `architecture_invariants_test.rb`). A page with none asks with the folder chooser
-   (`upload_pick_controller.js`) rather than guess one.
-9. **Breadcrumbs render in the top bar through `content_for :crumbs`**, with the page title as the
-   fallback; page-level actions stay in the page's `.page-head`, so the top bar carries no
-   per-page control. Its New ▾ and Upload are on every signed-in page; only their destination
-   (rule 8) and Upload's weight (rule 13) vary. **On a phone (below 720px) they are one "+"**: the
-   Upload BUTTON hides and the New menu's phone-only "Upload…" item (`upload_forward_controller.js#open`)
-   clicks that button, never the file input. **Upload is a `<button type="button" class="upload-btn">`
-   beside its hidden input, never a `<label>` over it** (UX audit I: a label cannot take focus, so
-   keyboard users could not upload): with a folder, `upload-forward#choose` opens the input; without
-   one, `upload-pick#pick` asks for a folder on EVERY click, starting from the last one chosen. An
-   input-targeted click skips the ask and uploads to the library root unasked. Hide only the button,
-   never `.topbar-upload`, which also holds the chunk flow's `.upload-status` progress text.
-   **The crumb root of every Library page (a folder, a file, the 3D models view, a model, Trash)
-   reads Library, the rail's word for the place, never "Files"** (UX audit A3); a parent-named
-   button in a page head is not a third way up, and where a back control legitimately remains (a
-   foot link) it reads "Back to NAME".
+7. **Theme state is a cookie (`theme` ∈ light|dark|system), rendered by `ShellHelper` into the first
+   byte of HTML — never an inline script.** The CSP nonces `script-src`, and a pre-paint script is
+   the thing not to add. `theme_controller.js` writes it with `path=/`, a one-year `max-age` and
+   `samesite=lax`; the server trusts nothing beyond the enum. The choice is `settings/_theme`,
+   rendered on the Settings page and in the strip's account menu; every instance re-renders on a
+   change made in another (the `theme:change` broadcast). **The `rail` cookie retired with the rail
+   (Shop manual slice 3): nothing reads or writes it, and no `body.rail--*` class exists**
+   (`shell_layout_test.rb` sends both old values and finds the body unchanged).
+8. **The shell is a strip of four places — Library, Projects, Tools, Inventory, always all four —
+   over a left column, and `ShellHelper#sidebar_current` alone decides what is lit: AT MOST ONE place
+   and AT MOST ONE column row** (Shop manual spec §7 and §11.2). It answers one key (`[:folder, id]`,
+   `[:project, id]`, `[:low_stock]`, `[:settings, :tags]`, …); the place is DERIVED from the key
+   (`ShellHelper::PLACES`, `sidebar_place`), and the strip, the phone tab bar and the column all read
+   that one answer (`place_aria`, `row_aria`). A lit place is weight 800 over a 3px ink underline with
+   `aria-current="page"`; a current row is weight 800 with a 6px accent square. **Home, Search,
+   Settings and Help light no place**: Home is the wordmark's (`/`, which keeps the `[:home]` key,
+   the `home` `SECTIONS` entry and the route — it was Recent, a place of its own, until slice 3),
+   and the account menu holds Settings and Help, whose pages light their rows in their own columns.
+   `shell_section` maps `controller_path`'s FIRST segment — or, for a `SECTIONS` entry holding a `/`,
+   the whole path (`users/registrations` is a Settings page) — and a new web controller needs a
+   `SECTIONS` entry or its pages light nothing and get no column. **The 3D models view
+   (`files/models`), the model pages and Trash light Library** and their own rows in its column; this
+   reversed the old exception under which the 3D models view lit a place of its own
+   (`models_redirects_test.rb`). In the Library the lit row is the folder on screen — the deepest crumb
+   (`@crumbs`, which FilesController#index and #show both build; a file's page lights its folder),
+   else the library root. A project lights its row among the eight listed (`sidebar_projects`), or
+   All projects when it is older; the Projects index lights the filter applied (All, Archived, a
+   kind). **The column is a slot**: a page supplies its own with `content_for :column`, and otherwise
+   its section's default renders (`layouts/column/_<name>`, `ShellHelper::COLUMNS`); a section with
+   none (Search) gets no column and no Contents button. Every default row is a real link, and every
+   list in it is ONE query whatever it holds (`page_query_budget_test.rb`). Home's column is the
+   page's sections as in-page links, then Pinned (the pinned folders and the pinned tools, the
+   calculator's row opening its modal, each tool row keeping its right-click Unpin);
+   `shell_layout_test.rb` holds every in-page link to an element the page carries, and walks every
+   kind of page for two lit places, two current rows, or a tab bar that disagrees with the strip.
+   **The layout never reads the addon registry**, so the Tools column lists the gallery and the
+   pinned tools, which the user row holds (docs/invariants/addons.md). **Narrower than the screens**:
+   from 960px the column sits beside the page; below it is a sheet the strip's Contents button opens
+   (`shell_controller.js`: fixed, so opening it moves nothing; focus moves in, and Escape, the scrim
+   or the button closes it and hands focus back). Below 720px the four places move to the phone tab
+   bar, which is exactly the four (the More tab retired with the rail), Search becomes an icon linking
+   to `/search`, and Add shows only its "+". **The strip's Add creates in `FolderDestination`'s
+   folder, set by the action that renders a folder** and by nothing else, never from session or user
+   state (the current project it replaced is guarded out by `architecture_invariants_test.rb`). A page
+   with none asks with the folder chooser (`upload_pick_controller.js`) rather than guess one.
+9. **Breadcrumbs render at the head of `main` as the caps path (`.page-path`) through
+   `content_for :crumbs`**, with the page title as the fallback; they left the top bar with it, and
+   page-level actions stay in the page's `.page-head`, so the strip carries no per-page control. **The
+   strip's one Add holds what Upload and New ▾ held** — "Upload…", New folder, Text file, Project, the
+   tools that make something (a lazy frame, so no render reads the registry), Inventory item — on
+   every signed-in page, an outlined button; only its destination (rule 8) varies, and its menu says
+   where things land. **"Upload…" clicks the hidden Upload BUTTON beside the menu
+   (`upload_forward_controller.js#open`), never the file input. Upload is a
+   `<button type="button" class="upload-btn">` beside its hidden input, never a `<label>` over it**
+   (UX audit I: a label cannot take focus, so keyboard users could not upload; the keyboard reaches it
+   through the menu item, itself a button): with a folder, `upload-forward#choose` opens the input;
+   without one, `upload-pick#pick` asks for a folder on EVERY click, starting from the last one chosen.
+   An input-targeted click skips the ask and uploads to the library root unasked. **Hide only the
+   button, never `.topbar-upload`** (named for the top bar it was built in), which sits OUTSIDE the
+   menu and also holds the chunk flow's `.upload-status`: a closed `<details>` hides everything but its
+   summary, and the progress must show while an upload runs, so it hangs under the strip's rule at
+   the right, where it neither moves the strip nor pushes the account button off a phone
+   (`phone_strip_test.rb`). **Search keeps ⌘K and gains `/`** (spec §11.5): both focus the strip's box,
+   `/` only when focus is not taking typing and no grid owns the keys, and `aria-keyshortcuts` names
+   all three. **The crumb root of every Library page (a folder, a file, the 3D models view, a model,
+   Trash) reads Library, the strip's word for the place, never "Files"** (UX audit A3); a
+   parent-named button in a page head is not a third way up, and where a back control legitimately
+   remains (a foot link) it reads "Back to NAME".
 10. **Only `.flash-stack > .flash` floats.** `projects/_tasks` renders an inline
     `p.flash-alert.task-error` and two forms render `div.form-errors.flash-alert`; they must stay
     inline, so the fixed positioning lives on the stack container, not on the class. **The stack sits
-    bottom-right (above the tab bar on a phone), clear of New ▾ and Upload** (UX audit A5). A notice
+    bottom-right (above the tab bar on a phone), clear of the strip's Add and account button** (UX
+    audit A5). A notice
     pauses while hovered or focused and resumes with at least 2 s left; Escape dismisses the focused
     toast; an alert stays until dismissed; any `[data-toast-target=item]` appended later (the layout
     editor's, the uploader's) is handled by `toast_controller.js` (`shell_toast_test.rb`). An error
@@ -164,7 +175,9 @@ theme: black on white, at true scale (measure-view.md).
     ("Deleted the note.", never "Note deleted."), in the verb of the button that caused it
     ("Unlink" answers "Unlinked lid.stl."). `notice_grammar_test.rb` refuses the noun-first shape
     and a missing full stop in every `notice:`/`alert:` literal under app/controllers and app/views.
-11. **No page scrolls sideways at 375px** (`test/system/shell_test.rb`). Tables drop columns
+11. **No page scrolls sideways at 375px** (`test/system/shell_test.rb`), and neither does the strip,
+    the column's open sheet or the tab bar on any section's page (spec §10's width guard, the same
+    file). Tables drop columns
     through the `col-*` classes `files/_list.html.erb` carries; anything that must keep its width
     (code, diffs, the Measure stage, the spreadsheet, a recipe table) scrolls inside its own
     `overflow-x: auto` container; long names get `overflow-wrap: anywhere`. **`anywhere`, never
@@ -208,22 +221,18 @@ stylesheet or script tag goes in `_head`, never in either layout, or the two hea
     number (`.fig-num`), the current row's square, a selected figure's outline, a warning word or
     flag (the flag `.badge`s: a failed print, low stock, changed since a release) and the focus ring,
     and never a control's fill. **The one primary action per screen is an INK fill** (`.btn.primary`:
-    `--fg` with `--bg` text); every other button is outlined in ink. On the Library, Recent and a
-    project hub the primary is the top bar's Upload. The Library and
-    the hub show a folder and say so through `FolderDestination`'s `primary`, and Upload names where
-    it saves. Recent shows none, so it calls `upload_primary!`, **which changes Upload's weight and
-    never its destination**: Upload there still asks with the chooser. It is a flag of its own
-    because a `Destination` with a nil `node_id` would mean the library ROOT, not "ask". Everywhere
-    else Upload is a quiet `.btn`. No secondary control
-    is filled. The project hub is the one page the 2026-09-10 cohesion spec's
-    decision 3 allows two, and since 2026-10-26 it spends one (Upload): its second, Save publishing,
-    moved with the Publish panel to the edit area's Publishing tab. Each of that area's three tabs
-    (Details, Publishing, Page layout) spends it on its own Save, with Upload quiet on all three
-    (`ProjectsController#show` passes `primary:` false in edit mode, and the YAML drawer's Apply is
-    a quiet `.btn`). `accent_spend_test.rb` pins every page by RESOLVED background: exactly its ink
+    `--fg` with `--bg` text); every other button is outlined in ink. **The strip's Add is outlined on every page** and is never
+    a primary (Shop manual slice 3): it replaced the top bar's Upload, which was the Library's, Recent's
+    and the hub's primary, and `FolderDestination` lost its `primary` flag and `upload_primary!` with
+    it, so a destination says where things land and nothing about weight. Home, the Library and a
+    project page spend nothing today. No secondary control is filled. The project hub is the one page the 2026-09-10 cohesion spec's
+    decision 3 allows two; since 2026-10-26 its second, Save publishing, has lived with the Publish
+    panel in the edit area's Publishing tab, and since slice 3 its first (Upload) is Add's. Each of
+    that area's three tabs (Details, Publishing, Page layout) spends it on its own Save (the YAML
+    drawer's Apply is a quiet `.btn`). `accent_spend_test.rb` pins every page by RESOLVED background: exactly its ink
     primaries, and no control anywhere filled with the accent. **Selection is ink too**: a filter
     chip is underlined in ink, a pressed toggle, a segmented control's lit part, the chosen tag and
-    the file-chooser selection are filled with it, and tabs and the lit rail item use `--fg`. A lit
+    the file-chooser selection are filled with it, and tabs and the lit strip place use `--fg`. A lit
     part SAYS it is lit (`aria-pressed`, `aria-current`, `aria-selected`), which is how the guard
     tells a selection from a second primary. Status carries its word, never colour alone
     (`.flash::before`, badge labels, a flag's word). Text on an accent fill is
@@ -247,7 +256,8 @@ stylesheet or script tag goes in `_head`, never in either layout, or the two hea
 
 **Every timestamp is `ApplicationHelper#time_at`, in the app's one zone (`config.time_zone`, from `TIME_ZONE`), and its three styles are the whole vocabulary** — `:absolute` `2026-11-01 22:09`, `:date`, `:relative` "10 minutes ago" — always a `<time datetime>`, with the full time and zone in `title` (a Date has no more to show); no template calls `strftime`, `to_fs(` or `time_ago_in_words`, and the History panel prints the server's `at_label`, never `toLocaleString()` (UX audit D1, `time_format_test.rb`).
 
-The library search that the top bar drives (`FilesController#index`, `?q=`) is flat, whole-library
+The Files page's own search (`FilesController#index`, `?q=`; the strip's box drives `/search`) is
+flat, whole-library
 and case-insensitive; its `LIKE` carries `ESCAPE '\'` because SQLite has no default escape
 character and `sanitize_sql_like` alone is inert there — measured, and the same rule `LIKE_EXT`
 already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
@@ -276,7 +286,7 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     rows appear after Show and Save). A panel the MAKER hid is not named and still costs no query —
     they hid it themselves, in the layout editor — and the stats line counts only panels on the page. Every panel's composer
     is a `details.composer` in its `.panel-head`, opened by "Add…", its submit naming the thing and
-    never `primary` (the hub's primary is the top bar's Upload).
+    never `primary`.
 
 **A PANEL'S VIEW BUTTONS SWITCH IT IN PLACE, AND THE DOOR STILL RENDERS NOTHING (2026-11-16).** A
 press on the page posts `in_place` (`projects/_view_toggle`). `Projects::PanelsController#in_place`
@@ -301,7 +311,7 @@ pins what the page does with it.
 
 ## The front door
 
-15. **Signed out, `/` has two answers and demo mode picks; signed in it is Recent.** On the public
+15. **Signed out, `/` has two answers and demo mode picks; signed in it is Home.** On the public
     demo's box (`Tinkerex::Landing.enabled?`, which is `Tinkerex::Demo.enabled?`) it is the marketing
     landing; anywhere else it is the plain sign-in card, because a self-hosted box has nobody to pitch
     to and the landing's one action IS the demo. `config/routes.rb` declares three roots in this

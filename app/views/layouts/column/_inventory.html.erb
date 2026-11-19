@@ -1,0 +1,24 @@
+<%# THE INVENTORY COLUMN (Shop manual spec §7): the items, then Places and Suppliers. Every row is a
+    view the index already serves — all items, `?low=1`, `?location=`, `?supplier=` — or the Places
+    and Suppliers pages themselves. "Needed by a project" waits for the index to learn that filter
+    (spec §9's To buy). Places and Suppliers are one capped query each (ShellHelper), so the column
+    costs the same however many there are. %>
+<div class="column-group">
+  <h2 class="column-head">Inventory</h2>
+  <%= column_row "All items", inventory_items_path, key: [ :inventory_items ] %>
+  <%= column_row "Low or out", inventory_items_path(low: 1), key: [ :low_stock ] %>
+</div>
+<div class="column-group">
+  <h2 class="column-head">Places</h2>
+  <% column_locations.each do |location| %>
+    <%= column_row location.name, inventory_items_path(location: location.id), key: [ :location, location.id.to_s ] %>
+  <% end %>
+  <%= column_row "All places", locations_path, key: [ :locations ] %>
+</div>
+<div class="column-group">
+  <h2 class="column-head">Suppliers</h2>
+  <% column_suppliers.each do |supplier| %>
+    <%= column_row supplier.name, inventory_items_path(supplier: supplier.id), key: [ :supplier, supplier.id.to_s ] %>
+  <% end %>
+  <%= column_row "All suppliers", suppliers_path, key: [ :suppliers ] %>
+</div>

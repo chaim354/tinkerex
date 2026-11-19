@@ -7,9 +7,9 @@ import { evaluate, formatInches } from "lib/calc"
 // box is exactly where neither belongs). This file is only the dialog around it.
 //
 // ONE DELEGATED OPENER, NOT A CONTROLLER PER BUTTON. Anything on the page carrying
-// `data-calculator-open` opens the modal — the rail's pinned link, the Tools card, a saved
+// `data-calculator-open` opens the modal — the column's pinned row, the Tools card, a saved
 // calculation's "Open in calculator" — with `data-calculator-expression` and
-// `data-calculator-fraction` to start from. The openers sit outside this element (the rail, a
+// `data-calculator-fraction` to start from. The openers sit outside this element (the column, a
 // project panel), where a Stimulus action cannot reach it, so `click@document` is the one door.
 // The keyboard's door is Alt+C (⌥C), `keydown@document` (#shortcut, 2026-10-22).
 //
@@ -43,7 +43,7 @@ export default class extends Controller {
   openFrom(event) {
     const opener = event.target.closest?.("[data-calculator-open]")
     if (!opener || event.defaultPrevented) return
-    // A modified click on the rail's link is the browser's (a new tab onto /tools), not ours.
+    // A modified click on the pinned row is the browser's (a new tab onto /tools), not ours.
     if (opener.tagName === "A" && (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button > 0)) return
     event.preventDefault()
     this.open({ expression: opener.dataset.calculatorExpression, fraction: opener.dataset.calculatorFraction, opener })
@@ -57,7 +57,7 @@ export default class extends Controller {
       this.dialogTarget.showModal()
     }
     // A saved calculation reopens at the display it was saved with (an empty attribute is decimal);
-    // the rail and the card carry no attribute and keep this browser's own choice.
+    // the pinned row and the card carry no attribute and keep this browser's own choice.
     if (fraction !== undefined) this.setDenominator(Number(fraction) || 0)
     if (expression) {
       this.inputTarget.value = expression

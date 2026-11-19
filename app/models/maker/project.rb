@@ -82,7 +82,7 @@ module Maker
     # thirteen disagree with what humanize would say: `readme` is "README" (the file's own spelling,
     # not "Readme"), `attachments` is "Files" (the panel has been
     # headed Files since S2-2 — the key is the partial's name, and renaming the partial would touch
-    # eight call sites), `models` is "3D models" (the rail's word for that catalog, UX audit H),
+    # eight call sites), `models` is "3D models" (the Library column's word for that catalog, UX audit H),
     # `bom` is "Bill of materials", and `build_log` is "Build log", not "Build Log". A chooser whose labels differ from the headings above them is a chooser nobody
     # trusts. Totality pinned in project_kind_test.rb.
     PANEL_LABELS = {

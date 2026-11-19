@@ -164,14 +164,14 @@ module WebHelpers
   # call would pass against a page that was never open. No test drove Back before this helper (grep
   # for `go_back`), so nothing else would have noticed that.
   #
-  # THE WAY OUT IS A REAL LINK, the rail's Trash, because a click is what a user does and every
-  # signed-in page carries that link. Any advance visit caches the snapshot; Trash is also cheap to
-  # render.
+  # THE WAY OUT IS A REAL LINK, the strip's Inventory place, because a click is what a user does
+  # and every signed-in page carries that link. Any advance visit caches the snapshot; an empty
+  # Inventory is also cheap to render.
   def back_through_turbo_cache
     here = page.current_path
     page.execute_script("document.body.dataset.snapshotProbe = 'cached'")
-    find("a.rail-link[title='Trash']").click
-    assert_current_path trash_index_path
+    find("header.strip a.strip-place", text: "Inventory").click
+    assert_current_path inventory_items_path
     page.go_back
     assert_current_path here
     wait_until(message: "Back re-rendered #{here} instead of restoring Turbo's snapshot of it, " \

@@ -42,7 +42,7 @@ module Web
       get files_path
       assert_response :success
       assert_select "main .uploader", count: 0
-      assert_select "header.topbar .topbar-upload .uploader", count: 1
+      assert_select "header.strip .topbar-upload .uploader", count: 1
     end
 
     # NEW TEXT FILE IS ONE CONTROL, IN THE TOP BAR'S New ▾ (UX audit D5, 2026-11-02). It was also a
@@ -51,7 +51,7 @@ module Web
       get files_path(folder: "dir-cad")
       assert_response :success
       assert_select "main a[href^=?]", new_files_text_file_path, count: 0
-      assert_select "header.topbar a.menu-item[href=?]", new_files_text_file_path(parent_node_id: "dir-cad")
+      assert_select "header.strip a.menu-item[href=?]", new_files_text_file_path(parent_node_id: "dir-cad")
     end
 
     test "rescan lives in the overflow menu on a scannable backend" do

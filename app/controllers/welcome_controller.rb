@@ -57,8 +57,7 @@ class WelcomeController < ApplicationController
   def files
     @folder = project_folder
     if @folder
-      use_folder_destination(@folder.node_id, path: Maker::LibraryTree.new(current_user).path_for(@folder.node_id),
-                                              primary: true)
+      use_folder_destination(@folder.node_id, path: Maker::LibraryTree.new(current_user).path_for(@folder.node_id))
       use_upload_return("welcome_#{track}", url: welcome_done_path(track:, project: @project.slug))
     end
     rules = Maker::FilingRules.for(current_user)

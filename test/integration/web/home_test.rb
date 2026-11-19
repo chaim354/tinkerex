@@ -18,19 +18,19 @@ module Web
                           updated_at: at, parent_node_id: parent)
     end
 
-    # ONE EMPTY STATE, AND IT POINTS AT THE TOP BAR. Since F onboarding (2026-10-13) it is the
+    # ONE EMPTY STATE, AND IT POINTS AT THE STRIP'S UPLOAD. Since F onboarding (2026-10-13) it is the
     # getting-started panel, in place of a Recently changed panel with nothing in it; what it says
     # per backend is where_files_come_from_test.rb's. Active projects and Needs attention are absent
     # rather than empty, and the panel does not grow an upload control of its own — a second one
-    # would duplicate the top bar's input id and spend the primary twice.
-    test "an empty account sees one empty state, pointing at the top bar's Upload" do
+    # would duplicate the strip's input id.
+    test "an empty account sees one empty state, pointing at the strip's Upload" do
       get root_path
       assert_response :success
       assert_select ".page-head h1", text: "Recent"
-      # The head is the heading alone: New ▾ in the top bar already has Project.
+      # The head is the heading alone: the strip's Add already has Project.
       assert_select ".page-head > *", count: 1
       assert_select "main a[href=?]", new_project_path, count: 0
-      assert_select ".home-section.getting-started .file-sources", text: /Upload, in the top bar/
+      assert_select ".home-section.getting-started .file-sources", text: /Upload, under Add at the top of the page/
       assert_select ".home-section", count: 1
       assert_select ".home-files", count: 0
       assert_select ".home-projects", count: 0

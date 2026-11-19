@@ -604,10 +604,10 @@ class AddonSdkTest < ApplicationSystemTestCase
     visit "/tools/sdk-fixture"
     assert_selector "[data-role=sdk-level]", text: "level #{Maker::Addons::Host::LEVEL}"
 
-    # AWAY: the rail's "Tools" link is a plain link_to — Turbo Drive intercepts it, so this is a
-    # pushState visit, not a fresh page load. Scoped to the rail: the page's breadcrumb names
+    # AWAY: the strip's "Tools" place is a plain link_to — Turbo Drive intercepts it, so this is a
+    # pushState visit, not a fresh page load. Scoped to the strip: the page's breadcrumb names
     # Tools too since 2026-11-02, and either would do, but an ambiguous match does neither.
-    within("aside.rail") { click_link "Tools" }
+    within("header.strip") { click_link "Tools" }
     assert_selector ".tools-grid"
     assert_selector "h1", text: "Tools"
 

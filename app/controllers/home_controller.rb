@@ -66,8 +66,5 @@ class HomeController < ApplicationController
       current_user, @recent_projects.filter_map(&:cover_node_id) + @recent_files.map(&:node_id)
     )
     @addon_origins = addon_origins_for(@recent_files.map(&:node_id))
-    # Recent shows no folder, so Upload asks with the chooser — but it is this page's one action
-    # (spec §4.2).
-    upload_primary!
   end
 end

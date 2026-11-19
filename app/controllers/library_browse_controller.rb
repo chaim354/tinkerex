@@ -77,7 +77,7 @@ class LibraryBrowseController < ApplicationController
     # comment says so; this door never got the equivalent update.
     node = Maker::LibraryFolder.create_child!(current_user, parent_node_id: parent&.node_id, name:)
     # TWO DOORS, ONE ACTION. The file chooser posts JSON (Accept: application/json) and gets the row
-    # back; the top bar's New ▸ Folder posts a browser form and lands IN the new folder. JSON is
+    # back; the strip's Add ▸ New folder posts a browser form and lands IN the new folder. JSON is
     # listed FIRST so an ambiguous Accept (*/*) keeps getting the JSON it always got.
     respond_to do |format|
       format.json { render json: { node_id: node.node_id, name: node.name, kind: node.kind }, status: :created }

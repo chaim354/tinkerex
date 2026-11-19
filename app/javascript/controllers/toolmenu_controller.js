@@ -1,7 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
 
 // Right-click a tool → "Pin to sidebar" or "Unpin from sidebar" (2026-10-22). On every card in the
-// Tools gallery and on each pinned tool's link in the rail; Tools::PinsController does the work and
+// Tools gallery and on each pinned tool's row in the left column; Tools::PinsController does the work and
 // redirects back, so the sidebar the maker sees afterwards is the server's. THE SHORTCUT, NOT THE
 // ONLY WAY: since 2026-11-02 each gallery card also carries a visible Pin toggle that posts to the
 // same door (tools/home/_pin_toggle), because a right click is invisible and iOS has none.
@@ -38,7 +38,7 @@ export default class extends Controller {
     const url = cell.dataset.toolPinUrl
     if (!url) return
     event.preventDefault()
-    // ONE MENU ON THE PAGE. The gallery and the rail each mount this controller, and a contextmenu
+    // ONE MENU ON THE PAGE. The gallery and the column each mount this controller, and a contextmenu
     // event is not a click, so the other one's document listener would leave its menu standing.
     document.querySelectorAll("[data-toolmenu-menu]").forEach((menu) => menu.remove())
     this.close()

@@ -1,0 +1,23 @@
+<%# THE LIBRARY'S COLUMN (Shop manual spec §7), on every Library page: a folder, a file's page, the 3D
+    models view, a model's page, Trash. Folders first — the library root, the chain down to the
+    folder this page shows, and that folder's own subfolders (ShellHelper#column_folders: the chain
+    is the breadcrumb's, the subfolders one capped query) — then the two other Library views as rows.
+    The folder this page shows is the lit row; on a file's page that is the file's folder. The full
+    tree, remembering what is open, is a later behaviour (spec §9). %>
+<div class="column-group">
+  <h2 class="column-head">Folders</h2>
+  <% column_folders.each do |node_id, name, depth| %>
+    <%= column_row name, (node_id ? files_path(folder: node_id) : files_path),
+                   key: (node_id ? [ :folder, node_id ] : [ :library ]), depth: depth %>
+  <% end %>
+  <%# The subfolders are capped; past the cap this row opens the folder itself, which lists them all. %>
+  <% if column_folders_more? %>
+    <%= column_row "All folders here", files_path(folder: Array(@crumbs).last&.node_id),
+                   depth: Array(@crumbs).size + 1, class: "column-row--more" %>
+  <% end %>
+</div>
+<div class="column-group">
+  <h2 class="column-head">Also</h2>
+  <%= column_row "3D models", files_models_path, key: [ :models ] %>
+  <%= column_row "Trash", trash_index_path, key: [ :trash ] %>
+</div>

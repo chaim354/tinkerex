@@ -1,20 +1,17 @@
 require "test_helper"
 
 module Web
-  # THE SHELL'S SMALLER PROMISES, AS MARKUP (UX audit A1, A2, A6, A7, F1). The browser halves are the
-  # shell_*_test.rb system tests; this pins what the server renders: the phone's More tab and what it
-  # carries, the Account page lighting Settings, the search hint per platform, the theme and collapse
-  # buttons named for what they do, and the app icon and manifest agreeing with the page.
+  # THE SHELL'S SMALLER PROMISES, AS MARKUP (Shop manual slice 3; UX audit A1, A6, A7, F1). The
+  # browser halves are the shell_*_test.rb system tests; this pins what the server renders: the
+  # account button's menu (which took over the phone's More sheet and the rail's foot), the Account
+  # page as a Settings page, the search hint and its keys, Add's one menu, and the app icon and
+  # manifest agreeing with the page.
   #
-  # MUTATION-CHECKED (2026-11-02; each reverted, and the file re-run green after):
+  # MUTATION-CHECKED (2026-11-19; each reverted, and the file re-run green after):
   #   1. `search_shortcut` answering "⌘K" whatever the user agent: the Windows arm red.
   #   2. Dropping `users/registrations` from ShellHelper::SECTIONS' settings entry: the Account test
-  #      red, nothing lit in the rail.
-  #   3. Dropping the title from the rail's Collapse button: the foot test red.
-  #   4. `"theme_color": "#fcfbf8"` back in the manifest: the manifest test red.
-  #   5. The pre-A2 family marks back (the Library link's `rail-family-lit: sidebar_family_lit?(:library)`
-  #      and the helper's `pin: :library, project: :all_projects`): the family test red, Library
-  #      marked for a pin whose monogram already carries the mark.
+  #      red, no Settings column and no row lit.
+  #   3. `"theme_color": "#fcfbf8"` back in the manifest: the manifest test red.
   class ShellChromeTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
     MAC = "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36".freeze
@@ -26,91 +23,58 @@ module Web
       sign_in_web!(@user, password: PASSWORD)
     end
 
-    test "the phone tab bar's fifth tab, More, carries every rail place the four tabs do not" do
-      @user.maker_inventory_items.create!(name: "M3 bolt")
+    # THE ACCOUNT BUTTON'S MENU holds what the rail's foot and the phone's More sheet held: Settings,
+    # Account and Help (each keeps its page), the theme choice, and Sign out — at every width, so a
+    # phone has its way to all of them. It lights nothing: Settings and Help light no place, and on
+    # their pages the column lights the row.
+    test "the account button opens Settings, Account, Help, the theme and Sign out" do
       get root_path
-      assert_select "nav.tabbar a.tabbar-link", count: 4
-      assert_select "nav.tabbar details.menu.tabbar-more[data-controller='menu'] > summary.tabbar-link", text: "More"
-      links = css_select("nav.tabbar .tabbar-sheet a.menu-item").map { |a| [ a.text.strip, a["href"] ] }
-      assert_equal [ [ "Inventory", inventory_items_path ], [ "Trash", trash_index_path ], [ "Settings", settings_path ],
-                     [ "Account", edit_user_registration_path ], [ "Help", help_path ] ], links
-      assert_select "nav.tabbar .tabbar-sheet .theme-choice[data-controller='theme'] button[data-action='theme#choose']", count: 3
-      assert_select "nav.tabbar .tabbar-sheet form[action=?] button", destroy_user_session_path, text: "Sign out"
-      assert_select "nav.tabbar .tabbar-sheet [aria-current]", count: 0
+      assert_select "header.strip details.menu.strip-account[data-controller='menu'] > summary.strip-account-btn[aria-label=?]",
+                    "Account: settings, theme, help, sign out", text: @user.email[0].upcase
+      links = css_select("header.strip .strip-account a.menu-item").map { |a| [ a.text.strip, a["href"] ] }
+      assert_equal [ [ "Settings", settings_path ], [ "Account", edit_user_registration_path ], [ "Help", help_path ] ], links
+      assert_select "header.strip .strip-account .theme-choice[data-controller='theme'] button[data-action='theme#choose']", count: 3
+      assert_select "header.strip .strip-account form[action=?] button", destroy_user_session_path, text: "Sign out"
+      assert_select "header.strip .strip-account p.strip-account-email", text: @user.email
+      get settings_path
+      assert_select "header.strip .strip-account [aria-current]", count: 0
     end
 
-    # The rail's own rule: Inventory appears once there are items, or while you are in it.
-    test "More offers Inventory only when the rail does" do
-      get root_path
-      assert_select "nav.tabbar .tabbar-sheet a[href=?]", inventory_items_path, count: 0
-      assert_select "aside.rail a[href=?]", inventory_items_path, count: 0
-      get inventory_items_path
-      assert_select "nav.tabbar .tabbar-sheet a[href=?][aria-current='page']", inventory_items_path, count: 1
-    end
-
-    # THE ACCOUNT PAGE IS A SETTINGS PAGE (UX audit F1): it lights Settings in the rail and in More,
-    # exactly one link each, the way the hub and its children do.
-    test "the Account page lights Settings" do
+    # THE ACCOUNT PAGE IS A SETTINGS PAGE (UX audit F1): it gets the Settings column and lights its
+    # own row there, and like every Settings page it lights no place.
+    test "the Account page is a Settings page" do
       get edit_user_registration_path
       assert_response :success
-      assert_select "aside.rail [aria-current='page']", count: 1
-      assert_select "aside.rail a.rail-settings[aria-current='page']", count: 1
-      assert_select "nav.tabbar .tabbar-sheet a[aria-current='page']", count: 1, text: "Settings"
+      assert_select "aside.column .column-row[aria-current='page']", count: 1, text: "Account"
+      assert_select "header.strip a.strip-place[aria-current]", count: 0
     end
 
-    test "the search hint names the shortcut this platform uses" do
-      { MAC => "⌘K", WINDOWS => "Ctrl+K" }.each do |agent, hint|
+    # `/` IS THE HINT, AND THE TITLE NAMES THE CHORD THIS PLATFORM USES (spec §11.5; UX audit A7).
+    # aria-keyshortcuts names all three, platform-neutrally.
+    test "the search box shows its slash and names the chord this platform uses" do
+      { MAC => "⌘K", WINDOWS => "Ctrl+K" }.each do |agent, chord|
         get root_path, headers: { "User-Agent" => agent }
-        assert_select "header.topbar .topbar-search kbd.topbar-kbd", text: hint
-        assert_select "header.topbar .topbar-search input[name='q'][aria-keyshortcuts=?]", ShellHelper::SEARCH_KEYS
+        assert_select "header.strip .strip-search kbd.strip-kbd", text: "/"
+        assert_select "header.strip .strip-search input[name='q'][title=?]", "Search everything (/ or #{chord})"
+        assert_select "header.strip .strip-search input[name='q'][aria-keyshortcuts=?]", ShellHelper::SEARCH_KEYS
       end
+      assert_equal "/ Control+K Meta+K", ShellHelper::SEARCH_KEYS
     end
 
-    # EVERY RAIL-FOOT CONTROL HAS A TITLE BESIDE ITS aria-label (UX audit A7), because the icon rail
-    # hides each one's words; Theme and Collapse had only the label. Theme names what a click does
-    # (A6) and Collapse names the way the rail will move.
-    test "the rail foot's Theme and Collapse are named for what they do, for a pointer too" do
+    # ONE ADD (spec §7): what Upload and New ▾ held, in one outlined menu. Its "Upload…" forwards to the
+    # hidden Upload BUTTON beside it (rule 9), and the strip spends no accent.
+    test "the strip has one Add, holding Upload, New folder, Text file, Project, the tools and Inventory item" do
       get root_path
-      assert_select "aside.rail .rail-foot .rail-theme[title='Switch to dark'][aria-label='Switch to dark']", text: "Switch to dark"
-      assert_select "aside.rail .rail-foot .rail-theme[data-theme-actions-value=?]", ShellHelper::THEME_ACTIONS.to_json
-      assert_select "aside.rail .rail-foot .rail-collapse[title='Collapse navigation'][aria-label='Collapse navigation'][aria-expanded='true']"
-      cookies[:theme] = "dark"
-      cookies[:rail] = "collapsed"
-      get root_path
-      assert_select "aside.rail .rail-foot .rail-theme[title='Use system theme']", text: "Use system theme"
-      assert_select "aside.rail .rail-foot .rail-collapse[title='Expand navigation'][aria-expanded='false']"
-      cookies[:theme] = "system"
-      get root_path
-      assert_select "aside.rail .rail-foot .rail-theme[title='Switch to light']"
-    end
-
-    # THE `rail` COOKIE'S THIRD STATE (UX audit A2): `expanded` puts its class on the body, so the
-    # ≤1099px track rule exempts it; junk is the width default, like an absent cookie.
-    test "the rail cookie's expanded state reaches the body, and junk is ignored" do
-      { "expanded" => [ 1, 0 ], "collapsed" => [ 0, 1 ], "sideways" => [ 0, 0 ] }.each do |value, (expanded, collapsed)|
-        cookies[:rail] = value
-        get root_path
-        assert_select "body.app-shell.rail--expanded", count: expanded
-        assert_select "body.app-shell.rail--collapsed", count: collapsed
-      end
-    end
-
-    # A PROJECT AND A PINNED FOLDER CARRY A MONOGRAM FOR THE ICON RAIL, drawn from an attribute so the
-    # link's text stays exactly the name; so their family links no longer stand in for them. A pinned
-    # ADDON still hides there, and Tools still does (tool_pins_test.rb).
-    test "projects and pins carry a monogram and mark no family link" do
-      laser = @user.nodes.create!(node_id: "dir-laser", name: "laser", kind: "dir")
-      @user.maker_pins.create!(node_id: laser.node_id)
-      project = @user.maker_projects.create!(name: "desk lamp")
-
-      get files_path(folder: laser.node_id)
-      assert_select "aside.rail a.rail-pin[aria-current='page'] span.rail-monogram[aria-hidden='true'][data-monogram='L']"
-      assert_select "aside.rail a.rail-pin[aria-current='page']", text: "laser"
-      assert_select "aside.rail .rail-family-lit", count: 0
-      get project_path(project)
-      assert_select "aside.rail a.rail-project[aria-current='page'] span.rail-monogram[data-monogram='D']"
-      assert_select "aside.rail a.rail-project[aria-current='page']", text: "desk lamp"
-      assert_select "aside.rail .rail-family-lit", count: 0
+      assert_select "header.strip details.menu.strip-add-menu > summary.btn.strip-add-btn[aria-label='Add']", count: 1
+      assert_select "header.strip .strip-add-menu > summary.primary", count: 0
+      assert_select "header.strip .strip-add-menu button.menu-item[data-controller='upload-forward'][data-action='upload-forward#open']",
+                    text: "Upload…"
+      assert_select "header.strip .strip-add-menu form[action=?] label", library_folders_path, text: "New folder"
+      assert_equal [ "Text file", "Project", "Inventory item" ],
+                   css_select("header.strip .strip-add-menu a.menu-item").map { |a| a.text.strip }
+      assert_select "header.strip .strip-add-menu turbo-frame#new-menu-tools[loading='lazy']"
+      assert_select "header.strip .upload-btn.primary", count: 0
+      assert_select "header.strip details", count: 2
     end
 
     # THE APP ICON IS TINKEREX'S, NOT THE RAILS SCAFFOLD'S RED CIRCLE, and the manifest's theme colour

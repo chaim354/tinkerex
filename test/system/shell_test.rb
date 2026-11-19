@@ -2,10 +2,11 @@ require "application_system_test_case"
 require "support/kicad_fixture"
 require "support/gerber_fixture"
 
-# The shell's behaviour only a browser can see (spec §12): the rail's collapse surviving a Turbo
-# navigation and a reload, the theme button cycling and persisting, a notice toast leaving on its
-# own while an alert waits to be dismissed, Cmd/Ctrl-K reaching the search field, and — the guard
-# for the bug that started this rework — no page scrolling sideways at phone width.
+# The shell's behaviour only a browser can see (Shop manual spec §7 and §10, slice 3): the strip and
+# the left column drawn as the screens draw them, the wordmark on every surface, a notice toast
+# leaving on its own while an alert waits to be dismissed, `/` and Cmd/Ctrl-K reaching the search box,
+# and — the guard for the bug that started the first rework — no page scrolling sideways at phone
+# width, the strip, the column's sheet and the tab bar included.
 class ShellTest < ApplicationSystemTestCase
   include KicadFixture
   include GerberFixture
@@ -20,262 +21,62 @@ class ShellTest < ApplicationSystemTestCase
     FileUtils.remove_entry(@root) if @root&.exist?
   end
 
-  test "collapsing the rail survives a navigation and a reload" do
+  # THE STRIP AND THE COLUMN AS THE SCREENS DRAW THEM (spec §7): 50px and a 2px ink rule; the lit place
+  # weight 800 over a 3px ink underline, its neighbours 500 with none; the column's caps head in the
+  # mono face at 12px; a 28px row, and the current one 800 with a 6px accent square before it. Read as
+  # COMPUTED style, because the cascade decides it. Mutation-checked (2026-11-19): the lit place's
+  # `border-bottom-color: var(--fg)` dropped reddens it as "lit" => ["800", "3px", false];
+  # `.column-row[aria-current]::before` without its background as "square" => ["6px", false].
+  test "the strip and the column draw what the screens draw" do
     visit files_path
-    assert_selector "aside.rail"
-    assert_no_selector "body.rail--collapsed"
-
-    find("aside.rail [data-action='rail#toggle']").click
-    assert_selector "body.rail--collapsed"
-
-    find("aside.rail a.rail-link[title='All projects']").click
-    assert_current_path projects_path
-    assert_selector "body.rail--collapsed"
-
-    visit projects_path
-    assert_selector "body.rail--collapsed"
-
-    find("aside.rail [data-action='rail#toggle']").click
-    assert_no_selector "body.rail--collapsed"
-    assert_no_console_errors
-  end
-
-  # COLLAPSED, A LIT PIN OR PROJECT STAYS VISIBLE AS ITS MONOGRAM AND CARRIES THE MARK ITSELF (UX audit
-  # A2). It used to hide with its group, and its family link wore the mark instead — before that, the
-  # first cut of the places sidebar showed nothing lit at all, seen in a screenshot and by no test.
-  # Measured as "which VISIBLE links draw the edge marker", the `::before` every lit rail link
-  # carries, because only a browser resolves the cascade. shell_rail_test.rb draws the monograms.
-  test "the collapsed rail still marks where you are inside a pinned folder or a project" do
-    @root.join("laser").mkpath
-    Library::ScanJob.perform_now(user_id: @user.id)
-    laser = @user.nodes.present.find_by!(name: "laser", kind: "dir")
-    @user.maker_pins.create!(node_id: laser.node_id)
-    project = @user.maker_projects.create!(name: "Desk Lamp")
-    marked = lambda do
-      page.evaluate_script(<<~JS)
-        Array.from(document.querySelectorAll("aside.rail a.rail-link"))
-          .filter((a) => a.offsetParent !== null && getComputedStyle(a, "::before").content !== "none")
-          .map((a) => a.title)
-      JS
-    end
-
-    visit files_path(folder: laser.node_id)
-    assert_equal [ "laser" ], marked.call
-    find("aside.rail [data-action='rail#toggle']").click
-    assert_selector "body.rail--collapsed"
-    assert_equal [ "laser" ], marked.call
-
-    visit project_path(project)
-    assert_selector "body.rail--collapsed"
-    assert_equal [ "Desk Lamp" ], marked.call
-
-    find("aside.rail [data-action='rail#toggle']").click
-    assert_no_selector "body.rail--collapsed"
-    assert_equal [ "Desk Lamp" ], marked.call
-    assert_no_console_errors
-  end
-
-  # BELOW 1100px, WITH NO COOKIE, THE RAIL IS ICONS: the viewport narrows the rail's track, and the
-  # one icon-rail block (a container query on `.rail`, shell.css) follows the width — the other
-  # trigger to the collapsed-cookie test above, which is what this one reaches. The lit pin is its
-  # own monogram there. No cookie, 900px viewport (CDP, for the reason the 375px sweep below records);
-  # the `expanded` cookie's exemption is shell_rail_test.rb's.
-  test "below 1100px with no rail cookie the icon rail marks the lit pin's monogram" do
-    @root.join("laser").mkpath
-    Library::ScanJob.perform_now(user_id: @user.id)
-    laser = @user.nodes.present.find_by!(name: "laser", kind: "dir")
-    @user.maker_pins.create!(node_id: laser.node_id)
-    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
-                                    width: 900, height: 900, deviceScaleFactor: 1, mobile: false)
-    visit files_path(folder: laser.node_id)
-    assert_no_selector "body.rail--collapsed"
-    assert_no_selector "body.rail--expanded"
-    marked = page.evaluate_script(<<~JS)
-      Array.from(document.querySelectorAll("aside.rail a.rail-link"))
-        .filter((a) => a.offsetParent !== null && getComputedStyle(a, "::before").content !== "none")
-        .map((a) => [a.title, getComputedStyle(a.querySelector(".rail-label")).display])
-    JS
-    assert_equal [ [ "laser", "none" ] ], marked
-  ensure
-    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
-  end
-
-  # SIGN OUT IS ONE ICON IN THE ICON RAIL (slice 7). It was a bare-text `button_to` with no span
-  # for shell.css's `.rail-btn span { display: none }` to hide, so in the 40px button "Sign out"
-  # wrapped onto two lines. HEIGHT ALONE COULD NOT SEE THAT: the foot's `font: 13px/1` makes two
-  # lines 26px, inside the button's 30px min-height, so the wrapped button measured exactly as
-  # tall as Theme. Hence three assertions — the visible text occupies at most one line box, the
-  # button is no taller than a sibling `.rail-btn`, and its icon draws — each mutation-checked:
-  # deleting the `<span>` (bare text beside the icon) reddens the first, deleting the icon
-  # reddens the third, and restoring the original bare-text `button_to` reddens the first.
-  test "below 1100px Sign out is a single-line icon like its rail-foot siblings" do
-    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
-                                    width: 900, height: 900, deviceScaleFactor: 1, mobile: false)
-    visit files_path
-    assert_no_selector "body.rail--collapsed"
-    sign_out = find("aside.rail .rail-foot form button")
-    foot = page.evaluate_script(<<~JS, sign_out)
+    drawn = page.evaluate_script(<<~JS)
       (() => {
-        const b = arguments[0], theme = document.querySelector("aside.rail .rail-foot [data-action='theme#cycle']");
-        const walk = document.createTreeWalker(b, NodeFilter.SHOW_TEXT);
-        const tops = new Set();
-        for (let t = walk.nextNode(); t; t = walk.nextNode()) {
-          const range = document.createRange();
-          range.selectNodeContents(t);
-          for (const r of range.getClientRects()) if (r.width > 0 && r.height > 0) tops.add(Math.round(r.top));
-        }
-        const icon = b.querySelector("svg.rail-icon"), ir = icon && icon.getBoundingClientRect();
-        return { lines: tops.size, height: b.getBoundingClientRect().height,
-                 sibling: theme.getBoundingClientRect().height, icon: ir ? [ir.width, ir.height] : null };
+        const css = (s, pseudo) => getComputedStyle(document.querySelector(s), pseudo || null);
+        const probe = document.createElement("i"); probe.style.color = "var(--fg)"; probe.style.background = "var(--accent)";
+        document.body.append(probe); const ink = getComputedStyle(probe).color, accent = getComputedStyle(probe).backgroundColor; probe.remove();
+        const strip = document.querySelector("header.strip").getBoundingClientRect();
+        const lit = css("header.strip a.strip-place[aria-current='page']"), other = css("header.strip a.strip-place:not([aria-current])");
+        const row = document.querySelector("aside.column a.column-row[aria-current]");
+        return {
+          strip: [Math.round(strip.height), css("header.strip").borderBottomWidth, css("header.strip").borderBottomColor === ink],
+          lit: [lit.fontWeight, lit.borderBottomWidth, lit.borderBottomColor === ink],
+          other: [other.fontWeight, other.borderBottomColor === ink],
+          head: [css("aside.column .column-head").fontSize, css("aside.column .column-head").textTransform,
+                 css("aside.column .column-head").fontFamily.includes("Courier Prime")],
+          row: [Math.round(row.getBoundingClientRect().height), getComputedStyle(row).fontWeight],
+          square: [getComputedStyle(row, "::before").width, getComputedStyle(row, "::before").backgroundColor === accent]
+        };
       })()
     JS
-    assert_operator foot["lines"], :<=, 1, "Sign out's visible text wraps in the icon rail (#{foot.inspect})"
-    assert_operator foot["height"], :<=, foot["sibling"], "Sign out is taller than Theme in the icon rail (#{foot.inspect})"
-    assert_equal [ 16, 16 ], foot["icon"], "Sign out draws no icon in the icon rail (#{foot.inspect})"
-    assert_equal "Sign out", sign_out["aria-label"]
-  ensure
-    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
-  end
-
-  # ONE ICON RAIL, TWO TRIGGERS (F-S20-1, 2026-10-19). The collapse cookie and a viewport below 1100px
-  # each set only the grid TRACK; the icon rail itself is ONE container query on `.rail` (shell.css),
-  # so both triggers must draw the identical rail. Read as a fingerprint of COMPUTED styles, each arm
-  # against the same expected icon rail, because only a browser resolves a container query. Until
-  # 2026-10-19 each trigger had its own hand-synced copy of the rules, so a rail edit landed twice.
-  # Mutation-checked: dropping `.rail-label` from the `@container` block reddens both arms; deleting
-  # `body.app-shell.rail--collapsed`'s track rule reddens the cookie arm alone; deleting `container`
-  # from `.rail` reddens both.
-  #
-  # THE NARROW ARM DELETES THE COOKIE FIRST (UX audit A2): the second click writes `expanded`, an
-  # explicit choice that now keeps the FULL rail below 1100px, so the width trigger is "no cookie".
-  test "the collapse cookie and a narrow viewport draw the same icon rail" do
-    @root.join("laser").mkpath
-    Library::ScanJob.perform_now(user_id: @user.id)
-    laser = @user.nodes.present.find_by!(name: "laser", kind: "dir")
-    @user.maker_pins.create!(node_id: laser.node_id)
-    parts = [ ".brand-name", ".rail-label", ".rail-user", ".rail-btn span", ".rail-group-head", ".rail-pin .folder-glyph" ]
-    fingerprint = lambda do
-      page.evaluate_script(<<~JS)
-        (() => {
-          const rail = document.querySelector("aside.rail");
-          const style = (sel) => getComputedStyle(rail.querySelector(sel));
-          return {
-            container: `${getComputedStyle(rail).containerType} ${getComputedStyle(rail).containerName}`,
-            width: Math.round(rail.getBoundingClientRect().width),
-            hidden: #{parts.to_json}.filter((sel) => style(sel).display === "none"),
-            brand: style(".brand").justifyContent,
-            link: `${style(".rail-link").justifyContent} ${style(".rail-link").paddingLeft}`,
-            lit: Array.from(rail.querySelectorAll("a.rail-link"))
-              .filter((a) => a.offsetParent !== null && getComputedStyle(a, "::before").content !== "none")
-              .map((a) => a.title)
-          };
-        })()
-      JS
-    end
-    icon_rail = { "container" => "inline-size rail", "width" => 56, "hidden" => parts,
-                  "brand" => "center", "link" => "center 0px", "lit" => [ "laser" ] }
-
-    visit files_path(folder: laser.node_id)
-    expanded = fingerprint.call
-    assert_equal [ [], [ "laser" ] ], [ expanded["hidden"], expanded["lit"] ], "the expanded rail (#{expanded.inspect})"
-
-    find("aside.rail [data-action='rail#toggle']").click
-    assert_selector "body.rail--collapsed"
-    cookie = fingerprint.call
-
-    find("aside.rail [data-action='rail#toggle']").click
-    assert_no_selector "body.rail--collapsed"
-    page.driver.browser.manage.delete_cookie("rail")
-    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
-                                    width: 900, height: 900, deviceScaleFactor: 1, mobile: false)
-    visit files_path(folder: laser.node_id)
-    assert_no_selector "body.rail--collapsed"
-    assert_no_selector "body.rail--expanded"
-    # BOTH ARMS IN ONE ASSERTION, so a failure shows which trigger drew a different rail.
-    assert_equal({ "collapse cookie at 1400px" => icon_rail, "expanded cookie at 900px" => icon_rail },
-                 { "collapse cookie at 1400px" => cookie, "expanded cookie at 900px" => fingerprint.call },
-                 "the two triggers must draw the one icon rail")
+    assert_equal({ "strip" => [ 52, "2px", true ], "lit" => [ "800", "3px", true ], "other" => [ "500", false ],
+                   "head" => [ "12px", "uppercase", true ], "row" => [ 28, "800" ], "square" => [ "6px", true ] }, drawn)
     assert_no_console_errors
-  ensure
-    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
   end
 
-  # A `.brand` OUTSIDE THE RAIL KEEPS ITS WORDMARK BELOW 1100px (F-S20-1, 2026-10-19). The viewport's
-  # copy of the icon-rail rules sat UNSCOPED in shell.css's ≤1099px media query, so it hid
-  # `.brand-name` on every `.brand` on the page: the visitor's header and the landing each carried an
-  # override, and the sign-in card — `/` on every self-hosted box — had none. That copy did a second
-  # thing to every `.brand`, which is why the brand's own box is read too: it centred it and took
-  # its padding (`justify-content: center; padding: 4px 0`), so the card's mark sat alone in the
-  # middle and the header's brand lost its 8px. Signed out, because the card and the landing are the
-  # signed-out doors; demo mode on, because only there is `/` the landing. COMPUTED style at a CDP
-  # viewport (the 375px sweep below says why not resize_to). Mutation-checked: putting the unscoped
-  # `.brand-name { display: none }` back into the ≤1099px block reddens all three surfaces at both
-  # widths, and so does the unscoped `.brand { justify-content: center; padding: 4px 0 }` alone
-  # (every brand centred, the header's padding 0px).
-  test "below 1100px a brand outside the rail keeps its wordmark" do
+  # THE WORDMARK IS A T IN AN ACCENT DISC, THEN THE NAME, ON EVERY SURFACE THAT DRAWS ONE: the strip,
+  # the sign-in card, the visitor's header and the landing. The letter is drawn by `.brand-mark::after`
+  # so no page's markup changed; this reads it back. Demo mode on, because only there is `/` the
+  # landing. Mutation-checked (2026-11-19): `.brand-mark::after` deleted reddens every surface, each
+  # reading "letter" => "none".
+  test "the wordmark draws its T and its name everywhere it appears" do
     prior_demo = ENV["DEMO_ACCOUNT_EMAIL"]
-    find("aside.rail button", text: "Sign out").click
+    seen = { "strip" => wordmark("header.strip") }
+    find("header.strip .strip-account > summary").click
+    find("header.strip .strip-account button", text: "Sign out").click
     assert_current_path root_path
     assert_selector ".auth-card"
     ENV["DEMO_ACCOUNT_EMAIL"] = "demo@example.com"
     User.create!(email: "demo@example.com", password: SecureRandom.base58(32), confirmed_at: Time.current, handle: "demo")
-    seen = {}
-    [ 900, 375 ].each do |width|
-      page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
-                                      width:, height: 900, deviceScaleFactor: 1, mobile: false)
-      { new_user_session_path => ".auth-card", public_explore_path => ".public-header", root_path => ".landing-nav" }.each do |path, surface|
-        visit path
-        assert_selector "#{surface} .brand .brand-name", visible: :all
-        seen["#{surface} at #{width}px"] = page.evaluate_script(<<~JS)
-          (() => {
-            const name = document.querySelector(#{"#{surface} .brand-name".to_json});
-            const brand = getComputedStyle(name.closest(".brand"));
-            return { display: getComputedStyle(name).display, width: Math.round(name.getBoundingClientRect().width),
-                     justify: brand.justifyContent, padding: brand.paddingLeft };
-          })()
-        JS
-      end
+    { new_user_session_path => ".auth-card", public_explore_path => ".public-header", root_path => ".landing-nav" }.each do |path, surface|
+      visit path
+      assert_selector "#{surface} .brand .brand-name"
+      seen[surface] = wordmark(surface)
     end
-    # The wordmark draws, the brand is not centred like the icon rail's, and the visitor's header keeps
-    # its own 8px (the card and the landing set their padding to 0 themselves).
-    drawn_as_icon_rail = seen.reject do |key, brand|
-      brand["display"] != "none" && brand["width"].positive? && brand["justify"] != "center" &&
-        (!key.start_with?(".public-header") || brand["padding"] == "8px")
-    end
-    assert_empty drawn_as_icon_rail, "a brand outside the rail is drawn as the icon rail's below 1100px; every surface: #{seen.inspect}"
+    expected = { "letter" => "\"T\"", "disc" => "50%", "width" => 24, "named" => true }
+    assert_equal seen.transform_values { expected }, seen
     assert_no_console_errors
   ensure
-    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
     prior_demo.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior_demo
-  end
-
-  # THE BUTTON NAMES ITS NEXT STEP, NOT THE STATE (UX audit A6): "Switch to dark" while light is on,
-  # "Use system theme" while dark is, "Switch to light" while system is — in the label, the
-  # aria-label and the title alike, both as the server renders it and as the controller re-renders it.
-  test "the theme button cycles light, dark, system, persists, and names what it will do" do
-    visit files_path
-    theme = -> { page.evaluate_script("document.documentElement.dataset.theme") }
-    button = -> { find("aside.rail [data-action='theme#cycle']") }
-    names = -> { [ button.call.text, button.call["aria-label"], button.call["title"] ] }
-    assert_equal "light", theme.call
-    assert_equal [ "Switch to dark" ] * 3, names.call
-
-    button.call.click
-    assert_equal "dark", theme.call
-    assert_equal [ "Use system theme" ] * 3, names.call
-    visit files_path
-    assert_equal "dark", theme.call
-    assert_equal [ "Use system theme" ] * 3, names.call
-
-    button.call.click
-    assert_equal "system", theme.call
-    assert_equal [ "Switch to light" ] * 3, names.call
-    button.call.click
-    assert_equal "light", theme.call
-    assert_equal [ "Switch to dark" ] * 3, names.call
-    visit files_path
-    assert_equal "light", theme.call
-    assert_no_console_errors
   end
 
   # THE `hidden` ATTRIBUTE BEATS EVERY COMPONENT'S `display` (F-S34-2, 2026-10-19). An author
@@ -329,7 +130,8 @@ class ShellTest < ApplicationSystemTestCase
     # same code with a different seed. Waiting for the sign-in page makes the sign-out a fact.
     # Devise lands a sign-out on root_path, which, with demo mode off as it is here, a visitor sees as
     # the plain sign-in card (landing_test.rb).
-    find("aside.rail button", text: "Sign out").click
+    find("header.strip .strip-account > summary").click
+    find("header.strip .strip-account button", text: "Sign out").click
     assert_current_path root_path
     assert_selector ".auth-card form[action='#{user_session_path}']"
     visit files_path
@@ -340,14 +142,72 @@ class ShellTest < ApplicationSystemTestCase
     assert_no_selector ".flash-stack .flash-alert"
   end
 
-  # Stage 2, S2-5: the field this focuses now posts to SearchController (sitewide), not
-  # FilesController -- rail_controller.js's selector (`.topbar-search input[type=search]`) and
-  # this field's `name` did not change, so the shortcut itself did not need to.
-  test "command-K focuses the top bar's search field" do
+  # SEARCH KEEPS ⌘K AND GAINS `/` (spec §11.5; shell_controller.js). Both focus the strip's box, which
+  # posts to SearchController. `/` is a character a maker types, so in a field it stays the field's,
+  # and the last press, from outside any field on the same page, shows it was live throughout.
+  # Mutation-checked (2026-11-19): shell_controller.js answering `/` without the `takesTyping` check
+  # reddens the field arm ("/ typed into the Files search left it as ''"); without the `/` arm at all,
+  # the first assertion.
+  test "slash and command-K focus the strip's search box, and slash in a field stays typing" do
     visit projects_path
-    find("body").send_keys([ :control, "k" ])
+    find("body").send_keys("/")
     assert_equal "q", page.evaluate_script("document.activeElement.name")
+    assert page.evaluate_script("document.activeElement.closest('header.strip form.strip-search') !== null")
+    assert_equal "", page.evaluate_script("document.activeElement.value"), "the / that focused the box was typed into it"
+    page.evaluate_script("document.activeElement.blur()")
+
+    find("body").send_keys([ :control, "k" ])
+    assert page.evaluate_script("document.activeElement.closest('header.strip form.strip-search') !== null"),
+           "Ctrl+K did not reach the strip's search box"
+    page.evaluate_script("document.activeElement.blur()")
+
+    visit files_path
+    field = find("main input[name='q']")
+    field.click
+    field.send_keys("/")
+    assert_equal "/", field.value, "/ typed into the Files search left it as #{field.value.inspect}"
+    assert page.evaluate_script("document.activeElement.closest('main') !== null"), "/ in a field moved focus to the strip"
     assert_no_console_errors
+  end
+
+  # WIDTH AT 375PX (spec §10): the strip, the column's sheet and the tab bar each stay inside the page,
+  # on every section's column, measured against the CLIENT width (CI's Linux Chrome draws a 15px
+  # scrollbar). The full sweep below measures the page itself on every page. Mutation-checked
+  # (2026-11-19): the ≤719px block keeping the four places in the strip reddens the strip arm ("/: the
+  # strip runs past the screen", right 569 of a 360px client); the sheet's `min(300px, …)` widened to
+  # 400px reddens the sheet arm ("/: the open sheet runs past the screen", 400 of 360).
+  test "at 375px the strip, the open column sheet and the tab bar stay on the screen" do
+    @user.maker_projects.create!(name: "Desk Lamp")
+    @user.maker_inventory_items.create!(name: "M3 bolt")
+    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
+                                    width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
+    [ root_path, files_path, projects_path, inventory_items_path, tools_path, settings_path, help_path ].each do |path|
+      visit path
+      assert_selector "nav.tabbar", visible: true
+      measure = lambda do
+        page.evaluate_script(<<~JS)
+          (() => {
+            // Drawn boxes only: a closed menu's list keeps a layout box Chrome never paints.
+            const right = (sel) => Math.max(0, ...Array.from(document.querySelectorAll(sel))
+              .filter((e) => e.checkVisibility()).map((e) => e.getBoundingClientRect().right));
+            return { strip: right("header.strip, header.strip *"), tabbar: right("nav.tabbar, nav.tabbar *"),
+                     sheet: right("aside.column"), client: document.documentElement.clientWidth,
+                     scroll: document.documentElement.scrollWidth };
+          })()
+        JS
+      end
+      closed = measure.call
+      assert_operator closed["strip"], :<=, closed["client"], "#{path}: the strip runs past the screen (#{closed.inspect})"
+      assert_operator closed["tabbar"], :<=, closed["client"], "#{path}: the tab bar runs past the screen (#{closed.inspect})"
+      find("header.strip button.strip-contents").click
+      assert_selector "aside.column", visible: true
+      open = measure.call
+      assert_operator open["sheet"], :<=, open["client"], "#{path}: the open sheet runs past the screen (#{open.inspect})"
+      assert_operator open["scroll"], :<=, open["client"], "#{path}: the open sheet scrolls the page sideways (#{open.inspect})"
+    end
+    assert_no_console_errors
+  ensure
+    page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
   end
 
   # MUTATION-CHECKED (§15), AND THE MUTATION THAT WORKS IS NOT THE ONE YOU WOULD REACH FOR.
@@ -359,7 +219,8 @@ class ShellTest < ApplicationSystemTestCase
   # 480-719px, not overflow safety, and this guard is honest about not covering them.
   # What DOES redden it is the regression it exists for — the shell failing to collapse: making
   # `@media (max-width: 719px)`'s `body.app-shell` keep `var(--rail-width)` and deleting
-  # `.rail { display: none }` gives "/files?view=list scrolls sideways at 375px (scrollWidth 393)".
+  # `.rail { display: none }` gave "/files?view=list scrolls sideways at 375px (scrollWidth 393)"
+  # (the rail's; the strip's half of it is the 375px test above).
   test "no page scrolls sideways at phone width" do
     # `tag_list:` (stage 2, S2-5, Maker::Taggable) so the sweep below has a real tag page to visit
     # (tag_path("lamp")) and the search results page (search_path(q: "lamp")) has more than the
@@ -572,7 +433,8 @@ class ShellTest < ApplicationSystemTestCase
     # `visit root_path` once at desktop width before narrowing, so the sweep starts from a page
     # rendered after every fixture above existed. (This used to pick a current project through the
     # rail's <select> so Home rendered its hero in full; both went in slice 4 of the 2026-10-08
-    # redesign. Home became Recent in slice 6.)
+    # redesign. Home became Recent in slice 6, and Home again, behind the wordmark, in Shop manual
+    # slice 3; the page's own heading still reads Recent.)
     visit root_path
     assert_selector "main h1", text: "Recent"
     assert_selector ".home-files .recent-grid .grid-card", count: HomeController::RECENT_FILES
@@ -855,7 +717,7 @@ class ShellTest < ApplicationSystemTestCase
       # the signed-in chrome.
       #
       # EACH ONE ALSO NAMES A MARKER OF ITS OWN CONTENT, and that is not decoration: `visit` does
-      # not fail on a 404, and a 404 renders no tabbar and no rail and does not scroll sideways --
+      # not fail on a 404, and a 404 renders no tabbar and no strip and does not scroll sideways --
       # so without a positive assertion a broken route would satisfy all three checks below and this
       # loop would be green over three error pages. The project page's marker is the KiCanvas stage
       # reaching `ready`, which is the strongest of the three: it proves the controller mounted and
@@ -878,7 +740,8 @@ class ShellTest < ApplicationSystemTestCase
         assert_selector marker
         assert_selector "header.public-header"
         assert_no_selector "nav.tabbar"
-        assert_no_selector "aside.rail"
+        assert_no_selector "header.strip"
+        assert_no_selector "aside.column"
         no_sideways_scroll.call(path)
       end
       # KICANVAS_PLACEHOLDER_FETCH: the Schematics preview's `controls="basic"` embed makes Chrome
@@ -890,4 +753,19 @@ class ShellTest < ApplicationSystemTestCase
       page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
     end
   end
+
+  private
+
+    # The wordmark under `scope`: the disc's drawn letter, its rounding and width, and whether the
+    # name beside it draws.
+    def wordmark(scope)
+      page.evaluate_script(<<~JS, scope)
+        (() => {
+          const brand = document.querySelector(arguments[0] + " .brand");
+          const mark = brand.querySelector(".brand-mark"), name = brand.querySelector(".brand-name");
+          return { letter: getComputedStyle(mark, "::after").content, disc: getComputedStyle(mark).borderTopLeftRadius,
+                   width: Math.round(mark.getBoundingClientRect().width), named: name.getBoundingClientRect().width > 0 };
+        })()
+      JS
+    end
 end

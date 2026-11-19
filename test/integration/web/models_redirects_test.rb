@@ -60,8 +60,8 @@ module Web
       get files_models_path
       assert_response :success
       assert_select "h1", text: "3D models"
-      assert_select "header.topbar nav.breadcrumb a[href=?]", files_path, text: "Library"
-      assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "3D models"
+      assert_select "main .page-path nav.breadcrumb a[href=?]", files_path, text: "Library"
+      assert_select "main .page-path nav.breadcrumb [aria-current='page']", text: "3D models"
       assert_select ".model-card[href=?]", model_path(shown), count: 1
       assert_select ".model-card", text: /Gone/, count: 0
       # "ADD MODEL", WITH TWO ROUTES (UX audit 2026-11-01, E3): the primary is a menu, not the zip import alone.
@@ -105,16 +105,20 @@ module Web
       assert_redirected_to files_models_path(status: "printed")
     end
 
-    test "the sidebar lights 3D models on the view, and the phone tab bar lights Library" do
+    # THE 3D MODELS VIEW IS A LIBRARY PAGE (Shop manual spec §11.2, which reversed rule 8's old
+    # exception): it lights Library in the strip and the tab bar alike, and its own row in the
+    # Library's column. A model's page is the same key.
+    test "the 3D models view lights Library, and its own row in the Library column" do
       get files_models_path
-      assert_select "aside.rail [aria-current='page']", count: 1, text: /3D models/
-      assert_select "aside.rail a.rail-link[href=?]", files_models_path, text: /3D models/
+      assert_select "header.strip a.strip-place[aria-current='page']", count: 1, text: "Library"
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: /Library/
+      assert_select "aside.column [aria-current='page']", count: 1
+      assert_select "aside.column a.column-row[href=?][aria-current='page']", files_models_path, text: /3D models/
 
-      # The same key on a model page: ModelsController's pages are the 3D models place.
       get model_path(@user.maker_models.create!(title: "Orphan"))
-      assert_select "aside.rail [aria-current='page']", count: 1, text: /3D models/
+      assert_select "header.strip a.strip-place[aria-current='page']", count: 1, text: "Library"
       assert_select "nav.tabbar a.tabbar-link[aria-current='page']", count: 1, text: /Library/
+      assert_select "aside.column a.column-row[href=?][aria-current='page']", files_models_path, text: /3D models/
     end
   end
 end

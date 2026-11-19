@@ -77,9 +77,11 @@ module Web
       assert_select ".page-head a[href=?]", welcome_path, text: "Take the tour"
     end
 
-    test "the wizard's pages light Recent in the rail" do
+    # THE WIZARD OPENS FROM HOME, SO IT IS HOME'S, and Home lights no place (Shop manual spec §11.2).
+    test "the wizard's pages light no place" do
       get welcome_path
-      assert_select ".rail-link[title=Recent][aria-current=page]"
+      assert_response :success
+      assert_select "header.strip a.strip-place[aria-current]", 0
     end
 
     # ---------------------------------------------------------------- tour
@@ -160,12 +162,14 @@ module Web
       assert_response :not_found
     end
 
-    test "the Files step aims the top bar's Upload at the project folder and makes it the primary" do
+    # Add is an outlined button on every page, here too (Shop manual slice 3): its menu says where the
+    # files go, and Upload is no page's primary any more.
+    test "the Files step aims Add's Upload at the project folder" do
       project, = project_with_rows
       get welcome_files_path(track: "models", project: project.slug)
       assert_response :success
-      assert_select "header.topbar .topbar-upload-caption", text: "Saves to Projects/lamp"
-      assert_select "header.topbar .upload-btn.primary", count: 1
+      assert_select "header.strip .topbar-upload-caption", text: "Saves to Projects/lamp"
+      assert_select "header.strip .upload-btn:not(.primary)", count: 1
       assert_select ".welcome-files code", text: "models/"
       assert_select "a[href=?]", welcome_done_path(track: "models", project: project.slug), text: "I'll add files later"
     end
@@ -178,13 +182,13 @@ module Web
       get welcome_files_path(track: "models", project: project.slug)
       done = welcome_done_path(track: "models", project: project.slug)
       if FileLayer.current.capabilities.port_writable?
-        assert_select "header.topbar form.uploader" do
+        assert_select "header.strip form.uploader" do
           assert_select "input[type=hidden][name=return_to][value=?]", "welcome_models"
           assert_select "input[type=hidden][name=parent_node_id][value=?]", folder.node_id
         end
       else
-        assert_select "header.topbar [data-controller=uploader][data-uploader-redirect-url-value=?]", done
-        assert_select "header.topbar [data-controller=uploader][data-uploader-parent-node-id-value=?]", folder.node_id
+        assert_select "header.strip [data-controller=uploader][data-uploader-redirect-url-value=?]", done
+        assert_select "header.strip [data-controller=uploader][data-uploader-parent-node-id-value=?]", folder.node_id
       end
       # Every other page renders neither: Recent, with the account no longer pending so it stays there.
       @user.update_column(:onboarding_pending, false)
@@ -206,7 +210,7 @@ module Web
       folder.update_column(:deleted, true)
       get welcome_files_path(track: "files", project: project.slug)
       assert_select ".welcome-folder-pending"
-      assert_select "header.topbar .topbar-upload-caption", text: /Saves to/, count: 0
+      assert_select "header.strip .topbar-upload-caption", text: /Saves to/, count: 0
     end
 
     test "Done lists what landed by folder, and the 3D track starts the model catalog" do

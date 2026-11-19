@@ -286,7 +286,7 @@ module Web
     test "one account's page is crumbed Settings, Users, then the account" do
       sign_in_as(@admin)
       get edit_settings_user_path(@member)
-      assert_select ".topbar nav.breadcrumb" do
+      assert_select ".page-path nav.breadcrumb" do
         assert_select "a[href=?]", settings_path, text: "Settings"
         assert_select "a[href=?]", settings_users_path, text: "Users"
         assert_select "[aria-current=page]", @member.email

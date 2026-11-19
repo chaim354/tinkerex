@@ -376,8 +376,8 @@ module Web
     test "the page's breadcrumb leads back to Settings" do
       get settings_shelves_path
 
-      assert_select ".topbar nav.breadcrumb a[href=?]", settings_path, text: "Settings"
-      assert_select ".topbar nav.breadcrumb [aria-current=page]", "Shelves"
+      assert_select ".page-path nav.breadcrumb a[href=?]", settings_path, text: "Settings"
+      assert_select ".page-path nav.breadcrumb [aria-current=page]", "Shelves"
       assert_select ".page-head a[href=?]", settings_path, 0
     end
 

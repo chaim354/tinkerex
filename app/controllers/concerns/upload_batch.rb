@@ -2,8 +2,8 @@
 #
 # Both upload doors took exactly one file — `projects/_upload_control` and `files/index` rendered a
 # file field with no `multiple`, so a maker with a dozen project files opened the picker a dozen
-# times. (The Files page's field has been the top bar's since redesign slice 4,
-# layouts/_topbar_upload.html.erb; it posts to the same door. The other door is a build-log entry's
+# times. (The Files page's field has been the shell's since redesign slice 4, now in the strip's
+# Add, layouts/_strip_add.html.erb; it posts to the same door. The other door is a build-log entry's
 # photo uploader, Projects::UploadsController.) The model importer next door has always accepted a
 # batch, so the app already knew how; the two doors a maker actually lives in did not.
 #

@@ -2,7 +2,7 @@ import { Controller } from "@hotwired/stimulus"
 import { uploadPortFile } from "lib/chunk_upload"
 import { isZip, reportAndLand, splitSelection, uploadSplit } from "lib/zip_unpack"
 
-// THE SHARE/S3 TOP-BAR UPLOAD (layouts/_topbar_upload.html.erb), WHICH UNPACKS A MODEL ZIP
+// THE SHARE/S3 UPLOAD IN THE STRIP'S ADD (layouts/_strip_add.html.erb), WHICH UNPACKS A MODEL ZIP
 // (2026-10-21; spec docs/superpowers/specs/2026-10-20-zip-upload-unpacks-models-design.md).
 //
 // THE FORM IS STILL THE DOOR for every selection without a model zip: `change` submits it exactly

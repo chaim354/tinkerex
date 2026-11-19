@@ -1,38 +1,15 @@
-<%# The phone navigation (structural redesign spec §4.3): four destinations, shown below 720px by
-    shell.css. Lit by ShellHelper#sidebar_current, the same answer as the sidebar.
+<%# THE PHONE TAB BAR (Shop manual spec §7, slice 3): below 720px the strip's four places move here,
+    exactly the four, lit by the same `sidebar_current` (through `place_aria`), so the strip and the
+    bar cannot disagree. shell.css shows it below 720px only.
 
-    THE FIFTH TAB IS "MORE" (UX audit A1): below 720px the rail is display:none, and it held the only
-    way to Settings, Account, Trash, Inventory, Help, the theme and Sign out. More is a `details.menu`
-    (menu_controller.js closes it on an outside tap and on Escape, returning focus to the summary)
-    whose list opens upward as a sheet above the bar (shell.css). Its links come from
-    ShellHelper#tabbar_more_links; the theme choice is the Settings page's own partial, so the two
-    cannot disagree; Sign out is the rail's form. The tab lights through CSS when one of its links
-    carries aria-current, so `sidebar_current` stays the one answer. A summary, not an `<a>`: it is
-    not a place, and the four `a.tabbar-link`s stay the four places the tests count. %>
+    THERE IS NO MORE TAB ANY LONGER. It held what the rail carried beyond four tabs; now the account
+    button's menu, in the strip at every width, holds Settings, Account, Help, the theme and Sign
+    out, and Trash and 3D models are rows in the Library's column. Labelled "Main" like the strip's places,
+    because only one of the two is ever displayed. %>
 <nav class="tabbar" aria-label="Main">
-  <% tabbar_links.each do |label, path, icon, lit| %>
-    <%= link_to path, class: "tabbar-link", "aria-current": (lit ? "page" : nil) do %>
+  <% strip_places.each do |place, label, path, icon| %>
+    <%= link_to path, class: "tabbar-link", "aria-current": place_aria(place) do %>
       <%= rail_icon(icon) %><span><%= label %></span>
     <% end %>
   <% end %>
-  <details class="menu tabbar-more" data-controller="menu">
-    <summary class="tabbar-link"><%= rail_icon(:more) %><span>More</span></summary>
-    <div class="menu-list tabbar-sheet">
-      <% tabbar_more_links.each do |label, path, icon, lit| %>
-        <%= link_to path, class: "menu-item", "aria-current": (lit ? "page" : nil) do %>
-          <%= rail_icon(icon) %><span><%= label %></span>
-        <% end %>
-      <% end %>
-      <div class="menu-sep" role="separator"></div>
-      <div class="tabbar-theme">
-        <span class="tabbar-sheet-label">Theme</span>
-        <%= render "settings/theme" %>
-      </div>
-      <div class="menu-sep" role="separator"></div>
-      <p class="tabbar-sheet-user" title="<%= current_user.email %>"><%= current_user.email %></p>
-      <%= button_to destroy_user_session_path, method: :delete, class: "menu-item" do %>
-        <%= rail_icon(:sign_out) %><span>Sign out</span>
-      <% end %>
-    </div>
-  </details>
 </nav>

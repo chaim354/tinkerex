@@ -23,26 +23,26 @@ require "application_system_test_case"
 # across 49 PRs is why this file exists, and the table carried over unchanged when the fill moved
 # from the accent to ink.
 #
-# WHAT IS COUNTED: controls inside the top bar or `main` whose computed background-color equals the
+# WHAT IS COUNTED: controls inside the strip or `main` whose computed background-color equals the
 # resolved `--fg`, the ink, LESS those that announce a state (`aria-pressed="true"`, `aria-current`,
 # `aria-selected="true"`). Selection is ink too (a pressed toggle, a segmented control's lit part,
 # the chosen tag), and a lit part that SAYS it is lit is a selection, not an action; one that says
 # nothing is indistinguishable from a primary, which is why the Library's Grid/List links carry
-# `aria-current`. The top bar is in because Upload lives there and is the Library's, Recent's and
-# the project hub's one action. Only CONTROLS: an ink chip (`.badge`) is a label, not an action. The
+# `aria-current`. The strip is in because Add lives there: an outlined button on every page (Shop
+# manual slice 3), which a primary must never become. Only CONTROLS: an ink chip (`.badge`) is a label, not an action. The
 # colours are compared against PROBES, never literals, so the guard holds in every theme state.
 # AND THE ACCENT FILLS NOTHING: the same controls, compared against the resolved `--accent`, must be
 # none on every page. Red marks (a figure number, a flag, the current row's square, focus); it never
-# fills a control. `.brand-mark`, the rail's red logo, is not a control and not in the top bar.
+# fills a control. The wordmark's red disc is not a control.
 #
 # MUTATION-CHECKED (§15), each run and restored (re-measured 2026-11-19 for the ink primary):
 #   1. Putting `.btn.primary` back on the accent fill (`background: var(--accent)`): every route
 #      reports [] in the ink table (the landing's too), the fill having left ink.
 #   2. Deleting the `.btn.primary` background/border/color declarations: every route reports []
 #      against its expectation, so the FLOOR half is not decoration.
-#   3. Dropping ProjectsController#show's `primary:` from `use_folder_destination`: /projects/desk-lamp
-#      reports [] — the opt-in-forgotten case, which a ceiling could never have caught.
-#   4. Dropping the Library's Grid/List `aria-current`: /files reports ["Upload", "List"] — a lit
+#   3. Giving the strip's Add summary `primary`: every route reports "Add" first — the strip's
+#      control is counted, so Add cannot quietly become every page's second primary.
+#   4. Dropping the Library's Grid/List `aria-current`: /files reports ["List"] — a lit
 #      segment that announces nothing reads as a second primary.
 #   5. Filling `.btn[aria-pressed="true"]` with the accent: the ink table stays right (a pressed
 #      button is a selection) and the accent table reports "/settings" => ["Light"], so the
@@ -66,7 +66,7 @@ class AccentSpendTest < ApplicationSystemTestCase
     3.times { |i| @project.build_log_entries.create!(user: @user, body: "Bench note #{i}.") }
     # A 3D MODEL'S FOLDER (structural redesign §5.4, slice 5), so the Library's model strip is on a
     # page this guard measures. The strip carries Edit, Delete and "Log a print" and spends none of
-    # them: the folder's one action is still the top bar's Upload.
+    # them, and the folder page spends nothing either.
     @model_folder = FileLayer.current.mkdir(@user, parent_node_id: nil, name: "bracket")
     @user.maker_models.create!(title: "Wall Bracket", folder_node_id: @model_folder.node_id)
   end
@@ -81,30 +81,26 @@ class AccentSpendTest < ApplicationSystemTestCase
     # below needs the setup's account to be the only one, or the demo's door stays shut on share.
     @other_account = User.create!(email: "accent-other@example.com", confirmed_at: Time.current, omniauth_signup: true)
     expected = {
-      # RECENT'S ONE ACTION IS THE TOP BAR'S UPLOAD (slice 6, spec §4.2), although the page shows no
-      # folder: FolderDestination's upload_primary! changes Upload's weight and leaves it asking with
-      # the chooser. The head's "New project" went — New ▾ in the top bar already has Project. (The
-      # front door's primary was "Files" until 2026-09-10, a rail destination rendered as the loudest
-      # control on the page, §2.6; then "New project" until slice 6.)
-      "/" => [ "Upload" ],
-      # The top bar's, now the Library's one action (redesign slice 4).
-      "/files" => [ "Upload" ],
+      # HOME SPENDS NOTHING (Shop manual slice 3). Its one action was the top bar's Upload until the
+      # strip's Add replaced Upload and New ▾ as an outlined button on every page. (The front door's
+      # primary was "Files" until 2026-09-10, then "New project" until slice 6, then Upload.)
+      "/" => [],
+      # The Library spends nothing: Add is outlined, and a selected file's Open is slice 6's.
+      "/files" => [],
       # The model strip above the files adds nothing (slice 5).
-      "/files (a model folder)" => [ "Upload" ],
+      "/files (a model folder)" => [],
       # The Library's 3D models view (slice 5): its one action is the Add model menu (UX audit E3:
       # a model comes from a file already in the library or from a Printables zip, so the primary
-      # opens a menu). No folder is on screen, so the top bar's Upload stays quiet.
+      # opens a menu). The strip's Add is outlined here as everywhere.
       "/files/models" => [ "Add model ▾" ],
       "/projects" => [ "New project" ],
       "/inventory" => [ "New item" ],
-      # THE PROJECT PAGE SPENDS IT ONCE NOW (2026-10-26, the edit area): the top bar's Upload, into
-      # the folder this project keeps its files in. Decision 3 allowed it two, and the second — Save
+      # THE PROJECT PAGE SPENDS NOTHING (Shop manual slice 3): its one action was the top bar's Upload,
+      # which the strip's outlined Add replaced. Decision 3 allowed it two, and the second — Save
       # publishing, the switch that makes the whole thing public — is the Publishing tab's one
       # primary now, below. It rendered SEVEN with this fixture and ten with six log entries.
-      "/projects/desk-lamp" => [ "Upload" ],
-      # THE EDIT AREA'S THREE TABS, one primary each, and the top bar's Upload quiet on all three —
-      # including Page layout, which is the project page in edit mode and so the one that had to
-      # be told (ProjectsController#show's `primary:`).
+      "/projects/desk-lamp" => [],
+      # THE EDIT AREA'S THREE TABS, one primary each, and the strip's Add outlined on all three.
       "/projects/desk-lamp/edit" => [ "Save changes" ],
       "/projects/desk-lamp/publishing" => [ "Save publishing" ],
       "/projects/desk-lamp/layout" => [ "Save layout" ],
@@ -134,12 +130,12 @@ class AccentSpendTest < ApplicationSystemTestCase
       # Devices (pentest H1b, 2026-10-22): no one action; each row's Sign out is a danger link.
       "/settings/devices" => [],
       # THE ONBOARDING WIZARD (2026-11-09): Choose spends nothing, its two cards being equal; Tour spends
-      # its Next, Project its Create, Files the top bar's Upload (aimed at the new project's folder), and
+      # its Next, Project its Create, Files nothing (Add's Upload is aimed at the new project's folder), and
       # Done its Open.
       "/welcome" => [],
       "/welcome/files/tour" => [ "Next: your first project" ],
       "/welcome/models/project" => [ "Create project" ],
-      "/welcome/files/files" => [ "Upload" ],
+      "/welcome/files/files" => [],
       "/welcome/models/done" => [ "Open Desk Lamp" ]
     }
     paths = {
@@ -170,7 +166,7 @@ class AccentSpendTest < ApplicationSystemTestCase
       # directory dies silently when the directory leaves", with a route in place of a glob.
       assert_selector "main", visible: :all
       # The model folder's row pins the strip spending nothing only while the strip is ON the page —
-      # without it, a folder that stopped showing its model would report ["Upload"] just the same.
+      # without it, a folder that stopped showing its model would report [] just the same.
       assert_selector ".model-strip h2", text: "Wall Bracket" if path == paths["/files (a model folder)"]
       filled = filled_controls
       accent[name] = filled["accent"]
@@ -200,9 +196,9 @@ class AccentSpendTest < ApplicationSystemTestCase
 
   private
 
-    # { "ink" => [...], "accent" => [...] }: the labels of every control inside the top bar or `main`
+    # { "ink" => [...], "accent" => [...] }: the labels of every control inside the strip or `main`
     # filled with ink (less those announcing a state, see the header) and with the accent, in document
-    # order (the bar comes first). Labels rather than a bare count so a failure says WHICH controls —
+    # order (the strip comes first). Labels rather than a bare count so a failure says WHICH controls —
     # a count alone sends the next reader back to the browser to find out what it was talking about.
     def filled_controls
       page.evaluate_script(<<~JS)
@@ -224,7 +220,7 @@ class AccentSpendTest < ApplicationSystemTestCase
 
           var sel = ['a', 'button', 'input[type=submit]', 'input[type=button]', 'summary',
                      '.upload-btn > span']
-                      .reduce(function (all, s) { return all.concat(['header.topbar ' + s, 'main ' + s]) }, [])
+                      .reduce(function (all, s) { return all.concat(['header.strip ' + s, 'main ' + s]) }, [])
                       .join(', ')
 
           // AN `<input type=submit>` CARRIES ITS LABEL IN `value`, NOT `textContent`, and the first

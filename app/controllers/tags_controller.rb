@@ -8,7 +8,7 @@ class TagsController < ApplicationController
   GROUP_CAP = 100
 
   # `noun` IS WHAT THE SUBTITLE COUNTS IN (UX audit D11, 2026-11-02): "2 projects · 1 3D model", where
-  # it read "3 things". "3D models" is the rail's word for that catalog, which "Models" was not.
+  # it read "3 things". "3D models" is the Library column's word for that catalog, which "Models" was not.
   def show
     @tag = current_user.maker_tags.find_by!(name: params[:name].to_s.strip.downcase)
     # `catalogued`, AS SEARCH AND THE 3D MODELS VIEW START: a model the maker removed from the catalog

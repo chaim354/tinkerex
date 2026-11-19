@@ -21,8 +21,8 @@ module Web
     test "the list's crumbs say Inventory › Locations, with no ghost button named for the parent" do
       get locations_path
       assert_select "title", text: "Locations — Tinkerex"
-      assert_select "header.topbar nav.breadcrumb a[href=?]", inventory_items_path, text: "Inventory"
-      assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "Locations"
+      assert_select "main .page-path nav.breadcrumb a[href=?]", inventory_items_path, text: "Inventory"
+      assert_select "main .page-path nav.breadcrumb [aria-current='page']", text: "Locations"
       assert_select ".page-head a[href=?]", inventory_items_path, count: 0
       assert_no_match(/ -- /, css_select("main").text)
       assert_select "form.settings-add input[name='location[description]']"

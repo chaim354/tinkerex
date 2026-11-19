@@ -248,7 +248,7 @@
 - **ONE CAP, NOT TWO, AND THE SECOND IS OWED BY WHOEVER ADDS A NUDGE.** `MAX_MODELS` bounds an
   unattended run's churn and is absolute rather than a percentage, because the intended first run
   catalogues 100% of what is there. `Maker::ProjectIntake` carries a second, smaller cap only
-  because it has an entry point inside a browser request; nothing here does. **The top bar's unpack
+  because it has an entry point inside a browser request; nothing here does. **The strip Upload's unpack
   nudge (`Files::UnpacksController#finish`, 2026-10-21) owes no second cap:** it only ENQUEUES
   `Maker::ModelIntakeJob` and never sweeps in the request, so the run is the ordinary job — bounded
   by `MAX_MODELS`, and a nudge while another run holds the job's `limits_concurrency` slot is

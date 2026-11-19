@@ -49,7 +49,7 @@ class ApplicationController < ActionController::Base
   before_action :require_library_folder!,
                 if: -> { !devise_controller? && user_signed_in? && Tinkerex::LibraryRoot.pending? }
 
-  # The top bar renders on every signed-in page and needs both: which upload flow this deployment
+  # The strip's Add renders on every signed-in page and needs both: which upload flow this deployment
   # drives (`capabilities.port_writable?`) and which folder it uploads into.
   include LibraryCapabilities
   include FolderDestination
