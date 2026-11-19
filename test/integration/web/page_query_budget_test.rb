@@ -324,8 +324,9 @@ module Web
       assert_operator css_select("aside.column .project-contents a.column-row").size, :>, LARGE,
                       "the contents column must list the sections the page drew"
       # THE TIDY-UP PLATE WAS UNDER MEASUREMENT (the Shop manual's §9): full at the large size, so its
-      # checks ran over every growing row and its cells rendered. MUTATION-CHECKED in the report that
-      # landed it: a per-suggestion dismissal lookup in Maker::TidyUp reddens the budget above.
+      # checks ran over every growing row and its cells rendered. MUTATION-CHECKED: a dismissal lookup
+      # per suggestion in Maker::TidyUp#undismissed reddens the budget above: "projects#show issued 58
+      # queries at the small size and 82 at the large one".
       assert_select "#tidy-up li.plate-cell", Maker::TidyUp::SHOWN
     ensure
       Maker::Addons::Source.reset!
@@ -1138,7 +1139,9 @@ module Web
       # files query really was cut by its LIMIT while the per-row work stayed flat.
       assert_select ".home-files .grid-card", count: HomeController::RECENT_FILES
       # THE TIDY-UP ROWS WERE UNDER MEASUREMENT: at the large size Needs attention holds the capped
-      # count of them, so both lists were read past their limit.
+      # count of them, so both lists were read past their limit. MUTATION-CHECKED: looking each row's
+      # project up by its folder (Maker::TidyUp::Attention#project_holding) instead of the one index
+      # reddens it: "home#index issued 24 queries at the small size and 75 at the large one".
       assert_select ".home-attention .tidy-attention", count: HomeController::ATTENTION_TIDY
       assert_operator large, :>, HomeController::RECENT_FILES
       assert_operator small, :<, HomeController::RECENT_FILES

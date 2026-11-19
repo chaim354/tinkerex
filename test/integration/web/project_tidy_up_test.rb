@@ -97,7 +97,7 @@ module Web
       get project_path(@project)
       assert_select "li.plate-cell", 1
       assert_select "li.tidy-cell--export-older", count: 0
-      assert_select ".column-row-note", text: "1"
+      assert_select "aside.column a.column-row[href='#tidy-up'] .column-row-note", text: "1"
     end
 
     test "Dismiss on a suggestion the page no longer raises records nothing" do

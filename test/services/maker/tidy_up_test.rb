@@ -124,14 +124,22 @@ class Maker::TidyUpTest < ActiveSupport::TestCase
     assert_empty tidy.all
   end
 
-  test "an export whose source is in the trash, or a photo link, is not a suggestion" do
+  test "an export whose source is in the trash is not a suggestion" do
     folder = project_folder_rows!(@user, @project)
     source = file!("a.lbrn2", folder, mtime: 2_000)
     export = file!("a.svg", folder, mtime: 1_000)
     @user.maker_file_links.create!(from_node_id: export.node_id, to_node_id: source.node_id, kind: "derived_from")
-    photo = file!("a.jpg", folder, mtime: 1_000)
-    @user.maker_file_links.create!(from_node_id: photo.node_id, to_node_id: source.node_id, kind: "photo_of")
     source.update!(deleted: true)
+
+    assert_empty tidy.all
+  end
+
+  # A photograph older than the file it shows is a photo, not an export.
+  test "a photo older than the file it depicts is not a suggestion" do
+    folder = project_folder_rows!(@user, @project)
+    depicted = file!("lamp.stl", folder, mtime: 2_000)
+    photo = file!("lamp.jpg", folder, mtime: 1_000)
+    @user.maker_file_links.create!(from_node_id: photo.node_id, to_node_id: depicted.node_id, kind: "photo_of")
 
     assert_empty tidy.all
   end
@@ -193,8 +201,12 @@ class Maker::TidyUpTest < ActiveSupport::TestCase
     @project.update_column(:folder_node_id, root.node_id)
     File.write(File.join(library_root, "catan", "notes.md"), "new\n")
 
-    assert_empty tidy(capabilities: REMOTE).all
-    assert_empty Maker::TidyUp.repos_in(@user, Maker::ProjectFolderListing.new(@user, @project), @project, capabilities: REMOTE)
+    # Each gate on its own: the checks given the repository anyway, and the lookup that finds it.
+    listing = Maker::ProjectFolderListing.new(@user, @project)
+    repos = Maker::TidyUp.repos_in(@user, listing, @project, capabilities: LOCAL)
+    assert_equal [ root.node_id ], repos.map { |r| r.node.node_id }
+    assert_empty Maker::TidyUp.for(user: @user, project: @project, listing:, repos:, capabilities: REMOTE).all
+    assert_empty Maker::TidyUp.repos_in(@user, listing, @project, capabilities: REMOTE)
   end
 
   # --- dismissals ----------------------------------------------------------------------------

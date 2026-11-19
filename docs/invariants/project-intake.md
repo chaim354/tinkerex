@@ -349,6 +349,10 @@
   is not listed under the Files panel's Loose group — Loose is "what the next pass will file", and
   this file never is — while a second README-named file at the root stays listed, its row saying
   it stays (`Maker::LooseFilingNotes`). Guard: `project_repo_card_test.rb`.
+  **The tidy-up list reads the same prediction** (`Maker::TidyUp`, 2026-11-19): its "Loose file"
+  cell is `LooseFilingNotes.blocked`, never a second copy of the rule, so the cell and the Files
+  panel's row cannot disagree about which file the next pass will not file. It suggests only where
+  filing runs (autofile on, not inside a working tree, not a model's bundle file) and files nothing.
 
 - **ROOT = INBOX, PLUS WHAT `other/` NO LONGER HOLDS — AND IT IS STATELESS.** Files at a project
   folder's own root are filed; anything in any other subfolder — including one filed "wrong" by

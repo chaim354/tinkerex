@@ -220,7 +220,7 @@ starts by writing the real list down where rule 12 can point at it, then correct
 |---|---|---|---|
 | version stacks | **built** (2026-11-19): `Maker::VersionStacks` (the rule in its header), drawn by the Library's rows and tiles, a project's Files and folder panels, and Search | group by name: a version number, a copy number, "backup". A toggle per panel, and a way to pull one file out. Reused by the Library and Search. Settled while building: the Library's and Search's switch is one `files_stacks` cookie, a panel's is saved on the project row (`panels["unstacked"]`, off-only); a stack opens in place; a backup that stacks leaves the Files panel's Backups group; a paged folder pages figures | medium |
 | figure numbers | nothing | number files by panel order, then file order (§11.3) | medium |
-| tidy-up list | nothing | four checks: loose files, uncommitted repository changes, an export older than its source, a sheet that disagrees with a file. Stored dismissals | large |
+| tidy-up list | nothing | four checks: loose files, uncommitted repository changes, an export older than its source, a sheet that disagrees with a file. Stored dismissals. **Three are built (`Maker::TidyUp`); the sheet check waits on a sheet cell that cites a file and a convention for which cell holds which dimension** | large |
 | next step on Home and Projects | `Maker::Task.open` | the first open task per project in one query. Built: a Doing before a Todo, then the panel's order (`Maker::Task.next_steps_for`); Home's Carry on covers the projects Active projects lists, with no checkbox (the panel's tick answers for the project page) | small |
 | To buy | `Maker::BomRollup#short`, per project | the shortfalls of every active project in one list. Built: open projects' current BOMs, one row per item (`Maker::ToBuy`), on Inventory's unfiltered page; Buy is the shortfall, not a top-up to the item's minimum, and the column's "Needed by a project" waits for its own filter | medium |
 | folder tree in the Library | only in the choosers, through `library_children` | the same tree as the left column, remembering what is open | medium |
@@ -241,6 +241,24 @@ things the rule above does not settle yet, and the test needs:
   name the expected groups, not count them.
 - **A copy number against a part number.** "game box 2" has the shape of Finder's copy number,
   which the rule groups, so the rule must say how a copy number differs from a part number.
+
+**The tidy-up list, as built (2026-11-19).** Four things the row above left open, decided:
+
+- **A sheet that disagrees with a file is not a check yet, because it cannot be.** A `maker_sheets`
+  grid is free-form JSON with no link to any node and no typed cells, so "disagrees" has no
+  definition. It needs a sheet cell that cites a file (a node id) plus a convention for which cell
+  holds which dimension, so the two values have something to be compared by.
+- **A loose file is one the filing pass cannot file** — its folder already holds the name
+  (`Maker::LooseFilingNotes`'s prediction) — and only where filing runs: autofile on, not inside a
+  working tree, not a model's bundle file, never a README. A file the next pass will file is the
+  pass's job, not a suggestion.
+- **A dismissal holds while its subject's state is unchanged**: the path that blocks a loose file,
+  the source's mtime for an export, the set of changed paths for a repository (plus: no save through
+  the app since). A new occurrence comes back by itself. The server computes the state, never the
+  browser.
+- **Home's NOT COMMITTED counts only what was saved through the app** (`Maker::RepoEdit`), and says
+  so: Home lists every project, and asking git per project per visit is a working-tree walk each on
+  a NAS. The project page asks git. OUT OF DATE is the project page's own check, one query on both.
 
 (`design-system.md` still says the top bar drives the Files page's flat `?q=`. That line is stale.)
 
