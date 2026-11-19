@@ -300,6 +300,7 @@ module Maker
       # rule 14). `unpublished` rides along unchanged, because Maker::PublicProject#permits? asks it
       # and must not mistake a panel the maker merely hid for one they kept private.
       def published = with(hidden: hidden | unpublished)
+
       def folder?(key) = key.to_s.start_with?(FOLDER_PREFIX)
       def folder_id(key) = key.to_s.delete_prefix(FOLDER_PREFIX)
       def block?(key) = key.to_s.start_with?(BLOCK_PREFIX)

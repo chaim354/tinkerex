@@ -716,10 +716,10 @@ class ProjectsController < ApplicationController
   # a crafted request names outside it is ignored — it can never put a key the layout does not know
   # in the column.
   #
-  # A FORM THAT DOES NOT CARRY THE LIST LEAVES THE CHOICE ALONE. Details posts here too, and so does
-  # the Publishing tab's handle-less branch; neither is about panels. The tab's own form always
-  # carries it, through a blank hidden entry that makes "every box unticked" an answer rather than
-  # an absence. A value that is not a list of strings is read as no answer, never a 500.
+  # A FORM THAT DOES NOT CARRY THE LIST LEAVES THE CHOICE ALONE. Details posts here too, and so can a
+  # hand-made or API-shaped PATCH; neither is about panels. The tab's own form always carries it,
+  # through a blank hidden entry that makes "every box unticked" an answer rather than an absence.
+  # A value that is not a list of strings is read as no answer, never a 500.
   #
   # STORED BESIDE THE ARRANGEMENT, NOT IN IT: the editor's Save carries it through
   # (Maker::LayoutDocument#column) and Reset keeps it (Projects::PanelsController#destroy), because
