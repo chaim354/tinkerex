@@ -28,6 +28,10 @@
   <span class="panel-strip-name">
     <b data-layout-editor-target="name"><%= @panel_layout.title_for(key, label) %></b>
     <% if @panel_layout.folder?(key) %><span class="mono muted"><%= label %>/</span><% end %>
+    <%# LEFT OFF THE PUBLIC PAGE (2026-11-19, the published view): said where the maker arranges the
+        page, because the editor is where they would otherwise wonder why a panel they see is not on
+        their public page. Read-only here; the Publishing tab is where it changes. %>
+    <% if @panel_layout.unpublished?(key) %><span class="muted panel-strip-unpublished">not on the public page</span><% end %>
   </span>
   <span class="panel-strip-controls">
     <button type="button" class="linkbtn small" data-action="layout-editor#up" aria-label="Move <%= label %> up">▲</button>

@@ -577,6 +577,11 @@
   .publish-option-label { font-weight: 600; font-size: 13px; }
   .publish-option-meaning { font-size: 12px; }
   .publish-warning { font-size: 12px; }
+  /* The published view's boxes (2026-11-19, projects/_public_panels): the visibility rows' own grid,
+     a sentence above and below, and a long folder name wrapping rather than pushing the page
+     sideways at 375px (design-system rule 11). */
+  .publish-panels > p { margin: 0; font-size: 12px; }
+  .publish-panels .publish-option-label { overflow-wrap: anywhere; min-width: 0; }
   .publish-url, .publish-unlisted { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
                                     margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
   .publish-url .mono, .publish-unlisted .mono { font-size: 12px; overflow-wrap: anywhere; }

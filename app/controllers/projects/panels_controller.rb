@@ -37,8 +37,14 @@ module Projects
     # would freeze this release's defaults onto the row and stop the project following its own kind
     # — including after the maker changes that kind on the edit form. Views, widths, titles and
     # intros go with it, by the same argument: they are the arrangement, not a separate setting.
+    #
+    # WHAT THE PUBLIC PAGE LEAVES OUT STAYS (2026-11-19, the published view). That IS a separate
+    # setting — the Publishing tab's — and a reset that cleared it would publish every panel the
+    # maker kept private, files and all, from a button that says it resets the layout. The column
+    # keeps that one key, or goes back to nil when there is nothing kept back.
     def destroy
-      @project.update!(panels: nil)
+      kept = Array(stored["unpublished"])
+      @project.update!(panels: kept.any? ? { "unpublished" => kept } : nil)
       redirect_to project_path(@project), notice: "Reset the page layout to the #{kind_label} defaults."
     end
 

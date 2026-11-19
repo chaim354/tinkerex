@@ -25,9 +25,10 @@
     <% when "text" %>
       <% if block.heading.present? %><h2><%= block.heading %></h2><% end %>
       <%# RELATIVE LINKS RESOLVE AGAINST THE PROJECT FOLDER THROUGH THE PUBLIC SEAM — the README's own
-          rule and its own lambda (`pub.file_url_for`), so a block links to a file exactly as the
-          README does; an unresolvable path is plain text (found in review). %>
-      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s, &Maker::Markdown.folder_resolver(pub.listing.path, pub.listing.path_index) { |id| pub.file_url_for(id) }) %></div>
+          rule and its own lambda (`pub.authored_url_for`), so a block links to a file exactly as the
+          README does; an unresolvable path is plain text (found in review), and so is a file in a
+          folder the maker left off the public page (2026-11-19), which the route would answer 404. %>
+      <div class="markdown"><%= Maker::Markdown.render(block.body.to_s, &Maker::Markdown.folder_resolver(pub.listing.path, pub.listing.path_index) { |id| pub.authored_url_for(id) }) %></div>
     <% when "link" %>
       <%= link_to block.url, class: "block-link-card", rel: "noopener nofollow", target: "_blank" do %>
         <span class="block-link-title"><%= block.heading %></span>

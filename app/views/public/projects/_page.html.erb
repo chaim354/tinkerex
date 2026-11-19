@@ -163,18 +163,16 @@
   one layout, read off the project through Maker::PublicProject#visible_panels, so the maker's page
   and a visitor's cannot disagree about what is hidden.
 
-  THE MAP IS THE WHOLE DEFINITION OF "HAS A PUBLIC FACE". `tasks`, `sheets` and `publish` are
-  absent from it and are therefore absent from a visitor's page WHATEVER the order says, which is
-  exactly what they were before this loop existed -- there is no second list to keep in step, and a
-  maker who drags Tasks to the top does not publish their task list. `readme` joined it on
-  2026-11-05 — the README used to be pinned above the hero outside this loop.
+  AND IT IS THE PUBLISHED VIEW (2026-11-19; the Shop manual's spec §3 and §9): a panel the maker
+  left off the public page on the Publishing tab is hidden here and nowhere else, because
+  `pub.layout` is `Layout#published`. Nothing on this page asks about it a second time.
 
-  EVERY PARTIAL IS NAMED WITH ITS FULL PATH, AND MUST STAY THAT WAY -- including `repo_card` below.
-  A bare `render "photos"` resolves against the CONTROLLER's prefixes, not this file's directory:
-  under Public::ProjectsController that is public/projects/_photos, but under
-  ProjectsController#preview it is projects/_photos, the maker's OWN panel with its composer,
-  rendered into the preview with nothing going red. `files` has no private twin and would raise;
-  the others would silently render the wrong page.
+  WHICH PANELS HAVE A PUBLIC FACE IS Maker::PublicProject::PANEL_PARTIALS (the map lived here until
+  the Publishing tab had to list the same panels): `tasks`, `sheets`, `calculations` and `models`
+  are absent from it and are therefore absent from a visitor's page WHATEVER the order says.
+
+  EVERY PARTIAL IS NAMED WITH ITS FULL PATH, AND MUST STAY THAT WAY -- including `repo_card` below,
+  and the map's own entries (Maker::PublicProject::PANEL_PARTIALS says why).
 
   WIRING IS THE ONE SPECIAL CASE and it is not new: the shared projects/_wiring partial is what the
   visitor gets, with `editable: false`, and it has always been wrapped in a check for any
@@ -200,13 +198,6 @@
   leaves this page entirely, along with the bundle. The key carries the node id, `pub.folder_dir`
   resolves it against the same listing the layout was built from, and the map below never sees it.
 %>
-<% public_panels = { "readme"      => "public/projects/readme",
-                     "attachments" => "public/projects/files",
-                     "photos"      => "public/projects/photos",
-                     "schematics"  => "public/projects/schematics",
-                     "build_log"   => "public/projects/build_log",
-                     "bom"         => "public/projects/bom",
-                     "releases"    => "public/projects/releases" } %>
 <%#
   EVERY PANEL IN A SLOT WITH ITS WIDTH (2026-09-09, the page editor; spec §3): the same
   `div.panel-slot.panel--<width>` the maker's page renders, from the same layout, so the visitor
@@ -239,7 +230,7 @@
     <% elsif pub.layout.folder?(key) %>
       <%= render "public/projects/folder_panel", pub: pub, key: key, dir: pub.folder_dir(key),
                  view: pub.layout.view_for(key) %>
-    <% elsif (partial = public_panels[key]) %>
+    <% elsif (partial = Maker::PublicProject::PANEL_PARTIALS[key]) %>
       <%= render partial, pub: pub %>
     <% end %>
   <% end %>

@@ -237,6 +237,7 @@ module Maker
         "widths" => sized.to_h { |e| [ e["key"], e["width"] ] },
         "titles" => arranged.filter_map { |e| [ e["key"], e["title"] ] if e["title"] }.to_h.merge(tabs.to_h { |e| [ e["key"], e["name"] ] }),
         "intros" => arranged.filter_map { |e| [ e["key"], e["intro"] ] if e["intro"] }.to_h }
+        .merge(published_choice(panels))
     end
 
     # --- what Save writes beside the column -------------------------------------------------------
@@ -263,6 +264,19 @@ module Maker
     end
 
     private
+
+    # WHAT THE PUBLIC PAGE LEAVES OUT RIDES THROUGH SAVE UNCHANGED (2026-11-19, the published view).
+    # It is not the arrangement: the Publishing tab sets it, so it is in neither the draft nor the
+    # YAML, and a layout pasted from another project cannot publish a panel this one kept private.
+    # But #column is the WHOLE column Save writes, so a key it did not carry would be dropped — and
+    # a dropped key is a panel published by a Save that said nothing about publishing. Carried from
+    # the layout this document was built on, for the keys the draft still holds (a block deleted in
+    # the editor takes its key with it). ABSENT, NOT EMPTY, when nothing is kept back, so the column
+    # of every project that publishes everything is exactly what it was before this key existed.
+    def published_choice(panels)
+      kept = @layout.unpublished & panels.map { |e| e["key"] }
+      kept.any? ? { "unpublished" => kept } : {}
+    end
 
     def entry(key)
       return { "key" => key, "kind" => "tab", "name" => @layout.tab_name_for(key) } if @layout.tab?(key)

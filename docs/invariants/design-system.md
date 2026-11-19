@@ -328,6 +328,34 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     section and must leave the number standing; it is taken only once the body rendered
     (`ProjectsHelper#section_number!`), so a panel with nothing to show takes none, and the editor
     numbers nothing.
+    **The public page is the published view** (2026-11-19, the Shop manual's spec §3 and §9): the
+    maker leaves panels off it with the Publishing tab's "On the public page" boxes, saved by its
+    one Save publishing, and their own page keeps every panel. The choice is `panels["unpublished"]`,
+    read by `layout_for` into `Layout#unpublished` like `hidden` (against the folders that exist now,
+    minus `ALWAYS`: Files and Photos are what publishing a project is), and applied in ONE place,
+    `Layout#published`, which is what `Maker::PublicProject#layout` returns. So the page, its feed,
+    its bundle and its BOM CSV lose a panel left out with no gate of their own, and so do the owner's
+    preview, the Photos and Schematics panels, the repository cards and the hero. Five things not to
+    undo. **Left out is unpermitted, hidden is not**: `#permits?` refuses every file under a folder
+    left out, asked by LOCATION and before `claimed?`, because `Maker::ProjectIntake` attaches every
+    file in the folder to the project and an attachment arm left open would keep the folder
+    downloadable. The one exception is a build-log entry's own photo while the build log is on the
+    page. A panel the maker HID still delivers its files (decision 2, `public_bundle_test.rb`).
+    Authored links (a README's, a text block's) to a file left out unwrap to their words
+    (`#authored_url_for`), and the /u/:handle card refuses such a cover as the hero does.
+    **No preset leaves anything out**, so a project that never chose publishes what it shows.
+    **Every write of the arrangement carries the choice**: the editor's Save
+    (`Maker::LayoutDocument#column` takes it from the layout and never puts it in the draft or the
+    YAML, so a pasted layout cannot publish a panel) and Reset (`Projects::PanelsController#destroy`
+    keeps the key). A write that dropped it would publish what the maker kept private. **A form
+    that sends no list leaves the choice alone**: the tab's blank hidden entry is what makes "every
+    box unticked" an answer (`ProjectsController#assign_public_panels`). **Which panels have a
+    public face is `Maker::PublicProject::PANEL_PARTIALS`** (plus Wiring, the folders and the
+    blocks: `.faced?`), read by the public page's loop and by the tab, so the tab never offers a
+    panel the visitor's page does not draw. Known gap: on share and s3 a folder renamed in Finder
+    gets a new id, so it is published again until unticked (`Maker::ProjectKind::FOLDER_PREFIX`).
+    Guards: `published_view_test.rb`, `page_query_budget_test.rb` ("keeping folders off the public
+    page"), `project_kind_test.rb`, `layout_document_test.rb`.
 
 **A PANEL'S VIEW BUTTONS SWITCH IT IN PLACE, AND THE DOOR STILL RENDERS NOTHING (2026-11-16).** A
 press on the page posts `in_place` (`projects/_view_toggle`). `Projects::PanelsController#in_place`

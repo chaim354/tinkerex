@@ -1,0 +1,50 @@
+<%#
+  WHAT THE PUBLIC PAGE SHOWS (2026-11-19, the Shop manual's published view; its spec §3 and §9):
+  one box per panel a visitor's page can draw, in the page's own order, ticked while the panel is
+  on the public page. The maker's own page keeps every panel whatever is ticked here — that is the
+  whole difference from Hide in the layout editor, which arranges the maker's page and reaches the
+  visitor's only as a side effect.
+
+  A PART OF THE PUBLISH FORM, SAVED BY ITS ONE "Save publishing". No button of its own, so the tab
+  keeps its one ink primary (design-system.md rule 13). ProjectsController#assign_public_panels
+  reads the boxes: every panel Maker::PublicProject.keepable offers and the maker left unticked is
+  stored as kept off the page. The BLANK HIDDEN ENTRY is what makes "every box unticked" an answer
+  rather than an absence — a form that sends no list at all (Details) leaves the choice alone.
+
+  WHICH PANELS, AND WHICH CANNOT BE UNTICKED, ARE Maker::PublicProject's: `faced?` is the public
+  page's own map, so this list never offers a panel the visitor's page does not draw; Files and
+  Photos (Maker::ProjectKind::ALWAYS) render ticked and disabled, because publishing a project
+  publishes its folder's root. The panels with no public face at all are named once, under the
+  list, from the same constants.
+
+  A PANEL THE MAKER HID STILL HAS ITS BOX, saying so: it is off the public page while hidden, and
+  its box is what applies once it is shown again.
+
+  Locals: layout (the project's Maker::ProjectKind::Layout as the column holds it, or as a refused
+  save assigned it); labels (ProjectsController#panel_labels).
+%>
+<% offered = Maker::PublicProject.keepable(layout) %>
+<% never = (Maker::Project::PANELS - Maker::PublicProject::FACED).map { |key| Maker::Project::PANEL_LABELS.fetch(key) } %>
+<fieldset class="publish-options publish-panels">
+  <legend>On the public page</legend>
+  <p class="muted">Your own page keeps every panel. A folder you leave off keeps its files private,
+    except a photo a build-log entry shows.</p>
+  <%= hidden_field_tag "project[public_panels][]", "", id: nil %>
+  <% layout.order.select { |key| Maker::PublicProject.faced?(layout, key) }.each do |key| %>
+    <% always = !offered.include?(key) %>
+    <% label = labels.fetch(key, key) %>
+    <% title = layout.title_for(key, label) %>
+    <label class="publish-option">
+      <%= check_box_tag "project[public_panels][]", key, always || !layout.unpublished?(key),
+                        id: nil, disabled: always %>
+      <span class="publish-option-label"><%= title %></span>
+      <span class="muted publish-option-meaning">
+        <%# A FOLDER SAYS SO, and names itself only when the maker titled its panel something else —
+            "cnc cnc/" on every row said the same word twice. %>
+        <% if layout.folder?(key) %><% if title == label %>folder<% else %><span class="mono"><%= label %>/</span><% end %><% end %>
+        <% if always %>always shown<% elsif layout.hidden?(key) %>hidden on your page too<% end %>
+      </span>
+    </label>
+  <% end %>
+  <p class="muted">Never on the public page: <%= never.to_sentence(last_word_connector: " and ") %>.</p>
+</fieldset>

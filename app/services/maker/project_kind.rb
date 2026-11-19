@@ -209,6 +209,10 @@ module Maker
     # is a NEW folder to this layout — its placement, its view and its HIDDEN state all reset to the
     # defaults, which puts a folder the maker had hidden back on the visitor's page and into the
     # bundle until they hide it again. Totality is what makes that a reset rather than a stale key.
+    # THE SAME RESET REACHES `unpublished` (2026-11-19): a folder kept off the public page and then
+    # renamed in Finder on share or s3 is published again — page, bundle and downloads — until the
+    # maker unticks it on the Publishing tab again. Recorded, not solved: a path key would break on
+    # every chunk_remote move instead.
     FOLDER_PREFIX = "folder:".freeze
 
     # `block:<key>` — a content block (2026-09-09, content blocks; spec §4). The key is the row's own
@@ -264,13 +268,21 @@ module Maker
     # way of drawing its files, chosen in its head and saved on the row (Projects::PanelsController).
     # SPARSE AND OFF-ONLY: stacking is the default, so an absent key stacks, and a panel added later
     # stacks without anyone having saved it. Only keys that draw files may be named (.stacks?).
+    #
+    # `unpublished` IS THE PANELS THE PUBLIC PAGE LEAVES OUT (2026-11-19, the Shop manual's published
+    # view; its spec §3 and §9), chosen on the edit area's Publishing tab. A DIFFERENT QUESTION FROM
+    # `hidden`, which arranges the MAKER's page and so reaches the visitor's only as a side effect:
+    # an unpublished panel stays on the maker's page and leaves the visitor's, and #published is the
+    # one place the two are combined. Filtered like `hidden` — the vocabulary without the tab keys,
+    # minus ALWAYS — so the folder root and the photos are always on a published page.
     Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids, :block_kinds,
-                         :shelf_views, :shelf_groups, :root_repo, :unstacked) do
+                         :shelf_views, :shelf_groups, :root_repo, :unstacked, :unpublished) do
       # SHELVES ARE OPTIONAL (2026-10-20): a caller with no shelves passes none. So is the root's
       # repository (2026-11-19): a caller with no listing knows of none. So are the stack switches
-      # (2026-11-19): a caller that never read them stacks everywhere, the default.
-      def initialize(shelf_views: {}, shelf_groups: {}, root_repo: false, unstacked: [], **rest) =
-        super(shelf_views:, shelf_groups:, root_repo:, unstacked:, **rest)
+      # (2026-11-19): a caller that never read them stacks everywhere, the default. And so is
+      # publishing (2026-11-19): a layout built with no choice publishes every panel it shows.
+      def initialize(shelf_views: {}, shelf_groups: {}, root_repo: false, unstacked: [], unpublished: [], **rest) =
+        super(shelf_views:, shelf_groups:, root_repo:, unstacked:, unpublished:, **rest)
 
       # Does this panel draw its versions as stacks? The default for every panel that can.
       def stacked?(key) = ProjectKind.stacks?(key) && !unstacked.include?(key.to_s)
@@ -279,6 +291,16 @@ module Maker
       # `to_s` like `folder?` and `view_for` below, so a Symbol asks the same question a String does.
       def visible?(key) = order.include?(key.to_s) && !hidden.include?(key.to_s)
       def hidden?(key) = hidden.include?(key.to_s)
+      def unpublished?(key) = unpublished.include?(key.to_s)
+
+      # THE PUBLISHED VIEW: this layout as a visitor's page reads it — every panel the maker hid OR
+      # left off the public page is hidden. Data#with, never a write. Maker::PublicProject#layout is
+      # its caller, and that one layout feeds the public page, its feed, its bundle and its BOM CSV,
+      # so a panel left out here is left out of all four with no gate of its own (design-system.md
+      # rule 14). `unpublished` rides along unchanged, because Maker::PublicProject#permits? asks it
+      # and must not mistake a panel the maker merely hid for one they kept private.
+      def published = with(hidden: hidden | unpublished)
+
       def folder?(key) = key.to_s.start_with?(FOLDER_PREFIX)
       def folder_id(key) = key.to_s.delete_prefix(FOLDER_PREFIX)
       def block?(key) = key.to_s.start_with?(BLOCK_PREFIX)
@@ -463,13 +485,18 @@ module Maker
       # "Add block" did a moment ago, and first is where the editor puts a new one.
       order = (block_keys - order) + order
       hidden = (over.key?("hidden") ? known(over["hidden"], panel_vocabulary) : preset[:hidden]) - ALWAYS
+      # NO PRESET LEAVES ANYTHING OFF THE PUBLIC PAGE (2026-11-19, the published view): a kind's guess
+      # arranges a page, and what is published is the maker's answer alone, so a column with no
+      # `unpublished` publishes every panel the page shows — every project before this key existed.
+      unpublished = known(over["unpublished"], panel_vocabulary) - ALWAYS
       ordered = order & vocabulary
       Layout.new(order: ordered, hidden:, views: stored_views(over["views"], panel_vocabulary),
                  widths: stored_widths(over["widths"], panel_vocabulary),
                  titles: stored_text(over["titles"], vocabulary, TITLE_MAX),
                  intros: stored_text(over["intros"], panel_vocabulary, INTRO_MAX),
                  repo_ids:, block_kinds:, shelf_views:, shelf_groups:, root_repo: root_repo == true,
-                 unstacked: known(over["unstacked"], panel_vocabulary).select { |key| stacks?(key) })
+                 unstacked: known(over["unstacked"], panel_vocabulary).select { |key| stacks?(key) },
+                 unpublished:)
     end
 
     # THE PANELS THIS KIND'S PRESET HIDES AND THE MAKER HAS NOT ANSWERED (2026-11-02, the UX audit's
