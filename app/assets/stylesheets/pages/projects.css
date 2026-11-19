@@ -177,7 +177,7 @@
      title, the note and the view buttons keep one line in half a column. */
   .project-panels .folder-panel > .panel-head > .panel-path { flex-basis: 100%; order: 1; margin: 0; }
   .project-panels .panel-head { align-items: baseline; row-gap: 8px; }
-  .section-note { font: 400 13px/1.2 var(--font-mono); white-space: nowrap; }
+  .project-panels .panel-head > .panel-note { font: 400 13px/1.2 var(--font-mono); white-space: nowrap; }
 
   /* --- Folder panels (2026-09-08): one per depth-one subfolder of the project's folder, each with
      its own view. Half a column by default, full while it is a repository (Maker::ProjectKind

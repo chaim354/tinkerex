@@ -186,9 +186,12 @@ module ProjectsHelper
   # column shows beside the same section. The panel partial knows its count; recording it here is
   # what keeps the column from asking a second time — it renders after the panels (projects/show),
   # so it reads @section_counts and issues no query of its own (page_query_budget_test.rb).
+  # `panel-note` IS THE SHOP MANUAL'S NAME FOR A SECTION HEAD'S NOTE, shared with the other pages'
+  # numbered heads (slice 7's components.css); `mono muted` keep it drawn where that rule is absent,
+  # and are what a quiet panel's head hides at zero.
   def section_note(key, count, text = nil)
     (@section_counts ||= {})[key.to_s] = count
-    tag.span(text || count.to_s, class: "mono muted section-note")
+    tag.span(text || count.to_s, class: "mono muted panel-note")
   end
 
   # WHAT THE CONTENTS COLUMN CALLS A SECTION: the head the panel itself shows — the maker's title,
