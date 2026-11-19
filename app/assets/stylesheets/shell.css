@@ -25,12 +25,24 @@
      on a maker's page, the maker. Not the strip — a visitor has no library to navigate. It reuses
      `.brand` rather than restyling it, which is why it lives here beside it and not in
      pages/public.css: that sheet is about page CONTENT, and a `pages`-layer rule would outrank
-     `shell` and start a cascade fight over the wordmark. --- */
-  .public-header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
-                   max-width: 1360px; margin: 0 auto; padding: 10px 16px;
-                   border-bottom: 1px solid var(--line); }
-  .public-header .public-author { color: var(--fg-muted); font-size: 12px; }
-  .public-header .public-intro { margin: 0; font-size: 12px; }
+     `shell` and start a cascade fight over the wordmark.
+     SHOP MANUAL (slice 8; the `public-project` and `public-explore` screens): the strip's frame, 50px
+     over a 2px ink rule across the window, holding the wordmark, Explore, the maker, and Sign in at
+     the right, outlined. --- */
+  .public-header {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 22px; min-height: var(--strip-height);
+    padding: 0 24px; background: var(--bg); border-bottom: 2px solid var(--fg);
+  }
+  .public-header .brand { padding: 0; }
+  .public-header .public-explore { color: var(--fg); font-size: 14px; font-weight: 500; }
+  .public-header .public-author { color: var(--fg); font-size: 14px; font-weight: 600; }
+  .public-header .public-intro { flex: 1 1 260px; min-width: 0; margin: 0; font-size: 13.5px; color: var(--fg-muted); }
+  .public-header .public-sign-in { margin-left: auto; }
+  @media (max-width: 719px) {
+    .public-header { gap: 6px 16px; padding: 9px 12px; }
+    /* The sentence takes a line of its own under the links, so Sign in stays on the first. */
+    .public-header .public-intro { order: 1; flex-basis: 100%; padding-bottom: 3px; font-size: 12.5px; }
+  }
 
   /* --- THE STRIP (layouts/_strip): 50px, a 2px ink rule under it, sticky at the top. The wordmark,
      the four places, then Search, Add and the account button at the right. --- */

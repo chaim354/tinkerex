@@ -205,6 +205,32 @@ class AccentSpendTest < ApplicationSystemTestCase
     prior.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior
   end
 
+  # THE PUBLIC PAGES (Shop manual slice 8). A published project spends its one primary on the bundle,
+  # an ink fill: taking the project away is what a visitor comes for. Explore and a maker's page spend
+  # nothing. Signed in, which is no weakening: a public page renders the visitor's view whatever the
+  # session says (Public::BaseController), and its header is not the strip, so the header's outlined
+  # Sign in is outside the count either way. Mutation-checked (2026-11-19): the bundle button back on
+  # `btn small` reported "/u/bench/bench-lamp" => [].
+  test "a published project fills its bundle with ink, the public lists spend nothing, and nothing takes the accent" do
+    projects = FileLayer.current.mkdir(@user, parent_node_id: nil, name: "Projects")
+    folder = FileLayer.current.mkdir(@user, parent_node_id: projects.node_id, name: "bench-lamp")
+    FileLayer.current.write(@user, parent_node_id: folder.node_id, name: "base.stl", io: StringIO.new("solid base\nendsolid base\n"))
+    lamp = @user.maker_projects.create!(name: "Bench Lamp", visibility: "public", folder_node_id: folder.node_id)
+    paths = { "/u/bench/bench-lamp" => public_project_path(@user.handle, lamp.slug),
+              "/explore" => public_explore_path, "/u/bench" => public_user_path(@user.handle) }
+    accent = {}
+    actual = paths.to_h do |name, path|
+      visit path
+      assert_selector "main.public-main"
+      assert_selector "header.public-header"
+      filled = filled_controls
+      accent[name] = filled["accent"]
+      [ name, filled["ink"] ]
+    end
+    assert_equal({ "/u/bench/bench-lamp" => [ "Download bundle (1 file, 25 Bytes)" ], "/explore" => [], "/u/bench" => [] }, actual)
+    assert_equal paths.keys.index_with { [] }, accent, "the accent marks; it fills no control (rule 13)"
+  end
+
   private
 
     # { "ink" => [...], "accent" => [...] }: the labels of every control inside the strip or `main`
