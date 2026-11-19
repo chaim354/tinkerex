@@ -16,8 +16,8 @@ class CodeThemeTest < ApplicationSystemTestCase
   PAPER = { ground: "rgb(255, 255, 255)",   # --surface  #ffffff
             gutter: "rgb(244, 244, 241)",   # --raised   #f4f4f1
             keyword: "rgb(154, 52, 18)" }.freeze  # --code-keyword #9a3412
-  GRAPHITE = { ground: "rgb(27, 28, 25)",   # --surface  #1b1c19
-               gutter: "rgb(37, 38, 34)",   # --raised   #252622
+  GRAPHITE = { ground: "rgb(17, 19, 22)",   # --surface  #111316
+               gutter: "rgb(27, 30, 34)",   # --raised   #1b1e22
                keyword: "rgb(255, 154, 102)" }.freeze # --code-keyword #ff9a66
 
   # SCANNED INTO PLACE rather than built with `create_node!`, and the difference is not cosmetic:

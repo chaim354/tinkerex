@@ -266,7 +266,7 @@ module Web
       cookies[:theme] = "dark"
       get files_path
       assert_select "html[data-theme='dark']"
-      assert_select "meta[name='theme-color'][content='#141512']"
+      assert_select "meta[name='theme-color'][content='#111316']"
       assert_select "meta[name='color-scheme'][content='dark']"
 
       cookies[:theme] = "system"

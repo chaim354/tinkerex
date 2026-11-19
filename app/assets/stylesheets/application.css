@@ -12,8 +12,8 @@
      below; a colour declared only inside a theme block never applies in the other state
      (design-system.md rule 4). Token names are the pre-redesign names on purpose, so every page
      sheet keeps working. Values: the Shop manual light set (2026-11-18, spec
-     docs/superpowers/specs/2026-11-18-shop-manual-redesign-design.md §5); Graphite below keeps the
-     earlier values until slice 4 draws it. */
+     docs/superpowers/specs/2026-11-18-shop-manual-redesign-design.md §5); Graphite below is the same
+     manual printed light-on-dark (slice 4, 2026-11-19), since the screens draw no dark theme. */
   :root {
     color-scheme: light;
     --bg: #ffffff;
@@ -26,7 +26,8 @@
     --fg-muted: #555b63;
     /* Text tokens (fg-muted, accent-text, ok, warn, danger, info) clear 4.5:1 on every light ground
        a text sits on: white (--bg and --surface are one colour now), --raised (the left column) and
-       --accent-soft (a selected row). The lowest is --accent-text on --accent-soft, 4.58:1. */
+       --accent-soft (a selected row). The lowest is --accent-text on --accent-soft, 4.58:1.
+       test/theme_contrast_test.rb holds every pair, in both themes. */
     /* RED MARKS AND NEVER FILLS A CONTROL (design-system.md rule 13): a figure number, the current
        row's square, a selected figure's outline, a warning word, a focus ring. The one primary
        action is an INK fill; selection, tabs, links and the lit nav item are ink too. */
@@ -49,8 +50,8 @@
     --scrim: rgba(15, 17, 19, .45);
     /* THE SELECT'S CHEVRON IS A TOKEN, because a colour inside a data: URI cannot read a custom
        property: the picture itself is redefined per theme, here and in both Graphite blocks below
-       (rule 4's three places). Ink on Paper; on Graphite its muted grey (7:1 on its surface), where
-       ink would be the page colour and vanish. components.css's select names only the token. */
+       (rule 4's three places). Each theme draws it in its own ink, near-black here and near-white in
+       Graphite, where Paper's ink would vanish. components.css's select names only the token. */
     --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%230f1113' stroke-width='1.5'/></svg>");
     /* A user's PHOTO is not a render: it sits on a neutral matte, never on the paper card. */
     --photo-stage: #f4f4f1;
@@ -66,11 +67,12 @@
     /* ONE MESH MATERIAL for the STL and F3D thumbnailers (Maker::Previews::Palette::MATERIAL, which
        test/services/maker/previews/palette_test.rb holds equal to this) and the 3D viewer's
        default colour. Deliberately NOT redefined per theme: it clears 3:1 on the viewer's --raised
-       in Paper (3.82) and Graphite (3.61) and on the card in both (4.21, 3.58), so a live theme
-       switch has only the viewer's background to repaint. */
+       in Paper (3.82) and Graphite (3.97) and, multiplied, on the card in both (4.21, 3.54), so a
+       live theme switch has only the viewer's background to repaint. */
     --model-material: #7f7b73;
     /* Syntax colours for the code viewers (lib/codemirror_theme.js's HighlightStyle). Every one
-       clears 4.5:1 on --surface in its theme; --code-comment is the lowest, 5.13:1 in both. */
+       clears 4.5:1 on --surface and --raised in its theme; --code-comment is the lowest, 4.82:1 on
+       Paper's --raised and 5.46:1 on Graphite's. */
     --code-keyword: #9a3412;
     --code-string: #2f6b2a;
     --code-number: #8a5300;
@@ -110,17 +112,26 @@
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
-    --bg: #141512;
-    --surface: #1b1c19;
-    --raised: #252622;
-    --line: #32332d;
-    --line-strong: #74756c;
-    --fg: #ecebe5;
-    --fg-muted: #a3a299;
-    --accent: #ff7a33;
-    --accent-ink: #1d0c02;
-    --accent-text: #ff8f52;
-    --accent-soft: rgba(255, 122, 51, .14);
+    /* GRAPHITE IS THE SHOP MANUAL PRINTED LIGHT-ON-DARK (slice 4, 2026-11-19): the same page, rules
+       and red, inverted. Neutral, like Paper since slice 1 (it was a warm olive set before): a
+       near-black page that IS its surface, --raised one step lighter (1.11:1, Paper's step is 1.10),
+       a cool hairline, and ink and the strong line one near-white colour. Every text token clears
+       4.5:1 on the page, --raised and --accent-soft; test/theme_contrast_test.rb holds each pair. */
+    --bg: #111316;
+    --surface: #111316;
+    --raised: #1b1e22;
+    --line: #383c43;
+    --line-strong: #e6e8eb;
+    --fg: #e6e8eb;
+    --fg-muted: #9ba2ab;
+    /* The red brightened until it reads as TEXT on all three grounds (5.80 on the page, 5.21 on
+       --raised, 5.07 on --accent-soft), so the text token is the accent here too. The ink on an
+       accent fill (.fig-num, the wordmark's disc) is the page itself, as Paper's is its white: 5.80. */
+    --accent: #ff5245;
+    --accent-ink: #111316;
+    --accent-text: #ff5245;
+    /* The accent at 12% on the page, solid like Paper's: a selected row, a search match. */
+    --accent-soft: #2e1b1c;
     --ok: #56c27f;
     --ok-soft: rgba(86, 194, 127, .14);
     --warn: #e3a73d;
@@ -129,39 +140,46 @@
     --danger-soft: rgba(243, 108, 92, .14);
     --info: #6fb2f0;
     --info-soft: rgba(111, 178, 240, .14);
-    --shadow-float: 0 10px 30px rgba(0, 0, 0, .55), 0 1px 2px rgba(0, 0, 0, .4);
+    /* A shadow cannot darken a near-black page much, so a float is told apart by its border (every
+       menu has one) and the shadow only deepens the edge. */
+    --shadow-float: 0 10px 30px rgba(0, 0, 0, .6), 0 1px 2px rgba(0, 0, 0, .5);
     --shadow-toggle: 0 1px 2px rgba(0, 0, 0, .5);
     --scrim: rgba(0, 0, 0, .6);
-    --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23a3a299' stroke-width='1.5'/></svg>");
-    --photo-stage: #0e0f0c;
-    /* The dimmed paper (rule 5): 9.6:1 against Graphite's page where white was ~19:1, so a grid
-       of tiles no longer out-shines the text; black ink 11:1, a LightBurn blue layer 6.7:1 on it. */
-    --thumb-stage: #bfbbb2;
-    --thumb-ink: #3d3e38;
+    /* Graphite's own ink, as Paper's chevron is Paper's (15.16:1 on the page). */
+    --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23e6e8eb' stroke-width='1.5'/></svg>");
+    /* A photo's matte is --raised, as Paper's is. */
+    --photo-stage: #1b1e22;
+    /* The dimmed paper (rule 5), neutral like the page: 9.54:1 against it where white would be
+       18.6:1, so a grid of tiles does not out-shine the text (15.16:1). Multiplied onto it, black ink
+       reads 10.76:1, a LightBurn blue layer 6.14:1 and red 3.60:1; --thumb-ink on it 5.44:1. */
+    --thumb-stage: #b6babf;
+    --thumb-ink: #3a3f46;
     --code-keyword: #ff9a66;
     --code-string: #93c97c;
     --code-number: #e3b45a;
-    --code-comment: #8e8d85;
+    --code-comment: #8d949d;
     --code-function: #82b9ee;
     --code-type: #c4a5ee;
     --code-property: #dfb98c;
-    --code-meta: #a3a299;
+    --code-meta: #9ba2ab;
     --code-invalid: #f36c5c;
   }
+  /* The OS's dark, when the choice is System: the SAME declarations, value for value
+     (theme_contrast_test.rb compares the two blocks). */
   @media (prefers-color-scheme: dark) {
     :root[data-theme="system"] {
       color-scheme: dark;
-      --bg: #141512;
-      --surface: #1b1c19;
-      --raised: #252622;
-      --line: #32332d;
-      --line-strong: #74756c;
-      --fg: #ecebe5;
-      --fg-muted: #a3a299;
-      --accent: #ff7a33;
-      --accent-ink: #1d0c02;
-      --accent-text: #ff8f52;
-      --accent-soft: rgba(255, 122, 51, .14);
+      --bg: #111316;
+      --surface: #111316;
+      --raised: #1b1e22;
+      --line: #383c43;
+      --line-strong: #e6e8eb;
+      --fg: #e6e8eb;
+      --fg-muted: #9ba2ab;
+      --accent: #ff5245;
+      --accent-ink: #111316;
+      --accent-text: #ff5245;
+      --accent-soft: #2e1b1c;
       --ok: #56c27f;
       --ok-soft: rgba(86, 194, 127, .14);
       --warn: #e3a73d;
@@ -170,23 +188,21 @@
       --danger-soft: rgba(243, 108, 92, .14);
       --info: #6fb2f0;
       --info-soft: rgba(111, 178, 240, .14);
-      --shadow-float: 0 10px 30px rgba(0, 0, 0, .55), 0 1px 2px rgba(0, 0, 0, .4);
+      --shadow-float: 0 10px 30px rgba(0, 0, 0, .6), 0 1px 2px rgba(0, 0, 0, .5);
       --shadow-toggle: 0 1px 2px rgba(0, 0, 0, .5);
       --scrim: rgba(0, 0, 0, .6);
-      --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23a3a299' stroke-width='1.5'/></svg>");
-      --photo-stage: #0e0f0c;
-      /* The dimmed paper (rule 5): 9.6:1 against Graphite's page where white was ~19:1, so a grid
-         of tiles no longer out-shines the text; black ink 11:1, a LightBurn blue layer 6.7:1 on it. */
-      --thumb-stage: #bfbbb2;
-      --thumb-ink: #3d3e38;
+      --select-chevron: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23e6e8eb' stroke-width='1.5'/></svg>");
+      --photo-stage: #1b1e22;
+      --thumb-stage: #b6babf;
+      --thumb-ink: #3a3f46;
       --code-keyword: #ff9a66;
       --code-string: #93c97c;
       --code-number: #e3b45a;
-      --code-comment: #8e8d85;
+      --code-comment: #8d949d;
       --code-function: #82b9ee;
       --code-type: #c4a5ee;
       --code-property: #dfb98c;
-      --code-meta: #a3a299;
+      --code-meta: #9ba2ab;
       --code-invalid: #f36c5c;
     }
   }
