@@ -6,7 +6,7 @@
     FilesController#index only when no project claims the folder (a project's claim wins). Its
     title opens the model's own page (2026-10-21): files on the left, a pane on the right.
 
-    NOT A SELECTION ITEM AND NO ACCENT: Upload is the folder's one action (design-system.md rule 13),
+    NOT A SELECTION ITEM AND NO PRIMARY: Upload is the folder's one action (design-system.md rule 13),
     and nothing here goes through with_selection. Its cover cell carries its OWN thumbs controller,
     because the grid's is on a sibling, not an ancestor, and it renders only for a LIVE cover node
     (cover_live): the cover is a raw column nothing validates, and a dead one would poll forever. %>

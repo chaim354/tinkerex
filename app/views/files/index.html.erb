@@ -164,12 +164,14 @@
       looking at (the folder, and from Task 6 the type filter) instead of dumping them at the
       root; the choice itself is remembered in a cookie (FilesController#resolve_view), so it
       sticks across navigation, and the sort is remembered the same way rather than being pinned
-      into these two links. %>
+      into these two links. The lit one SAYS it is lit (`aria-current`), as every other segmented
+      control's part says `aria-pressed`: a link is never pressed, and an ink fill that announces
+      nothing is what accent_spend_test.rb counts as a primary action. %>
   <div class="view-toggle" role="group" aria-label="View">
     <%= link_to "Grid", files_path(files_query_base.merge(view: "grid")),
-                class: "toggle#{' active' if @view == 'grid'}" %>
+                class: "toggle#{' active' if @view == 'grid'}", "aria-current": ("true" if @view == "grid") %>
     <%= link_to "List", files_path(files_query_base.merge(view: "list")),
-                class: "toggle#{' active' if @view == 'list'}" %>
+                class: "toggle#{' active' if @view == 'list'}", "aria-current": ("true" if @view == "list") %>
   </div>
   <%#
     The grid has no column headers to click, so the sort is a pair of selects — and on the shared

@@ -130,7 +130,7 @@ module Web
       get project_path(@project)
 
       # ONE COMPOSER PATTERN (the UX audit's C4): "Add…" in the head, a submit naming the thing, and
-      # no second accent on the hub — the top bar's Upload is its one.
+      # no second primary on the hub — the top bar's Upload is its one.
       assert_select ".bom-panel .panel-head > details.composer.bom-add summary", text: "Add…"
       assert_select "details.composer.bom-add input[type=submit][value=?]", "Add line"
       assert_select "details.composer.bom-add input[type=submit].primary", 0

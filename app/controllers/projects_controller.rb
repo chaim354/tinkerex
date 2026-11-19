@@ -148,7 +148,7 @@ class ProjectsController < ApplicationController
     # gives no destination, and the top bar asks with the chooser rather than guess the root.
     # PRIMARY ON THE PAGE, QUIET IN THE EDITOR (2026-10-26, the edit area): edit mode is the edit
     # area's Page layout tab, whose one primary is Save, so Upload keeps its destination and gives up
-    # the accent there (design-system.md rule 13; accent_spend_test.rb pins both renders). The path
+    # the primary there (design-system.md rule 13; accent_spend_test.rb pins both renders). The path
     # parameter is read here directly because @editing is set further down, after the layout.
     use_folder_destination(@listing.folder_id, path: @listing.path,
                            primary: request.path_parameters[:editing] != "1") if @listing.available?

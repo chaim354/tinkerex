@@ -40,6 +40,7 @@ class CssHygieneTest < ActiveSupport::TestCase
     .block-panel .block-link-card .page-intro .image-pick
     .panel-slot--tab .tabs .tab-bar .tab-pane .tab-link .tab-heading
     .render-card dialog.calculator .field-hint .btn-name
+    .fig-num .plate .stack .note-box
   ].freeze
 
   def read(name) = SHEETS_DIR.join(name).read
@@ -214,13 +215,18 @@ class CssHygieneTest < ActiveSupport::TestCase
   # The thumbnail ink (#5f6873), the spinner (#d9dde3 / #7a8390) and the file-chooser scrim
   # (rgba(0, 0, 0, .55)) were literals in components.css. Each was right in exactly one theme and
   # a token flip could not reach it. Drawing colours (Measure, LightBurn, the tray top view) are
-  # deliberately literal, and they live in pages/, which this guard does not scan. The one allowed
-  # literal is inside a data: URI (the select chevron), which cannot read a custom property.
+  # deliberately literal, and they live in pages/, which this guard does not scan. NOTHING IS
+  # EXEMPT, A data: URI INCLUDED: the select chevron was the one literal allowed, because a colour
+  # inside a data: URI cannot read a custom property, and so it was one grey in both themes. Since
+  # 2026-11-19 the picture itself is a token (`--select-chevron`, redefined per theme in
+  # application.css), so a new data: URI with a colour in it is refused like any other literal:
+  # `%23`, a URI's spelling of `#`, counts as one (the exemption never needed to exist, because the
+  # scan could not see the chevron's `%23878276` at all; mutation-checked, it can now).
   test "components.css and shell.css name tokens, not colours" do
     %w[components.css shell.css].each do |sheet|
-      css = strip_comments(read(sheet)).gsub(/url\("data:[^"]*"\)/, "")
+      css = strip_comments(read(sheet))
       assert_operator css.length, :>, 1000, "#{sheet} is suspiciously short — the scan is vacuous"
-      literals = css.scan(/#\h{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/)
+      literals = css.scan(/(?:#|%23)\h{3,8}\b|rgba?\([^)]*\)|hsla?\([^)]*\)/)
       assert_empty literals, "#{sheet} carries colour literals #{literals.uniq.inspect}; add a token"
     end
   end
@@ -304,5 +310,56 @@ class CssHygieneTest < ActiveSupport::TestCase
       end
     end
     assert_empty offenders, "the icon rail has a second definition:\n  #{offenders.join("\n  ")}"
+  end
+
+  # --- THE ADD-ON BUNDLES' CLASSES STAY STYLED (design-system.md rule 12, 2026-11-19) -------------
+  #
+  # The bundles in chaim354/tinkerex-addons ship no stylesheet: they build their markup from this
+  # app's class names, so a class renamed or dropped here leaves a tool unstyled in another
+  # repository with nothing red in this one. The contract was "52 classes" in one doc and "53" in
+  # another, listed in a spec that was later deleted, and a scan of the bundles found 101. The list
+  # is a file now, test/fixtures/addon_host_classes.txt (its header says how it was scanned), and
+  # the first test fails when a class on it is no longer named by any selector under
+  # app/assets/stylesheets. The second keeps the list honest against what this repo can see of the
+  # bundles: every class the boxes snapshot under test/fixtures/addons puts on an element, and this
+  # app styles, must be on it. Mutation-checked: renaming `.box-saved-name` in pages/tools.css
+  # reddens the first, and deleting `box-field-wide` from the list reddens the second.
+  ADDON_HOST_CLASSES = Rails.root.join("test/fixtures/addon_host_classes.txt")
+  ADDON_SNAPSHOT = Rails.root.join("test/fixtures/addons")
+
+  def addon_host_classes = ADDON_HOST_CLASSES.readlines(chomp: true).map(&:strip).reject { |l| l.empty? || l.start_with?("#") }
+
+  # Every class any selector in any sheet names: `.a`, `.b` and `.c` in `.a:not(.b) > .c`.
+  def styled_classes
+    Dir[SHEETS_DIR.join("**/*.css")].flat_map do |path|
+      rules(File.read(path)).flat_map { |head, _| head.scan(/\.(-?[A-Za-z_][\w-]*)/).flatten }
+    end.uniq
+  end
+
+  test "every class the add-on bundles build markup with is still styled" do
+    listed = addon_host_classes
+    assert_operator listed.size, :>=, 90, "#{ADDON_HOST_CLASSES} lists #{listed.size} classes; the scan found 101"
+    assert_equal listed.uniq.sort, listed, "#{ADDON_HOST_CLASSES}: one class per line, sorted, none twice"
+    styled = styled_classes
+    assert_operator styled.size, :>, 300, "the sheets name only #{styled.size} classes; the parse is vacuous"
+    orphaned = listed - styled
+    assert_empty orphaned,
+                 "no stylesheet styles #{orphaned.inspect} any more, and the add-on bundles build markup " \
+                 "with them (design-system.md rule 12): restyle, never rename"
+  end
+
+  test "every styled class the boxes snapshot puts on an element is on the add-on list" do
+    used = Dir[ADDON_SNAPSHOT.join("**/*.js")].flat_map do |path|
+      src = File.read(path)
+      src.scan(/\bclass="([^"]*)"/).flatten.flat_map { |c| c.gsub(/\$\{[^}]*\}/, " ").split } +
+        src.scan(/\b(?:className\s*=|class:)\s*"([^"]*)"/).flatten.flat_map(&:split) +
+        src.scan(/classList\.(?:add|remove|toggle)\("([^"]*)"/).flatten.flat_map(&:split) +
+        src.scan(/\bclasses(?:\.push\(| = \[ )"([^"]*)"/).flatten
+    end.uniq
+    assert_operator used.size, :>, 50, "found #{used.size} class names in #{ADDON_SNAPSHOT}; the scan is vacuous"
+    missing = (used & styled_classes) - addon_host_classes
+    assert_empty missing,
+                 "the boxes snapshot builds markup with #{missing.inspect}, which this app styles, and " \
+                 "#{ADDON_HOST_CLASSES} does not list them: add them, sorted"
   end
 end

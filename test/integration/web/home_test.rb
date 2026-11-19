@@ -22,7 +22,7 @@ module Web
     # getting-started panel, in place of a Recently changed panel with nothing in it; what it says
     # per backend is where_files_come_from_test.rb's. Active projects and Needs attention are absent
     # rather than empty, and the panel does not grow an upload control of its own — a second one
-    # would duplicate the top bar's input id and spend the accent twice.
+    # would duplicate the top bar's input id and spend the primary twice.
     test "an empty account sees one empty state, pointing at the top bar's Upload" do
       get root_path
       assert_response :success

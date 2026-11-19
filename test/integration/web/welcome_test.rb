@@ -160,7 +160,7 @@ module Web
       assert_response :not_found
     end
 
-    test "the Files step aims the top bar's Upload at the project folder and makes it the accent" do
+    test "the Files step aims the top bar's Upload at the project folder and makes it the primary" do
       project, = project_with_rows
       get welcome_files_path(track: "models", project: project.slug)
       assert_response :success

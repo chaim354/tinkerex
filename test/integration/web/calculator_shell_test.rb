@@ -15,13 +15,13 @@ module Web
       @project = @user.maker_projects.create!(name: "Desk Lamp")
     end
 
-    test "every signed-in page renders the modal exactly once, closed, with nothing accent in it" do
+    test "every signed-in page renders the modal exactly once, closed, with no primary in it" do
       [ root_path, files_path, projects_path, project_path(@project), tools_path, settings_path, help_path ].each do |path|
         get path
         assert_response :success, path
         assert_select "body > .calculator-host[data-controller=calculator] > dialog.calculator", 1, path
         assert_select "dialog.calculator[open]", 0, "#{path}: the modal must render closed"
-        assert_select "dialog.calculator .primary", 0, "#{path}: the accent is spent once per screen"
+        assert_select "dialog.calculator .primary", 0, "#{path}: a screen has one primary"
         assert_select "dialog.calculator input#calculator-input", 1
       end
     end

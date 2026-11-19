@@ -39,7 +39,7 @@
         with <kbd><%= calculator_shortcut %></kbd>.</span></span>
       <%# A <div>, not a <span>: the pin toggle is a <form>, which phrasing content cannot hold. %>
       <div class="calculator-card-actions">
-        <%# Plain `.btn`: the accent is not spent on this page (design-system.md rule 13). %>
+        <%# Plain `.btn`: this page has no primary (design-system.md rule 13). %>
         <button type="button" class="btn small calculator-card-open" data-calculator-open aria-haspopup="dialog"
                 aria-keyshortcuts="<%= CalculationsHelper::CALCULATOR_KEYS %>">Open calculator</button>
         <%# After Open, so Esc from the right-click menu still hands focus back to Open

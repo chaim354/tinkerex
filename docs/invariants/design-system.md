@@ -189,38 +189,57 @@ stylesheet or script tag goes in `_head`, never in either layout, or the two hea
 
 ## Contracts a restyle may not break
 
-12. **Class names are a contract: restyle, never rename.** The selectors the tests pin (spec §10),
+12. **Class names are a contract: restyle, never rename.** The selectors the tests pin,
     `main.container` / `.container-wide` (the addon host page opts in), `.flash-notice` /
-    `.flash-alert`, and the 53 classes the addon bundles in `chaim354/tinkerex-addons` build their
-    own markup with (`addons.md`'s host contract; the list is in spec §10). Fonts are self-hosted under `app/assets/fonts` with the OFL text beside
-    them because `font_src` is `:self`; `@font-face` `url()`s are relative to `application.css`'s
-    logical path and Propshaft fingerprints them (`shell_layout_test.rb` fetches each).
+    `.flash-alert`, and the **101 classes the addon bundles in `chaim354/tinkerex-addons` build their
+    own markup with: `test/fixtures/addon_host_classes.txt`**, whose header says how it was scanned
+    (every bundle on that repo's `main`, 2026-11-19). The bundles ship no stylesheet, so a class
+    renamed or left unstyled here breaks a tool in another repository with nothing red in this one;
+    `css_hygiene_test.rb` fails when a listed class is no longer named by any sheet, and when the boxes
+    snapshot under `test/fixtures/addons` uses a styled class the list lacks. Re-scan when the bundles
+    grow a class. (The count was "52" in one doc and "53" in another, both pointing at a spec deleted
+    on 2026-11-10; the scan found 101, all 53 among them.) Fonts are self-hosted under
+    `app/assets/fonts` with the OFL text beside them because `font_src` is `:self`; `@font-face`
+    `url()`s are relative to `application.css`'s logical path and Propshaft fingerprints them
+    (`shell_layout_test.rb` fetches each).
 
-13. **The accent is spent once per screen; selection is ink.** `--accent` fills the one primary
-    action. On the Library, Recent and a project hub that is the top bar's Upload. The Library and
+13. **Red marks and never fills a control; the one primary action is ink** (the Shop manual's
+    proposal 1, 2026-11-19; until then the accent filled the primary). `--accent` draws a figure
+    number (`.fig-num`), the current row's square, a selected figure's outline, a warning word or
+    flag (the flag `.badge`s: a failed print, low stock, changed since a release) and the focus ring,
+    and never a control's fill. **The one primary action per screen is an INK fill** (`.btn.primary`:
+    `--fg` with `--bg` text); every other button is outlined in ink. On the Library, Recent and a
+    project hub the primary is the top bar's Upload. The Library and
     the hub show a folder and say so through `FolderDestination`'s `primary`, and Upload names where
     it saves. Recent shows none, so it calls `upload_primary!`, **which changes Upload's weight and
     never its destination**: Upload there still asks with the chooser. It is a flag of its own
     because a `Destination` with a nil `node_id` would mean the library ROOT, not "ask". Everywhere
     else Upload is a quiet `.btn`. No secondary control
-    is allowed the accent now. The project hub is the one page the 2026-09-10 cohesion spec's
+    is filled. The project hub is the one page the 2026-09-10 cohesion spec's
     decision 3 allows two, and since 2026-10-26 it spends one (Upload): its second, Save publishing,
     moved with the Publish panel to the edit area's Publishing tab. Each of that area's three tabs
     (Details, Publishing, Page layout) spends it on its own Save, with Upload quiet on all three
     (`ProjectsController#show` passes `primary:` false in edit mode, and the YAML drawer's Apply is
-    a quiet `.btn`). `accent_spend_test.rb` pins every page. Links, selected chips, toggles, tabs, the file-chooser selection and the active
-    rail item use `--fg`. Status carries its word, never colour alone (`.flash::before`, badge
-    labels). Text on an accent fill is
-    `--accent-ink` (near-black in the dark theme), never a literal white. `components.css` and
-    `shell.css` name tokens, never colour literals (`css_hygiene_test.rb`); drawing colours stay
-    literal in `pages/` (rule 5). No emoji draws anything: `css_hygiene_test.rb` refuses a
+    a quiet `.btn`). `accent_spend_test.rb` pins every page by RESOLVED background: exactly its ink
+    primaries, and no control anywhere filled with the accent. **Selection is ink too**: a filter
+    chip is underlined in ink, a pressed toggle, a segmented control's lit part, the chosen tag and
+    the file-chooser selection are filled with it, and tabs and the lit rail item use `--fg`. A lit
+    part SAYS it is lit (`aria-pressed`, `aria-current`, `aria-selected`), which is how the guard
+    tells a selection from a second primary. Status carries its word, never colour alone
+    (`.flash::before`, badge labels, a flag's word). Text on an accent fill is
+    `--accent-ink` (near-black in the dark theme), never a literal white; `.fig-num` follows it.
+    `components.css` and `shell.css` name tokens, never colour literals (`css_hygiene_test.rb`, a
+    data: URI's `%23` included: the select chevron is a token, `--select-chevron`, redefined per
+    theme); drawing colours stay literal in `pages/` (rule 5). No emoji draws anything: `css_hygiene_test.rb` refuses a
     pictograph (U+1F300–U+1FAFF) in a stylesheet's `content`, and `test/no_emoji_test.rb` refuses
     one in templates, helpers, controllers and scripts; a glyph helper (`rail_icon`,
     `folder_glyph`) or a word stands in. Data is no exception: an addon manifest's emoji `icon` is
     never drawn, the Tools gallery shows a monogram tile instead (`tools/home/_addon_mark`), and
     `tools_gallery_test.rb` reads the rendered gallery, since no source scan can see a manifest.
-    Labels stay in the UI face (`--font-ui`, Libre Franklin since 2026-11-18) and mono stays for
-    data (the 2026-09-10 cohesion decisions 4 and 5). Text selection (`::selection`) and the code
+    **Words are the UI face (`--font-ui`, Libre Franklin) and mono (`--font-mono`, Courier Prime) is
+    for data and for the caps label** — crumbs, table heads, group heads, plate heads and a field's
+    label, mono 700 12px (11 over a field), tracked .08em, uppercase (Shop manual spec §5; the
+    2026-09-10 cohesion decision 4 kept labels in the UI face until 2026-11-19). Text selection (`::selection`) and the code
     editor's selection and active-line tints are browser text affordances, not UI selection state,
     and keep accent tints. The light values are the Shop manual spec's
     (`docs/superpowers/specs/2026-11-18-shop-manual-redesign-design.md` §5); Graphite's are still
@@ -257,7 +276,7 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
     rows appear after Show and Save). A panel the MAKER hid is not named and still costs no query —
     they hid it themselves, in the layout editor — and the stats line counts only panels on the page. Every panel's composer
     is a `details.composer` in its `.panel-head`, opened by "Add…", its submit naming the thing and
-    never `primary` (the accent is the top bar's Upload).
+    never `primary` (the hub's primary is the top bar's Upload).
 
 **A PANEL'S VIEW BUTTONS SWITCH IT IN PLACE, AND THE DOOR STILL RENDERS NOTHING (2026-11-16).** A
 press on the page posts `in_place` (`projects/_view_toggle`). `Projects::PanelsController#in_place`
@@ -292,8 +311,8 @@ pins what the page does with it.
     (`unauthenticated_root`), then `root` — any other order and a visitor meets the wrong door
     (`test/integration/web/landing_test.rb`). `LandingsController` stands on `ActionController::Base`,
     never on `ApplicationController` with a skip (`architecture_invariants_test.rb`'s default-deny),
-    and outside `Public::` because its demo button's CSRF token writes the session. The accent is Try
-    the demo while `Tinkerex::Demo.available?`, else Install — exactly once either way (rule 13; the Try the demo state in
+    and outside `Public::` because its demo button's CSRF token writes the session. The primary, an
+    ink fill, is Try the demo while `Tinkerex::Demo.available?`, else Install — exactly once either way (rule 13; the Try the demo state in
     `accent_spend_test.rb`, both states in `landing_test.rb`). `/users/sign_in` is the plain card everywhere. **The wall's twelve tiles
     are the app's own renders** of twelve files of the owner's `catan` project, which `db/seeds/demo`
     holds whole (the seed's 70 MB budget is that decision, `demo_reset_test.rb`), written by `bin/rails landing:wall`

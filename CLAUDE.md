@@ -1204,7 +1204,7 @@ walk is ALWAYS capped and `stopped` reaches the view; restore writes a pending e
 class names. Fifteen rules there; the ones most often undone: the `@layer` order opens
 `application.css` and every rule of ours is layered, `vendor-overrides.css` alone is not; a
 component selector is defined in `components.css` and nowhere else; theme and rail state are
-cookies the layout renders, never an inline script; the classes the tests pin and the 52 the addon
+cookies the layout renders, never an inline script; the classes the tests pin and the 101 the addon
 bundles build markup with keep their names through any restyle. Guard: `test/css_hygiene_test.rb`.
 
 ## 15. Working agreements for the coding agent

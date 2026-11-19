@@ -91,7 +91,7 @@ module Web
       assert_select "header.topbar .topbar-upload-caption[hidden][data-upload-pick-target='caption']"
     end
 
-    # RECENT IS THE ONE PAGE WITH NO FOLDER WHOSE UPLOAD IS ITS ACCENT (slice 6; FolderDestination's
+    # RECENT IS THE ONE PAGE WITH NO FOLDER WHOSE UPLOAD IS ITS PRIMARY (slice 6; FolderDestination's
     # upload_primary!). Both halves in one selector: the weight changed (`primary`) and the destination
     # did not — it still asks with the chooser, because Recent has no folder to name. The settings test
     # above is the other half: the flag must not leak to every page without a folder.

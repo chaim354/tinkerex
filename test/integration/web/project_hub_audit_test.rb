@@ -336,15 +336,15 @@ module Web
       end
     end
 
-    # THE COMPOSERS SPEND NO ACCENT (C4): the hub's one is the top bar's Upload. Read across every
+    # THE COMPOSERS SPEND NO PRIMARY (C4): the hub's one is the top bar's Upload. Read across every
     # composer an ?add= can open, so a seventh composer with a `primary` submit goes red here.
     # MUTATION-CHECKED: `primary` back on the BOM's "Add line" reddens it: `?add=bom's composer
-    # spends the accent. Expected: 0  Actual: 1`.
-    test "no panel composer carries the accent" do
+    # spends the primary. Expected: 0  Actual: 1`.
+    test "no panel composer carries the primary" do
       project = @user.maker_projects.create!(name: "Lamp")
       ProjectsController::ON_DEMAND.each do |key|
         get project_path(project, add: key)
-        assert_select "details.composer .primary", 0, "?add=#{key}'s composer spends the accent"
+        assert_select "details.composer .primary", 0, "?add=#{key}'s composer spends the primary"
       end
     end
   end

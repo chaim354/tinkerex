@@ -2,7 +2,7 @@
 
 <%# THE HEADING ALONE (structural redesign §7, slice 6). This head carried "New project" as the page's
     one action; the top bar's New menu already has Project, and Recent's one action is the top bar's
-    Upload (HomeController#index calls upload_primary!), so a second accent here would spend it twice. %>
+    Upload (HomeController#index calls upload_primary!), so a second primary here would spend it twice. %>
 <div class="page-head">
   <h1>Recent</h1>
 </div>
@@ -23,7 +23,7 @@
     it, which would frame a panel inside a panel around nothing. Its first two steps are the shared
     partial's two halves, so they say what the Library's and the Projects page's empty states say.
     It points at the top bar's Upload rather than rendering a second upload control, which would
-    duplicate the input's id and the accent; nothing in it is accent (design-system.md rule 13). %>
+    duplicate the input's id and the primary; nothing in it is primary (design-system.md rule 13). %>
 <% if @recent_files.empty? %>
   <section class="panel home-section getting-started">
     <div class="panel-head"><h2>Getting started</h2><%= link_to "Help explains all of this", help_path, class: "muted" %></div>
