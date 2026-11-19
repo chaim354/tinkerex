@@ -10,7 +10,7 @@ module FolderDestination
   extend ActiveSupport::Concern
 
   # `path` is root-relative with no leading slash ("Projects/shop-stool") and "" at the library root —
-  # Maker::LibraryTree#path_for's spelling. `primary` is whether Upload is this screen's accent action
+  # Maker::LibraryTree#path_for's spelling. `primary` is whether Upload is this screen's primary action
   # (docs/invariants/design-system.md rule 13): the Library and the project hub. Recent, which shows no
   # folder, says the same through #upload_primary! below; nowhere else.
   Destination = Data.define(:node_id, :path, :primary) do
@@ -25,7 +25,7 @@ module FolderDestination
 
   def folder_destination = @folder_destination
 
-  # UPLOAD IS THIS SCREEN'S ONE ACCENT ACTION (design-system.md rule 13). A page that shows a folder
+  # UPLOAD IS THIS SCREEN'S ONE PRIMARY ACTION (design-system.md rule 13). A page that shows a folder
   # says so through use_folder_destination(primary: true); a page that shows NONE (Recent) says so here,
   # and its Upload still asks with the chooser — this changes Upload's weight, never its destination.
   # A Destination with a nil node_id would mean the library ROOT, not "ask", which is why this is its own

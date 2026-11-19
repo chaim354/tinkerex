@@ -20,7 +20,7 @@ module WebHelpers
   # bypasses the real session path can pass while login itself is broken.
   # THE INK A SELECTED CONTROL IS FILLED WITH, AS THE BROWSER RESOLVES IT in the page's own theme:
   # the `--fg` token painted on a throwaway element and read back, so it can be compared with a
-  # control's computed background (accent_spend_test.rb reads the accent the same way). A class or
+  # control's computed background (accent_spend_test.rb reads the ink and the accent the same way). A class or
   # an attribute in the markup says what a control IS; only this says how it is DRAWN.
   def ink_colour
     page.evaluate_script(<<~JS)

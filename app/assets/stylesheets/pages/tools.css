@@ -1,6 +1,9 @@
 /* The /tools gallery, the addon host page, and the classes the addon BUNDLES build their own
    markup with (Box Generator, Generators, OpenSCAD). Those class names are a cross-repo contract
-   (docs/invariants/addons.md, spec §10): restyle, never rename. */
+   (design-system.md rule 12; the list is test/fixtures/addon_host_classes.txt, and
+   test/css_hygiene_test.rb fails if one stops being styled): restyle, never rename. The bundle
+   classes take the Shop manual's vocabulary (2026-11-19): 1.5px ink controls with square
+   shoulders, caps labels in mono, hairlines between rows, square frames. */
 @layer pages {
   /* MIGRATED VERBATIM (old application.css 352-379, 381-603 and 658-659), substitution table
      applied, in file order: .tools-grid, .addon-card*, .addon-icon, .addon-title, .addon-desc,
@@ -33,7 +36,7 @@
   .calculator-card-keys kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
   /* `.tool-card` is a built-in tool's card (the calculator): the same face, a different class, so
      every `.addon-card` is still one a manifest made. It is not a link, so it takes no hover. */
-  .addon-card, .tool-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }
+  .addon-card, .tool-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 0; background: var(--surface); color: var(--fg); }
   .addon-card:hover { text-decoration: none; border-color: var(--fg); }
   .addon-card.disabled { opacity: .6; }
   .addon-card-head { display: flex; align-items: center; gap: 10px; }
@@ -49,8 +52,8 @@
   .tools-home .addon-card-link:hover { text-decoration: none; }
   .tools-home .addon-card-link:focus-visible { outline: none; }
   .tools-home .addon-card:has(.addon-card-link:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
-  .addon-title { font-weight: 600; font-size: 14px; }
-  .addon-desc { font-size: 13px; line-height: 1.45; }
+  .addon-title { font-weight: 800; font-size: 15px; }
+  .addon-desc { font-size: 13.5px; line-height: 1.45; }
   /* ONE CLASS, TWO ELEMENTS: a <span> on the gallery card, a <ul> on the addon page. Without the
      13px it inherits body 15px and renders LARGER than the .addon-desc above it; without the list
      reset the page's version carries UA bullets and a 40px indent. */
@@ -64,10 +67,14 @@
   /* The addon page's own states around the mount (tools/addons/show): loading, a bundle that would
      not load, and an addon this server cannot run. The raw error stays folded, left-aligned, and
      wraps rather than pushing the page sideways at 375px (design-system.md rule 11). */
+  /* A BUNDLE THAT DRAWS ITS OWN `.page-head` (the Box Generator's editor names the generator) draws
+     it inside the host page, under the host's title: one step down, so the page keeps one 56px title. */
+  [data-controller="addon"] .page-head { margin-bottom: var(--space-4); }
+  [data-controller="addon"] .page-head h1 { font-size: 32px; }
   .addon-load-failed details { margin-top: var(--space-3); text-align: left; }
   .addon-load-detail { margin: var(--space-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); }
   ul.addon-permissions li { margin-top: 4px; }
-  .addon-thumb { width: 100%; height: 120px; object-fit: contain; background: var(--raised); border-radius: 6px; }
+  .addon-thumb { width: 100%; height: 120px; object-fit: contain; background: var(--thumb-stage); border: 1px solid var(--line); border-radius: 0; }
   .addon-thumb.is-missing { display: none; }
   /* THE FRAME A GENERATOR WITH NO SAMPLE PHOTO GETS, and it is a placeholder rather than nothing so
      that the grid never reflows. Dropping the box (`is-missing` above) moved every card below it by
@@ -78,14 +85,14 @@
      real box and the empty one cannot drift apart and bring the jump back. */
   .addon-thumb-empty {
     display: flex; align-items: center; justify-content: center;
-    border: 1px dashed var(--line); color: var(--fg-muted); font-size: 11px;
+    border: 1.5px dashed var(--fg-muted); color: var(--fg-muted); font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
   }
 
   /* --- Box Generator addon --- */
   .box-search {
-    width: 100%; padding: 9px 12px; margin: 4px 0 18px;
-    border: 1px solid var(--line); border-radius: 8px;
-    font-size: 15px; background: var(--bg); color: var(--fg);
+    width: 100%; min-height: var(--control-height); padding: 4px 10px; margin: 4px 0 18px;
+    border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
+    font-size: 13.5px; background: var(--bg); color: var(--fg);
   }
   /* Index: table of contents | generator gallery | saved-box rail. */
   .box-index { display: grid; grid-template-columns: 172px minmax(0, 1fr) 264px; gap: 28px; align-items: start; }
@@ -94,23 +101,27 @@
 
   .box-toc { position: sticky; top: 16px; }
   .box-toc-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+  /* Caps labels (spec §5): mono 700 12px, tracked, uppercase, muted. */
   .box-toc-title, .box-group-title, .box-saved-name {
-    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted);
+    font: 700 12px/16px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }
   .box-toc-all {
     border: none; background: none; padding: 0; cursor: pointer;
-    font-size: 12px; color: var(--fg-muted); text-decoration: underline;
+    font-size: 12.5px; font-weight: 700; color: var(--fg); text-decoration: underline; text-underline-offset: 3px;
   }
   .box-toc-all:hover { color: var(--fg); }
   .box-toc-list { list-style: none; padding: 0; margin: 0; }
+  /* A CONTENTS LIST, DRAWN AS THE SHELL'S COLUMN IS: 28px rows, the current one at 800 with a 6px
+     red square before it (the accent marks the current row; rule 13), counts mono and muted. */
   .box-toc-list a {
-    display: flex; align-items: center; justify-content: space-between; gap: 8px;
-    padding: 5px 8px; border-radius: 7px; font-size: 14px; color: var(--fg);
+    position: relative; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    min-height: 28px; padding: 0 4px 0 14px; border-radius: 0; font-size: 13.5px; font-weight: 500; color: var(--fg);
   }
   .box-toc-list a:hover { background: var(--raised); text-decoration: none; }
-  .box-toc-list li.is-active a { background: var(--raised); color: var(--fg); font-weight: 600; }
+  .box-toc-list li.is-active a { color: var(--fg); font-weight: 800; }
+  .box-toc-list li.is-active a::before { content: ""; position: absolute; left: 0; top: 50%; width: 6px; height: 6px; margin-top: -3px; background: var(--accent); }
   .box-toc-count, .box-group-count {
-    font-size: 11px; color: var(--fg-muted); font-variant-numeric: tabular-nums;
+    font: 400 12px/16px var(--font-mono); color: var(--fg-muted); font-variant-numeric: tabular-nums;
   }
 
   /* Every section folds. The <details> does the folding; the marker is replaced by a chevron that
@@ -131,11 +142,11 @@
 
   /* The saved rail: section, then box type, both closed until asked for. */
   .box-saved-rail { position: sticky; top: 16px; max-height: calc(100vh - 32px); overflow-y: auto; }
-  .box-saved-count { font-size: 13px; margin: -6px 0 10px; }
+  .box-saved-count { font: 400 12.5px/1.4 var(--font-mono); margin: -6px 0 10px; }
   .box-saved-section { border-bottom: 1px solid var(--line); }
   .box-saved-type { margin-left: 14px; }
-  .box-saved-type .box-saved-name { text-transform: none; font-weight: 600; font-size: 13px; color: var(--fg); }
-  .box-saved-link { font-size: 13px; }
+  .box-saved-type .box-saved-name { font: 600 13.5px/1.4 var(--font-ui); letter-spacing: 0; text-transform: none; color: var(--fg); }
+  .box-saved-link { font-size: 13.5px; font-weight: 600; }
 
   /* A param value can be MULTILINE (boxes' TrayLayout/FrontPanel section params are newline-separated),
      so the value cell must not collapse it into one line. */
@@ -149,7 +160,7 @@
     .box-index { grid-template-columns: 1fr; }
     .box-toc, .box-saved-rail { position: static; max-height: none; }
     .box-toc-list { display: flex; flex-wrap: wrap; gap: 4px; }
-    .box-toc-list a { border: 1px solid var(--line); }
+    .box-toc-list a { border: 1px solid var(--line); padding-right: 8px; }
   }
 
   .box-editor { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 24px; align-items: start; }
@@ -158,12 +169,17 @@
     display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
     gap: 12px 16px; margin: 16px 0;
   }
-  .box-field { display: flex; flex-direction: column; gap: 4px; font-size: 14px; }
-  .box-field-label { color: var(--fg-muted); }
+  .box-field { display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; }
+  /* A PARAMETER'S NAME IS NOT A CAPS LABEL: boxes.py's names are identifiers (`FingerJoint_style`),
+     and uppercasing one changes what it says. The UI face at 600, muted. */
+  .box-field-label { color: var(--fg-muted); font-size: 12.5px; font-weight: 600; }
+  /* `background-color`, never the `background` shorthand: that reset the select's chevron
+     (`--select-chevron`, components.css) along with its fill. */
   .box-field input[type="number"], .box-field input[type="text"], .box-field select {
-    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
-    font-size: 14px; background: var(--bg); color: var(--fg);
+    width: 100%; min-height: var(--control-height); padding: 4px 10px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
+    font-size: 13.5px; background-color: var(--bg); color: var(--fg);
   }
+  .box-field select { min-height: 30px; padding-right: 28px; }
   .box-field input[type="checkbox"] { width: auto; align-self: flex-start; }
   /* A layout is column-aligned ASCII art (walls line up over the size markers), so it is only
      editable in a monospace face that doesn't wrap — and it needs the full grid row, not one
@@ -184,7 +200,7 @@
      a track, at any width. */
   @media (max-width: 640px) { .box-field-wide { grid-column: 1 / -1; } }
   .box-field textarea {
-    width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 7px;
+    width: 100%; padding: 7px 9px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
     background: var(--bg); color: var(--fg);
     font-family: var(--font-mono);
     font-size: 13px; line-height: 1.35; overflow-x: auto; resize: vertical;
@@ -194,31 +210,31 @@
     position: sticky; top: 0; z-index: 2;
     display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px 14px; align-items: end;
     padding: 12px 0 14px; margin-bottom: 4px;
-    background: var(--bg); border-bottom: 1px solid var(--line);
+    background: var(--bg); border-bottom: 2px solid var(--line-strong);
   }
   .box-actions .page-actions { margin: 0; display: flex; gap: 8px; }
   @media (max-width: 720px) { .box-actions { grid-template-columns: 1fr; } }
 
   .box-side { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 16px; }
   .box-side .box-preview { padding: 12px; }
-  .box-preview .preview-image { width: 100%; background: var(--thumb-stage); border-radius: 6px; }
+  .box-preview .preview-image { width: 100%; background: var(--thumb-stage); border-radius: 0; }
   /* Until the first render lands the <img> has no src, so give it a placeholder box rather than
      letting the panel collapse to nothing under the "Rendering…" line. */
   .box-preview .preview-image:not([src]) { min-height: 180px; }
-  .box-preview-status { font-size: 12px; color: var(--fg-muted); margin: 8px 0 0; white-space: pre-wrap; }
+  .box-preview-status { font: 400 12px/1.4 var(--font-mono); color: var(--fg-muted); margin: 8px 0 0; white-space: pre-wrap; }
   .box-preview-status.is-error { color: var(--danger); }
 
   /* The tray top view: a plan of the compartments, drawn client-side beside the cut sheet. */
-  .box-topview { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; }
-  .box-topview h3 { margin: 0 0 8px; font-size: 13px; display: flex; align-items: baseline; gap: 8px; }
-  .box-topview-summary { font-size: 12px; font-weight: 400; margin-left: auto; }
+  .box-topview { border: 1px solid var(--line); border-radius: 0; padding: 12px; }
+  .box-topview h3 { margin: 0 0 8px; font-size: 15px; font-weight: 800; display: flex; align-items: baseline; gap: 8px; }
+  .box-topview-summary { font: 400 12px/1.4 var(--font-mono); margin-left: auto; }
   /* Print / PDF / SVG, plus the paper the tiler pages onto. These live on the panel because the
      panel is what removes itself when a generator has no compartments — so the controls inherit
      that gate for free rather than needing one of their own. */
   .box-topview-actions { display: flex; gap: 6px; align-items: center; margin: 0 0 8px; }
-  .box-topview-actions select { font-size: 12px; padding: 2px 4px; }
-  .box-topview-actions .btn-sm { padding: 3px 8px; font-size: 12px; }
-  .box-topview-canvas { background: var(--thumb-stage); border-radius: 6px; padding: 8px; overflow-x: auto; }
+  .box-topview-actions select { min-height: var(--control-height-small); font-size: 12.5px; padding: 0 26px 0 6px; }
+  .box-topview-actions .btn-sm { min-height: var(--control-height-small); padding: 0 9px; font-size: 12.5px; }
+  .box-topview-canvas { background: var(--thumb-stage); border-radius: 0; padding: 8px; overflow-x: auto; }
   .box-topview-canvas .tv-svg { display: block; width: 100%; height: auto; max-height: 320px; }
   /* 12px, not 11.5 — it was the only half-pixel size in the app (§2.9). */
   .box-topview-hint { font-size: 12px; margin: 8px 0 0; }
@@ -241,19 +257,20 @@
   .generator-editor { display: grid; grid-template-columns: 340px minmax(0, 1fr); gap: 24px; align-items: start; margin-top: 16px; }
   .generator-side { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
   .generator-params { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 12px; margin: 6px 0; }
-  .generator-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--fg-muted); }
+  .generator-field { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--fg-muted); }
   .generator-picker-label, .generator-name-label, .generator-folder-label {
-    display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--fg-muted);
+    display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--fg-muted);
   }
   .generator-field input, .generator-picker-label select, .generator-name-label input, .generator-folder-label select {
-    width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 7px;
-    font-size: 14px; background: var(--bg); color: var(--fg);
+    width: 100%; min-height: var(--control-height); padding: 4px 10px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
+    font-size: 13.5px; font-weight: 400; background-color: var(--bg); color: var(--fg);
   }
+  .generator-picker-label select, .generator-folder-label select { min-height: 30px; padding-right: 28px; font-weight: 600; }
   .generator-field input[type="checkbox"] { width: auto; align-self: flex-start; }
   .generator-save { margin-top: 4px; align-self: flex-start; }
   /* A generator's live drawing is ink on paper too (design-system.md rule 5): the panel is the
      card, and the drawing is multiplied onto it. */
-  .generator-preview { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px; background: var(--thumb-stage); isolation: isolate; }
+  .generator-preview { position: sticky; top: 16px; border: 1px solid var(--line); border-radius: 0; padding: 12px; background: var(--thumb-stage); isolation: isolate; }
   .generator-preview img { display: block; width: 100%; height: auto; max-height: 72vh; object-fit: contain; mix-blend-mode: multiply; }
   .generator-saved-list { margin-top: 28px; }
   .generator-saved { margin: 4px 0; }
@@ -263,21 +280,21 @@
     .generator-preview { position: static; }
   }
 
-  .box-prior { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 12px 14px; }
-  .box-prior h3 { margin: 0; font-size: 14px; }
+  .box-prior { border: 1px solid var(--line); border-radius: 0; padding: 12px 14px; }
+  .box-prior h3 { margin: 0; font-size: 15px; font-weight: 800; }
   .box-prior-hint { font-size: 13px; margin-top: 2px; }
   .box-prior-list { list-style: none; padding: 0; margin: 10px 0 0; display: flex; flex-direction: column; gap: 10px; }
   .box-prior-item { display: flex; align-items: center; gap: 10px; }
-  .box-prior-item .thumb { width: 40px; height: 40px; flex: 0 0 40px; background: var(--raised); }
+  .box-prior-item .thumb { width: 40px; height: 40px; flex: 0 0 40px; }
   .box-prior-meta { flex: 1; min-width: 0; }
-  .box-prior-name { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .box-prior-date { font-size: 12px; color: var(--fg-muted); }
+  .box-prior-name { font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .box-prior-date { font: 400 12px/1.4 var(--font-mono); color: var(--fg-muted); }
 
   .box-help {
     display: inline-flex; align-items: center; justify-content: center;
-    width: 15px; height: 15px; margin-left: 5px; vertical-align: 1px;
-    border: 1px solid var(--line); border-radius: 50%;
-    font-size: 10px; line-height: 1; color: var(--fg-muted);
+    width: 16px; height: 16px; margin-left: 5px; vertical-align: 1px;
+    border: 1.5px solid var(--fg-muted); border-radius: 50%;
+    font: 700 10px/1 var(--font-mono); color: var(--fg-muted);
   }
   .box-help:hover { border-color: var(--fg); color: var(--fg); text-decoration: none; }
 
@@ -288,7 +305,7 @@
     margin: 14px 0 6px;
   }
   .param-groups-title, .param-group-title {
-    font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--fg-muted);
+    font: 700 12px/16px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }
   .param-group { border: none; padding: 0; margin: 0 0 6px; min-width: 0; }
   .param-group-summary {
@@ -303,7 +320,7 @@
   .param-group[open] > .param-group-summary::before { transform: rotate(45deg); }
   .param-group-summary:hover .param-group-title { color: var(--fg); }
   /* The advanced groups keep their boxed-off look, so "these are the fiddly ones" survives the change. */
-  .param-group-adv { border: 1px solid var(--line); border-radius: var(--radius-panel); padding: 2px 12px 4px; margin: 0 0 10px; }
+  .param-group-adv { border: 1.5px dashed var(--fg-muted); border-radius: 0; padding: 2px 12px 4px; margin: 0 0 10px; }
   .param-group > .box-params { margin-top: 6px; }
 
   .param-group-adv > summary { cursor: pointer; }

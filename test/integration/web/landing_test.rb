@@ -5,7 +5,7 @@ require "support/public_fixture"
 module Web
   # THE FRONT DOOR, SECOND PASS (2026-10-16). Signed out, `/` has two answers and DEMO MODE picks:
   # on the public demo's box (DEMO_ACCOUNT_EMAIL set) it is the marketing landing -- the pitch, a wall
-  # of twelve of the app's own renders, how it works, four features, Try the demo as its one accent;
+  # of twelve of the app's own renders, how it works, four features, Try the demo as its one primary;
   # anywhere else it is the plain sign-in card, because a self-hosted box has nobody to pitch to.
   # /users/sign_in is the plain card in both. Signed in, `/` is Recent. config/routes.rb declares
   # three roots in an order that matters; these are what go red if it changes.
@@ -94,8 +94,10 @@ module Web
       assert_select "li", text: /Point it at a folder.*A folder or a NAS share/m
     end
 
-    # THE ACCENT IS SPENT ONCE (design-system.md rule 13), on the action this page exists for.
-    test "the accent is Try the demo while the demo is available" do
+    # ONE PRIMARY, AN INK FILL (design-system.md rules 13 and 15), on the action this page exists for:
+    # `.primary` once, on Try the demo. Its colour is accent_spend_test.rb's, which reads the RESOLVED
+    # fill (ink, and the accent on nothing); this pins which control carries it, in both states.
+    test "the primary is Try the demo while the demo is available" do
       demo_on!
       get "/"
       assert_select "main .primary", 1
@@ -106,8 +108,8 @@ module Web
     end
 
     # Mid-reset, or before tinkerex:demo:setup, there is no account and POST /demo answers 404, so
-    # there is no button -- and the page still spends its accent exactly once, on Install.
-    test "with no demo account to sign into, Install takes the accent and no demo button renders" do
+    # there is no button -- and the page still has exactly one primary, Install.
+    test "with no demo account to sign into, Install is the primary and no demo button renders" do
       demo_on!(account: false)
       get "/"
       assert_response :success

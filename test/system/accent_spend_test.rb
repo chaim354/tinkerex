@@ -1,62 +1,60 @@
 require "application_system_test_case"
 
-# THE ACCENT MEANS "THE ONE ACTION THIS PAGE EXISTS FOR" (decision 3 of
-# `docs/superpowers/specs/2026-09-10-ui-cohesion-design.md`). This guard is the only thing that
-# keeps that true, because nothing else in the suite can see it: the accent is spent by a COMPONENT
-# rule, not by the pages, so a page acquires another accent button by rendering a partial that
+# ONE PRIMARY PER SCREEN, AND IT IS INK; THE ACCENT FILLS NO CONTROL AT ALL (design-system.md rule 13,
+# the Shop manual's proposal 1, 2026-11-19; decision 3 of
+# `docs/superpowers/specs/2026-09-10-ui-cohesion-design.md` before it). This guard is the only thing
+# that keeps both true, because nothing else in the suite can see them: the primary is drawn by a
+# COMPONENT rule, not by the pages, so a page acquires another one by rendering a partial that
 # already existed, with no diff on the page itself.
 #
 # WHY THE BROWSER TIER (this directory's README asks for the argument). The count that matters is of
 # RESOLVED BACKGROUNDS, and the defect this was written for was invisible to the class list:
 # `.upload-btn span` sat inside the `.btn.primary` group in components.css, so every uploader in the
-# app painted itself accent with no `primary` class anywhere in the markup. A request test asserting
-# on classes would have counted ZERO on the page that had ten. §14e's rule for exactly this shape:
-# only a browser knows.
+# app painted itself in the primary's fill with no `primary` class anywhere in the markup. A request
+# test asserting on classes would have counted ZERO on the page that had ten. §14e's rule for exactly
+# this shape: only a browser knows.
 #
-# WHY AN EXACT TABLE RATHER THAN A CEILING. A ceiling ("at most two") is satisfied perfectly by an
-# app with no accent at all, so deleting the `.btn.primary` rule outright would leave it green while
+# WHY AN EXACT TABLE RATHER THAN A CEILING. A ceiling ("at most one") is satisfied perfectly by an
+# app with no primary at all, so deleting the `.btn.primary` rule outright would leave it green while
 # the product lost its only strong signal. It also cannot see an uploader that silently LOSES its
-# opt-in — which is a new failure mode this slice introduced, since `primary:` now defaults to false
-# and a call site can forget it. The table is floor, ceiling and the record of what decision 3
-# resolved to, in one assertion. Updating it is meant to cost a deliberate edit: accent spend
-# drifting silently across 49 PRs is why this file exists.
+# opt-in — a failure mode `primary:` defaulting to false introduced, since a call site can forget it.
+# The table is floor, ceiling and the record of where each page spends its one primary, in one
+# assertion. Updating it is meant to cost a deliberate edit: the accent's spend drifting silently
+# across 49 PRs is why this file exists, and the table carried over unchanged when the fill moved
+# from the accent to ink.
 #
-# WHAT IS COUNTED: elements inside the top bar or `main` whose computed background-color equals the
-# resolved `--accent`, restricted to controls. The top bar joined in redesign slice 4, when Upload
-# moved there and became the Library's and the project hub's one action — a guard still reading
-# `main` alone would have seen those two pages lose their primary and reported it as `[]`. The
-# restriction is deliberate, not tidiness — `.brand-mark`
-# (the rail's 18px logo) is accent-filled and is not a control (the front door's low-stock dot was the
-# second such element until the 2026-10-08 redesign moved it to `--warn`), so counting every
-# element would fail this for things decision 3 does not govern. The accent is compared against a PROBE rather than a literal
-# `rgb(240, 165, 58)`: the token has a different value in the light theme, and a literal would pin
-# this guard to one of the three theme states.
+# WHAT IS COUNTED: controls inside the top bar or `main` whose computed background-color equals the
+# resolved `--fg`, the ink, LESS those that announce a state (`aria-pressed="true"`, `aria-current`,
+# `aria-selected="true"`). Selection is ink too (a pressed toggle, a segmented control's lit part,
+# the chosen tag), and a lit part that SAYS it is lit is a selection, not an action; one that says
+# nothing is indistinguishable from a primary, which is why the Library's Grid/List links carry
+# `aria-current`. The top bar is in because Upload lives there and is the Library's, Recent's and
+# the project hub's one action. Only CONTROLS: an ink chip (`.badge`) is a label, not an action. The
+# colours are compared against PROBES, never literals, so the guard holds in every theme state.
+# AND THE ACCENT FILLS NOTHING: the same controls, compared against the resolved `--accent`, must be
+# none on every page. Red marks (a figure number, a flag, the current row's square, focus); it never
+# fills a control. `.brand-mark`, the rail's red logo, is not a control and not in the top bar.
 #
-# MUTATION-CHECKED (§15) — four, each run and each restored (re-measured in redesign slice 6, when
-# Recent made the top bar's Upload its one action):
-#   1. Putting `.upload-btn span` back into the `.btn.primary` group in components.css — every
-#      route except /, /files (both rows) and /projects/desk-lamp gains an "Upload" at the head of
-#      its list (/projects reports ["Upload", "New project"], /settings ["Upload"]): the top bar's
-#      QUIET Upload, on every signed-in page, turns accent. The routes that stay green are the ones
-#      where Upload opts IN either way. The build-log entries' "Upload & attach" no longer shows
-#      here even under this mutation: they sit in each entry's action menu, where `.menu-item--host .upload-btn
-#      span` resets the background — so the per-entry runaway the spec measured (seven on one page)
-#      is now held by that rule, and the fixture's entries are what would show it coming back.
+# MUTATION-CHECKED (§15), each run and restored (re-measured 2026-11-19 for the ink primary):
+#   1. Putting `.btn.primary` back on the accent fill (`background: var(--accent)`): every route
+#      reports [] in the ink table (the landing's too), the fill having left ink.
 #   2. Deleting the `.btn.primary` background/border/color declarations: every route reports []
 #      against its expectation, so the FLOOR half is not decoration.
-#   3. Dropping `primary: true` from ProjectsController#show's `use_folder_destination`:
-#      /projects/desk-lamp reports [] — the opt-in-forgotten case, which a ceiling could never have
-#      caught. (It reported ["Save publishing"] alone until that moved to the Publishing tab.)
-#   4. Deleting `upload_primary!` from HomeController#index: "/" reports [] — the same
-#      opt-in-forgotten case on the one page whose Upload is its accent without a folder.
+#   3. Dropping ProjectsController#show's `primary:` from `use_folder_destination`: /projects/desk-lamp
+#      reports [] — the opt-in-forgotten case, which a ceiling could never have caught.
+#   4. Dropping the Library's Grid/List `aria-current`: /files reports ["Upload", "List"] — a lit
+#      segment that announces nothing reads as a second primary.
+#   5. Filling `.btn[aria-pressed="true"]` with the accent: the ink table stays right (a pressed
+#      button is a selection) and the accent table reports "/settings" => ["Light"], so the
+#      "fills nothing" half is not decoration either.
 class AccentSpendTest < ApplicationSystemTestCase
   setup do
     @root = use_fresh_share_library!
     @user = sign_in_as("accent@example.com")
     # THE HANDLE IS NOT DECORATION. `projects/_publish` renders "Claim handle" (quiet) until the
-    # user has one and "Save publishing" (accent) after — so a handle-less fixture would measure the
-    # Publishing tab with NO accent and never reach the control it exists to spend it on. (Until
-    # 2026-10-26 that was the project page's second accent, the one decision 3 allowed; the edit
+    # user has one and "Save publishing" (the primary) after — so a handle-less fixture would measure
+    # the Publishing tab with NO primary and never reach the control it exists to spend it on. (Until
+    # 2026-10-26 that was the project page's second primary, the one decision 3 allowed; the edit
     # area moved it to a tab of its own.)
     # An admin, so Settings → Users is on a page this guard measures (2026-10-21).
     @user.update!(handle: "bench", admin: true)
@@ -78,7 +76,7 @@ class AccentSpendTest < ApplicationSystemTestCase
     FileUtils.remove_entry(@root) if @root&.exist?
   end
 
-  test "every page spends the accent on exactly the action it exists for" do
+  test "every page fills exactly the action it exists for with ink, and nothing with the accent" do
     # A second account for the Users page's per-account page. HERE, NOT IN setup: the landing test
     # below needs the setup's account to be the only one, or the demo's door stays shut on share.
     @other_account = User.create!(email: "accent-other@example.com", confirmed_at: Time.current, omniauth_signup: true)
@@ -86,7 +84,7 @@ class AccentSpendTest < ApplicationSystemTestCase
       # RECENT'S ONE ACTION IS THE TOP BAR'S UPLOAD (slice 6, spec §4.2), although the page shows no
       # folder: FolderDestination's upload_primary! changes Upload's weight and leaves it asking with
       # the chooser. The head's "New project" went — New ▾ in the top bar already has Project. (The
-      # front door's accent was "Files" until 2026-09-10, a rail destination rendered as the loudest
+      # front door's primary was "Files" until 2026-09-10, a rail destination rendered as the loudest
       # control on the page, §2.6; then "New project" until slice 6.)
       "/" => [ "Upload" ],
       # The top bar's, now the Library's one action (redesign slice 4).
@@ -102,7 +100,7 @@ class AccentSpendTest < ApplicationSystemTestCase
       # THE PROJECT PAGE SPENDS IT ONCE NOW (2026-10-26, the edit area): the top bar's Upload, into
       # the folder this project keeps its files in. Decision 3 allowed it two, and the second — Save
       # publishing, the switch that makes the whole thing public — is the Publishing tab's one
-      # accent now, below. It rendered SEVEN with this fixture and ten with six log entries.
+      # primary now, below. It rendered SEVEN with this fixture and ten with six log entries.
       "/projects/desk-lamp" => [ "Upload" ],
       # THE EDIT AREA'S THREE TABS, one primary each, and the top bar's Upload quiet on all three —
       # including Page layout, which is the project page in edit mode and so the one that had to
@@ -124,7 +122,7 @@ class AccentSpendTest < ApplicationSystemTestCase
       # THE SHELVES PAGE (2026-10-20; it was Filing, and before that the model catalog's shelves
       # held this path) spends it once, on Add shelf at its foot. Each card's Add (an extension)
       # and Save (its view and group), and the page's Add group and each group's Rename, are quiet:
-      # with a dozen cards a per-card accent would be a dozen.
+      # with a dozen cards a per-card primary would be a dozen.
       "/settings/shelves" => [ "Add shelf" ],
       # K (2026-10-20): the library folder page, with a catalog to keep (the model folder above), spends
       # it on Switch; Start over is quiet behind its confirmation. Off share there is nothing to choose.
@@ -164,64 +162,87 @@ class AccentSpendTest < ApplicationSystemTestCase
       "/welcome/models/done" => welcome_done_path(track: "models", project: @project.slug)
     }
 
-    actual = paths.transform_values do |path|
+    accent = {}
+    actual = paths.to_h do |name, path|
       visit path
       # `main` is this assertion's own precondition. Without it a route that failed to render would
-      # report NO accent controls and satisfy every `[]` expectation — §14e's "a guard that scans a
+      # report NO filled controls and satisfy every `[]` expectation — §14e's "a guard that scans a
       # directory dies silently when the directory leaves", with a route in place of a glob.
       assert_selector "main", visible: :all
       # The model folder's row pins the strip spending nothing only while the strip is ON the page —
       # without it, a folder that stopped showing its model would report ["Upload"] just the same.
       assert_selector ".model-strip h2", text: "Wall Bracket" if path == paths["/files (a model folder)"]
-      accent_controls
+      filled = filled_controls
+      accent[name] = filled["accent"]
+      [ name, filled["ink"] ]
     end
     assert_equal expected, actual
+    assert_equal paths.keys.index_with { [] }, accent, "the accent marks; it fills no control (rule 13)"
   end
 
   # THE LANDING (2026-10-16): signed out on a demo deployment, its one action is Try the demo
-  # (design-system.md rule 15). Its own test because every route above is signed in. The setup's
-  # account doubles as the demo account -- the only account, so on share and s3 no other library
-  # sharer closes the demo's door and the expectation is the same on every leg.
-  test "the landing spends the accent on Try the demo" do
+  # (design-system.md rule 15), an ink fill like every other primary. Its own test because every
+  # route above is signed in. The setup's account doubles as the demo account -- the only account, so
+  # on share and s3 no other library sharer closes the demo's door and the expectation is the same on
+  # every leg. Install's state, with no demo account, is landing_test.rb's (both states, by class).
+  test "the landing fills Try the demo with ink, and nothing with the accent" do
     prior = ENV["DEMO_ACCOUNT_EMAIL"]
     ENV["DEMO_ACCOUNT_EMAIL"] = @user.email
     Capybara.reset_sessions!
     visit "/"
     assert_selector ".landing-hero h1"
-    assert_equal [ "Try the demo" ], accent_controls
+    filled = filled_controls
+    assert_equal [ "Try the demo" ], filled["ink"]
+    assert_equal [], filled["accent"], "the accent marks; it fills no control (rule 13)"
   ensure
     prior.nil? ? ENV.delete("DEMO_ACCOUNT_EMAIL") : ENV["DEMO_ACCOUNT_EMAIL"] = prior
   end
 
   private
 
-    # The labels of every accent-filled control inside the top bar or `main`, in document order (the
-    # bar comes first). Labels rather than a bare count so a failure says WHICH controls — a count
-    # alone sends the next reader back to the browser to find out what it was talking about.
-    def accent_controls
+    # { "ink" => [...], "accent" => [...] }: the labels of every control inside the top bar or `main`
+    # filled with ink (less those announcing a state, see the header) and with the accent, in document
+    # order (the bar comes first). Labels rather than a bare count so a failure says WHICH controls —
+    # a count alone sends the next reader back to the browser to find out what it was talking about.
+    def filled_controls
       page.evaluate_script(<<~JS)
         (function () {
-          var probe = document.createElement('span')
-          probe.style.background = 'var(--accent)'
-          document.body.appendChild(probe)
-          var accent = getComputedStyle(probe).backgroundColor
-          probe.remove()
+          var resolve = function (token) {
+            var probe = document.createElement('span')
+            probe.style.background = 'var(' + token + ')'
+            document.body.appendChild(probe)
+            var colour = getComputedStyle(probe).backgroundColor
+            probe.remove()
+            return colour
+          }
+          var ink = resolve('--fg'), accent = resolve('--accent')
+          // A lit part that says it is lit is a selection, drawn in ink by rule 13, not an action.
+          var announcesState = function (el) {
+            return el.getAttribute('aria-pressed') === 'true' || el.getAttribute('aria-selected') === 'true' ||
+                   (el.hasAttribute('aria-current') && el.getAttribute('aria-current') !== 'false')
+          }
 
           var sel = ['a', 'button', 'input[type=submit]', 'input[type=button]', 'summary',
                      '.upload-btn > span']
                       .reduce(function (all, s) { return all.concat(['header.topbar ' + s, 'main ' + s]) }, [])
                       .join(', ')
 
-          return Array.prototype.slice.call(document.querySelectorAll(sel))
-            .filter(function (el) { return getComputedStyle(el).backgroundColor === accent })
-            .map(function (el) {
-              // AN `<input type=submit>` CARRIES ITS LABEL IN `value`, NOT `textContent`, and the
-              // first run of this guard reported three of them as "btn small primary" — a failure
-              // message naming the class it already knew instead of the button a reader must find.
-              var text = el.value || el.textContent || ''
-              return text.replace(/\\s+/g, ' ').trim().slice(0, 40) ||
-                     el.getAttribute('aria-label') || el.className
-            })
+          // AN `<input type=submit>` CARRIES ITS LABEL IN `value`, NOT `textContent`, and the first
+          // run of this guard reported three of them as "btn small primary" — a failure message
+          // naming the class it already knew instead of the button a reader must find.
+          var label = function (el) {
+            var text = el.value || el.textContent || ''
+            return text.replace(/\\s+/g, ' ').trim().slice(0, 40) ||
+                   el.getAttribute('aria-label') || el.className
+          }
+          var controls = Array.prototype.slice.call(document.querySelectorAll(sel))
+          var filled = function (colour) {
+            return controls.filter(function (el) { return getComputedStyle(el).backgroundColor === colour })
+          }
+          return {
+            ink: filled(ink).filter(function (el) { return !announcesState(el) }).map(label),
+            accent: filled(accent).map(label)
+          }
         })()
       JS
     end

@@ -71,7 +71,7 @@ class TopbarUploadSystemTest < ApplicationSystemTestCase
   end
 
   # THE KEYBOARD CAN UPLOAD (UX audit I). Upload was a <label> over the hidden input: no tab stop, no
-  # key handler, so the one accent action on the Library, Recent and the hub was mouse-only. Now it is
+  # key handler, so the one primary action on the Library, Recent and the hub was mouse-only. Now it is
   # a <button>: in the Tab order, focusable, and Enter and Space each open the picker (counted as the
   # click the input receives, for the reason this file's header gives).
   # Mutation-checked (2026-11-02): putting the share/s3 branch's control back as a `tag.label` in
