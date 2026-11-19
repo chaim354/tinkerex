@@ -10,11 +10,19 @@
   compact kind: the cover, the name, its facts, when it last changed.
 
   THE LINK IS THE COVER AND THE NAME, and the row's other parts sit beside it: the badges are never
-  inside it (`.project-card .badge` stays empty, projects_flow_test.rb). pages/home.css and the
-  index's section of pages/projects.css place each part on the row's grid.
+  inside it (`.project-card .badge` stays empty, projects_flow_test.rb). pages/home.css places each
+  part on the row's grid, for both pages.
+
+  THE NEXT STEP AND THE PROGRESS (Shop manual spec §9, "next step on Home and Projects"): `progress`
+  is a Maker::Task::Progress or nil (no tasks), `next_step` a Maker::Task or nil, both looked up by
+  the caller from one query each for the whole list (Maker::Task.next_steps_for / .progress_for),
+  never per row. Home's row adds "1 of 4 steps done" to its facts (its Carry on section shows the
+  step itself); the index's row gives them a column of their own, the step under a caps "Next".
 %>
 <% number = local_assigns[:number] %>
 <% detail = local_assigns.fetch(:detail, false) %>
+<% progress = local_assigns[:progress] %>
+<% next_step = local_assigns[:next_step] %>
 <div class="project-tile">
   <% if number %><span class="project-num"><%= number %></span><% end %>
   <%= link_to project_path(project), class: "project-card" do %>
@@ -66,8 +74,20 @@
     <% end %>
     <% if detail %>
       <span class="project-visibility"><%= project.visibility.humanize %></span>
+    <% elsif progress %>
+      <span class="project-steps"><%= steps_done(progress, noun: "step") %></span>
     <% end %>
   </span>
+  <% if detail && (next_step || progress) %>
+    <%# A project with tasks but none open (every step done) shows its progress alone, with no "Next". %>
+    <span class="project-next">
+      <% if next_step %>
+        <span class="project-next-label">Next</span>
+        <span class="project-next-step"><%= next_step.title %></span>
+      <% end %>
+      <span class="project-steps"><%= steps_done(progress, noun: "step") %></span>
+    </span>
+  <% end %>
   <span class="project-side">
     <span class="project-when"><%= time_at(project.updated_at, style: :relative) %></span>
     <% if project.status == "archived" %>

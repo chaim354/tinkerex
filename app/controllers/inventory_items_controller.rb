@@ -64,6 +64,11 @@ class InventoryItemsController < ApplicationController
                              .where(maker_taggings: { taggable_type: "Maker::InventoryItem" })
                              .distinct.order(:name).pluck(:name)
     @low_count = current_user.maker_inventory_items.low_stock.count
+    # TO BUY (Shop manual spec §9): what the open projects' current BOMs need more of than is on hand,
+    # one row per item (Maker::ToBuy, four queries whatever the size; page_query_budget_test.rb). On
+    # the whole list only: a search or a facet narrows the stock to find something in it, and the
+    # shopping list is not a part of the stock that a filter could narrow.
+    @to_buy = @filtered ? [] : Maker::ToBuy.for(current_user)
   end
 
   def show

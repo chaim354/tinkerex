@@ -9,6 +9,9 @@
      low row's on-hand count takes the accent beside its Low stock flag: a mark with its word, never
      the colour alone (design-system.md rule 13). */
   .inventory-stock .toolbar { margin-bottom: var(--space-3); }
+  /* A name is the maker's own words, and one unbroken run of them (an export's underscore-joined name)
+     scrolled the page sideways at 375px (narrow_names_test.rb, measured with To buy above it). */
+  .inventory-table .col-name { overflow-wrap: anywhere; }
   .inventory-table .col-name a { color: var(--fg); font-weight: 600; }
   .inventory-table .col-part { font-family: var(--font-mono); font-size: 12px; color: var(--fg-muted); }
   .inventory-table .num { color: var(--fg); }
@@ -19,6 +22,18 @@
   /* At phone width the part number goes too: a mono run like `AMS1117-3.3` has no break in it, and
      with it the table outgrew a 375px page (measured, slice 7). The item page still shows it. */
   @media (max-width: 479px) { .inventory-table .col-category, .inventory-table .col-location, .inventory-table .col-part { display: none; } }
+
+  /* TO BUY (spec §9; the screen's section 1): the item at 600 in ink like a stock row's, how many and
+     what they cost in mono, and why in muted prose with each project's name in ink. Two sections on
+     one page are 40px apart, as the screen stacks them. Every number is ink, as the stock table's
+     are. At phone width the unit cost goes: the row's total is the one figure a buyer needs. */
+  .inventory-to-buy { margin-bottom: 40px; }
+  .to-buy-table .col-name { overflow-wrap: anywhere; }
+  .to-buy-table .col-name a { color: var(--fg); font-weight: 600; }
+  .to-buy-table .num { color: var(--fg); }
+  .to-buy-table .col-why { color: var(--fg-muted); font-size: 14px; line-height: 1.35; overflow-wrap: anywhere; }
+  .to-buy-table .col-why a { color: var(--fg); }
+  @media (max-width: 479px) { .to-buy-table .col-each { display: none; } }
 
   /* Only the push-right is Inventory's own; the type comes from the component. */
   .inventory-toolbar .toolbar-count { margin-left: auto; }

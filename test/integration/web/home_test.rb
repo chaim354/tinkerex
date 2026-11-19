@@ -161,8 +161,8 @@ module Web
     end
 
     # THE NUMBERS ARE THE PAGE'S READING ORDER, AND THE COLUMN READS THE SAME LIST (HomeHelper
-    # #home_sections, Shop manual slice 7): the left stack's projects, then the right stack's
-    # attention and files, numbered 1, 2, 3 with no gap whatever is absent, each column row the
+    # #home_sections, Shop manual slice 7): the left stack's next steps and projects, then the right
+    # stack's attention and files, numbered 1 to 4 with no gap whatever is absent, each column row the
     # same number and words as the head it links to, and a lead counted off the same lists. Every
     # section present, so a numbering that skipped or reordered one would show.
     #
@@ -170,17 +170,18 @@ module Web
     # assertion ("0 Active projects" for "1 Active projects"), and a column row reading the
     # section's label without its number reddened the column's.
     test "the sections are numbered in reading order, and the column numbers them the same way" do
-      @user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      lamp = @user.maker_projects.create!(name: "Desk Lamp", status: "active")
+      @user.maker_tasks.create!(title: "Check the flicker", taskable: lamp)
       file("lamp.stl", at: 1.hour.ago)
       low = @user.maker_inventory_items.create!(name: "M3 bolt", unit: "each", min_quantity: 5)
       Maker::InventoryTransaction.apply!(item: low, user: @user, delta: 2, reason: "initial")
       get root_path
 
       heads = css_select("main .home-section .panel-head h2").map { |h| h.text.squish }
-      assert_equal [ "1 Active projects", "2 Needs attention", "3 Recently changed" ], heads
+      assert_equal [ "1 Carry on", "2 Active projects", "3 Needs attention", "4 Recently changed" ], heads
       rows = css_select("aside.column a.column-row[href^='#']").map { |a| [ a.at_css(".column-row-name").text.squish, a["href"] ] }
-      assert_equal [ [ "1 Active projects", "#home-projects" ], [ "2 Needs attention", "#home-attention" ],
-                     [ "3 Recently changed", "#home-recent" ] ], rows
+      assert_equal [ [ "1 Carry on", "#home-carry-on" ], [ "2 Active projects", "#home-projects" ],
+                     [ "3 Needs attention", "#home-attention" ], [ "4 Recently changed", "#home-recent" ] ], rows
       assert_select ".page-head .page-lead", text: "One project is open. One thing needs a look."
     end
   end

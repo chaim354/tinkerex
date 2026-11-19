@@ -27,7 +27,7 @@ module Maker
           @bom_lines ||= (bom = project.current_bom) ? bom.lines.includes(:inventory_item, :supplier).to_a : []
         end
 
-        def tasks = @tasks ||= project.tasks.order(:position, :created_at).to_a
+        def tasks = @tasks ||= project.tasks.in_panel_order.to_a
 
         def entries
           @entries ||= project.build_log_entries.includes(:rich_text_body).reorder(logged_at: :desc).to_a
