@@ -82,7 +82,7 @@ module Maker
     # thirteen disagree with what humanize would say: `readme` is "README" (the file's own spelling,
     # not "Readme"), `attachments` is "Files" (the panel has been
     # headed Files since S2-2 — the key is the partial's name, and renaming the partial would touch
-    # eight call sites), `models` is "3D models" (the Library column's word for that catalog, UX audit H),
+    # eight call sites), `models` is "3D models" (the rail's word for that catalog, UX audit H),
     # `bom` is "Bill of materials", and `build_log` is "Build log", not "Build Log". A chooser whose labels differ from the headings above them is a chooser nobody
     # trusts. Totality pinned in project_kind_test.rb.
     PANEL_LABELS = {
@@ -120,9 +120,6 @@ module Maker
     # `project_belongs_to_user` validation, so a nulled pointer would be an unsaveable row (§14d).
     has_many :releases, -> { order(published_at: :desc, id: :desc) },
              class_name: "Maker::Release", foreign_key: :project_id, dependent: :destroy
-    # DISMISSED TIDY-UP SUGGESTIONS (the Shop manual's §9, 2026-11-19; Maker::TidyDismissal). A row is
-    # about this project's page and means nothing without it, so it goes with the project.
-    has_many :tidy_dismissals, class_name: "Maker::TidyDismissal", foreign_key: :project_id, dependent: :destroy
     # `:nullify`, AND IT IS THE ONLY OPTION THAT WORKS — do not "normalise" it onto the
     # `:destroy` lines above. The ledger outlives the project on purpose: a transaction records
     # that stock actually moved, and `InventoryItem#quantity_cached` was computed from it, so
@@ -165,15 +162,6 @@ module Maker
 
     scope :by_status, ->(s) { where(status: s) if s.present? }
     scope :active, -> { where(status: "active") }
-    # OPEN IS EVERY PROJECT STILL BEING WORKED ON: not done and not archived, so planning, active
-    # and paused. `active` above is the one status of that name, which is not the same question:
-    # most projects never leave `planning` (the column default), and an `active`-only list reads
-    # empty for them. Done is out because its build has consumed its stock, so its BOM reads short
-    # for ever; archived is out because the Projects index already sets it aside. What Home's next
-    # steps and Maker::ToBuy read; the redesign's Projects page calls the same set "Active".
-    CLOSED_STATUSES = %w[done archived].freeze
-    OPEN_STATUSES = (STATUSES - CLOSED_STATUSES).freeze
-    scope :open, -> { where(status: OPEN_STATUSES) }
     # What User#handle_locked? reads: anything with a public URL to break.
     scope :published,       -> { where.not(visibility: "private") }
     scope :publicly_listed, -> { where(visibility: "public") }
@@ -237,7 +225,7 @@ module Maker
     # Projects::BomsController#show) calls this rather than repeating the ORDER clause, so "latest
     # revision" has one definition (stage 2, S2-4).
     def current_bom
-      boms.latest_first.first
+      boms.order(revision: :desc, id: :desc).first
     end
 
     # THE PAGE'S LAYOUT: this kind's preset with this project's own overrides on top (stage 4,
@@ -259,10 +247,8 @@ module Maker
     # blocks keeps exactly the layout it has always had. The block keys are part of the vocabulary,
     # so a caller that does render them must say which they are or they drop out as stale — the
     # totality rule the folder keys already run on.
-    # `root_repo:` (2026-11-19) is Maker::ProjectFolderListing#root_repo? from the same listing, so
-    # Files keeps the full width its repository card needs; false for a caller with no listing.
-    def panel_layout(folders: [], blocks: [], root_repo: false) =
-      Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:, blocks:, root_repo:)
+    def panel_layout(folders: [], blocks: []) =
+      Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:, blocks:)
 
     # THE PANELS A CALLER MAY RENDER BY KEY, so a tab separator is filtered out (2026-09-09, tabs):
     # the two pages read Layout#groups instead, and every other caller of this method looks a panel

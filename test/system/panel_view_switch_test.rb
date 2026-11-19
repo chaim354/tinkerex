@@ -66,13 +66,6 @@ class PanelViewSwitchTest < ApplicationSystemTestCase
 
   def recent_names = all("#{FILES} .recent-files .attachment-tile .grid-name").map(&:text)
 
-  # THE SECTION NUMBER A PANEL'S HEAD SHOWS (the Shop manual, slice 5): drawn before the title from the
-  # SLOT's `--section`, which a stream replacing the panel's section leaves standing. Read as the
-  # browser resolves it, `"3"` or `none`, because no DOM text carries it. MUTATION-CHECKED: dropping
-  # the slot's `style:` in projects/_panel_slot reddens the first test with `the panel's head shows its
-  # section number. Expected /\A"\d+"\z/ to match "none".`
-  def head_number(css) = page.evaluate_script("getComputedStyle(document.querySelector(arguments[0] + ' > .panel-head > h2'), '::before').content", css)
-
   # Turbo moves the focus a frame AFTER it renders a stream, so this waits for it; nothing a
   # selector can wait on tells a focused button from the same button unfocused.
   def assert_focused(element, message)
@@ -106,8 +99,6 @@ class PanelViewSwitchTest < ApplicationSystemTestCase
     assert_operator top_before, :>, 150, "the button must sit mid-window for the comparison below to mean anything"
     assert_operator page.evaluate_script("window.scrollY"), :>, 0, "the page must be scrolled, or it cannot be seen to move"
     watch_the_page(keep: [ panel_for(@firmware), FILES ])
-    number = head_number(panel_for(@models))
-    assert_match(/\A"\d+"\z/, number, "the panel's head shows its section number")
 
     list.click
 
@@ -119,7 +110,6 @@ class PanelViewSwitchTest < ApplicationSystemTestCase
     end
 
     assert_page_was_not_redrawn
-    assert_equal number, head_number(panel_for(@models)), "the switched panel keeps its number"
     assert_equal 1, probe("streams"), "one stream, for the one panel: tiles to list changes nothing else"
     within(panel_for(@firmware)) do
       assert_selector ".filechooser--inline .filechooser-col", count: 2
@@ -180,16 +170,12 @@ class PanelViewSwitchTest < ApplicationSystemTestCase
     end
     assert_selector "#{FILES} .recent-files .attachment-tile", count: 1
     assert_equal %w[notes.txt], recent_names
-    # AND THE INDEX OF FILES (the Shop manual spec §9): a browsed folder draws no figure, so its files
-    # lose their numbers there and every number after them moves (Projects::PanelsController#in_place).
-    assert_equal 3, probe("streams"), "the panel, the Files panel and the index of files"
-    assert_equal "—", find("#project-index .files-index-entry", text: "base.stl").find(".files-index-fig").text
+    assert_equal 2, probe("streams"), "the panel and the Files panel"
 
     within(panel_for(@models)) { click_on "Tiles" }
     within(panel_for(@models)) { assert_selector ".attachments-grid .attachment-tile", count: 2 }
     assert_selector "#{FILES} .recent-files .attachment-tile", count: 3
     assert_equal %w[base.stl lid.stl notes.txt], recent_names.sort
-    assert_match(/\A\d+\z/, find("#project-index .files-index-entry", text: "base.stl").find(".files-index-fig").text)
 
     assert_page_was_not_redrawn
     assert_equal "tiles", @project.reload.panels.dig("views", "folder:#{@models.node_id}")

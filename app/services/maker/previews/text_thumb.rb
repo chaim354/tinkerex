@@ -34,9 +34,7 @@ module Maker
       #   1 -> (undeclared — `Enqueue::BASE_REVISION`) white page, cool `#1c2230` ink.
       #   2 -> the palette's ink on paper (2026-10-21): `Palette::PAPER` and `Palette::INK`; was a
       #        cool #1c2230.
-      #   3 -> Shop manual's ink (2026-11-18): `Palette::INK` follows Paper's `--fg` from #1b1c19
-      #        to #0f1113. Every text thumbnail re-renders once.
-      THUMBNAIL_REVISION = 3
+      THUMBNAIL_REVISION = 2
 
       # One kind (`thumbnail`); the signature matches the measurable renderers' so
       # `Enqueue.revision_for` has one way to ask.

@@ -10,7 +10,7 @@ module Web
   # variables. The variable names still exist on both pages, behind a collapsed "For the person
   # running this server" line; what these tests pin is that they left the maker's own sentences.
   #
-  # Every assertion about the page's words is scoped to `main`: the strip and the column say
+  # Every assertion about the page's words is scoped to `main`: the rail and the top bar say
   # Library, Tools and Trash on every page, so a body-wide match would pass over a Help page that
   # said none of them.
   class HelpPageTest < ActionDispatch::IntegrationTest
@@ -87,11 +87,11 @@ module Web
       get help_path
       text = maker_text.squish
       assert_no_match(/Files page|sweep|Publish panel/i, text)
-      assert_match(/Rescan library at the top of the Library/, text)
+      assert_match(/under ⋯ in the Library/, text)
       assert_match(/filed onto their shelf on the next scan/, text)
       assert_match(/shelves: type folders such as models\//, text)
       assert_match(/Publishing tab/, text)
-      assert_match(%r{/, or Ctrl\+K \(⌘K on a Mac\), jumps to it}, text)
+      assert_match(/Ctrl\+K \(⌘K on a Mac\)/, text)
       assert_select "main section[aria-labelledby='inventory']" do
         assert_select "h2#inventory", text: "Inventory"
         [ inventory_items_path, suppliers_path, locations_path ].each { |path| assert_select "a[href=?]", path }
@@ -149,35 +149,25 @@ module Web
                       "a setting or a console command belongs behind the operator's <details>")
     end
 
-    # HELP IS IN THE ACCOUNT BUTTON'S MENU, beside Settings and Account (Shop manual slice 3; it sat
-    # in the rail's foot before), on every page.
-    test "the account menu offers Help beside Settings" do
+    test "the rail offers Help beside Settings, named for the icon-only rail" do
       sign_in_as(make_owner!(handle: "ada"))
       get root_path
-      assert_select "header.strip .strip-account a.menu-item[href='/help']", 1 do
-        assert_select "svg.rail-icon", 1
-        assert_select "span", text: "Help"
-      end
-      assert_select "header.strip .strip-account a.menu-item[href=?] + a.menu-item + a.menu-item[href='/help']", settings_path
-      assert_select "header.strip .strip-account a[aria-current]", 0
+      assert_select "a.rail-btn[href='/help'][aria-label='Help']", 1
+      # Collapsed (and below 1100px) the rail hides every `.rail-btn span`, so the button names
+      # itself on the element and draws an icon, exactly as Settings and Sign out do.
+      assert_select "aside.rail .rail-foot a.rail-help[title='Help'] svg.rail-icon", 1
+      assert_select "aside.rail .rail-foot a.rail-help span", text: "Help"
+      assert_select "aside.rail .rail-foot a.rail-help + a.rail-settings", 1
+      assert_select "aside.rail .rail-foot a.rail-help[aria-current]", 0
     end
 
-    # HELP LIGHTS NO PLACE (Shop manual spec §11.2), and its column links its own sections, which the
-    # page carries (shell_layout_test.rb holds every in-page link to an element on the page), then
-    # the two places a reader goes from here (slice 8, the `help` screen's "Also"). The six sections
-    # are numbered in the column as the page numbers their heads (a CSS counter there, so the
-    # browser alone sees the page's half). Mutation-checked (2026-11-19): numbering the rows from 0
-    # printed `Actual: ["0", "1", "2", "3", "4", "5"]`; dropping the Also group printed `Actual: []`.
-    test "the Help page lights no place, and its column links its sections" do
+    # The foot's Settings link lights on its own pages (shell_layout_test.rb); Help does the same, so
+    # the rail never shows nothing lit on a page it links to — and Settings goes dark here.
+    test "the Help page lights the Help button and nothing else in the rail" do
       sign_in_as(make_owner!(handle: "ada"))
       get help_path
-      assert_select "header.strip a.strip-place[aria-current]", 0
-      assert_select "aside.column [aria-current]", 0
-      assert_equal %w[#library #projects #models #inventory #tools #account #server],
-                   css_select("aside.column a.column-row[href^='#']").map { |a| a["href"] }
-      assert_equal %w[1 2 3 4 5 6], css_select("aside.column a.column-row .column-row-num").map { |n| n.text.strip }
-      assert_equal [ welcome_path, settings_path ],
-                   css_select("aside.column a.column-row:not([href^='#'])").map { |a| a["href"] }
+      assert_select "aside.rail .rail-foot a.rail-help[aria-current='page']", 1
+      assert_select "aside.rail [aria-current='page']", 1
     end
 
     test "the Tools page speaks to the maker, not the operator" do

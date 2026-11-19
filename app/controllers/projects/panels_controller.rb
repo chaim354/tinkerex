@@ -27,7 +27,6 @@ module Projects
 
     def update
       return update_view if params[:view].present?
-      return update_stack if params[:stack].present?
       return replace if params[:layout].present?
 
       head :bad_request
@@ -37,14 +36,8 @@ module Projects
     # would freeze this release's defaults onto the row and stop the project following its own kind
     # — including after the maker changes that kind on the edit form. Views, widths, titles and
     # intros go with it, by the same argument: they are the arrangement, not a separate setting.
-    #
-    # WHAT THE PUBLIC PAGE LEAVES OUT STAYS (2026-11-19, the published view). That IS a separate
-    # setting — the Publishing tab's — and a reset that cleared it would publish every panel the
-    # maker kept private, files and all, from a button that says it resets the layout. The column
-    # keeps that one key, or goes back to nil when there is nothing kept back.
     def destroy
-      kept = Array(stored["unpublished"])
-      @project.update!(panels: kept.any? ? { "unpublished" => kept } : nil)
+      @project.update!(panels: nil)
       redirect_to project_path(@project), notice: "Reset the page layout to the #{kind_label} defaults."
     end
 
@@ -66,11 +59,6 @@ module Projects
         @project.transaction do
           keys = write_blocks(doc.blocks_from(held)).merge(mint_tab_keys(held))
           attrs = { panels: doc.column(held).transform_values { |value| rekey(value, keys) } }
-          # THE STACK SWITCHES RIDE THROUGH A SAVE UNCHANGED. They are not part of the document (the
-          # editor neither shows nor posts them; they are switched in a panel's head, #update_stack),
-          # and the column a Save writes REPLACES the stored one, so leaving them out here would turn
-          # every panel's stacks back on whenever the maker saved a layout.
-          attrs[:panels]["unstacked"] = stored["unstacked"] if stored.key?("unstacked")
           if (page = doc.page_from(held))
             attrs[:description] = page["description"]
             attrs[:cover_node_id] = page["cover_node_id"]
@@ -224,42 +212,11 @@ module Projects
     #
     # THE EDITOR'S COPY OF THE BUTTONS SENDS NO `in_place` and keeps the plain redirect: its slots
     # hold a draft view, and a stream replacing the panel under one would leave the two disagreeing.
-    #
-    # `figures` SAYS THE PAGE'S FIGURE NUMBERS MOVED (the Shop manual spec §9 and §11.3): a folder
-    # going into the browser draws no figure, and one coming out draws them again, so every figure
-    # after it, every citation and the index of files renumber. A switch between tiles and list
-    # draws the same figures in the same order and moves none.
     def in_place(key, view)
       return {} unless params[:in_place] == "1"
 
       browsed = (current_layout.view_for(key) == "browser") != (view == "browser")
-      browsed ? { panel: key, files: "1", figures: "1" } : { panel: key }
-    end
-
-    # ONE PANEL'S VERSION STACKS ON OR OFF (Shop manual spec §9, "a toggle per panel"): the shape and
-    # the rules of #update_view, over `panels["unstacked"]` (Maker::ProjectKind::Layout#stacked?).
-    # `stack[<key>]=1` stacks, `stack[<key>]=0` does not; exactly one pair, a key this project's page
-    # holds that draws files (Maker::ProjectKind.stacks?), or nothing is written. Answered IN PLACE
-    # as a view switch is (#in_place). A FOLDER's switch redraws the Files panel too (`files`): a
-    # backup its stack holds leaves the Files panel's Backups group, and comes back when it stops.
-    def update_stack
-      raw = params[:stack]
-      pairs = raw.is_a?(ActionController::Parameters) ? raw.to_unsafe_h : {}
-      key, value = pairs.first if pairs.size == 1
-      key = current_layout.order.find { |k| k == key.to_s } if key
-      return redirect_to(project_path(@project)) unless key && Maker::ProjectKind.stacks?(key) && %w[0 1].include?(value.to_s)
-
-      back = if params[:in_place] == "1"
-        # A STACK SWITCH ALWAYS RENUMBERS (`figures`, #in_place): a stack is one figure and its
-        # versions standing alone are several.
-        (current_layout.folder?(key) ? { panel: key, files: "1" } : { panel: key }).merge(figures: "1", pressed: "stack")
-      else
-        {}
-      end
-      off = Array(stored["unstacked"]).map(&:to_s) - [ key ]
-      off << key if value.to_s == "0"
-      @project.update!(panels: stored.merge("unstacked" => off))
-      redirect_to project_path(@project, **back, anchor: key)
+      browsed ? { panel: key, files: "1" } : { panel: key }
     end
 
     def view_pair

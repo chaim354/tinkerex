@@ -35,7 +35,7 @@ module Web
       assert_select ".model-strip form[action=?] button", model_path(@model), text: "Delete"
       assert_select ".model-strip details.composer > summary", text: "Log a print"
       assert_select ".model-strip form[action=?]", model_print_runs_path(@model)
-      # The strip is not a selection item and spends no primary (Upload is the folder's one action).
+      # The strip is not a selection item and spends no accent (Upload is the folder's one action).
       assert_select ".model-strip [data-selection-target]", count: 0
       assert_select ".model-strip .btn.primary", count: 0
     end

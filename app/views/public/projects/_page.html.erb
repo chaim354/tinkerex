@@ -14,97 +14,94 @@
   Local: pub (Maker::PublicProject).
 %>
 <% project = pub.project %>
-<%# THE TOP OF THE PAGE (Shop manual slice 8; the `public-project` screen): the head at the left and
-    the cover, the project's own figure, at the right, wrapping under it on a narrow window.
+<nav class="breadcrumb" aria-label="Project path">
+  <%= link_to "@#{pub.handle}", public_user_path(pub.handle) %>
+  <span class="sep" aria-hidden="true">/</span>
+  <span aria-current="page"><%= project.name %></span>
+</nav>
 
-    `.page-head` IS A TITLE, AT MOST A LEAD, AND AT MOST ONE ROW OF CONTROLS (template_hygiene_test.rb,
-    "every .page-head is a title, at most a lead, and at most one row of controls"): `.page-title`
-    holds the caps line, the name and the description, and `.head-actions` the page's one action, the
-    bundle, and the feed. This head once passed three slots, and the byline was laid out in the
-    centre of the page between the name and the button.
+<%# `.page-head` IS `justify-content: space-between` AND LAYS OUT EXACTLY TWO SLOTS. This head
+    passed THREE — title, byline, bundle — so the byline was laid out in the CENTRE of the page,
+    between the project's name on the left and the download button on the right. The byline is
+    title-side metadata, so it belongs in `.page-title` beside the name; the bundle is the head's
+    one action, so it takes the actions slot. Same mechanism as the old /models index (now
+    files/models/index), fixed the same way.
+    Guard: template_hygiene_test.rb, "every .page-head passes exactly the two slots it lays out". %>
+<div class="page-head public-head">
+  <div class="page-title">
+    <h1><%= project.name %></h1>
+    <p class="public-byline">
+    by <%= link_to "@#{pub.handle}", public_user_path(pub.handle) %>
+    <%# THE SAME RULE AS THE MAKER'S OWN PAGE (stage 4, S4-6): `planning` is the column default and
+        badging a default is noise; a status the maker SET is worth a badge. Found in review: the
+        status variants were restyled in components.css and this page went on badging the default. %>
+    <% unless project.status == "planning" %>
+      <span class="badge status-<%= project.status %>"><%= project.status.humanize %></span>
+    <% end %>
+    <% if project.license_label %>
+      <span class="badge license"><%= project.license_label %></span>
+    <% end %>
+    <% if project.unlisted? %>
+      <span class="badge visibility-unlisted">Unlisted link</span>
+    <% end %>
+    <%# NO LINK TO A FEED WITH NOTHING IN IT (hardening, 2026-09-08; tinkerex#283). The feed carries
+        exactly two kinds, and a maker who hid both panels publishes neither -- so the document is
+        still valid Atom with zero entries, and advertising it here would invite a reader to
+        subscribe to a stream that can never say anything. EITHER panel is enough: one visible kind
+        is a feed worth following. The Atom <link rel="alternate"> in public/projects/show.html.erb
+        is gated on the same pair and must stay in step -- a reader finds the feed through that
+        <link> as readily as through this anchor. %>
+    <% if pub.panel_visible?("build_log") || pub.panel_visible?("releases") %>
+      <%= link_to "Feed", public_feed_path(pub.handle, project.slug, **pub.link_params), class: "feed-link" %>
+    <% end %>
+    </p>
+  </div>
 
-    THE CAPS LINE IS THE PAGE'S ONE BREADCRUMB LANDMARK, `nav.breadcrumb` around the byline: the way up
-    is the maker, so "A project by @ada" is the path, and the owner's preview (projects/preview)
-    renders this partial inside a shell whose own caps path is the page title, so one landmark is all
-    either page carries (project_preview_test.rb). The badges ride in it, as the facts beside the
-    name. %>
-<div class="public-top">
-  <div class="page-head public-head">
-    <div class="page-title">
-      <nav class="breadcrumb public-path" aria-label="Project path">
-        <p class="public-byline">
-          <span>A project by <%= link_to "@#{pub.handle}", public_user_path(pub.handle) %></span>
-          <span class="sep" aria-hidden="true">·</span>
-          <span>updated <%= time_at(project.updated_at, style: :date) %></span>
-          <%# THE SAME RULE AS THE MAKER'S OWN PAGE (stage 4, S4-6): `planning` is the column default and
-              badging a default is noise; a status the maker SET is worth a badge. Found in review: the
-              status variants were restyled in components.css and this page went on badging the default. %>
-          <% unless project.status == "planning" %>
-            <span class="badge status-<%= project.status %>"><%= project.status.humanize %></span>
-          <% end %>
-          <% if project.license_label %>
-            <span class="badge license"><%= project.license_label %></span>
-          <% end %>
-          <% if project.unlisted? %>
-            <span class="badge visibility-unlisted">Unlisted link</span>
-          <% end %>
-        </p>
-      </nav>
-      <h1><%= project.name %></h1>
-      <% if project.description.present? %>
-        <p class="page-lead project-description"><%= project.description %></p>
-      <% end %>
+  <%# STAGE 3, S3-6: THE BUNDLE, BUILT IN THE VISITOR'S BROWSER. The button hands
+      `bundle_controller.js` a manifest URL and nothing else; that controller fetches each file
+      through the SAME public route this page links, adds bom.csv, and zips it client-side, so no
+      byte passes through Rails that a plain download would not already have moved (§15). The
+      status line is where a refused fetch is reported -- on the s3 deployment the public file
+      route redirects to a presigned URL at the bucket, a cross-origin fetch that reads only
+      under the bucket's CORS rule (docs/guides/DEPLOY.md) and the connect-src the port names for the
+      CSP, so the button must SAY it failed rather than sit there having done nothing.
+
+      `bundle.any?` IS THE ONLY CONDITION AND NO PANEL GATE JOINS IT (hardening, 2026-09-08;
+      tinkerex#283). The three other side documents are gated on the panel they belong to; this one
+      has no panel to be hidden by, because `attachments` is in Maker::ProjectKind::ALWAYS and no
+      override may hide the folder. So the empty test covers the one case that exists -- a folder
+      with nothing to zip -- and a second condition here would be a branch nothing can take (the
+      argument in full at Maker::PublicProject#bundle_files). The BOM inside the zip IS gated: the
+      manifest's `bom_csv_url` is null when that panel is hidden and the script skips it. %>
+  <% bundle = pub.bundle_files %>
+  <% if bundle.any? %>
+    <div class="page-actions bundle" data-controller="bundle"
+         data-bundle-manifest-value="<%= public_bundle_path(pub.handle, project.slug, **pub.link_params) %>"
+         data-bundle-name-value="<%= project.slug %>">
+      <button type="button" class="btn small" data-action="bundle#build">
+        <%# "FIRST N FILES" WHEN THE LISTING HIT ITS CAP, the same fact the manifest carries as
+            `truncated`. A button that said "300 files" for a folder holding 900 would be a lie the
+            visitor cannot detect until they open the zip. %>
+        Download bundle (<%= "first " if pub.listing.truncated? %><%= pluralize(bundle.size, "file") %>, <%= number_to_human_size(bundle.sum(&:size)) %>)
+      </button>
+      <span class="muted" data-bundle-target="status"></span>
     </div>
+  <% end %>
+</div>
 
-    <% bundle = pub.bundle_files %>
-    <% feed = pub.panel_visible?("build_log") || pub.panel_visible?("releases") %>
-    <% if bundle.any? || feed %>
-      <div class="head-actions">
-        <%# STAGE 3, S3-6: THE BUNDLE, BUILT IN THE VISITOR'S BROWSER. The button hands
-            `bundle_controller.js` a manifest URL and nothing else; that controller fetches each file
-            through the SAME public route this page links, adds bom.csv, and zips it client-side, so no
-            byte passes through Rails that a plain download would not already have moved (§15). The
-            status line is where a refused fetch is reported -- on the s3 deployment the public file
-            route redirects to a presigned URL at the bucket, a cross-origin fetch that reads only
-            under the bucket's CORS rule (docs/guides/DEPLOY.md) and the connect-src the port names for the
-            CSP, so the button must SAY it failed rather than sit there having done nothing.
+<% if project.description.present? %>
+  <p class="project-description"><%= project.description %></p>
+<% end %>
 
-            `bundle.any?` IS THE ONLY CONDITION AND NO PANEL GATE JOINS IT (hardening, 2026-09-08;
-            tinkerex#283). The three other side documents are gated on the panel they belong to; this one
-            has no panel to be hidden by, because `attachments` is in Maker::ProjectKind::ALWAYS and no
-            override may hide the folder. So the empty test covers the one case that exists -- a folder
-            with nothing to zip -- and a second condition here would be a branch nothing can take (the
-            argument in full at Maker::PublicProject#bundle_files). The BOM inside the zip IS gated: the
-            manifest's `bom_csv_url` is null when that panel is hidden and the script skips it.
-
-            THE PAGE'S ONE PRIMARY (Shop manual slice 8): taking the whole project away is what a
-            visitor comes for, so it is the ink fill (design-system.md rule 13). %>
-        <% if bundle.any? %>
-          <div class="page-actions bundle" data-controller="bundle"
-               data-bundle-manifest-value="<%= public_bundle_path(pub.handle, project.slug, **pub.link_params) %>"
-               data-bundle-name-value="<%= project.slug %>">
-            <button type="button" class="btn primary" data-action="bundle#build">
-              <%# "FIRST N FILES" WHEN THE LISTING HIT ITS CAP, the same fact the manifest carries as
-                  `truncated`. A button that said "300 files" for a folder holding 900 would be a lie the
-                  visitor cannot detect until they open the zip. %>
-              Download bundle (<%= "first " if pub.listing.truncated? %><%= pluralize(bundle.size, "file") %>, <%= number_to_human_size(bundle.sum(&:size)) %>)
-            </button>
-            <span class="muted" data-bundle-target="status"></span>
-          </div>
-        <% end %>
-        <%# NO LINK TO A FEED WITH NOTHING IN IT (hardening, 2026-09-08; tinkerex#283). The feed carries
-            exactly two kinds, and a maker who hid both panels publishes neither -- so the document is
-            still valid Atom with zero entries, and advertising it here would invite a reader to
-            subscribe to a stream that can never say anything. EITHER panel is enough: one visible kind
-            is a feed worth following. The Atom <link rel="alternate"> in public/projects/show.html.erb
-            is gated on the same pair and must stay in step -- a reader finds the feed through that
-            <link> as readily as through this anchor. %>
-        <% if feed %>
-          <%= link_to "Follow the feed", public_feed_path(pub.handle, project.slug, **pub.link_params), class: "feed-link linkbtn" %>
-        <% end %>
-      </div>
+<%# NOT `tag_chips(project)`: that helper links into /tags/:name, which is the SIGNED-IN owner's
+    private tag page. A visitor's tag link belongs on /explore. %>
+<% if project.tags.any? %>
+  <div class="tag-chips">
+    <% project.tags.sort_by(&:name).each do |t| %>
+      <%= link_to t.name, public_explore_path(tag: t.name), class: "tag-chip" %>
     <% end %>
   </div>
+<% end %>
 
 <%# THE HERO (stage 4, S4-5; story 5.7): the same picture the private page has led with since S4-1,
     in the same place on it, on the page a visitor sees. An image-role cover is the picture itself
@@ -117,16 +114,10 @@
     becoming the page's largest picture. The cover is the FIRST term of `pub.thumbs` wherever it
     lives, in the folder or attached from outside it (2026-10-19, F-S14-1). The map is already
     memoised for the page, so the hero costs no query of its own and shows whatever thumbnail is
-    READY. A pending one shows nothing, which is the honest answer on a page that cannot poll.
-
-    Since slice 8 it stands at the head's right, its name under it in the mono of a caption. %>
+    READY. A pending one shows nothing, which is the honest answer on a page that cannot poll. %>
 <% if (cover = pub.cover_node) %>
-  <%# THE COVER IS FIG. 1 HERE TOO (the Shop manual spec §9; Maker::PublicProject#figure_numbers): the
-      26px disc at the picture's top left. %>
-  <% cover_number = pub.figure_number(cover.node_id) %>
-  <%= tag.div class: "project-hero", data: (cover_number ? { fig: cover_number } : {}) do %>
-    <%= link_to pub.view_url_for(cover.node_id), class: "project-hero-link" do %>
-      <%= fig_num_tag(cover_number, size: :hero) %>
+  <div class="project-hero">
+    <%= link_to pub.view_url_for(cover.node_id) do %>
       <%# `inline_image?`, NOT the role (tinkerex#285): the same split projects/_hero makes. %>
       <% if Maker::FileAttachment.inline_image?(cover.name) %>
         <%= image_tag pub.file_url_for(cover.node_id), class: "project-hero-img", alt: cover.name %>
@@ -147,17 +138,6 @@
       <% end %>
     <% end %>
     <span class="project-hero-name mono muted"><%= cover.name %></span>
-  <% end %>
-<% end %>
-</div>
-
-<%# NOT `tag_chips(project)`: that helper links into /tags/:name, which is the SIGNED-IN owner's
-    private tag page. A visitor's tag link belongs on /explore. %>
-<% if project.tags.any? %>
-  <div class="tag-chips public-tags">
-    <% project.tags.sort_by(&:name).each do |t| %>
-      <%= link_to t.name, public_explore_path(tag: t.name), class: "tag-chip" %>
-    <% end %>
   </div>
 <% end %>
 
@@ -167,16 +147,18 @@
   one layout, read off the project through Maker::PublicProject#visible_panels, so the maker's page
   and a visitor's cannot disagree about what is hidden.
 
-  AND IT IS THE PUBLISHED VIEW (2026-11-19; the Shop manual's spec §3 and §9): a panel the maker
-  left off the public page on the Publishing tab is hidden here and nowhere else, because
-  `pub.layout` is `Layout#published`. Nothing on this page asks about it a second time.
+  THE MAP IS THE WHOLE DEFINITION OF "HAS A PUBLIC FACE". `tasks`, `sheets` and `publish` are
+  absent from it and are therefore absent from a visitor's page WHATEVER the order says, which is
+  exactly what they were before this loop existed -- there is no second list to keep in step, and a
+  maker who drags Tasks to the top does not publish their task list. `readme` joined it on
+  2026-11-05 — the README used to be pinned above the hero outside this loop.
 
-  WHICH PANELS HAVE A PUBLIC FACE IS Maker::PublicProject::PANEL_PARTIALS (the map lived here until
-  the Publishing tab had to list the same panels): `tasks`, `sheets`, `calculations` and `models`
-  are absent from it and are therefore absent from a visitor's page WHATEVER the order says.
-
-  EVERY PARTIAL IS NAMED WITH ITS FULL PATH, AND MUST STAY THAT WAY -- including `repo_card` below,
-  and the map's own entries (Maker::PublicProject::PANEL_PARTIALS says why).
+  EVERY PARTIAL IS NAMED WITH ITS FULL PATH, AND MUST STAY THAT WAY -- including `repo_card` below.
+  A bare `render "photos"` resolves against the CONTROLLER's prefixes, not this file's directory:
+  under Public::ProjectsController that is public/projects/_photos, but under
+  ProjectsController#preview it is projects/_photos, the maker's OWN panel with its composer,
+  rendered into the preview with nothing going red. `files` has no private twin and would raise;
+  the others would silently render the wrong page.
 
   WIRING IS THE ONE SPECIAL CASE and it is not new: the shared projects/_wiring partial is what the
   visitor gets, with `editable: false`, and it has always been wrapped in a check for any
@@ -202,6 +184,13 @@
   leaves this page entirely, along with the bundle. The key carries the node id, `pub.folder_dir`
   resolves it against the same listing the layout was built from, and the map below never sees it.
 %>
+<% public_panels = { "readme"      => "public/projects/readme",
+                     "attachments" => "public/projects/files",
+                     "photos"      => "public/projects/photos",
+                     "schematics"  => "public/projects/schematics",
+                     "build_log"   => "public/projects/build_log",
+                     "bom"         => "public/projects/bom",
+                     "releases"    => "public/projects/releases" } %>
 <%#
   EVERY PANEL IN A SLOT WITH ITS WIDTH (2026-09-09, the page editor; spec §3): the same
   `div.panel-slot.panel--<width>` the maker's page renders, from the same layout, so the visitor
@@ -234,7 +223,7 @@
     <% elsif pub.layout.folder?(key) %>
       <%= render "public/projects/folder_panel", pub: pub, key: key, dir: pub.folder_dir(key),
                  view: pub.layout.view_for(key) %>
-    <% elsif (partial = Maker::PublicProject::PANEL_PARTIALS[key]) %>
+    <% elsif (partial = public_panels[key]) %>
       <%= render partial, pub: pub %>
     <% end %>
   <% end %>

@@ -1,7 +1,7 @@
 import { alertToast, postJSON, uploadFailureSentence } from "lib/chunk_upload"
 import { extOf, isZip, listZipBundle } from "lib/zip_bundle"
 
-// THE STRIP'S UPLOAD WHEN THE SELECTION HOLDS A MODEL ZIP (2026-10-21; spec
+// THE TOP BAR'S UPLOAD WHEN THE SELECTION HOLDS A MODEL ZIP (2026-10-21; spec
 // docs/superpowers/specs/2026-10-20-zip-upload-unpacks-models-design.md). Shared by both upload
 // flows — zip_upload_controller.js (share/s3) and uploader_controller.js (chunk_remote) — which
 // differ only in the per-file door, passed in as `upload(file, parentNodeId)` resolving to

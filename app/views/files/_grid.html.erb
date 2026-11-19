@@ -11,30 +11,63 @@
   card reads what it always did. The actions draw as icons with a title, since a 160px card has no
   room for three words; each one's accessible name says which file it acts on.
 %>
-<%# THE TILES ARE A PLATE (Shop manual spec §6, slice 6): a 2px ink box, its head a caps label naming
-    what it holds at the left and the order at the right, then the figures. `.plate` is the
-    component; `.files-grid` stays the grid inside it, the one the poll, the file menu and the
-    selection all read. A figure carries no number here: a figure number is positional to a project
-    page (spec §9 and §11.3), and the Library prints none for another page's order. %>
-<% plate_order = case @sort
-                 when "modified" then @dir == "desc" ? "Newest first" : "Oldest first"
-                 when "type" then @dir == "desc" ? "By type, Z to A" : "By type, A to Z"
-                 else @dir == "desc" ? "Z to A" : "A to Z"
-                 end %>
-<section class="plate files-plate" aria-label="Files">
-  <div class="plate-head">
-    <span>Plate · <%= @flat ? "Matches" : (@folder ? @folder.name : "Library") %></span>
-    <span class="plate-count"><%= plate_order %></span>
-  </div>
-<div class="files-grid" data-controller="thumbs filemenu stack" data-thumbs-url-value="<%= thumbnails_files_path %>">
-  <%# WHAT THE PAGE DRAWS, IN ORDER (FilesController#index's @figures): a file or folder standing
-      alone is its card, a version stack is one figure that opens in place (files/_grid_stack). %>
-  <% @figures.each do |figure| %>
-    <% if figure.is_a?(Maker::VersionStacks::Stack) %>
-      <%= render "files/grid_stack", stack: figure %>
+<div class="files-grid" data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
+  <% @nodes.each do |node| %>
+    <% info = @info_by_node[node.node_id] %>
+    <%# ext_label is the thumbnail badge and is capped at four characters so it fits the box; the
+        tile's sub-line below uses the full extension, so "LBRN2" does not read as "LBRN". %>
+    <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
+    <div class="grid-item">
+    <% if !node.file? %>
+      <%# #folder_menu_data, NOT #file_menu_data - Delete is a folder's whole menu, and it takes no
+          thumb cell. The fuller note is in _list.html.erb; the argument is in files_helper.rb. %>
+      <%= link_to files_path(folder: node.node_id), class: "grid-card grid-folder",
+                  data: folder_menu_data(node.node_id, node.name) do %>
+        <span class="thumb folder-thumb" aria-hidden="true"><%= folder_glyph %></span>
+        <span class="grid-name"><%= node.name %></span>
+      <% end %>
+    <% elsif Maker::Previews::Registry.for_filename(node.name).present? %>
+      <% thumb = @thumb_by_node.thumb(node.node_id) %>
+      <%# FilesHelper#file_menu_data carries data-download-url, the right-click menu's route to the
+          bytes. The folder branch above calls #folder_menu_data instead, whose one url is the delete
+          one, so none of this reaches a directory. See the fuller note in _list.html.erb and the
+          argument in files_helper.rb.
+
+          A FILE CARD STAYS A LINK TO ITS PAGE: a click opens the file and a double-click opens it in
+          a new tab (FilesHelper#file_open_data), and right-click › Details opens the side panel,
+          which is what makes the card a selection item (FilesHelper#with_selection). `photo:` crops
+          a camera format to fill the stage (Maker::FileAttachment.photo?). %>
+      <%= link_to file_path(node.node_id), class: [ "grid-card file-cell", ("is-selected" if node.node_id == @selected) ],
+                  data: file_open_data(with_selection(thumb_cell_data(node.node_id, ext_label)
+                          .merge(file_menu_data(node, @addon_origins[node.node_id])), node.node_id)) do %>
+        <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: Maker::FileAttachment.photo?(node.name) %>
+        <span class="grid-name"><%= node.name %></span>
+        <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>
+        <%= render "note_badge", count: @note_counts[node.node_id] %>
+      <% end %>
     <% else %>
-      <%= render "files/grid_item", node: @node_by_id[figure], member: nil %>
+      <%# The non-renderable card: a menu, but no poll cell — nothing will ever render a thumbnail
+          for it, so a cell here would be a spinner the poll cannot resolve. %>
+      <%= link_to file_path(node.node_id), class: [ "grid-card", ("is-selected" if node.node_id == @selected) ],
+                  data: file_open_data(with_selection(file_menu_data(node, @addon_origins[node.node_id]), node.node_id)) do %>
+        <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
+        <span class="grid-name"><%= node.name %></span>
+        <span class="grid-sub"><%= [ (info.content_token ? number_to_human_size(info.size) : nil), File.extname(node.name).delete(".").upcase.presence ].compact.join(" · ") %></span>
+        <%= render "note_badge", count: @note_counts[node.node_id] %>
+      <% end %>
     <% end %>
+      <div class="grid-actions">
+        <% if node.file? %>
+          <%= link_to details_path_for(node.node_id), class: "row-action", title: "Details",
+                      aria: { label: "Details for #{node.name}" },
+                      data: { action: "selection#details", selection_id: node.node_id } do %><%= row_action_content(:details, "Details") %><% end %>
+          <%= link_to blob_file_path(node.node_id, download: 1), class: "row-action", title: "Download",
+                      aria: { label: "Download #{node.name}" } do %><%= row_action_content(:download, "Download") %><% end %>
+        <% end %>
+        <%= button_to file_path(node.node_id), method: :delete, class: "linkbtn danger row-action",
+              title: "Delete", aria: { label: "Delete #{node.name}" },
+              form: { data: { turbo_confirm: delete_confirm(node.name, kind: node.kind) } } do %><%= row_action_content(:delete, "Delete") %><% end %>
+      </div>
+    </div>
   <% end %>
 </div>
-</section>

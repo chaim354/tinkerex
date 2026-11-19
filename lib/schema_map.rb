@@ -80,7 +80,7 @@ module SchemaMap
     { "label" => "Files ↔ maker", "group" => "maker",
       "tables" => %w[maker_file_attachments maker_previews maker_notes maker_addon_files
                      maker_addon_states maker_addon_state_revisions maker_repo_edits
-                     maker_file_links maker_stack_exclusions] },
+                     maker_file_links] },
     { "label" => "Library", "group" => "maker",
       "tables" => %w[maker_items maker_collection_items maker_collections maker_taggings
                      maker_tags maker_tasks maker_pins] },
@@ -88,7 +88,7 @@ module SchemaMap
       "tables" => %w[maker_models maker_print_runs maker_projects maker_build_log_entries
                      maker_sheets maker_shelves maker_shelf_groups maker_filing_rules
                      maker_connections maker_project_blocks maker_releases maker_release_files
-                     maker_calculations maker_tidy_dismissals] },
+                     maker_calculations] },
     { "label" => "Inventory & BOM", "group" => "maker",
       "tables" => %w[maker_boms maker_bom_lines maker_inventory_items
                      maker_inventory_transactions maker_suppliers maker_locations] },
@@ -174,9 +174,6 @@ module SchemaMap
     # softness `maker_file_links` and `maker_notes` rely on.
     [ "maker_project_blocks.node_id",       "nodes.node_id",      "app", "pictures" ],
     [ "maker_pins.node_id",                 "nodes.node_id",      "app", "pins" ],
-    # A FILE PULLED OUT OF ITS VERSION STACK (shop-manual spec §9). Soft like every arrow into
-    # `nodes`: a tombstoned file keeps its row through the grace window (Maker::StackExclusion).
-    [ "maker_stack_exclusions.node_id",     "nodes.node_id",      "app", "pulled out of a stack" ],
     # --- maker layer internals ----------------------------------------------------
     [ "maker_boms.project_id",                        "maker_projects.id",        "app", "BOM for" ],
     [ "maker_bom_lines.bom_id",                       "maker_boms.id",            "app", "line of" ],
@@ -196,11 +193,6 @@ module SchemaMap
     # here (the map exists to show references no constraint would notice) and NOT registered as a
     # structural case — the orphan guard derives its set from edges whose parent is a real `.id`.
     [ "maker_project_blocks.project_id",              "maker_projects.id",        "app", "placed on" ],
-    # A DISMISSED TIDY-UP SUGGESTION NAMES ITS PROJECT (the Shop manual's §9, 2026-11-19). Its
-    # `subject` names nodes too, but as a key rather than a pointer (one subject is a PAIR of nodes),
-    # so it is no `*_id` column and draws no arrow; Maker::Project's `dependent: :destroy` is what
-    # test/models/structural_orphan_test.rb checks for this one.
-    [ "maker_tidy_dismissals.project_id",             "maker_projects.id",        "app", "dismissed on" ],
     [ "maker_releases.project_id",                    "maker_projects.id",        "app", "released from" ],
     [ "maker_releases.bom_id",                        "maker_boms.id",            "app", "BOM revision recorded" ],
     [ "maker_release_files.release_id",               "maker_releases.id",        "app", "file of" ],

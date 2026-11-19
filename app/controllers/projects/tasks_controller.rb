@@ -93,7 +93,7 @@ module Projects
       respond_to do |format|
         format.turbo_stream do
           @project = project
-          @tasks = project.tasks.in_panel_order.to_a
+          @tasks = project.tasks.order(:position, :created_at).to_a
           @task_error = alert
           @task_draft = draft
           @task_composer_open = composer_open

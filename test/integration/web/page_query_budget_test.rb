@@ -171,13 +171,6 @@ module Web
                                    parent_node_id: folder.node_id, size: 0,
                                    mtime: 1_700_000_000_000_000_000)
       project.update!(panels: { "views" => { "folder:listed-dir" => "list" } })
-      # THE TIDY-UP LIST (the Shop manual's §9, 2026-11-19): `design` is where the svg rule files, so a
-      # root svg whose name it already holds is a LOOSE suggestion, and `add` grows one per iteration
-      # (half of them dismissed, so the dismissal lookup is under measurement with rows to match) and
-      # an export older than its source per iteration. The plate renders at both sizes, capped at
-      # Maker::TidyUp::SHOWN cells, which LARGE passes: a per-cell read shows as 3 against 12.
-      design = @user.nodes.create!(node_id: "design-dir", name: "design", kind: "dir",
-                                   parent_node_id: folder.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
       add = lambda do |prefix, count|
         count.times do |i|
           id = "#{prefix}#{i}"
@@ -217,18 +210,6 @@ module Web
           @user.nodes.create!(node_id: "#{id}-loose", name: "#{id}-loose.txt", kind: "file",
                               parent_node_id: folder.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
                               content_hash: "h-#{id}-loose", current_version_id: "v-#{id}-loose")
-          # THE TIDY-UP LIST: a loose svg the next pass cannot file (its name is taken in `design`),
-          # every other one dismissed in its current state, and an export older than its source.
-          @user.nodes.create!(node_id: "#{id}-taken", name: "#{id}.svg", kind: "file", parent_node_id: design.node_id,
-                              size: 1, mtime: 1_700_000_000_000_000_000)
-          @user.nodes.create!(node_id: "#{id}-blocked", name: "#{id}.svg", kind: "file", parent_node_id: folder.node_id,
-                              size: 1, mtime: 1_700_000_000_000_000_000)
-          if i.even?
-            project.tidy_dismissals.create!(user: @user, kind: "loose", subject: "#{id}-blocked", state: "design/#{id}.svg")
-          end
-          @user.nodes.create!(node_id: "#{id}-source", name: "#{id}.scad", kind: "file", parent_node_id: sub.node_id,
-                              size: 1, mtime: 1_800_000_000_000_000_000)
-          @user.maker_file_links.create!(from_node_id: "#{id}-file", to_node_id: "#{id}-source", kind: "derived_from")
           # STAGE 5, THE FOLDER PANELS (2026-09-08): A PLAIN DEPTH-ONE FOLDER PER ITERATION, AND IT
           # IS WHAT MAKES N THE NUMBER OF PANELS ON THIS PAGE. `sub` above carries a `.git` marker,
           # so every panel IT grows opens in the BROWSER — one empty div, no tiles, no rows, no
@@ -315,19 +296,6 @@ module Web
       # projects/_file_tile, whose per-tile cost the groups above already grow. It is full (8) at
       # BOTH sizes, so this proves the row rendered, not that a per-tile read inside it would show.
       assert_select ".attachments-panel .recent-files .attachment-tile", 8
-      # THE CONTENTS COLUMN WAS UNDER MEASUREMENT TOO (the Shop manual, slice 5): one row per section
-      # the page drew, so the folders this seed grows are as many rows there, and each row's number
-      # and count come off the render (ProjectsHelper#section_number!, #section_note), never a query
-      # of its own. MUTATION-CHECKED: reading each row's count as `@project.tasks.count` in
-      # projects/_contents reddens the budget above: "projects#show issued 62 queries at the small size
-      # and 86 at the large one".
-      assert_operator css_select("aside.column .project-contents a.column-row").size, :>, LARGE,
-                      "the contents column must list the sections the page drew"
-      # THE TIDY-UP PLATE WAS UNDER MEASUREMENT (the Shop manual's §9): full at the large size, so its
-      # checks ran over every growing row and its cells rendered. MUTATION-CHECKED: a dismissal lookup
-      # per suggestion in Maker::TidyUp#undismissed reddens the budget above: "projects#show issued 58
-      # queries at the small size and 82 at the large one".
-      assert_select "#tidy-up li.plate-cell", Maker::TidyUp::SHOWN
     ensure
       Maker::Addons::Source.reset!
     end
@@ -510,69 +478,6 @@ module Web
       assert_equal pub_small, pub_large, "the visitor's page grew with tabs (#{pub_small} → #{pub_large})"
     end
 
-    # THE PUBLISHED VIEW IS ONE LAYOUT, NOT A QUESTION PER PANEL (2026-11-19). What could grow it:
-    # `permits?` now asks every file whether it sits under a folder kept off the page — a walk up the
-    # tree in memory, and the build log's own set — and the Publishing tab lists every panel. N is the
-    # number of folders kept back, each holding files the sweep attached to the project (the shape a
-    # real folder has) and a build-log photo, so the BOM's design-file lines, the photo arm and the
-    # attachment arm are all asked about kept-back files. Measured on the visitor's page, the bundle
-    # the page's button fetches, and the tab, signed out and signed in as the earlier tests here are.
-    test "keeping folders off the public page grows neither the page, the bundle nor the Publishing tab" do
-      @user.update!(handle: "keptbudget")
-      project = @user.maker_projects.create!(name: "Kept", visibility: "public")
-      folder = project_folder_rows!(@user, project)
-      bom = project.boms.create!(user: @user)
-      kept = []
-      add = lambda do |prefix, count|
-        count.times do |i|
-          id = "#{prefix}-#{i}"
-          dir = @user.nodes.create!(node_id: "#{id}-dir", name: "kept-#{id}", kind: "dir",
-                                    parent_node_id: folder.node_id, size: 0, mtime: 1_700_000_000_000_000_000)
-          2.times do |j|
-            file = @user.nodes.create!(node_id: "#{id}-#{j}", name: "#{id}-#{j}.stl", kind: "file",
-                                       parent_node_id: dir.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
-                                       content_hash: "h-#{id}-#{j}", current_version_id: "v-#{id}-#{j}")
-            project.file_attachments.create!(user: @user, node_id: file.node_id, role: "model")
-          end
-          @user.nodes.create!(node_id: "#{id}-shot", name: "#{id}-shot.png", kind: "file",
-                              parent_node_id: dir.node_id, size: 1, mtime: 1_700_000_000_000_000_000,
-                              content_hash: "hs-#{id}", current_version_id: "vs-#{id}")
-          entry = project.build_log_entries.create!(user: @user, body: "entry #{id}", logged_at: Time.current)
-          entry.file_attachments.create!(user: @user, node_id: "#{id}-shot", role: "image", position: 0)
-          bom.lines.create!(user: @user, node_id: "#{id}-0", quantity: 1, unit: "each")
-          project.blocks.create!(user: @user, kind: "text", heading: "Block #{id}", body: "See [it](kept-#{id}/#{id}-1.stl).")
-          kept << Maker::ProjectKind.folder_key(dir.node_id)
-        end
-        project.update!(panels: { "unpublished" => kept })
-      end
-      sign_out = -> { delete destroy_user_session_path }
-      sign_in = -> { sign_in_web!(@user, password: PASSWORD) }
-      page = public_project_path("keptbudget", project.slug)
-      bundle = public_bundle_path("keptbudget", project.slug)
-
-      measure = lambda do
-        sign_out.call
-        get page
-        assert_response :success, "the visitor's page must render before it can be budgeted"
-        on_page = count_queries { get page }
-        get bundle
-        in_bundle = count_queries { get bundle }
-        sign_in.call
-        get publishing_project_path(project)
-        assert_response :success
-        [ on_page, in_bundle, count_queries { get publishing_project_path(project) } ]
-      end
-
-      add.call("s", 1)
-      page_small, bundle_small, tab_small = measure.call
-      add.call("l", 5)
-      page_large, bundle_large, tab_large = measure.call
-
-      assert_equal page_small, page_large, "the visitor's page grew with folders kept back (#{page_small} → #{page_large})"
-      assert_equal bundle_small, bundle_large, "the bundle grew with folders kept back (#{bundle_small} → #{bundle_large})"
-      assert_equal tab_small, tab_large, "the Publishing tab grew with panels (#{tab_small} → #{tab_large})"
-    end
-
     # STAGE 3, S3-4: THE SAME PROJECT, READ BY A STRANGER. Not a duplicate of the budget above: the
     # public page is a DIFFERENT reader over the same rows (Maker::PublicProject, not
     # ProjectsController#show's ivars), and the two share no eager load — every panel it renders is
@@ -629,7 +534,7 @@ module Web
     end
 
     # STAGE 4, S4-4: THE OWNER'S PREVIEW, SIGNED IN — which is the difference worth measuring. It
-    # renders the same partials over the same object, plus the app shell (the strip, the left column,
+    # renders the same partials over the same object, plus the app shell (the rail, the top bar,
     # the flash) that a visitor never pays for. That shell cost is a
     # CONSTANT and must stay one: a preview that grew with the project would grow with it on a page
     # the maker opens to check their work, not on a page a stranger opens once.
@@ -922,31 +827,6 @@ module Web
                               "projects#index")
     end
 
-    # THE NEXT STEP COSTS NO QUERY PER PROJECT (Shop manual spec §10's "query budget", for §9's next
-    # step on Projects): every project carries a done, a doing and a todo task, so each row draws a
-    # Next and its "N of M steps done", and the list grows from SMALL to LARGE rows.
-    test "projects#index's next steps do not grow with projects or their tasks" do
-      add = lambda do |prefix, count|
-        count.times do |i|
-          project = @user.maker_projects.create!(name: "#{prefix}#{i}", status: "active")
-          seed_steps!(project)
-        end
-      end
-      assert_constant_queries(projects_path,
-                              -> { add.call("s", SMALL) },
-                              -> { add.call("l", LARGE - SMALL) },
-                              "projects#index with next steps")
-      assert_select ".projects-rows .project-next .project-next-step", count: LARGE
-    end
-
-    # Three tasks on one project: done, under way, not started, so a project's next step, its
-    # progress and both open statuses are all on the page being measured.
-    def seed_steps!(project)
-      %w[done doing todo].each_with_index do |status, i|
-        @user.maker_tasks.create!(title: "#{project.name} step #{i}", taskable: project, status:, position: i)
-      end
-    end
-
     # Same reasoning as projects#index above: a model with no attachment has no derived cover, so
     # the grid's `@covers` map was being budgeted while resolving nothing. EVERY MODEL SITS IN ITS
     # OWN PROJECT'S FOLDER, one level down, so the page's grouping (Maker::ModelProjects) walks a
@@ -1067,92 +947,6 @@ module Web
                               "files#index (folder)")
     end
 
-    # VERSION STACKS (Shop manual spec §9) MUST NOT COST A QUERY PER STACK OR PER MEMBER, on any of the
-    # three pages that draw them. Each step adds whole stacks — two versions and a backup of one part,
-    # and one of them pulled out — so the stacks, their members and the pull-outs all grow together.
-    # The Library is measured in both views and PAGED (the default name sort), which is the shape
-    # that loads a stack's other members in a query of its own (FilesController#stack_members_beyond_page):
-    # one for the page, never one per stack.
-    def add_stacks!(prefix, count, parent:)
-      count.times do |i|
-        id = "#{prefix}#{i}"
-        [ "part#{id} v1.stl", "part#{id} v2.stl", "part#{id}_backup.stl" ].each_with_index do |name, j|
-          node!("#{id}-#{j}", name).update!(parent_node_id: parent.node_id)
-        end
-        Maker::StackExclusion.pull_out!(@user, "#{id}-2") if i.zero?
-      end
-    end
-
-    test "files#index with version stacks does not grow with stacks or their members" do
-      folder = @user.nodes.create!(node_id: "budget-stacks", name: "stacks", kind: "dir", mtime: 1, size: 0)
-      add_stacks!("bs", SMALL, parent: folder)
-      %w[list grid].each do |view|
-        get files_path(folder: folder.node_id, view:)
-        assert_select ".stack-toggle", SMALL, "the #{view} page must draw the stacks it is budgeting"
-      end
-      assert_constant_queries(files_path(folder: folder.node_id, view: "list"), -> { },
-                              -> { add_stacks!("bl", LARGE - SMALL, parent: folder) }, "files#index (stacked list)")
-      assert_select ".stack-toggle", LARGE
-      assert_constant_queries(files_path(folder: folder.node_id, view: "grid"), -> { },
-                              -> { add_stacks!("bg", LARGE, parent: folder) }, "files#index (stacked grid)")
-      assert_select ".stack-toggle", 2 * LARGE
-    end
-
-    test "projects#show with version stacks does not grow with stacks or their members" do
-      project = @user.maker_projects.create!(name: "Stacked", status: "active", autofile: false)
-      folder = project_folder_rows!(@user, project)
-      laser = @user.nodes.create!(node_id: "budget-laser", name: "laser", kind: "dir",
-                                  parent_node_id: folder.node_id, mtime: 1, size: 0)
-      assert_constant_queries(project_path(project),
-                              -> { add_stacks!("ps", SMALL, parent: laser); add_stacks!("pr", SMALL, parent: folder) },
-                              -> { add_stacks!("pl", LARGE - SMALL, parent: laser); add_stacks!("pq", LARGE - SMALL, parent: folder) },
-                              "projects#show (stacked)")
-      assert_select "section[id=?] .stack-item", Maker::ProjectKind.folder_key(laser.node_id), LARGE
-    end
-
-    # FIGURE NUMBERS AND THE INDEX OF FILES (the Shop manual spec §9): one walk over what the page
-    # loaded, so neither the numbering, nor a callout per figure, nor a citation per BOM line, nor an
-    # index entry per file may cost a query. Each step adds a folder PANEL holding a stack and a file,
-    # a loose file, and a BOM line citing one of them — panels, figures, stacks, citations and index
-    # entries all grow together. MUTATION-CHECKED: a `current_user.nodes.find_by` per entry in
-    # projects/_files_index reddens this with the counts apart by the entries added.
-    test "projects#show numbers its figures and lists its index without growing with files or panels" do
-      project = @user.maker_projects.create!(name: "Figured", status: "active", autofile: false, kind: "mixed")
-      folder = project_folder_rows!(@user, project)
-      bom = project.boms.create!(user: @user)
-      add = lambda do |prefix, count|
-        count.times do |i|
-          panel = @user.nodes.create!(node_id: "#{prefix}-panel-#{i}", name: "#{prefix} panel #{i}", kind: "dir",
-                                      parent_node_id: folder.node_id, mtime: 1, size: 0)
-          %w[v1 v2].each { |v| node!("#{prefix}-#{i}-#{v}", "part #{prefix}#{i} #{v}.svg").update!(parent_node_id: panel.node_id) }
-          node!("#{prefix}-#{i}-jig", "jig #{prefix}#{i}.dxf").update!(parent_node_id: panel.node_id)
-          node!("#{prefix}-#{i}-loose", "notes #{prefix}#{i}.txt").update!(parent_node_id: folder.node_id)
-          bom.lines.create!(user: @user, node_id: "#{prefix}-#{i}-jig", quantity: 1, position: i)
-        end
-      end
-      assert_constant_queries(project_path(project), -> { add.call("fs", SMALL) }, -> { add.call("fl", LARGE - SMALL) },
-                              "projects#show (figures)")
-      assert_select ".files-index-entry", LARGE * 4, "the index lists every file the page lists"
-      assert_select ".folder-panel .attachment-tile.stack-item[data-fig]", LARGE, "each panel's stack is one figure"
-      assert_select ".bom-lines td.col-fig[data-fig-cite]", [ LARGE, Projects::BomLinesController::PANEL_CAP ].min,
-                    "each BOM line the panel shows cites its file's figure"
-      assert_select "#column .figure-find input[type=search]", 1
-    end
-
-    test "search#index with version stacks does not grow with stacks or their members" do
-      add = lambda do |prefix, count|
-        count.times do |i|
-          dir = @user.nodes.create!(node_id: "sd-#{prefix}#{i}", name: "box #{prefix}#{i}", kind: "dir", mtime: 1, size: 0)
-          [ "lamp v1.stl", "lamp v2.stl", "lamp_backup.stl" ].each_with_index do |name, j|
-            node!("sf-#{prefix}#{i}-#{j}", name).update!(parent_node_id: dir.node_id)
-          end
-        end
-      end
-      assert_constant_queries(search_path(q: "lamp"), -> { add.call("ss", SMALL) },
-                              -> { add.call("sl", LARGE - SMALL) }, "search#index (stacked)")
-      assert_select "#search-file .stack-result", SearchController::PER_GROUP
-    end
-
     # THE MODEL STRIP (slice 5) MUST NOT GROW WITH THE MODEL: its cover is derived from ONE load of its
     # attachments and its print log is one query, so a model folder with 15 files and 15 prints costs
     # what one with 3 does. Whether Maker::ModelFolder.model_in's eager load holds as hidden rows pile
@@ -1204,23 +998,6 @@ module Web
           # already rely on to catch a per-row query the LIMIT alone would hide.
           inv = @user.maker_inventory_items.create!(name: "Inv #{id}", unit: "each", min_quantity: 10)
           Maker::InventoryTransaction.apply!(item: inv, user: @user, delta: 1, reason: "initial")
-          # THE TIDY-UP ROWS (the Shop manual's §9): an export older than its source in each project's
-          # folder, and a repository there with one save not committed, so both of
-          # Maker::TidyUp::Attention's lists grow past ATTENTION_TIDY between the two sizes. Every
-          # other export is dismissed, so the dismissals it reads grow too.
-          folder = project_folder_rows!(@user, project)
-          @user.nodes.create!(node_id: "#{id}-src", name: "#{id}.lbrn2", kind: "file", parent_node_id: folder.node_id,
-                              size: 1, mtime: 2_000)
-          @user.nodes.create!(node_id: "#{id}-svg", name: "#{id}.svg", kind: "file", parent_node_id: folder.node_id,
-                              size: 1, mtime: 1_000)
-          @user.maker_file_links.create!(from_node_id: "#{id}-svg", to_node_id: "#{id}-src", kind: "derived_from")
-          if i.even?
-            project.tidy_dismissals.create!(user: @user, kind: "export_older", subject: "#{id}-svg>#{id}-src", state: "2000")
-          end
-          repo = @user.nodes.create!(node_id: "#{id}-repo", name: "firmware", kind: "dir", parent_node_id: folder.node_id,
-                                     size: 0, mtime: 1)
-          @user.nodes.create!(node_id: "#{id}-c", name: "main.c", kind: "file", parent_node_id: repo.node_id, size: 1, mtime: 1)
-          Maker::RepoEdit.record!(user: @user, repo_root_node_id: repo.node_id, node_id: "#{id}-c")
         end
       end
       assert_constant_queries(root_path,
@@ -1230,59 +1007,8 @@ module Web
       # THE STRADDLE, MEASURED RATHER THAN ASSUMED: the large size renders the capped count, so the
       # files query really was cut by its LIMIT while the per-row work stayed flat.
       assert_select ".home-files .grid-card", count: HomeController::RECENT_FILES
-      # THE TIDY-UP ROWS WERE UNDER MEASUREMENT: at the large size Needs attention holds the capped
-      # count of them, so both lists were read past their limit. MUTATION-CHECKED: looking each row's
-      # project up by its folder (Maker::TidyUp::Attention#project_holding) instead of the one index
-      # reddens it: "home#index issued 24 queries at the small size and 75 at the large one".
-      assert_select ".home-attention .tidy-attention", count: HomeController::ATTENTION_TIDY
       assert_operator large, :>, HomeController::RECENT_FILES
       assert_operator small, :<, HomeController::RECENT_FILES
-    end
-
-    # CARRY ON COSTS NO QUERY PER PROJECT (Shop manual spec §10's "query budget", for §9's next step
-    # on Home): every open project has three tasks, so each draws a Carry on row and its Active
-    # projects row a "N of M steps done". LOCAL SIZES, as home#index's own test above: `small` sits
-    # under RECENT_PROJECTS (6) and `large` over it, so a query per row shows as 3 against 6 even
-    # though the list is capped.
-    test "home#index's Carry on does not grow with projects or their tasks" do
-      small = 3
-      large = 20
-      add = lambda do |prefix, count|
-        count.times do |i|
-          seed_steps!(@user.maker_projects.create!(name: "P #{prefix}#{i}", status: "active"))
-        end
-      end
-      assert_constant_queries(root_path,
-                              -> { add.call("cs", small) },
-                              -> { add.call("cl", large - small) },
-                              "home#index with Carry on")
-      assert_select ".home-carry-on .carry-on-row", count: HomeController::RECENT_PROJECTS
-      assert_select ".home-projects .project-steps", count: HomeController::RECENT_PROJECTS
-      assert_operator small, :<, HomeController::RECENT_PROJECTS
-    end
-
-    # TO BUY COSTS NO QUERY PER PROJECT, BOM OR LINE (Shop manual spec §9's To buy, on Inventory):
-    # every open project gets its own BOM with an item of its own it is short of, a line on an item
-    # they all share, and a typed-in part, so the list grows in rows, in the projects each row names,
-    # and in lines the rollup must pass over. An item per project is also a Stock row, which the
-    # page's own probe above already holds flat.
-    test "inventory#index's To buy does not grow with projects, BOMs or lines" do
-      shared = @user.maker_inventory_items.create!(name: "Shared washer", unit: "each", unit_cost: "0.10")
-      add = lambda do |prefix, count|
-        count.times do |i|
-          project = @user.maker_projects.create!(name: "#{prefix}proj#{i}", status: "active")
-          own = @user.maker_inventory_items.create!(name: "#{prefix}part#{i}", unit: "each", unit_cost: "1.5")
-          bom = project.boms.create!(user: @user)
-          bom.lines.create!(user: @user, inventory_item_id: own.id, quantity: 2)
-          bom.lines.create!(user: @user, inventory_item_id: shared.id, quantity: 1)
-          bom.lines.create!(user: @user, part_name: "#{prefix}wire#{i}", quantity: 1)
-        end
-      end
-      assert_constant_queries(inventory_items_path,
-                              -> { add.call("s", SMALL) },
-                              -> { add.call("l", LARGE - SMALL) },
-                              "inventory#index with To buy")
-      assert_select ".to-buy-table tbody tr", count: LARGE + 1
     end
 
     # Stage 2, S2-3. Each item gets its OWN location and supplier so `.includes(:location,
@@ -1638,74 +1364,22 @@ module Web
                               "settings#show")
     end
 
-    # THE LEFT COLUMN IS ON EVERY PAGE (Shop manual slice 3), so a query per project, pin, folder,
-    # place or supplier in it would grow every page of its section. Each default column is probed on
-    # a page whose own body does not grow with what is added: Home (the pins), a project's page (the
-    # eight projects), the Library's root (its folders, which the pins' folders are) and Inventory
-    # with no items (the places and suppliers). Mutation-checked (2026-11-19): a per-row
-    # `project.file_attachments.size` in layouts/column/_projects reddens the project page; the
-    # Library's subfolders read one query per folder (`.each` over `nodes.find_by`) reddens /files.
-    test "the left column does not grow with projects, pins, folders, places or suppliers" do
-      project = @user.maker_projects.create!(name: "Probe")
+    # THE SIDEBAR IS ON EVERY PAGE, so a per-project or per-pin query here would grow every page in
+    # the app. Settings is the probe because nothing else on it grows with projects or pins.
+    test "the sidebar does not grow with projects or pins" do
       grow = lambda do |upto|
         (@user.maker_projects.count...upto).each { |i| @user.maker_projects.create!(name: "P#{i}") }
         (@user.maker_pins.count...[ upto, Maker::Pin::CAP ].min).each do |i|
           dir = @user.nodes.create!(node_id: "pin-#{i}", name: "place-#{i}", kind: "dir")
           @user.maker_pins.create!(node_id: dir.node_id)
         end
-        (@user.maker_locations.count...upto).each { |i| @user.maker_locations.create!(name: "Bin #{i}") }
-        (@user.maker_suppliers.count...upto).each { |i| @user.maker_suppliers.create!(name: "Shop #{i}") }
       end
-      paths = [ root_path, project_path(project), files_path, inventory_items_path ]
       grow.call(SMALL)
-      paths.each { |path| get path; assert_response :success }
-      small = paths.to_h { |path| [ path, count_queries { get path } ] }
+      get settings_path
+      small = count_queries { get settings_path }
       grow.call(LARGE)
-      large = paths.to_h { |path| [ path, count_queries { get path } ] }
-      assert_equal small, large, "the column's queries grew with projects, pins, folders, places or suppliers"
-    end
-
-    # THE LIBRARY COLUMN'S FOLDER TREE (Shop manual spec §9, Maker::FolderTree): OPEN FOLDERS and
-    # FOLDERS PER LEVEL both grow, and no page does. Every open folder is named by the `library_tree`
-    # cookie, a nested one under each too, and every listed subfolder holds one of its own, so the
-    # closed rows' disclosure query is measured with rows to answer. On a folder's page (the chain
-    # open as well, and its own level growing) and on Trash (the cookie alone); and the frame a
-    # closed folder opens into. Mutation-checked (2026-11-19): a disclosure asked per closed row
-    # (`dirs.where(parent_node_id: id).exists?` in Maker::FolderTree#build) read 27/16/8 queries small
-    # and 255/232/20 large; the subfolders loaded per open folder (a `parents.flat_map` of capped
-    # queries) 22/12/10 against 46/36/34.
-    test "the Library column's folder tree does not grow with open folders or folders per level" do
-      dir = lambda do |id, name, parent = nil|
-        @user.nodes.find_or_create_by!(node_id: id) do |d|
-          d.assign_attributes(name:, kind: "dir", parent_node_id: parent, mtime: 1, size: 0)
-        end
-      end
-      dir.call("tree-here", "here")
-      grow = lambda do |n|
-        (0...n).each do |i|
-          dir.call("tree-#{i}", "open #{i}")
-          dir.call("tree-here-#{i}", "beside #{i}", "tree-here")
-          (0...n).each do |j|
-            dir.call("tree-#{i}-#{j}", "sub #{j}", "tree-#{i}")
-            dir.call("tree-#{i}-#{j}-x", "leaf", "tree-#{i}-#{j}")
-          end
-        end
-        cookies[Maker::FolderTree::COOKIE] = (0...n).flat_map { |i| [ "tree-#{i}", "tree-#{i}-0" ] }.join(".")
-      end
-      paths = [ files_path(folder: "tree-here"), trash_index_path, library_tree_path(parent: "tree-0", depth: 2) ]
-      grow.call(SMALL)
-      paths.each { |path| get path; assert_response :success }
-      small = paths.to_h { |path| [ path, count_queries { get path } ] }
-      grow.call(LARGE)
-      paths.each { |path| get path; assert_response :success }
-      large = paths.to_h { |path| [ path, count_queries { get path } ] }
-      assert_equal small, large, "the folder tree's queries grew with open folders or folders per level"
-      # THE MEASUREMENT WAS OF A GROWN TREE, not of a column that drew nothing: on Trash, the library
-      # root, "here" and every open folder (closed "here" and each "sub j" but the opened first one
-      # carrying a disclosure), every open folder's subfolders, and each first subfolder's leaf.
-      get trash_index_path
-      assert_equal 1 + 1 + LARGE + (LARGE * LARGE) + LARGE, css_select("aside.column .column-tree .column-row").size
-      assert_equal 1 + LARGE * (LARGE - 1), css_select("aside.column button.column-tree-toggle[aria-expanded='false']").size
+      large = count_queries { get settings_path }
+      assert_equal small, large, "the sidebar's queries grew with projects or pins"
     end
 
     # THE TAGS LIST (S2-6). Each iteration grows a tag AND tags a project with it, so the one

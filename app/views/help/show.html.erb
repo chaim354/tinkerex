@@ -1,15 +1,6 @@
 <% content_for :title, "Help — Tinkerex" %>
 
-<%# THE HEAD (Shop manual slice 8; the `help` screen): the title and a lead in one slot, the tour in the
-    other (template_hygiene_test.rb: a .page-head passes two). Take the tour is this page's one action,
-    so it is the ink primary (design-system.md rule 13); everything else here is reading. %>
-<div class="page-head help-head">
-  <div class="page-title">
-    <h1>Help</h1>
-    <p class="page-lead">What each part of Tinkerex does, and where to find it.</p>
-  </div>
-  <div class="head-actions"><%= link_to "Take the tour", welcome_path, class: "btn primary" %></div>
-</div>
+<div class="page-head"><h1>Help</h1><div class="head-actions"><%= link_to "Take the tour", welcome_path, class: "btn" %></div></div>
 
 <%#
   WHAT A MAKER NEEDS TO KNOW TO USE THIS SERVER, IN THEIR WORDS (onboarding, 2026-10-13; spec
@@ -35,23 +26,18 @@
   their variables and console commands sit in its collapsed details, and help_page_test.rb holds
   every other section to that.
 %>
-<%# THE SECTIONS IN TWO COLUMNS FROM 1200PX, packed shortest column first by masonry_controller.js (the
-    project page's own mechanism), each under a section head whose number is a CSS counter
-    (pages/landing.css), so the heading's text stays its name. The column (layouts/column/_help)
-    numbers its rows the same way, in this order. The operator's details close the page, outside
-    the grid, at full width. %>
-<div class="prose help-sections" data-controller="masonry">
+<div class="prose">
   <section aria-labelledby="library">
     <h2 id="library">Your library</h2>
     <% if capabilities.scannable? %>
       <% if capabilities.presignable? %>
         <p>Your library is the storage this server was set up with. Anything put into it by other
-          means appears here within 15 minutes, or straight away with <em>Rescan library</em> at the
-          top of the <%= link_to "Library", files_path %>.</p>
+          means appears here within 15 minutes, or straight away with <em>Rescan library</em> under
+          ⋯ in the <%= link_to "Library", files_path %>.</p>
       <% else %>
         <p>Your library is a folder on this server. Anything put there — over a NAS share, by a
           slicer or another program, by copying it in — appears here within 15 minutes, or
-          straight away with <em>Rescan library</em> at the top of the <%= link_to "Library", files_path %>.</p>
+          straight away with <em>Rescan library</em> under ⋯ in the <%= link_to "Library", files_path %>.</p>
         <p>The library is the whole folder the server was given, or a folder inside it, chosen by an
           admin in <%= link_to "Library folder", settings_library_path %> under Settings, since it is
           every user's library; other users see it there but cannot change it. Changing it keeps
@@ -70,11 +56,11 @@
       <p>Your library lives on a sync server. The desktop app keeps a folder on your computer in
         sync with it, and changes made on another device appear here within a few minutes.</p>
     <% end %>
-    <p><em>Upload</em>, under Add at the top of the page, puts files in the folder you are looking
-      at; on a page with no folder it asks which one.</p>
-    <p>The search box at the top of the page looks through everything at once: files, folders,
-      projects, 3D models, inventory, notes and tags. <kbd>/</kbd>, or <kbd>Ctrl+K</kbd> (<kbd>⌘K</kbd>
-      on a Mac), jumps to it from anywhere.</p>
+    <p><em>Upload</em>, in the top bar, puts files in the folder you are looking at; on a page with
+      no folder it asks which one.</p>
+    <p>The search box in the top bar looks through everything at once: files, folders, projects,
+      3D models, inventory, notes and tags. <kbd>Ctrl+K</kbd> (<kbd>⌘K</kbd> on a Mac) jumps to it
+      from anywhere.</p>
     <% if capabilities.versioned? %>
       <p>Saving over a file keeps the version before it.</p>
     <% else %>
@@ -167,24 +153,24 @@
       an account or reset a password, only once the person running the server has set up mail: if
       you forget your password and no reset email arrives, ask them to reset it.</p>
   </section>
-</div>
 
-<details id="server" class="prose help-server">
-  <summary>For the person running this server</summary>
-  <p><%= link_to "docs/INSTALL.md", "https://github.com/chaim354/tinkerex/blob/main/docs/INSTALL.md" %>
-    covers installing, mail, accounts and backups.</p>
-  <p>Tools: <code>ADDON_SOURCE_URL</code> points at an addon bundle server, or
-    <code>ADDON_SOURCE_PATH</code> at a directory of bundles. A tool that needs a service stays
-    greyed out until <code>&lt;NAME&gt;_SIDECAR_URL</code> points at it:
-    <code>BOXES_SIDECAR_URL</code>, <code>OPENSCAD_SIDECAR_URL</code>.</p>
-  <p>Accounts: <code>REGISTRATION</code> is closed by default, and <code>REGISTRATION=open</code>
-    <% if capabilities.syncable? %>is accepted only on the sync-server backend, where every account
-      has a library of its own.<% else %>is refused at boot, because every account sees the same
-      library.<% end %>
-    <code>SMTP_ADDRESS</code> turns mail on. An admin adds accounts, resets passwords and makes other
-    admins under Settings → Users, with no mail needed. Only when no admin can sign in,
-    <code>bin/rails 'tinkerex:password[EMAIL]'</code> sets a new password, read from
-    <code>TINKEREX_PASSWORD</code>, and <code>bin/rails 'tinkerex:admin[EMAIL]'</code> makes an
-    account an admin.</p>
-  <p>The source is at <%= link_to "github.com/chaim354/tinkerex", "https://github.com/chaim354/tinkerex" %>.</p>
-</details>
+  <details id="server">
+    <summary>For the person running this server</summary>
+    <p><%= link_to "docs/INSTALL.md", "https://github.com/chaim354/tinkerex/blob/main/docs/INSTALL.md" %>
+      covers installing, mail, accounts and backups.</p>
+    <p>Tools: <code>ADDON_SOURCE_URL</code> points at an addon bundle server, or
+      <code>ADDON_SOURCE_PATH</code> at a directory of bundles. A tool that needs a service stays
+      greyed out until <code>&lt;NAME&gt;_SIDECAR_URL</code> points at it:
+      <code>BOXES_SIDECAR_URL</code>, <code>OPENSCAD_SIDECAR_URL</code>.</p>
+    <p>Accounts: <code>REGISTRATION</code> is closed by default, and <code>REGISTRATION=open</code>
+      <% if capabilities.syncable? %>is accepted only on the sync-server backend, where every account
+        has a library of its own.<% else %>is refused at boot, because every account sees the same
+        library.<% end %>
+      <code>SMTP_ADDRESS</code> turns mail on. An admin adds accounts, resets passwords and makes other
+      admins under Settings → Users, with no mail needed. Only when no admin can sign in,
+      <code>bin/rails 'tinkerex:password[EMAIL]'</code> sets a new password, read from
+      <code>TINKEREX_PASSWORD</code>, and <code>bin/rails 'tinkerex:admin[EMAIL]'</code> makes an
+      account an admin.</p>
+    <p>The source is at <%= link_to "github.com/chaim354/tinkerex", "https://github.com/chaim354/tinkerex" %>.</p>
+  </details>
+</div>

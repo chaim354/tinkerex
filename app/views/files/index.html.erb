@@ -1,4 +1,4 @@
-<% content_for :title, "#{@folder ? @folder.name : "Library"} — Tinkerex" %>
+<% content_for :title, "Library — Tinkerex" %>
 
 <%#
   Breadcrumb: root -> current folder, each segment a link. Root always shows; @crumbs is [] at
@@ -24,121 +24,79 @@
   </nav>
 <% end %>
 
-<%# THE PAGE HEAD (Shop manual spec §7, slice 6): the caps path above, then the folder's NAME as the
-    title (the root, and a flat search or filter, read Library: design-system.md rule 9), then the
-    page's own buttons and the lead line.
+<%# THE PAGE'S ONE PRIMARY ACTION IS UPLOAD, AND IT LIVES IN THE TOP BAR (structural redesign
+    slice 4; layouts/_topbar_upload.html.erb), which uploads into this folder — FilesController#index
+    hands it the validated @folder through FolderDestination, as `primary`. The page head keeps an
+    overflow menu for the rest of what used to stack above the list — rescan, the folder's own
+    actions — rendered only when it would have an item.
 
-    ADD FILES AND NEW FOLDER ARE THE STRIP'S ADD, A SECOND DOOR ONTO THE SAME TWO THINGS, never a
-    second copy of either. Add files forwards a click to the strip's hidden Upload button
-    (upload_forward_controller.js#open), exactly as Add's own "Upload…" does, so it uploads into
-    FolderDestination's folder — this one — through whichever flow `port_writable?` picked, and no
-    `.uploader` lives in main (files_toolbar_test.rb). New folder posts the form Add's menu posts,
-    to the same door with this folder as its parent. Neither is a primary: the Library spends none
-    (design-system.md rule 13; accent_spend_test.rb). New text file stays Add's alone (UX audit D5).
-
-    RESCAN IS A PAGE BUTTON (it sat in the ⋯ menu until slice 6), offered ONLY on a scannable
-    (share/s3) library: the catalog there is polled from the store (spec decision 5), so a user who
-    just edited files on the NAS can catch the index up now instead of waiting for the 15-minute
-    recurring Library::ScanJob. Chunk mode's catalog is the sync engine's changelog -- nothing to
-    poll -- so the button is hidden AND FilesController#rescan refuses the POST
-    (require_scannable!). `capabilities.scannable?` RAISES if misspelled (the concern's helper, not
-    an ivar with &.), so a typo fails at render in a test rather than silently vanishing.
-    `files_query_base` rides along so the redirect lands back where the user was. It reads "Rescan
-    library", not the screens' "Rescan": it rescans the whole library, never just this folder.
-
-    THE ⋯ MENU HOLDS WHAT IS LEFT, AND RENDERS ONLY WHEN IT WILL HOLD AN ITEM: Pin (or Unpin) on any
-    folder view, then Open project or Make this folder a project. The root and a flat view hold no
-    folder, so they render no menu. Until slice 2 of the 2026-10-08 redesign "is there a folder" was
-    NOT the menu's question (a dot-folder or the `Projects` root on a non-scannable backend rendered
-    an EMPTY menu, the state files_toolbar_test.rb's "no menu renders when it would be empty" pins);
-    every folder view now offers the pin, so `@folder.present?` is the honest answer. %>
+    NEW TEXT FILE LIVES IN THE TOP BAR'S New ▾ ONLY (UX audit D5, 2026-11-02). It was a page-head
+    button here as well, one control in two places; New ▾ creates in this same folder
+    (FolderDestination), so nothing is lost by its going. %>
 <% adoptable_folder = @folder && @folder_project.nil? &&
                       Maker::ProjectDiscovery.adoptable_name?(@folder.name) &&
                       !(@folder.parent_node_id.nil? && @folder.name == Maker::ProjectFolders::ROOT) %>
-<% menu_items = @folder_project.present? || adoptable_folder || @folder.present? %>
-<div class="page-head library-head">
-  <h1><%= @folder ? @folder.name : "Library" %></h1>
-  <div class="library-head-row">
-    <div class="library-head-actions">
-      <button type="button" class="btn library-add-files" data-controller="upload-forward"
-              data-action="upload-forward#open"><%= rail_icon(:plus) %><span>Add files</span></button>
-      <details class="menu library-new-folder" data-controller="menu">
-        <summary class="btn">New folder</summary>
+<%# THE MENU RENDERS ONLY WHEN IT WILL HOLD AN ITEM, and the folder arm therefore asks what the
+    folder arm actually offers. Until slice 2 of the 2026-10-08 redesign "is there a folder" was
+    NOT that question: on a non-scannable backend, a dot-folder or the
+    `Projects` root had neither an "Open project" nor an adopt button, so the menu rendered EMPTY --
+    the state files_toolbar_test.rb's "no menu renders when it would be empty" pins. Every folder
+    view now offers Pin (or Unpin) to the sidebar, so `@folder.present?` is the honest answer and
+    the root (no `@folder`) still renders no menu unless another arm has an item. %>
+<% menu_items = capabilities.scannable? || @folder_project.present? || adoptable_folder ||
+                @folder.present? %>
+<div class="page-head">
+  <h1>Library</h1>
+  <div class="page-actions">
+    <% if menu_items %>
+      <details class="menu" data-controller="menu">
+        <summary class="btn icon" aria-label="More actions" title="More actions">⋯</summary>
         <div class="menu-list">
-          <%= form_with url: library_folders_path, method: :post, class: "menu-form", data: { turbo: false } do %>
-            <%# `.to_s`: no folder is the library root, sent as "" exactly as Add's form sends it. %>
-            <%= hidden_field_tag :parent_node_id, @folder&.node_id.to_s, id: nil %>
-            <label class="menu-form-label" for="library_new_folder_name">
-              New folder in <%= @folder ? @folder.name : "Library" %>
-            </label>
-            <span class="menu-form-row">
-              <%= text_field_tag :name, nil, id: "library_new_folder_name", placeholder: "Name",
-                                 required: true, autocomplete: "off" %>
-              <%= submit_tag "Create", class: "small", name: nil %>
-            </span>
+          <%# PIN TO THE SIDEBAR (structural redesign, slice 2): the folder being viewed, never the
+              library root (no @folder there), and never in flat/search mode (also no @folder). %>
+          <% if @folder %>
+            <% if current_user.maker_pins.exists?(node_id: @folder.node_id) %>
+              <%= button_to "Unpin from sidebar", pin_path(@folder.node_id), method: :delete,
+                            class: "menu-item", data: { turbo: false } %>
+            <% else %>
+              <%= button_to "Pin to sidebar", pins_path, params: { node_id: @folder.node_id },
+                            class: "menu-item", data: { turbo: false } %>
+            <% end %>
+          <% end %>
+          <% if capabilities.scannable? %>
+            <%#
+              RESCAN, offered ONLY on a scannable (share/s3) library: the catalog there is
+              periodically polled from the store (spec decision 5), so a user who just edited files
+              on the NAS can catch the index up now instead of waiting for the 15-minute recurring
+              Library::ScanJob. Chunk mode's catalog is the sync engine's changelog -- nothing to
+              poll -- so the button is hidden AND FilesController#rescan refuses the POST
+              (require_scannable!). `capabilities.scannable?` RAISES if misspelled (the concern's
+              helper, not an ivar with &.), so a typo fails at render in a test rather than silently
+              vanishing. `folder:` rides along so the redirect lands back in this folder.
+            %>
+            <%= button_to "Rescan library", rescan_files_path(files_query_base),
+                          class: "menu-item", data: { turbo: false } %>
+          <% end %>
+          <% if @folder_project %>
+            <%= link_to "Open project “#{@folder_project.name}”", project_path(@folder_project),
+                        class: "menu-item" %>
+          <% elsif adoptable_folder %>
+            <%#
+              ADOPT IN PLACE (stage 4, S4-6; decision D1, stories 1.3 and 4.7). One POST turns the
+              folder being viewed into a project that keeps its path — the answer to "a fifth of my
+              files live outside Projects/" that does not ask the maker to move anything.
+
+              THE TWO CHEAP REFUSALS ARE ASKED HERE TOO, and only those two: a dot-folder and the
+              Projects root are a string test and a nil test on the row this page already holds.
+              The expensive ones — an ancestor's claim, a working tree — stay in the controller,
+              which is the only place that may be the authority; this just declines to offer a
+              button whose answer the page already knows.
+            %>
+            <%= button_to "Make this folder a project", adopt_projects_path,
+                          params: { node_id: @folder.node_id }, class: "menu-item" %>
           <% end %>
         </div>
       </details>
-      <% if capabilities.scannable? %>
-        <%= button_to "Rescan library", rescan_files_path(files_query_base),
-                      class: "linkbtn", form_class: "library-rescan", data: { turbo: false } %>
-      <% end %>
-      <% if menu_items %>
-        <div class="page-actions">
-          <details class="menu" data-controller="menu">
-            <summary class="btn icon" aria-label="More actions" title="More actions">⋯</summary>
-            <div class="menu-list">
-              <%# PIN TO THE SIDEBAR (structural redesign, slice 2): the folder being viewed, never the
-                  library root (no @folder there), and never in flat/search mode (also no @folder). %>
-              <% if @folder %>
-                <% if current_user.maker_pins.exists?(node_id: @folder.node_id) %>
-                  <%= button_to "Unpin from sidebar", pin_path(@folder.node_id), method: :delete,
-                                class: "menu-item", data: { turbo: false } %>
-                <% else %>
-                  <%= button_to "Pin to sidebar", pins_path, params: { node_id: @folder.node_id },
-                                class: "menu-item", data: { turbo: false } %>
-                <% end %>
-              <% end %>
-              <% if @folder_project %>
-                <%= link_to "Open project “#{@folder_project.name}”", project_path(@folder_project),
-                            class: "menu-item" %>
-              <% elsif adoptable_folder %>
-                <%#
-                  ADOPT IN PLACE (stage 4, S4-6; decision D1, stories 1.3 and 4.7). One POST turns the
-                  folder being viewed into a project that keeps its path — the answer to "a fifth of my
-                  files live outside Projects/" that does not ask the maker to move anything.
-
-                  THE TWO CHEAP REFUSALS ARE ASKED HERE TOO, and only those two: a dot-folder and the
-                  Projects root are a string test and a nil test on the row this page already holds.
-                  The expensive ones — an ancestor's claim, a working tree — stay in the controller,
-                  which is the only place that may be the authority; this just declines to offer a
-                  button whose answer the page already knows.
-                %>
-                <%= button_to "Make this folder a project", adopt_projects_path,
-                              params: { node_id: @folder.node_id }, class: "menu-item" %>
-              <% end %>
-            </div>
-          </details>
-        </div>
-      <% end %>
-    </div>
-    <%# A PROJECT'S FOLDER SAYS WHAT THE SWEEP WILL DO TO IT, BEFORE IT DOES IT (F onboarding,
-        2026-10-13), as the page head's lead line since slice 6. Only the folder a project claims
-        (`@folder_project` is an exact match on folder_node_id, so a subfolder carries no line),
-        because only its top level is the sweep's inbox. `autofile?` picks the sentence: off,
-        Maker::ProjectIntake attaches and files nothing, and a line promising a move would be false.
-        On, the exceptions are named because they are the files a maker would worry about: a README
-        is never filed, and nothing inside a git working tree is. %>
-    <% if @folder_project %>
-      <p class="muted project-folder-note">
-        This is the folder of the project <%= link_to @folder_project.name, project_path(@folder_project) %>.
-        <% if @folder_project.autofile? %>
-          Files left loose here are filed into type folders within 15 minutes, except a README and
-          anything in a git repository (<%= link_to "Shelves", settings_shelves_path %>).
-        <% else %>
-          Automatic filing is off for this project, so files here stay where you put them.
-        <% end %>
-      </p>
     <% end %>
   </div>
 </div>
@@ -158,116 +116,83 @@
         data-scanreload-since-value="<%= current_user.library_scanned_stamp %>"></span>
 <% end %>
 
-<%# THE TOOLBAR, IN TWO ROWS AS THE SCREENS LAY IT OUT (slice 6): the search, the type filter, the
-    view toggle and the sort over a 2px ink rule, then the dot-file switch and the count. One
-    `.toolbar` still, in both views (the list keeps its sortable headers as well).
-
-    THE SCREENS' KIND TABS ("All 60 · Laser 22 …") ARE NOT BUILT, and the type select stays: that
-    filter is an EXTENSION filter over the WHOLE library (it flattens, #index), and its counts are
-    library-wide, so a row of per-folder kind tabs would be a different filter with different
-    counts, which is new behaviour, not a restyle. %>
+<%# ONE TOOLBAR ROW: the search box, the type filter and its chips, the dot-file switch, the
+    count, the view toggle and the sort — in both views (the list keeps its sortable headers as
+    well). %>
 <div class="toolbar files-toolbar">
-  <div class="files-toolbar-main">
-    <%# THE FILES PAGE'S OWN SEARCH (spec S2-5), separate from the strip's sitewide box (which posts
-        to SearchController). This one stays flat-library-and-files-only, exactly what
-        FilesController#index's own ?q= has always answered — a plain GET, its own small form so the
-        ext-picker form below keeps its one job (choosing a type). It is WHOLE-LIBRARY, never "find
-        in this folder" as the screens' column box reads, so it says so. `ext` rides along as a
-        hidden field so searching does not silently drop an active type filter (composing with the
-        filter is pinned in files_search_test.rb); `folder` does NOT, because a search is flat by
-        design (#index ignores it outright — see @flat above). %>
-    <%= form_with url: files_path, method: :get, class: "files-search", data: { turbo: false } do %>
-      <% if @exts.any? %><%= hidden_field_tag :ext, @exts.join(",") %><% end %>
-      <input type="search" name="q" value="<%= @q %>" placeholder="Search all files"
-             aria-label="Search all files in the library" autocomplete="off">
+  <%# THE FILES PAGE'S OWN SEARCH (spec S2-5), separate from the top bar's sitewide box (which now
+      posts to SearchController). This one stays flat-library-and-files-only, exactly what
+      FilesController#index's own ?q= has always answered — a plain GET, its own small form so
+      the ext-picker form below keeps its one job (choosing a type). `ext` rides along as a
+      hidden field so searching does not silently drop an active type filter (composing with the
+      filter is pinned in files_search_test.rb); `folder` does NOT, because a search is flat by
+      design (#index ignores it outright — see @flat above). %>
+  <%= form_with url: files_path, method: :get, class: "files-search", data: { turbo: false } do %>
+    <% if @exts.any? %><%= hidden_field_tag :ext, @exts.join(",") %><% end %>
+    <input type="search" name="q" value="<%= @q %>" placeholder="Search files"
+           aria-label="Search files" autocomplete="off">
+  <% end %>
+  <%= render "ext_filter" %>
+  <%# HIDDEN-FILE TOGGLE. Dot-prefixed entries are noise in a maker's library — 78 of them on the
+      deployed share box, mostly `.gitignore`, `.github` and `.clang-format` sitting between the
+      models — but hiding them with no way back is how a file becomes unreachable, so this is a
+      toggle rather than a silent filter.
+
+      THE STATE LIVES IN A COOKIE (FilesController#resolve_hidden), not in files_query_base, for the
+      same reason `view` and `sort` do: the choice has to survive clicking into a folder, and folder
+      links carry only `folder:`. The link therefore sends the value it wants rather than a bare
+      flag — `hidden=0` is a real instruction to hide, not an absent parameter.
+
+      `.git` STAYS HIDDEN EITHER WAY and that is not an oversight — Node#visible_entries explains why
+      the marker is a different rule from the clutter. %>
+  <p class="hidden-toggle muted">
+    <% if @show_hidden %>
+      <%= link_to "Hide dot-files", files_path(files_query_base.merge(hidden: "0")), class: "chip active" %>
+    <% else %>
+      <%= link_to "Show dot-files", files_path(files_query_base.merge(hidden: "1")), class: "chip" %>
     <% end %>
-    <%= render "ext_filter" %>
-    <span class="toolbar-spacer"></span>
-    <%# Tiles/Rows toggle (the screens' words; the values stay `grid` and `list`). files_query_base
-        rides along so the choice keeps whatever the user is looking at (the folder, the type
-        filter) instead of dumping them at the root; the choice itself is remembered in a cookie
-        (FilesController#resolve_view), so it sticks across navigation, and the sort is remembered
-        the same way rather than being pinned into these two links. The lit one SAYS it is lit
-        (`aria-current`), as every other segmented control's part says `aria-pressed`: a link is
-        never pressed, and an ink fill that announces nothing is what accent_spend_test.rb counts as
-        a primary action. %>
-    <div class="view-toggle" role="group" aria-label="View">
-      <%= link_to "Tiles", files_path(files_query_base.merge(view: "grid")),
-                  class: "toggle#{' active' if @view == 'grid'}", "aria-current": ("true" if @view == "grid") %>
-      <%= link_to "Rows", files_path(files_query_base.merge(view: "list")),
-                  class: "toggle#{' active' if @view == 'list'}", "aria-current": ("true" if @view == "list") %>
-    </div>
-    <%#
-      The grid has no column headers to click, so the sort is a pair of selects — and on the shared
-      toolbar the list carries them too, beside its sortable headers. GET, so the result is a plain
-      shareable URL exactly like the header links produce. `onchange` submits without JS of our own
-      (an inline handler on a native form, not a controller) — the same shape files/models/index.html.erb's
-      toolbar already uses.
-    %>
-    <form method="get" action="<%= files_path %>" class="sort-form">
-      <% files_query_base.each do |k, v| %>
-        <input type="hidden" name="<%= k %>" value="<%= v %>">
-      <% end %>
-      <label class="muted" for="sort-key">Sort</label>
-      <select name="sort" id="sort-key" onchange="this.form.requestSubmit()">
-        <% { "name" => "Name", "type" => "Type", "modified" => "Modified" }.each do |value, label| %>
-          <option value="<%= value %>" <%= "selected" if @sort == value %>><%= label %></option>
-        <% end %>
-      </select>
-      <select name="dir" aria-label="Sort direction" onchange="this.form.requestSubmit()">
-        <option value="asc"  <%= "selected" if @dir == "asc" %>>Ascending</option>
-        <option value="desc" <%= "selected" if @dir == "desc" %>>Descending</option>
-      </select>
-    </form>
+  </p>
+  <span class="toolbar-spacer"></span>
+  <span class="toolbar-count">
+    <% if @flat %>
+      <%= count_label(@match_count, "match", "matches") %>
+    <% else %>
+      <%= count_label(@paged ? @child_count : @nodes.size, "item") %>
+    <% end %>
+  </span>
+  <%# List/grid toggle. files_query_base rides along so the choice keeps whatever the user is
+      looking at (the folder, and from Task 6 the type filter) instead of dumping them at the
+      root; the choice itself is remembered in a cookie (FilesController#resolve_view), so it
+      sticks across navigation, and the sort is remembered the same way rather than being pinned
+      into these two links. %>
+  <div class="view-toggle" role="group" aria-label="View">
+    <%= link_to "Grid", files_path(files_query_base.merge(view: "grid")),
+                class: "toggle#{' active' if @view == 'grid'}" %>
+    <%= link_to "List", files_path(files_query_base.merge(view: "list")),
+                class: "toggle#{' active' if @view == 'list'}" %>
   </div>
-  <div class="files-toolbar-sub">
-    <%# HIDDEN-FILE TOGGLE. Dot-prefixed entries are noise in a maker's library — 78 of them on the
-        deployed share box, mostly `.gitignore`, `.github` and `.clang-format` sitting between the
-        models — but hiding them with no way back is how a file becomes unreachable, so this is a
-        toggle rather than a silent filter.
-
-        THE STATE LIVES IN A COOKIE (FilesController#resolve_hidden), not in files_query_base, for the
-        same reason `view` and `sort` do: the choice has to survive clicking into a folder, and folder
-        links carry only `folder:`. The link therefore sends the value it wants rather than a bare
-        flag — `hidden=0` is a real instruction to hide, not an absent parameter.
-
-        `.git` STAYS HIDDEN EITHER WAY and that is not an oversight — Node#visible_entries explains why
-        the marker is a different rule from the clutter. %>
-    <p class="hidden-toggle muted">
-      <% if @show_hidden %>
-        <%= link_to "Hide dot-files", files_path(files_query_base.merge(hidden: "0")), class: "chip active" %>
-      <% else %>
-        <%= link_to "Show dot-files", files_path(files_query_base.merge(hidden: "1")), class: "chip" %>
+  <%#
+    The grid has no column headers to click, so the sort is a pair of selects — and on the shared
+    toolbar the list carries them too, beside its sortable headers. GET, so the result is a plain
+    shareable URL exactly like the header links produce. `onchange` submits without JS of our own
+    (an inline handler on a native form, not a controller) — the same shape files/models/index.html.erb's
+    toolbar already uses.
+  %>
+  <form method="get" action="<%= files_path %>" class="sort-form">
+    <% files_query_base.each do |k, v| %>
+      <input type="hidden" name="<%= k %>" value="<%= v %>">
+    <% end %>
+    <label class="muted" for="sort-key">Sort</label>
+    <select name="sort" id="sort-key" onchange="this.form.requestSubmit()">
+      <% { "name" => "Name", "type" => "Type", "modified" => "Modified" }.each do |value, label| %>
+        <option value="<%= value %>" <%= "selected" if @sort == value %>><%= label %></option>
       <% end %>
-    </p>
-    <%# STACK VERSIONS AND BACKUPS (Shop manual spec §9; the screens' words). A checkbox in a GET form,
-        remembered in a cookie like the dot-file switch (FilesController#resolve_stacks), so it holds
-        across folders and on Search. The hidden 0 before the box is what an unticked box sends: a
-        box sends nothing when unticked, and nothing is "keep what you had". It submits on change,
-        the house's spelling for a control with no button (the sort above). `files_query_base`
-        rides along so the folder, the filter and the selection stay. %>
-    <form method="get" action="<%= files_path %>" class="stack-switch">
-      <% files_query_base.each do |k, v| %>
-        <input type="hidden" name="<%= k %>" value="<%= v %>">
-      <% end %>
-      <input type="hidden" name="stacks" value="0">
-      <label>
-        <input type="checkbox" name="stacks" value="1" <%= "checked" if @stacking %> onchange="this.form.requestSubmit()">
-        Stack versions and backups
-      </label>
-    </form>
-    <%# THE COUNT, AND THE FIGURES IT MAKES WHEN STACKS FOLD ANY ("60 items in 44 figures", the
-        screens' sentence in this page's own word for an entry). @item_count and @figure_count are
-        FilesController#index's: a paged folder counts its figures in SQL. %>
-    <span class="toolbar-count">
-      <% counted = @flat ? count_label(@item_count, "match", "matches") : count_label(@item_count, "item") %>
-      <% if @figure_count < @item_count %>
-        <%= counted %> in <%= count_label(@figure_count, "figure") %>
-      <% else %>
-        <%= counted %>
-      <% end %>
-    </span>
-  </div>
+    </select>
+    <select name="dir" aria-label="Sort direction" onchange="this.form.requestSubmit()">
+      <option value="asc"  <%= "selected" if @dir == "asc" %>>Ascending</option>
+      <option value="desc" <%= "selected" if @dir == "desc" %>>Descending</option>
+    </select>
+  </form>
 </div>
 
 <%# THE LIBRARY AND ITS INSPECTOR (structural redesign spec §5.1–5.2, slice 3; reworked 2026-10-21).
@@ -287,6 +212,24 @@
 <div class="library<%= " has-inspector" if @selected %>" data-controller="selection"
      data-selection-inspector-url-value="<%= inspector_file_path("__ID__") %>">
   <div class="library-main">
+    <%# A PROJECT'S FOLDER SAYS WHAT THE SWEEP WILL DO TO IT, BEFORE IT DOES IT (F onboarding,
+        2026-10-13). Only the folder a project claims (`@folder_project` is an exact match on
+        folder_node_id, so a subfolder carries no line), because only its top level is the sweep's
+        inbox. `autofile?` picks the sentence: off, Maker::ProjectIntake attaches and files
+        nothing, and a line promising a move would be false. On, the exceptions are named because
+        they are the files a maker would worry about: a README is never filed, and nothing inside a
+        git working tree is. One line, not a panel: it sits above the files it is about. %>
+    <% if @folder_project %>
+      <p class="muted project-folder-note">
+        This is the folder of the project <%= link_to @folder_project.name, project_path(@folder_project) %>.
+        <% if @folder_project.autofile? %>
+          Files left loose here are filed into type folders within 15 minutes, except a README and
+          anything in a git repository (<%= link_to "Shelves", settings_shelves_path %>).
+        <% else %>
+          Automatic filing is off for this project, so files here stay where you put them.
+        <% end %>
+      </p>
+    <% end %>
     <%# THE MODEL STRIP (structural redesign §5.4, slice 5): set by FilesController#index only on a
         folder view whose folder a catalogued model names and no project claims. %>
     <% if @folder_model %>
@@ -320,8 +263,7 @@
     <% end %>
     <span class="pager-status">
       Page <%= number_with_delimiter(@page) %> of <%= number_with_delimiter(@pages) %>
-      <%# A stacked folder pages its figures, so its pager counts them (spec §9). %>
-      (<%= @figure_count < @item_count ? count_label(@figure_count, "figure") : "#{number_with_delimiter(@child_count)} items" %>)
+      (<%= number_with_delimiter(@child_count) %> items)
     </span>
     <% if @page < @pages %>
       <%= link_to "Next ›",
@@ -331,7 +273,7 @@
   </nav>
 <% end %>
 
-<% if @figures.empty? %>
+<% if @nodes.empty? %>
   <%# Three emptinesses. "How files arrive" is advice for an empty library or folder; said to
       someone who searched or filtered, it reads as "your library is empty" and is a lie.
 
@@ -357,18 +299,12 @@
 <% end %>
   </div>
   <aside class="inspector" aria-label="Selected file">
-    <%# THE PANEL'S HEAD IS A CAPS LABEL OVER A 2PX INK RULE (the screens' SELECTED panel), with the
-        close at its right. Outside the frame, so it is there before the frame loads and after a
-        gone frame. A LINK, NOT A BUTTON: with JavaScript off the frame never loads, and a ?selected=
-        page (the file page's folder crumb carries one) would otherwise show an empty panel whose
-        only control does nothing — on a phone a sheet over the listing. With the controller, close
-        prevents it. %>
-    <div class="inspector-bar">
-      <span class="inspector-bar-label">Selected</span>
-      <%= link_to "×", files_path(request.query_parameters.except("selected")),
-                  class: "btn small icon inspector-close", data: { action: "selection#close" },
-                  aria: { label: "Close the inspector" } %>
-    </div>
+    <%# A LINK, NOT A BUTTON: with JavaScript off the frame never loads, and a ?selected= page (the
+        file page's folder crumb carries one) would otherwise show an empty panel whose only control
+        does nothing — on a phone a sheet over the listing. With the controller, close prevents it. %>
+    <%= link_to "×", files_path(request.query_parameters.except("selected")),
+                class: "btn small icon inspector-close", data: { action: "selection#close" },
+                aria: { label: "Close the inspector" } %>
     <%= turbo_frame_tag "inspector", src: (@selected && inspector_file_path(@selected)),
                         target: "_top", data: { selection_target: "frame" } %>
   </aside>

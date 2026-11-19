@@ -68,7 +68,7 @@ class ProjectEditFormsTest < ApplicationSystemTestCase
     name_field.fill_in(with: "Lamp, mark two")
 
     accept_confirm(LEAVE) { within("nav.edit-tabs") { click_on "Page layout" } }
-    assert_selector ".layout-bar", text: /Editing page layout/i
+    assert_selector ".layout-bar", text: "Editing page layout"
     assert_equal "false", page.evaluate_script("localStorage.getItem('dirty-form-unload')"),
                  "the full load that ended the agreed visit asked a second time"
   end

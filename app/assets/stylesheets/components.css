@@ -3,40 +3,31 @@
    later file won, so `.btn` rendered grey everywhere and `.btn.primary` blue. A page sheet under
    pages/ may style its own classes and may qualify a component inside a page container
    (`.files-grid .thumb`), but never redeclares a bare component selector from this file.
-   test/css_hygiene_test.rb fails if one does. Every colour is a token from application.css.
-
-   THE SHOP MANUAL (2026-11-18, spec docs/superpowers/specs/2026-11-18-shop-manual-redesign-design.md
-   §5 and §6): white page, ink rules, Libre Franklin for words and Courier Prime for data and caps
-   labels, square corners. Controls are outlined in a 1.5px ink line; the one primary action is an
-   INK fill; red marks (a figure number, a warning flag, a focus ring) and never fills a control
-   (design-system.md rule 13). Values are the screens', drawn at 1440px. */
+   test/css_hygiene_test.rb fails if one does. Every colour is a token from application.css. */
 @layer components {
   /* --- Buttons --- */
   .btn, input[type="submit"], .upload-btn span, details.composer > summary {
-    display: inline-flex; align-items: center; justify-content: center; gap: 7px;
-    min-height: var(--control-height); padding: 0 13px; border-radius: var(--radius-control);
-    border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--fg);
-    font: 700 13.5px/1 var(--font-ui); text-decoration: none; cursor: pointer; white-space: nowrap;
+    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
+    min-height: var(--control-height); padding: 0 14px; border-radius: var(--radius-control);
+    border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg);
+    font: 500 14px/1 var(--font-ui); text-decoration: none; cursor: pointer; white-space: nowrap;
     transition: background-color .12s, border-color .12s;
   }
   .btn:hover, input[type="submit"]:hover, .upload-btn span:hover, details.composer > summary:hover { background: var(--raised); text-decoration: none; }
-  .btn svg { width: 15px; height: 15px; flex: 0 0 auto; }
-  /* THE PRIMARY MEANS "THE ONE ACTION THIS PAGE EXISTS FOR", AND IT IS AN INK FILL (Shop manual,
-     design-system.md rule 13; the accent filled it until 2026-11-19). An uploader is in this group
-     only when its page ASKS -- `.upload-btn.primary`, not `.upload-btn`. It was unconditional until
+  .btn svg { width: 16px; height: 16px; flex: 0 0 auto; }
+  /* THE ACCENT MEANS "THE ONE ACTION THIS PAGE EXISTS FOR", so an uploader is in this group only
+     when its page ASKS -- `.upload-btn.primary`, not `.upload-btn`. It was unconditional until
      2026-09-10, which meant no page could ask for a neutral uploader and every upload control in
      the app was the loudest thing on its page BY CONSTRUCTION. Measured on a project with three
-     build-log entries: seven primary controls, four of them the same "Upload & attach" repeated per
+     build-log entries: seven accent controls, four of them the same "Upload & attach" repeated per
      log row, so nothing on the page read as THE thing to do. The neutral `.btn` face still comes
      from the base rule above, so an opted-out uploader is a button, not an unstyled label.
      Guard: test/system/accent_spend_test.rb, which counts RESOLVED backgrounds -- a class-list
      assertion counted zero on the page that had ten. */
   .btn.primary, .upload-btn.primary span, input[type="submit"].primary {
-    background: var(--fg); border-color: var(--fg); color: var(--bg);
+    background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 600;
   }
-  .btn.primary:hover, .upload-btn.primary span:hover, input[type="submit"].primary:hover {
-    background: color-mix(in srgb, var(--fg) 82%, var(--bg)); border-color: color-mix(in srgb, var(--fg) 82%, var(--bg));
-  }
+  .btn.primary:hover, .upload-btn.primary span:hover, input[type="submit"].primary:hover { filter: brightness(1.06); border-color: var(--accent); }
   .btn.danger { background: transparent; border-color: var(--danger); color: var(--danger); }
   .btn.danger:hover { background: var(--danger-soft); }
   .btn.ghost { background: transparent; border-color: transparent; }
@@ -50,8 +41,8 @@
      AFTER `.btn:hover` IN SOURCE ORDER: the two have the same specificity, and hover would
      otherwise put a pale fill under the pale text. test/css_hygiene_test.rb refuses a pressed
      selector in any other sheet. */
-  .btn[aria-pressed="true"] { border-color: var(--fg); background: var(--fg); color: var(--bg); }
-  .btn.small, input[type="submit"].small { min-height: var(--control-height-small); padding: 0 9px; font-size: 12.5px; }
+  .btn[aria-pressed="true"] { border-color: var(--fg); background: var(--fg); color: var(--surface); }
+  .btn.small, input[type="submit"].small { min-height: var(--control-height-small); padding: 0 10px; font-size: 13px; }
   .btn.icon { width: var(--control-height); padding: 0; }
   .btn.small.icon { width: var(--control-height-small); }
   .btn:disabled, input[type="submit"]:disabled { opacity: .5; cursor: default; filter: none; }
@@ -62,20 +53,17 @@
      move into NAME", "Download NAME"); it never grows past its line, and the caller's container
      decides how much of the line that is. Guard: test/system/narrow_names_test.rb. */
   .btn-name { max-width: 100%; white-space: normal; overflow-wrap: anywhere; text-align: center; line-height: 1.3; }
-  /* 3px, not 4: 1.3 × 13.5px plus 3+3 plus the border stays inside --control-height-small. */
+  /* 3px, not 4: 1.3 × 13px plus 4+4 plus the border overshot --control-height-small by a pixel. */
   .btn.btn-name { padding-top: 3px; padding-bottom: 3px; }
-  /* A TEXT LINK THAT ACTS: ink, bold, underlined, as the screens draw "Open", "Rescan" and "Copy the
-     path". A quiet one (Delete beside a row of buttons) is `.linkbtn.muted`. */
   .linkbtn {
-    background: none; border: 0; padding: 0; color: var(--fg); font: inherit; font-weight: 700; cursor: pointer;
-    text-decoration: underline; text-decoration-color: currentColor; text-decoration-thickness: 1px; text-underline-offset: 3px;
+    background: none; border: 0; padding: 0; color: var(--fg); font: inherit; cursor: pointer;
+    text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 3px;
   }
-  .linkbtn:hover { text-decoration-thickness: 2px; }
-  .linkbtn.muted { color: var(--fg-muted); font-weight: 400; }
+  .linkbtn:hover { text-decoration-color: var(--fg); }
   .linkbtn.danger { color: var(--danger); text-decoration-color: currentColor; }
-  .linkbtn.small { font-size: 12.5px; }
+  .linkbtn.small { font-size: 12px; }
   .upload-btn { display: inline-flex; cursor: pointer; }
-  /* UPLOAD IS A <button> (UX audit I), beside the strip's Add and in projects/_upload_control, so a keyboard
+  /* UPLOAD IS A <button> (UX audit I), in the top bar and in projects/_upload_control, so a keyboard
      reaches it; its face is still the `.upload-btn span` above, so the button itself is only a
      frame: no padding, border or fill of its own, and its corners match the span's so the focus
      ring (base layer's `:focus-visible`) sits on the face. HERE, beside `.upload-btn`, and not in
@@ -85,228 +73,156 @@
   .upload-status { font-size: 12px; color: var(--fg-muted); }
   .uploader { display: inline-flex; align-items: center; gap: var(--space-3); }
 
-  /* --- Inputs: a 1.5px ink line, square shoulders, 32px (a select 30, at weight 600) --- */
+  /* --- Inputs --- */
   .app-shell input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="submit"]):not([type="hidden"]),
   .app-shell select, .app-shell textarea,
   .auth-card input:not([type="checkbox"]):not([type="submit"]) {
-    font: 400 13.5px/20px var(--font-ui); color: var(--fg); background-color: var(--surface);
-    border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
-    padding: 4px 10px; min-height: var(--control-height);
+    font: 400 14px/20px var(--font-ui); color: var(--fg); background: var(--surface);
+    border: 1px solid var(--line-strong); border-radius: var(--radius-control);
+    padding: 5px 10px; min-height: var(--control-height);
   }
   .app-shell input:hover, .app-shell select:hover, .app-shell textarea:hover,
-  .auth-card input:hover { border-color: var(--fg); }
+  .auth-card input:hover { border-color: var(--fg-muted); }
   .app-shell input:focus-visible, .app-shell select:focus-visible, .app-shell textarea:focus-visible,
   .auth-card input:focus-visible { border-color: var(--fg); outline: 2px solid var(--focus); outline-offset: 1px; }
   .app-shell input::placeholder, .app-shell textarea::placeholder { color: var(--fg-muted); }
-  .app-shell textarea { min-height: 88px; line-height: 20px; }
-  /* A box and a radio are ink when checked, not the browser's blue. */
-  .app-shell input[type="checkbox"], .app-shell input[type="radio"], .auth-card input[type="checkbox"] { accent-color: var(--fg); }
-  /* THE CHEVRON IS `--select-chevron`, a token redefined per theme in application.css: a colour
-     inside a data: URI cannot read a custom property, so the picture itself is the token. It was a
-     literal grey here, which read on both grounds and was ink on neither. */
+  .app-shell textarea { min-height: 88px; line-height: 22px; }
   .app-shell select {
-    min-height: 30px; padding: 0 28px 0 8px; font-weight: 600; appearance: none;
-    background-image: var(--select-chevron); background-repeat: no-repeat; background-position: right 10px center;
+    padding-right: 28px; appearance: none;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23878276' stroke-width='1.5'/></svg>");
+    background-repeat: no-repeat; background-position: right 10px center;
   }
   .field { display: block; margin-bottom: var(--space-4); }
-  /* A FIELD'S LABEL IS A CAPS LABEL ABOVE IT (spec §5), at the 11px the screens draw a form's. */
-  .field > span, .field > label {
-    display: block; margin-bottom: var(--space-1); color: var(--fg-muted);
-    font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
-  }
+  .field > span, .field > label { display: block; margin-bottom: var(--space-1); font-size: 13px; font-weight: 500; color: var(--fg); }
   .field input, .field textarea, .field select { width: 100%; max-width: 480px; }
   .field > .folder-field { display: inline-flex; }
   /* A HINT UNDER A FIELD (UX audit H, 2026-11-02): one quiet sentence, styled here once. It was three
      page copies (the Account page's, the adjust-stock composer's and the item form's) at three
      spacings. Inside a `.field` the label rule above, `.field > span` (0,1,1), would make the hint a
-     second caps label; `.field > .field-hint` (0,2,0) is what outranks it within this layer, so it
-     restates the face as well as the size. */
-  .field-hint, .field > .field-hint {
-    display: block; margin: var(--space-1) 0 0; color: var(--fg-muted);
-    font: 400 12px/1.4 var(--font-ui); letter-spacing: 0; text-transform: none;
-  }
-  .field-inline { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); font-size: 13.5px; }
+     second, bold label; `.field > .field-hint` (0,2,0) is what outranks it within this layer. */
+  .field-hint, .field > .field-hint { display: block; margin: var(--space-1) 0 0; font-size: 12px; font-weight: 400; color: var(--fg-muted); }
+  .field-inline { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-2); font-size: 13px; }
   .field-inline input { width: auto; }
   .form-actions { display: flex; gap: 12px; align-items: center; }
   .form-errors {
     margin-bottom: var(--space-4); padding: 10px 12px; border-radius: var(--radius-control);
-    border: 1.5px solid var(--danger); background: var(--danger-soft); color: var(--fg); font-size: 13.5px;
+    border: 1px solid var(--danger); background: var(--danger-soft); color: var(--fg); font-size: 13px;
   }
 
-  /* --- Filters, tags, segmented control, toolbar, breadcrumb, pager, page head --- */
-  /* A FILTER IS A WORD, AND THE CHOSEN ONE IS UNDERLINED IN INK (the Library's "All 60 / Laser 22"
-     in the screens): weight 800 and a 3px ink rule under it, never a filled pill. Its count, where
-     the markup carries one, is mono. `.chips` is the row that spaces them. */
-  .chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 18px; }
+  /* --- Chips, segmented control, toolbar, breadcrumb, pager, page head --- */
   .chip {
-    display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 2px;
-    border: 0; border-bottom: 3px solid transparent; border-radius: 0; background: none;
-    color: var(--fg); font: 500 13.5px/1 var(--font-ui); text-decoration: none;
+    display: inline-flex; align-items: center; gap: var(--space-1); min-height: var(--control-height-small);
+    padding: 0 10px; border-radius: var(--radius-pill); border: 1px solid var(--line);
+    background: var(--surface); color: var(--fg-muted); font: 500 13px/1 var(--font-ui); text-decoration: none;
   }
-  .chip:hover { border-bottom-color: var(--line); color: var(--fg); text-decoration: none; }
-  .chip.active { border-bottom-color: var(--fg); font-weight: 800; }
+  .chip:hover { border-color: var(--line-strong); color: var(--fg); text-decoration: none; }
+  .chip.active { border-color: var(--fg); background: var(--fg); color: var(--surface); }
   .chip .chip-x { opacity: .75; font-weight: 600; }
-  /* An active chip that removes its filter (the Library's type chips carry ×) says so in the
-     danger tone under the pointer, on the word and its rule; never a fill. */
-  .chip.active:hover { border-bottom-color: var(--danger); color: var(--danger); }
+  .chip.active:hover { border-color: var(--danger); background: var(--danger-soft); color: var(--danger); }
   /* Tags (stage 2, S2-5): the chip row a tagged record's page renders (TagsHelper#tag_chips) and
-     the tag page's own h1. An outlined box with the name at 600, lowercase, as the screens' Tags
-     list draws it, so a run of them reads as labels on the thing, not as a row of filters. */
+     the tag page's own h1. Smaller, lowercase and outlined so a run of them reads as metadata
+     beside a title, not as a second row of the same buttons `.chip` renders for a toolbar filter. */
   .tag-chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .tag-chip {
-    display: inline-flex; align-items: center; gap: 6px; min-height: 24px; padding: 0 8px; border-radius: var(--radius-control);
-    border: 1.5px solid var(--line-strong); background: var(--surface); color: var(--fg);
-    font: 600 12.5px/1 var(--font-ui); text-transform: lowercase; text-decoration: none;
+    display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--radius-pill);
+    border: 1px solid var(--line); background: var(--surface); color: var(--fg-muted);
+    font: 500 12px/16px var(--font-ui); text-transform: lowercase; text-decoration: none;
   }
-  .tag-chip:hover { background: var(--raised); color: var(--fg); text-decoration: none; }
+  .tag-chip:hover { border-color: var(--line-strong); color: var(--fg); text-decoration: none; }
   /* THE CHOSEN TAG, from what the link announces (`aria-current`: a link is never "pressed"). After
      the hover rule, which has the same specificity and would set ink text on this ink fill. */
-  .tag-chip[aria-current="page"] { border-color: var(--fg); background: var(--fg); color: var(--bg); }
-  /* THE SEGMENTED CONTROL: one 1.5px ink box, parts divided by the same line, the lit part an ink
-     fill. `> * + *` draws the divider because a part is sometimes wrapped in its own button_to form. */
-  .view-toggle {
-    display: inline-flex; gap: 0; padding: 0; overflow: hidden;
-    border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); background: var(--surface);
-  }
-  .view-toggle > * + * { border-left: 1.5px solid var(--line-strong); }
-  .view-toggle form { display: flex; margin: 0; }
+  .tag-chip[aria-current="page"] { border-color: var(--fg); background: var(--fg); color: var(--surface); }
+  .view-toggle { display: inline-flex; gap: 2px; padding: 2px; border-radius: var(--radius-control); background: var(--raised); }
   /* A `.toggle` is an <a> on the Files page and a button_to's <button> on the project page (folder
      panels), so the UA's button border and background are reset HERE, in the component: a reset in
      a `pages` sheet would beat `.toggle.active` and `.toggle:hover` below regardless of specificity,
      because across cascade layers only the layer order counts (found in review). */
   .view-toggle .toggle {
-    display: inline-flex; align-items: center; gap: 6px; min-height: calc(var(--control-height) - 3px); padding: 0 12px;
-    border: 0; border-radius: 0; background: none; color: var(--fg);
-    font: 700 13.5px/1 var(--font-ui); text-decoration: none; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 6px; min-height: calc(var(--control-height-small) - 2px); padding: 0 10px;
+    border: 0; border-radius: 2px; background: none; color: var(--fg-muted);
+    font: 500 13px/1 var(--font-ui); text-decoration: none; cursor: pointer;
   }
-  .view-toggle .toggle:hover { background: var(--raised); text-decoration: none; }
-  /* The lit part, from the class the views set and the state the buttons announce. */
-  .view-toggle .toggle.active, .view-toggle .toggle[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+  .view-toggle .toggle:hover { color: var(--fg); text-decoration: none; }
+  .view-toggle .toggle.active { background: var(--surface); color: var(--fg); box-shadow: var(--shadow-toggle); }
   .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin: 0 0 var(--space-4); }
   .toolbar-spacer { flex: 1; }
   /* ONE COUNT, ONE DEFINITION (UI-cohesion spec §2.7). This lived TWICE — `pages/files.css` had it
      bare and `pages/inventory.css` had it qualified, with the same three declarations — which is
      the `.projects-empty` shape again and equally invisible to css_hygiene_test.rb, since
      `.toolbar-count` was not on its component list. It is now, and both copies are gone.
-     A count is DATA, so it is mono. `tabular-nums` so a count changing under a filter does not
-     shift the controls beside it. */
+     MONO IS CORRECT HERE and is not the chrome-mono decision 4 retires: a count is a QUANTITY,
+     which is exactly what decision 4 says mono means. `tabular-nums` so a count changing under a
+     filter does not shift the controls beside it. */
   /* A toolbar part, not a Files-page one: `pages/files.css` defined it and then Projects needed
      it too (slice 4). Both uses sit inside `.toolbar`, which owns the spacing, so the standalone
      bottom margin that rule carried is gone with the move. */
   .sort-form { display: flex; align-items: center; gap: 8px; margin: 0; }
-  .toolbar-count { font: 400 12.5px/16px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-muted); white-space: nowrap; }
-  /* THE CRUMBS ARE A CAPS PATH (spec §5): mono 700 12px, tracked, muted, the way up underlined.
-     A crumb is a folder, file or project name, so it wraps anywhere for the h1's reason below; the
+  .toolbar-count { font: 400 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; color: var(--fg-muted); white-space: nowrap; }
+  /* A crumb is a folder, file or project name, so it wraps anywhere for the h1's reason below; the
      property inherits, which is what lowers each crumb's own min-content as a flex item. */
-  .breadcrumb {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere;
-    color: var(--fg-muted); font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
-  }
-  .breadcrumb .sep { color: var(--fg-muted); }
-  .breadcrumb a { color: var(--fg-muted); text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
-  .breadcrumb a:hover { color: var(--fg); }
-  .breadcrumb [aria-current="page"] { color: var(--fg); font-weight: 700; text-decoration: none; }
-  .pager { display: flex; align-items: center; gap: var(--space-4); margin: 0 0 var(--space-3); font-size: 13.5px; }
-  .pager-status { color: var(--fg-muted); font: 400 12.5px/16px var(--font-mono); }
-  /* THE PAGE HEAD, TOP TO BOTTOM (spec §7): the title, a lead sentence, then the page's buttons.
-     A column, so the buttons sit under the title rather than across from it. */
-  .page-head { display: flex; flex-direction: column; align-items: flex-start; gap: 14px; margin: 0 0 var(--space-6); }
+  .breadcrumb { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 14px; min-width: 0; overflow-wrap: anywhere; }
+  .breadcrumb .sep { color: var(--line-strong); }
+  .breadcrumb a { color: var(--fg-muted); }
+  .breadcrumb a:hover { color: var(--fg); text-decoration: none; }
+  .breadcrumb [aria-current="page"] { color: var(--fg); font-weight: 600; }
+  .pager { display: flex; align-items: center; gap: var(--space-4); margin: 0 0 var(--space-3); font-size: 13px; }
+  .pager-status { color: var(--fg-muted); font-family: var(--font-mono); }
+  .page-head { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-2) var(--space-4); margin: 0 0 var(--space-5); }
   /* A HEADING IS OFTEN A NAME THE MAKER CHOSE (a file, a project, an account), and an export's name is
      routinely one unbroken run (`lid_v3_final_print`: an underscore is no line-break opportunity),
      so the h1 wraps anywhere. `anywhere`, not `break-word`: only `anywhere` lowers the MIN-CONTENT
-     width a flex line sizes this item by (UX audit J; test/system/narrow_names_test.rb).
-     800 56px at 1440px, tracked in; it steps down with the window so a laptop's title is not a wall. */
-  .page-head h1 {
-    max-width: 100%; font-size: clamp(32px, 2.4vw + 22px, 56px); line-height: .98; font-weight: 800;
-    letter-spacing: -0.035em; overflow-wrap: anywhere;
-  }
-  /* THE LEAD: one or two sentences under the title, at 17px. `.page-subtitle` is the same thing by
-     its older name, which the add-on bundles build (test/fixtures/addon_host_classes.txt). */
-  .page-lead, .page-subtitle { margin: 0; max-width: 38em; font-size: 17px; line-height: 1.45; }
+     width a flex line sizes this item by (UX audit J; test/system/narrow_names_test.rb). */
+  .page-head h1 { font-size: 20px; line-height: 26px; overflow-wrap: anywhere; }
+  .page-subtitle { margin: 2px 0 0; font-size: 14px; color: var(--fg-muted); flex-basis: 100%; }
   .page-actions, .row-actions, .head-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 
   /* --- Panels, group headers, tables --- */
-  /* A PANEL IS NOT A BOX (spec §6): its section head (800 20px over a 2px ink rule, a muted note or
-     the panel's controls at the right), then its body. Section numbers are the project page's. */
-  .panel { background: none; border: 0; border-radius: 0; padding: 0; }
-  .panel h2 { margin: 0 0 var(--space-3); font-size: 20px; line-height: 1.2; font-weight: 800; letter-spacing: -.01em; }
-  .panel > h2 { padding-bottom: 6px; border-bottom: 2px solid var(--line-strong); }
-  .panel-head {
-    display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2) var(--space-3);
-    margin-bottom: var(--space-3); padding-bottom: 6px; border-bottom: 2px solid var(--line-strong);
-  }
+  .panel { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel); padding: var(--space-4); }
+  .panel h2 { margin: 0 0 var(--space-3); font-size: 16px; }
+  .panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-3); margin-bottom: var(--space-3); }
   .panel-head h2 { margin: 0; }
   .panel-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
-  /* A SECTION'S NUMBER AND ITS NOTE (spec §5's section head; Shop manual slice 7). The number is the
-     mono figure before the title, in ink, inside the h2 so a screen reader hears "1 Carry on"; the
-     note is the mono 13px fact at the head's right ("5 things", "4 of 5"). The pages that number
-     their sections (Home, Inventory, an item, Tools, Search, Settings) count them in the order
-     they render, so a number is a place on the page and never a stored thing. */
-  .panel-num { margin-right: 12px; font-family: var(--font-mono); font-weight: 700; }
-  .panel-note { color: var(--fg-muted); font: 400 13px/1.4 var(--font-mono); }
-  /* A PAGE OF NUMBERED SECTIONS IN TWO COLUMNS (the screens' Home, Search, Tools, Settings and an
-     inventory item): two stacks that wrap to one below about 920px of page, each section stacked
-     40px under the one above it in its own column, so a short section never leaves a gap beside a
-     tall one the way a grid row would. Which column a section goes in is the page's choice. */
-  .page-columns { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 40px; }
-  .page-column { display: flex; flex: 1 1 440px; flex-direction: column; gap: 40px; min-width: 0; }
-  .page-column > .panel { margin: 0; }
 
   /* --- The page editor (2026-09-09, spec 2026-09-09-page-editor §5): the slot, the strip along
-     a panel's top edge, the ghost state, the layout bar and the YAML drawer. Components, so they hold
+     a panel's top edge, the ghost state, the top bar and the YAML drawer. Components, so they hold
      in both themes and the page sheet keeps only the grid rule (design-system rules 2 and 3).
      `panel--full` / `panel--half` stay in pages/projects.css: they are the GRID's business (a
-     column span inside `.project-panels`' own media query), not a component's.
-     In the editor a panel is drawn as a box again, an ink line round its strip and its body, so
-     each one reads as a thing to move. --- */
+     column span inside `.project-panels`' own media query), not a component's. --- */
   .panel-slot { min-width: 0; }
-  .panel-intro { margin: -6px 0 var(--space-3); font-size: 13.5px; color: var(--fg-muted); }
-  .panel-strip + .panel-slot-body { padding: 12px; border: 1px solid var(--line-strong); border-top: 0; }
+  .panel-intro { margin: -6px 0 var(--space-3); font-size: 13px; color: var(--fg-muted); }
+  .panel-slot-body > .panel { border-top-left-radius: 0; border-top-right-radius: 0; }
   .panel--placeholder p { margin: 0; }
-  .panel-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 6px 8px;
-                 border: 1px solid var(--line-strong); background: var(--raised); font-size: 12.5px; }
+  .panel-strip { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 4px 8px;
+                 border: 1px dashed var(--line-strong); border-bottom: 0;
+                 border-radius: var(--radius-panel) var(--radius-panel) 0 0; background: var(--raised); font-size: 12px; }
   .panel-strip-handle { cursor: grab; color: var(--fg-muted); font-size: 14px; letter-spacing: -2px; user-select: none; }
   .panel-strip-name { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
-  .panel-strip-name b { font-size: 14.5px; font-weight: 800; }
   .panel-strip-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-left: auto; }
-  .panel-strip .view-toggle .toggle { min-height: 22px; padding: 0 9px; font-size: 12.5px; }
+  .panel-strip .view-toggle .toggle { padding: 2px 8px; }
   .panel-strip-narrow { font-size: 11px; }
   @media (min-width: 900px) { .panel-strip-narrow { display: none; } }
   .panel-strip-edit { position: relative; }
   .panel-strip-edit > summary { list-style: none; cursor: pointer; }
   .panel-strip-edit > summary::-webkit-details-marker { display: none; }
   .panel-strip-popover { position: absolute; right: 0; top: calc(100% + 4px); z-index: 5; width: min(320px, 80vw); display: grid; gap: 8px;
-                         padding: 10px; background: var(--surface); border: 1.5px solid var(--line-strong);
-                         border-radius: var(--radius-control); box-shadow: var(--shadow-float); }
+                         padding: 10px; background: var(--surface); border: 1px solid var(--line-strong);
+                         border-radius: var(--radius-panel); box-shadow: var(--shadow-float); }
   .panel-slot--hidden .panel-slot-body { opacity: .45; }
-  .panel-slot--hidden .panel-strip, .panel-slot--hidden .panel-strip + .panel-slot-body { border-style: dashed; border-color: var(--fg-muted); }
+  .panel-slot--hidden .panel-strip { border-style: dotted; }
   .panel-slot--ghost { opacity: .35; }
-  /* THE EDITING BAR IS AN INK BAND (the Shop manual's project-editor screen; slice 5, 2026-11-19): the
-     page colour on ink, a caps label, the sentence, then the controls OUTLINED IN THE PAGE COLOUR and
-     Save layout FILLED WITH IT — the inverse of the page's primary, and still the editor's one primary.
-     accent_spend_test.rb counts a fill that contrasts its GROUND, ink on the page or the page colour
-     on ink, so the band cannot hide a second primary nor lose this one. A menu that opens from the
-     band (Add block) is a surface of its own and keeps the page's colours. */
   .layout-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
-                padding: 12px 16px; margin: 0 0 16px; border: 0; border-radius: 0; background: var(--fg); color: var(--bg); }
-  .layout-bar-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; font-size: 13.5px; }
-  .layout-bar-text > b { font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
-  .layout-bar-text .muted, .layout-bar .layout-add-cap.layout-tab-cap { color: var(--bg); }
-  .layout-bar .btn { border-color: var(--bg); background: transparent; color: var(--bg); }
-  .layout-bar .btn:hover, .layout-bar details.menu[open] > summary { background: color-mix(in srgb, var(--bg) 16%, var(--fg)); }
-  .layout-bar .btn.primary, .layout-bar input[type="submit"].primary { border-color: var(--bg); background: var(--bg); color: var(--fg); }
-  .layout-bar .btn.primary:hover, .layout-bar input[type="submit"].primary:hover { background: color-mix(in srgb, var(--bg) 84%, var(--fg)); }
-  .layout-bar .linkbtn { color: var(--bg); }
-  .layout-bar-noscript { color: var(--bg); font-weight: 700; }
+                padding: 10px 12px; margin: 0 0 12px; border: 1px solid var(--info); border-radius: var(--radius-panel); background: var(--info-soft); }
+  .layout-bar-text { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 13px; }
+  .layout-bar-noscript { color: var(--danger); }
   .layout-bar-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .layout-bar-actions form { display: contents; }
   .layout-editor--drawer { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: 16px; align-items: start; }
   .layout-editor--drawer .layout-bar { grid-column: 1 / -1; }
   .layout-drawer { position: sticky; top: 12px; display: flex; flex-direction: column; gap: 8px; padding: 12px;
-                   border: 1.5px solid var(--line-strong); border-radius: 0; background: var(--surface); }
+                   border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); }
   .layout-drawer-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .layout-yaml { width: 100%; min-height: 320px; resize: vertical; font: 12.5px/1.45 var(--font-mono); color: var(--fg);
-                 background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); padding: 8px; }
+  .layout-yaml { width: 100%; min-height: 320px; resize: vertical; font: 12px/1.45 var(--font-mono); color: var(--fg);
+                 background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius-control); padding: 8px; }
   .layout-note { margin: 0; font-size: 12px; }
   .layout-note--error { color: var(--danger); }
   .layout-note--ok { color: var(--ok); }
@@ -323,19 +239,18 @@
      it some other way would invert that: the no-JavaScript page would lose its own structure.
 
      THE BAR SCROLLS SIDEWAYS RATHER THAN WRAPPING, on every width (decision 7): one row of tabs is
-     one mechanism and one set of deep links, and a wrapped bar changes height as tabs are renamed.
-     The bar's 2px ink rule and the lit tab's 3px one are INSET SHADOWS, not borders: a scroll
-     container clips anything a negative margin pushes into its own border. --- */
+     one mechanism and one set of deep links, and a wrapped bar changes height as tabs are renamed. */
   .panel-slot--tab { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 8px 12px;
-                     border: 1px solid var(--line-strong); border-radius: 0; background: var(--raised); }
-  .panel-slot--tab .tab-slot-label { font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+                     border: 1px solid var(--info); border-radius: var(--radius-panel); background: var(--info-soft); }
+  .panel-slot--tab .tab-slot-label { font-weight: 600; }
   .panel-slot--tab .tab-name { width: min(240px, 60vw); }
   .panel-slot--tab .tab-slot-count { flex: 1 1 auto; font-size: 12px; }
   .tabs { display: grid; gap: 16px; margin: 16px 0; }
-  .tab-bar { display: flex; gap: 22px; overflow-x: auto; white-space: nowrap; box-shadow: inset 0 -2px 0 var(--line-strong); scrollbar-width: thin; }
-  .tab-link { padding: 8px 2px 9px; color: var(--fg); font-weight: 500; text-decoration: none; }
-  .tab-link:hover { box-shadow: inset 0 -3px 0 var(--line); text-decoration: none; }
-  .tab-link.is-active, .tab-link[aria-selected="true"] { color: var(--fg); font-weight: 800; box-shadow: inset 0 -3px 0 var(--fg); }
+  .tab-bar { display: flex; gap: var(--space-5); overflow-x: auto; white-space: nowrap; border-bottom: 1px solid var(--line); scrollbar-width: thin; }
+  .tab-link { padding: 10px 0; border-bottom: 2px solid transparent; margin-bottom: -1px;
+              color: var(--fg-muted); font-weight: 500; text-decoration: none; }
+  .tab-link:hover { color: var(--fg); text-decoration: none; }
+  .tab-link.is-active, .tab-link[aria-selected="true"] { color: var(--fg); border-bottom-color: var(--fg); }
   .tab-pane { display: grid; gap: 12px; }
   .tab-heading { margin: 0; }
   .tabs.tabs-ready .tab-heading { display: none; }
@@ -354,30 +269,30 @@
   .block-panel { display: flex; flex-direction: column; gap: 8px; }
   .block-panel > h2 { margin: 0; }
   .block-link-card { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; color: var(--fg);
-                     background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: 0;
+                     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-panel);
                      text-decoration: none; }
-  .block-link-card:hover { background: var(--raised); text-decoration: none; }
-  .block-link-title { font-weight: 700; }
-  .block-link-line { font-size: 12.5px; }
-  .block-link-host { font: 400 12px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+  .block-link-card:hover { border-color: var(--fg); text-decoration: none; }
+  .block-link-title { font-weight: 600; }
+  .block-link-line { font-size: 12px; }
+  .block-link-host { font-size: 11px; font-family: var(--font-mono); overflow-wrap: anywhere; }
   .block-figure { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin: 0; }
-  .block-image { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: 0; }
+  .block-image { max-width: 100%; height: auto; border: 1px solid var(--line); border-radius: var(--radius-panel); }
   .block-thumb { display: inline-flex; }
   .block-thumb .thumb { width: 160px; height: 160px; }
-  .block-figure figcaption { font: 400 12px/1.4 var(--font-mono); color: var(--fg-muted); }
+  .block-figure figcaption { font-size: 12px; }
   /* The editor's inputs run the full width of the slot: `.field`'s 480px cap is a FORM PAGE's
      measure, and a block's editor is as wide as the panel it will become. */
   .block-editor { display: grid; gap: 8px; }
   .block-editor .field { margin-bottom: 0; }
   .block-editor .field input, .block-editor .field textarea { max-width: none; }
   .block-editor-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .block-preview { padding: 8px 10px; border: 1.5px dashed var(--fg-muted); border-radius: 0; }
+  .block-preview { padding: 8px 10px; border: 1px dashed var(--line-strong); border-radius: var(--radius-panel); }
   .block-missing { margin: 0; font-size: 12px; color: var(--danger); }
   .image-picker { display: flex; flex-wrap: wrap; gap: 8px; }
   .image-pick { display: flex; flex-direction: column; gap: 4px; width: 96px; padding: 4px; color: var(--fg);
-                font: 12px/1.4 var(--font-ui); background: none; border: 1.5px solid transparent;
-                border-radius: 0; cursor: pointer; }
-  .image-pick:hover { border-color: var(--line); }
+                font: 12px/1.4 var(--font-ui); background: none; border: 1px solid transparent;
+                border-radius: var(--radius-panel); cursor: pointer; }
+  .image-pick:hover { border-color: var(--line-strong); }
   .image-pick.active { border-color: var(--fg); background: var(--raised); }
   .image-pick .thumb { width: 100%; height: 72px; }
   .image-pick-name { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -387,24 +302,21 @@
   .page-intro-description { margin-bottom: 0; }
   .page-intro-description textarea { max-width: none; }
   @media (min-width: 900px) { .page-intro { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
-  /* THE CAPS LABEL (spec §5): mono 700 12px, tracked .08em, uppercase, muted. Crumbs, table heads,
-     group heads and plate heads all wear it. It was the UI face until 2026-11-19 (the 2026-09-10
-     cohesion decision 4 kept labels out of mono); the Shop manual sets every such label in the
-     typewriter face, and "mono means data" now reads "mono means data and caps labels". */
+  /* MONO MEANS DATA (decision 4): paths, hashes, sizes, timestamps, quantities, IDs. A group head
+     is a LABEL, and mono was doing so much chrome work that it had stopped distinguishing anything
+     — 22 mono leaf elements on the project page, 20 on inventory. Uppercase and the letter-spacing
+     stay: they are what makes this read as a group head, and they do that in either face. */
   .attachment-group-head, .tasks-group h3, .group-head {
-    margin: 0 0 var(--space-2); font: 700 12px/16px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
+    margin: 0 0 var(--space-2); font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }
   .attachment-group-head { cursor: pointer; }
   .attachment-group-head:hover { color: var(--fg); }
-  /* THE TABLE (spec §5): the head is a caps label over a 2px ink rule; a row is 35px with a
-     hairline under it (`table.files`, whose rows carry a 32px thumbnail, keeps --row-height). */
-  table.files, .table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  table.files, .table { width: 100%; border-collapse: collapse; font-size: 14px; }
   table.files th, .table th {
-    text-align: left; padding: 7px 8px; border-bottom: 2px solid var(--line-strong); white-space: nowrap;
-    font: 700 12px/16px var(--font-mono); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
+    text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line-strong); white-space: nowrap;
+    font: 600 11px/16px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted);
   }
-  table.files td, .table td { height: 35px; padding: 4px 8px; border-bottom: 1px solid var(--line); vertical-align: middle; }
-  table.files td { height: var(--row-height); }
+  table.files td, .table td { height: var(--row-height); padding: 6px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
   /* THE LIST'S ROW DIVIDER IS THE ROW'S, NOT ITS CELLS' (slice 7). `td.row-actions` is
      `display: flex` (the .row-actions component), which makes it a flex box inside an anonymous
      table cell rather than a cell: its border left the collapsed row line, sat at the bottom of
@@ -418,7 +330,7 @@
   table.files th a { color: inherit; }
   table.files th a:hover { text-decoration: underline; }
   table.files th.sorted a { color: var(--fg); }
-  table.files .num, .table .num { text-align: right; font: 400 12.5px/16px var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--fg-muted); }
+  table.files .num, .table .num { text-align: right; font: 400 12px/16px var(--font-mono); font-variant-numeric: tabular-nums; white-space: nowrap; color: var(--fg-muted); }
   /* HOVER-REVEAL ONLY WHERE THERE IS A HOVER (UX audit D2, 2026-11-02). The actions are VISIBLE by
      default and fade only for a fine pointer that can hover, where a hovered or focused row brings
      them back; a touch screen, a stylus and a hybrid whose primary pointer is coarse never meet a
@@ -442,7 +354,7 @@
     table.files .row-action .action-icon { display: block; }
     table.files .row-action .row-action-label { display: none; }
   }
-  .dir { font-weight: 700; }
+  .dir { font-weight: 600; }
   .file-cell { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
   .file-name { overflow-wrap: anywhere; }
 
@@ -452,16 +364,14 @@
      makes that white the card while ink stays ink, so our renders, LightBurn's own embedded
      thumbnails and a PDF's page 1 all land on one ground in both themes without a stored pixel
      being edited. `isolation` keeps the blend inside the tile: without it the image multiplies
-     with whatever is behind the tile, not with the card. A photo opts out below. The frame is a
-     hairline with square corners, as the screens draw every figure. */
+     with whatever is behind the tile, not with the card. A photo opts out below. */
   .thumb {
     position: relative; display: flex; align-items: center; justify-content: center; overflow: hidden;
-    border: 1px solid var(--line); border-radius: 0; background: var(--thumb-stage); color: var(--thumb-ink);
+    border: 1px solid var(--line); border-radius: var(--radius-control); background: var(--thumb-stage); color: var(--thumb-ink);
     isolation: isolate;
   }
   .thumb img { width: 100%; height: 100%; object-fit: contain; display: block; mix-blend-mode: multiply; }
-  /* The type label on a tile ("PY", "SHEET"): mono at 700, Courier Prime's bold (it has no 500). */
-  .thumb-icon { font: 700 11px/1 var(--font-mono); letter-spacing: .06em; color: var(--thumb-ink); }
+  .thumb-icon { font: 500 11px/1 var(--font-mono); letter-spacing: .06em; color: var(--thumb-ink); }
   .thumb-spinner {
     width: 14px; height: 14px; border: 2px solid transparent; border-top-color: var(--thumb-ink); border-right-color: var(--thumb-ink);
     border-radius: 50%;
@@ -477,7 +387,7 @@
   table.files .thumb { width: 32px; height: 32px; flex: 0 0 32px; }
   .folder-thumb, .generic-thumb { background: var(--raised); color: var(--fg-muted); }
   .folder-thumb .folder-glyph { width: 40%; height: 40%; }
-  .generic-thumb { font: 700 12px/1 var(--font-mono); letter-spacing: .08em; }
+  .generic-thumb { font: 500 12px/1 var(--font-mono); letter-spacing: .08em; }
   /* A user's PHOTO on a tile: the neutral matte and a crop, never letterboxed on the card. NOT
      multiplied: a photo is not ink on paper, and Graphite's matte is near-black, so a multiplied
      photo would be a black square. */
@@ -488,14 +398,14 @@
      poster occupies the footprint its viewer opens into. */
   .render-card {
     display: flex; align-items: center; justify-content: center; overflow: hidden;
-    border: 1px solid var(--line); border-radius: 0; background: var(--thumb-stage);
+    border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--thumb-stage);
     isolation: isolate;
   }
   .render-card img { display: block; max-width: 100%; height: auto; mix-blend-mode: multiply; }
   /* A FAILED RENDER KEEPS ITS TYPE ICON AND GAINS A MARK, so "no preview for this type" and "the
      render failed" stop looking identical (F onboarding). thumbs_controller.js adds the class, with
      the icon's title, when the poll answers `failed`; an unsupported file gets neither. A STATE OF
-     THE COMPONENT, so it lives here and not in a page sheet: the poll runs on Home, Projects, the
+     THE COMPONENT, so it lives here and not in a page sheet: the poll runs on Recent, Projects, the
      project page and the model pages as well as the Library. The mark is a glyph, not colour alone
      (design-system.md rule 13), painted in the stage's own pair, `--thumb-ink` and `--thumb-stage`,
      which flip together (rule 5), so it keeps its contrast on the card in both themes. The second `content` hides the
@@ -503,237 +413,133 @@
   .thumb.thumb-failed::after {
     content: "!"; content: "!" / "";
     position: absolute; top: 3px; right: 3px; display: grid; place-items: center; width: 14px; height: 14px;
-    border-radius: var(--radius-pill); background: var(--thumb-ink); color: var(--thumb-stage); font: 700 10px/1 var(--font-mono);
+    border-radius: var(--radius-pill); background: var(--thumb-ink); color: var(--thumb-stage); font: 700 10px/1 var(--font-ui);
   }
-  /* The folder glyph (ShellHelper#folder_glyph): the `files` glyph, inline beside a name. */
+  /* The folder glyph (ShellHelper#folder_glyph): the rail's `files` icon, inline beside a name. */
   .folder-glyph, .file-glyph { width: 16px; height: 16px; flex: 0 0 auto; vertical-align: -3px; }
   .filechooser-row .folder-glyph, .filechooser-row .file-glyph { margin-right: 6px; }
   .grid-card { display: flex; flex-direction: column; gap: 2px; min-width: 0; color: var(--fg); text-decoration: none; }
-  .grid-card .thumb { margin-bottom: var(--space-1); transition: border-color .12s; }
+  .grid-card .thumb { margin-bottom: var(--space-2); transition: border-color .12s; }
   .grid-card:hover { text-decoration: none; }
   .grid-card:hover .thumb { border-color: var(--fg); }
-  .grid-card .grid-name { font-size: 13.5px; font-weight: 600; line-height: 18px; overflow-wrap: anywhere; }
+  .grid-card .grid-name { font-size: 13px; line-height: 18px; overflow-wrap: anywhere; }
 
-  /* --- Figures, plates, stacks and the note box (Shop manual, spec §6; 2026-11-19). Four new
-     components with no markup user yet: the project page, the Library and Search take them up as
-     the behaviours in spec §9 land. Each is defined here and nowhere else (rule 3). --- */
-  /* A FIGURE NUMBER: a red disc, its number mono 700 at 56% of the disc in `--accent-ink` (rule 13:
-     text on an accent fill). 22px on a figure; 24 where a section head carries it (`--head`), 26 on
-     a large figure (`--hero`). The RING is a callout INSIDE a figure: 18px, a 1.5px red line, the
-     page colour within, a red letter. Red here is a mark, which rule 13 allows. */
-  .fig-num {
-    --fig-size: 22px;
-    display: inline-flex; align-items: center; justify-content: center; flex: 0 0 auto;
-    width: var(--fig-size); height: var(--fig-size); border-radius: 50%;
-    background: var(--accent); color: var(--accent-ink);
-    font: 700 calc(var(--fig-size) * .56)/1 var(--font-mono); font-variant-numeric: tabular-nums;
-  }
-  .fig-num--head { --fig-size: 24px; }
-  .fig-num--hero { --fig-size: 26px; }
-  .fig-num--ring { --fig-size: 18px; border: 1.5px solid var(--accent); background: var(--surface); color: var(--accent-text); font-size: 12px; }
-  /* A PLATE: a 2px ink box holding a grid of figures, as a manual's plate of parts. Its head is a
-     caps label at the left and a muted count at the right over a 2px ink rule. A FIGURE is a
-     118px `.thumb` (the ink-on-paper card, rule 5: a figure never paints its own image surface),
-     its number at the top left, its marks (a chip, a flag) at the top right, then the name at 600
-     and mono facts. An OPENED figure spans the plate on `--raised` in a 1.5px ink line; a SELECTED
-     one takes a 2px red outline. */
-  .plate { min-width: 0; border: 2px solid var(--line-strong); background: var(--surface); }
-  .plate-head {
-    display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 7px 12px; border-bottom: 2px solid var(--line-strong);
-    font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
-  }
-  .plate-count { margin-left: auto; color: var(--fg-muted); }
-  .plate-grid {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); grid-auto-flow: dense;
-    gap: 14px 4px; padding: 8px 6px 12px 12px;
-  }
-  .plate-figure { position: relative; display: flex; flex-direction: column; gap: 5px; min-width: 0; margin: 0; padding: 8px 8px 0 0; }
-  .plate-figure > .thumb, .plate-figure > a > .thumb { height: 118px; padding: 9px; }
-  .plate-figure .thumb > .fig-num { position: absolute; left: 5px; top: 5px; z-index: 1; }
-  .plate-marks { position: absolute; right: 5px; top: 5px; z-index: 1; display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
-  .plate-name { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
-  .plate-facts { overflow: hidden; color: var(--fg-muted); font: 400 12px/1.4 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
-  .plate-figure.selected > .thumb, .plate-figure.selected > a > .thumb,
-  .plate-figure[aria-current="true"] > .thumb, .plate-figure[aria-current="true"] > a > .thumb { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .plate-open { grid-column: 1 / -1; margin: 2px 6px 0 0; border: 1.5px solid var(--line-strong); background: var(--raised); }
-  /* A STACK: one figure standing for several versions. Its card takes a 1px ink line and two copies
-     drawn behind it, up and to the right (each the page colour inside an ink line: a shadow spread
-     by -1px over one that is not); the name is 800 and a `.badge` carries the count. The figure's
-     own top-right padding is the room the copies stand in. */
-  .stack { position: relative; }
-  .stack > .thumb, .stack > a > .thumb {
-    border-color: var(--line-strong);
-    box-shadow: 4px -4px 0 -1px var(--bg), 4px -4px 0 0 var(--line-strong), 8px -8px 0 -1px var(--bg), 8px -8px 0 0 var(--line-strong);
-  }
-  .stack .plate-name, .stack-name { font-weight: 800; }
-  /* A STACK THAT OPENS IN PLACE (spec §9; stack_controller.js): its figure or its row's name is a
-     BUTTON, since it shows its members rather than going anywhere, drawn as the link it stands in
-     for. `.stack-role` is a member's "latest" or "older", mono and muted as the screens set it. */
-  .stack-toggle {
-    margin: 0; padding: 0; border: 0; background: none; color: inherit; font: inherit; text-align: left;
-    cursor: pointer; appearance: none;
-  }
-  .stack-toggle .stack-count { flex: 0 0 auto; }
-  .stack-role { color: var(--fg-muted); font: 400 12px/16px var(--font-mono); }
-  /* THE SWITCH, "Stack versions and backups": a plain checkbox and its words, submitting on change,
-     on the Library's toolbar, Search's form and under a project panel's head. The box is ink. */
-  .stack-switch { margin: 0; }
-  .stack-switch label, label.stack-switch { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; cursor: pointer; }
-  .stack-switch input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var(--fg); }
-  /* THE NOTE BOX: a 1.5px ink box, its label an ink block reading NOTE in the caps style, then one
-     sentence at 500. The label is generated, so the markup is the sentence alone, and it is read as
-     text, the way a toast's "Done" is. Not `.note`, which is the file page's notes (pages/files.css). */
-  .note-box { display: flex; align-items: stretch; gap: 12px; margin: 0; padding: 8px 12px 8px 0; border: 1.5px solid var(--line-strong); font-weight: 500; }
-  .note-box::before {
-    content: "Note"; display: flex; align-items: center; flex: 0 0 auto; margin: -8px 0; padding: 0 10px;
-    background: var(--fg); color: var(--bg); font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
-  }
-  /* A PLATE OF NUMBERED CELLS (spec §6: "the tidy-up list is a plate whose cells are numbered
-     suggestions"; the tidy-up list, §9, 2026-11-19). In place of `.plate-grid`'s figures, an `ol` of
-     cells at least 240px wide, as many to a row as fit: each a number in the mono face and a title at
-     800, one sentence, then its actions. A hairline on each cell's left and top divides them; the
-     list is pulled up and left by that hairline so the first row's and the first column's lines sit
-     under the plate's own ink and do not show. A name in the sentence is one unbroken run, so the
-     cell breaks it anywhere (rule 11). */
-  .plate-cells {
-    display: grid; grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
-    margin: -1px 0 0 -1px; padding: 0; list-style: none;
-  }
-  .plate-cell {
-    display: flex; flex-direction: column; gap: 6px; min-width: 0; padding: 12px 14px;
-    border-top: 1px solid var(--line); border-left: 1px solid var(--line); overflow-wrap: anywhere;
-  }
-  .plate-cell-head { display: flex; align-items: baseline; gap: 8px; margin: 0; font-size: 14.5px; font-weight: 800; line-height: 1.3; }
-  .plate-cell-num { flex: 0 0 auto; font: 700 20px/1 var(--font-mono); }
-  .plate-cell-text { margin: 0; }
-  .plate-cell-actions { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px; margin-top: auto; }
-  .plate-cell-actions form.button_to { display: contents; }
-
-  /* --- Metadata list, badges, empty state --- */
-  /* A FACT PER ROW (the file page's Details in the screens): the term muted at the left, the value
-     at 600 at the right, a hairline under each. Rows rather than a grid of boxes, so the column
-     gap is padding on the term: a gap would break each hairline in two. From 900px two pairs
-     share a row, the left pair's value padded off the right pair's term. A value that is DATA
-     (a hash, `dd.mono`) keeps the mono face. */
+  /* --- Metadata strip, badges, empty state --- */
   dl.meta {
-    display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 0; margin: 0 0 var(--space-4);
-    padding: 0; border: 0; border-radius: 0; background: none;
+    display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px var(--space-4); margin: 0 0 var(--space-4);
+    padding: 12px var(--space-4); border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface);
   }
-  dl.meta dt { padding: 6px 16px 6px 0; border-bottom: 1px solid var(--line); font: 400 13.5px/20px var(--font-ui); color: var(--fg-muted); }
-  dl.meta dd { margin: 0; padding: 6px 0; border-bottom: 1px solid var(--line); font: 600 13.5px/20px var(--font-ui); text-align: right; justify-content: flex-end; overflow-wrap: anywhere; }
-  dl.meta dd.mono { font: 400 12.5px/20px var(--font-mono); }
-  @media (min-width: 900px) {
-    dl.meta { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); }
-    dl.meta dd:nth-of-type(odd) { padding-right: 32px; }
-  }
-  /* THREE SHAPES, ONE SIZE (spec §6). `.badge`, `.chip` and `.tag-chip` were "one pill vocabulary"
-     (the 2026-09-10 decision 5); the Shop manual draws a label on a thing in three shapes at one
-     size, padding 1px 6px in a 1px line, so they line up wherever they meet:
-       - THE INK CHIP (the bare `.badge`): an ink fill, page-coloured mono 700 11.5px caps. A fact
-         about the thing: its kind, its type, a tag, a version, "repo", a count ("4 VERSIONS").
-       - THE OUTLINED CHIP (a state): the same in an ink line on the page colour, as the project
-         head's ACTIVE is drawn. The quiet states (planning, paused, archived, a partial
-         release, a text line) take the muted line and text.
-       - THE FLAG (a warning word): red text in a 1px red line on the page colour, in the UI face
-         and the word's own case ("over bed", "failed", "changed"). Red marks; rule 13.
-     Status carries its WORD in all three, never colour alone (rule 13).
+  /* `dt` is the label and `dd` is the value, which is decision 4's split inside one component:
+     the term goes to the UI face, the data keeps mono. */
+  dl.meta dt { font: 600 11px/20px var(--font-ui); text-transform: uppercase; letter-spacing: .08em; color: var(--fg-muted); }
+  dl.meta dd { margin: 0; font: 400 13px/20px var(--font-mono); overflow-wrap: anywhere; }
+  @media (min-width: 900px) { dl.meta { grid-template-columns: max-content minmax(0, 1fr) max-content minmax(0, 1fr); } }
+  /* ONE PILL VOCABULARY (decision 5). `.chip`, `.tag-chip` and `.badge` are three components
+     saying the same kinds of thing, and until 2026-09-10 they said them in two typefaces and three
+     capitalisations: a 12px MONO chip, an 11px MONO lowercase tag, an 11px sans CAPITALIZED badge.
+     On /projects the same taxonomy rendered twice 200px apart — "Laser cutting" in mono, "Laser
+     Cutting" in sans. All three now share `--font-ui` (decision 4: mono means DATA — paths,
+     hashes, sizes, timestamps, IDs — not labels).
 
      `text-transform: capitalize` IS GONE AND MUST NOT COME BACK. It cannot know that
      `want_to_print` reads "Wanted", so it rendered "Want To Print" beside a filter chip saying
      "Wanted" — one state, two words, one screen. Labels come from a hash keyed on the enum
      (Maker::Model::PRINT_STATUS_LABELS, Maker::ProjectKind::LABELS) so both callers read one
-     source. A badge whose text is a WORD rather than a label (the bom-* kinds, "N of a larger
-     folder", "N changed since") keeps its case: `text-transform: none`. `.tag-chip` keeps
-     `lowercase`: a tag is user-entered and lowercasing it is a real normalisation. */
+     source. `.tag-chip` KEEPS `lowercase`: a tag is user-entered and lowercasing it is a real
+     normalisation, not a display trick. Since the 2026-10-08 redesign a `.badge` is
+     square-shouldered (`--radius-control`) where a `.chip` stays round: shape says
+     fixed-versus-removable, face and case stay shared. */
   .badge {
-    display: inline-flex; align-items: center; padding: 1px 6px; border: 1px solid var(--fg); border-radius: 0;
-    background: var(--fg); color: var(--bg); white-space: nowrap;
-    font: 700 11.5px/16px var(--font-mono); letter-spacing: .04em; text-transform: uppercase;
+    display: inline-flex; align-items: center; padding: 1px 7px; border-radius: var(--radius-control);
+    font: 600 12px/18px var(--font-ui); background: var(--raised); color: var(--fg-muted); white-space: nowrap;
   }
-  /* THE OUTLINED CHIP: a state. */
-  .badge.status-active, .badge.status-done, .badge.project-new, .badge.mstatus-want_to_print, .badge.mstatus-printed,
-  .badge.visibility-public, .badge.bom-stock, .badge.bom-file {
-    background: var(--surface); border-color: var(--line-strong); color: var(--fg);
-  }
-  .badge.status-planning, .badge.status-archived, .badge.status-paused, .badge.partial, .badge.bom-text {
-    background: var(--surface); border-color: var(--fg-muted); color: var(--fg-muted);
-  }
+  .badge.status-archived { background: var(--raised); color: var(--fg-muted); }
   /* --- Project status and the new-project mark (stage 4, S4-6). Variants of `.badge`, so they
      live HERE and nowhere else: a component selector is defined in components.css alone
      (design-system rule 3), and `pages/projects.css` may qualify one inside a container but never
-     redeclare it. `planning` is the default, so the Projects card draws it quiet: an ink chip there
-     made the state nobody chose the loudest thing on the card. --- */
-  .badge.project-new { text-transform: none; }
-  .badge.bom-stock, .badge.bom-file, .badge.bom-text { text-transform: none; }
+     redeclare it. `planning` has no rule because it is the default and is never badged. --- */
+  .badge.status-active { background: var(--info-soft); color: var(--info); }
+  .badge.status-paused { background: var(--raised); color: var(--fg-muted); }
+  .badge.status-done { background: var(--ok-soft); color: var(--ok); }
+  .badge.project-new { background: var(--info-soft); color: var(--info); text-transform: none; }
+  .badge.mstatus-want_to_print { background: var(--info-soft); color: var(--info); }
+  .badge.mstatus-printed { background: var(--ok-soft); color: var(--ok); }
+  .badge.mstatus-failed { background: var(--danger-soft); color: var(--danger); }
+  .badge.low-stock { background: var(--warn-soft); color: var(--warn); text-transform: none; }
+  .badge.bom-stock { background: var(--ok-soft); color: var(--ok); text-transform: none; }
+  .badge.bom-file { background: var(--info-soft); color: var(--info); text-transform: none; }
+  .badge.bom-text { background: var(--raised); color: var(--fg-muted); text-transform: none; }
+  /* Publishing (stage 3, S3-4): the project head's visibility badge. Public reads as "on", unlisted
+     as a warning tone, since the accent is reserved for the one action -- a link, not a listing.
+     Private renders no badge at all. */
+  .badge.visibility-public { background: var(--ok-soft); color: var(--ok); }
+  .badge.visibility-unlisted { background: var(--warn-soft); color: var(--warn); }
   /* Releases (stage 3, S3-5): a release recorded from a folder larger than the snapshot's cap says
-     so on its row -- the quiet state, since it is a fact about the record, not a fault. NOT
+     so on its row -- the quiet neutral, since it is a fact about the record, not a fault. NOT
      `.badge.truncated`: the bare `.truncated` BANNER rule below shares that class and, later in the
      source at equal specificity, turned the chip into a squared box with a stray margin (measured
      in a browser by S3-5's review). */
-  .badge.partial { text-transform: none; }
-  /* THE FLAG: a warning word. A failed print, low stock, files changed since a release (a COMPONENT
-     MODIFIER, because the private panel and the public one both render it), and an unlisted
-     project (Publishing, S3-4: a link anyone holding it can open, the warning tone it always had). */
-  .badge.mstatus-failed, .badge.low-stock, .badge.changed, .badge.visibility-unlisted {
-    background: var(--surface); border-color: var(--accent); color: var(--accent-text);
-    font: 700 11.5px/16px var(--font-ui); letter-spacing: 0; text-transform: none;
-  }
+  .badge.partial { background: var(--raised); color: var(--fg-muted); text-transform: none; }
+  /* Releases (stage 3, S3-5): "N changed since" on a release summary, and "changed"/"gone" on a
+     file row. A COMPONENT MODIFIER, not a page rule, because both the private panel and the public
+     one render it -- a copy in each page sheet is the shape rule 3 (design-system.md) forbids.
+     `text-transform: none` for the same reason the bom-* modifiers carry it: these read as words,
+     not as a label. */
+  .badge.changed { background: var(--info-soft); color: var(--info); text-transform: none; }
   /* ONE EMPTY STATE, TWO SIZES (decision, UI-cohesion spec §2.4). `.empty` had THREE
      implementations before 2026-09-10: this one, plus `.projects-empty` and `.models-empty`, which
      carried these four declarations VERBATIM under new names in two page sheets. That slipped past
      css_hygiene_test.rb because the guard forbids REDECLARING a component selector, not copying
      its declarations under a different name.
 
-     `.empty.inline` is the variant that was missing. The 48px dashed box is right for "this whole
+     `.empty.inline` is the variant that was missing. The 40px dashed box is right for "this whole
      page has nothing on it" and wrong for a one-line "nothing yet" inside a list or a card — so
      those cases used to take the big box and then override it back down (pages/settings.css had
      `.filing-card .empty { padding: 4px 0; text-align: left; border: 0 }` doing exactly that, and
      it is deleted now). A `<li>` inside a list takes `.empty.inline`.
 
      `.muted` ON AN `.empty` IS INERT AND WAS WRITTEN 18 TIMES — `color: var(--fg-muted)` is right
-     here. All 18 are dropped; do not add a nineteenth. The box is the screens' hidden-panel dash
-     (1.5px, muted) over graph paper. */
+     here. All 18 are dropped; do not add a nineteenth. */
   .empty {
     padding: var(--space-7) var(--space-4); text-align: center; color: var(--fg-muted);
-    border: 1.5px dashed var(--fg-muted); border-radius: 0; background-color: var(--bg);
+    border: 1px dashed var(--line-strong); border-radius: var(--radius-panel); background-color: var(--bg);
     background-image: linear-gradient(var(--line) 1px, transparent 1px), linear-gradient(90deg, var(--line) 1px, transparent 1px);
     background-size: 12px 12px; background-position: -1px -1px;
   }
-  .empty.inline { padding: 4px 0; text-align: left; border: 0; background: none; font-size: 13.5px; }
+  .empty.inline { padding: 4px 0; text-align: left; border: 0; background: none; font-size: 13px; }
   /* INSIDE A PANEL THE DASH IS DOUBLE FRAMING. The dashed box exists to mark out a region that has
-     nothing in it on a bare page; a `.panel` already heads that region, so the two together read as
-     a box inside a section. Found by looking at Home after its four sections became panels (slice
-     4) — the markup did not change, and neither did `.empty`, but putting one inside the other did. */
+     nothing in it on a bare page; a `.panel` already draws that region, so the two together read as
+     a box inside a box. Found by looking at Home after its four sections became panels (slice 4) —
+     the markup did not change, and neither did `.empty`, but putting one inside the other did. */
   .panel .empty { border: 0; padding: 24px 16px; background: none; }
   /* An .empty that HOLDS elements rather than being one — /tools first-run state. `p` carries a
      bottom margin, which would otherwise sit inside the box's own padding and make it lopsided. */
   .empty > :last-child { margin-bottom: 0; }
-  .truncated { margin: 0 0 var(--space-3); padding: 8px 12px; border: 1.5px solid var(--warn); border-radius: 0; background: var(--warn-soft); color: var(--fg); font-size: 13.5px; }
+  .truncated { margin: 0 0 var(--space-3); padding: 8px 12px; border-radius: var(--radius-control); background: var(--warn-soft); color: var(--fg); font-size: 13px; }
 
   /* --- Flash (inline colours here; the floating stack is shell.css's .flash-stack) --- */
-  .flash { display: flex; align-items: flex-start; gap: var(--space-3); padding: 10px 12px; border-radius: var(--radius-control); border: 1.5px solid; font-size: 13.5px; color: var(--fg); background: var(--surface); }
-  /* Each toast LEADS WITH ITS WORD, a caps label: a status is never colour alone (rule 13). */
-  .flash::before { flex: 0 0 auto; font: 700 12px/19px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
-  .flash-notice { border-color: var(--line-strong); background: var(--surface); }
-  .flash.flash-notice::before { content: "Done"; color: var(--fg); }
+  .flash { display: flex; align-items: flex-start; gap: var(--space-3); padding: 10px 12px; border-radius: var(--radius-float); border: 1px solid; font-size: 14px; color: var(--fg); background: var(--surface); }
+  /* Each toast LEADS WITH ITS WORD: a status is never colour alone (design-system.md rule 13). */
+  .flash::before { flex: 0 0 auto; font: 600 11px/21px var(--font-ui); letter-spacing: .08em; text-transform: uppercase; }
+  .flash-notice { border-color: var(--ok); background: var(--ok-soft); }
+  .flash.flash-notice::before { content: "Done"; color: var(--ok); }
   .flash-alert { border-color: var(--danger); background: var(--danger-soft); }
   .flash.flash-alert::before { content: "Problem"; color: var(--danger); }
   .flash-text { flex: 1; }
   .flash-close { background: none; border: 0; padding: 0 2px; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; opacity: .7; }
   .flash-close:hover { opacity: 1; }
   /* The optional next step a notice carries (layouts/_flash, UX audit B6): inherits the toast's ink. */
-  .flash-link { margin-left: var(--space-2); color: inherit; font-weight: 700; text-decoration: underline; }
+  .flash-link { margin-left: var(--space-2); color: inherit; font-weight: 600; text-decoration: underline; }
 
-  /* --- Floating things: menu, popover, dialog, composer. Square, in a 1.5px ink line, lifted by
-     the float shadow so they read as over the page. --- */
+  /* --- Floating things: menu, popover, dialog, composer --- */
   .file-menu {
     position: absolute; z-index: 1000; min-width: 200px; padding: 4px;
-    background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
   }
   .file-menu button, .file-menu a {
     display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--control-height); padding: 0 10px;
-    text-align: left; background: none; border: 0; color: var(--fg); font: 500 13.5px/1 var(--font-ui);
-    border-radius: 0; cursor: pointer; text-decoration: none; box-sizing: border-box;
+    text-align: left; background: none; border: 0; color: var(--fg); font: 400 14px/1 var(--font-ui);
+    border-radius: var(--radius-control); cursor: pointer; text-decoration: none; box-sizing: border-box;
   }
   .file-menu button:hover, .file-menu a:hover { background: var(--raised); text-decoration: none; }
   /* THE ONE DESTRUCTIVE ENTRY READS AS ONE. filemenu_controller.js sets `className = "danger"` on
@@ -743,16 +549,15 @@
   .file-menu button.danger { color: var(--danger); }
   .note-popover {
     position: absolute; z-index: 1001; width: 320px; max-width: 90vw; padding: 10px;
-    background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
   }
   .note-popover textarea { width: 100%; box-sizing: border-box; resize: vertical; }
   .note-popover-actions { display: flex; align-items: center; gap: 8px; margin-top: 8px; }
   .note-popover-status { font-size: 12px; color: var(--fg-muted); }
-  /* A note count is data: mono, at Courier Prime's 400 (it has no 500). */
-  .note-badge { display: inline-block; margin-left: 6px; font: 400 11.5px/1 var(--font-mono); color: var(--fg-muted); vertical-align: middle; white-space: nowrap; }
+  .note-badge { display: inline-block; margin-left: 6px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); vertical-align: middle; white-space: nowrap; }
   dialog.move-conflict {
     display: block; position: static; width: 100%; max-width: none; margin: 0 0 16px; padding: 12px 14px;
-    border: 1.5px solid var(--line-strong); border-radius: 0;
+    border: 1px solid var(--line-strong); border-radius: var(--radius-panel);
     background: var(--surface); color: var(--fg);
   }
   dialog.move-conflict p { margin: 0 0 10px; }
@@ -767,21 +572,21 @@
   details.menu { position: relative; display: inline-block; }
   details.menu > summary { list-style: none; }
   details.menu > summary::-webkit-details-marker { display: none; }
-  details.menu[open] > summary { border-color: var(--fg); background: var(--raised); }
+  details.menu[open] > summary { border-color: var(--line-strong); }
   .menu-list {
     position: absolute; right: 0; top: calc(100% + 4px); z-index: 50; min-width: 220px; padding: 4px;
-    background: var(--surface); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
   }
   .menu-list form { margin: 0; }
   .menu-item {
     display: flex; align-items: center; gap: var(--space-2); width: 100%; min-height: var(--control-height); padding: 0 10px;
-    text-align: left; background: none; border: 0; color: var(--fg); font: 500 13.5px/1 var(--font-ui);
-    border-radius: 0; cursor: pointer; text-decoration: none; white-space: nowrap;
+    text-align: left; background: none; border: 0; color: var(--fg); font: 400 14px/1 var(--font-ui);
+    border-radius: var(--radius-control); cursor: pointer; text-decoration: none; white-space: nowrap;
   }
   .menu-sep { height: 1px; margin: 4px 6px; background: var(--line); }
   /* An inline form inside a menu (New ▸ Folder): a label, then a field and its button on one row. */
   .menu-form { display: grid; gap: var(--space-1); padding: 6px 10px 8px; margin: 0; }
-  .menu-form-label { color: var(--fg-muted); font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+  .menu-form-label { font-size: 13px; font-weight: 500; color: var(--fg); }
   .menu-form-row { display: flex; gap: var(--space-2); }
   .menu-form-row input[type="text"] { flex: 1; min-width: 0; }
   .menu-item:hover { background: var(--raised); text-decoration: none; }
@@ -796,10 +601,10 @@
   .folder-field { display: inline-flex; }
   .folder-field-btn {
     display: inline-flex; align-items: center; gap: 6px; max-width: 260px; min-height: var(--control-height);
-    padding: 0 12px; border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
-    background: var(--surface); color: var(--fg); font: 600 13.5px/20px var(--font-ui); cursor: pointer;
+    padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-control);
+    background: var(--surface); color: var(--fg); font: 400 14px/20px var(--font-ui); cursor: pointer;
   }
-  .folder-field-btn:hover { background: var(--raised); }
+  .folder-field-btn:hover { border-color: var(--fg-muted); }
   .folder-field-btn .ff-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .filechooser-overlay {
     position: fixed; inset: 0; z-index: 1000; padding: 16px; background: var(--scrim);
@@ -807,9 +612,9 @@
   }
   .filechooser {
     display: flex; flex-direction: column; overflow: hidden; width: min(720px, 100%); max-height: min(560px, 90vh);
-    background: var(--surface); color: var(--fg); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
+    background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
   }
-  .filechooser-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 2px solid var(--line-strong); font-weight: 800; }
+  .filechooser-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); font-weight: 600; }
   .filechooser-close { background: none; border: 0; font-size: 16px; color: var(--fg-muted); cursor: pointer; }
   .filechooser-crumbs { padding: 8px 16px; border-bottom: 1px solid var(--line); color: var(--fg-muted); font: 12px/1.4 var(--font-mono); white-space: nowrap; overflow-x: auto; }
   .filechooser-cols { display: flex; flex: 1; min-height: 0; overflow-x: auto; }
@@ -819,7 +624,7 @@
      flow instead of a centred panel capped at the viewport — so every column, row, empty-state and
      the narrow-width rule at the end of this block go on applying unchanged. A separate
      `.repo-browser` component would have been a second definition of all of them. */
-  .filechooser--inline { position: static; width: 100%; max-height: none; height: 320px; border: 1px solid var(--line-strong); border-radius: 0; box-shadow: none; }
+  .filechooser--inline { position: static; width: 100%; max-height: none; height: 320px; border: 1px solid var(--line); border-radius: var(--radius-panel); }
   .filechooser-bar { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-bottom: 1px solid var(--line); }
   /* The crumbs keep their font and take the rest of the bar; the bar already draws the divider, so
      the crumbs' own bottom border would double it. */
@@ -827,22 +632,22 @@
   /* A ROW IS A `div` IN THE PICKING MODES AND A `button`/`a` IN BROWSE MODE — real controls, so
      middle-click and the keyboard work on a file link — which means this rule has to flatten a
      UA-styled button and an anchor back to what the `div` row always looked like. */
-  .filechooser-row { display: block; padding: 7px 12px; font-size: 13.5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; appearance: none; border: 0; background: none; width: 100%; text-align: left; font-family: inherit; color: inherit; text-decoration: none; }
+  .filechooser-row { display: block; padding: 7px 12px; font-size: 13px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; appearance: none; border: 0; background: none; width: 100%; text-align: left; font-family: inherit; color: inherit; text-decoration: none; }
   .filechooser-row:hover { background: var(--raised); }
-  .filechooser-row.sel { background: var(--fg); color: var(--bg); }
+  .filechooser-row.sel { background: var(--fg); color: var(--surface); }
   .filechooser-row.is-file { color: var(--fg-muted); }
-  .filechooser-row.sel.is-file { color: var(--bg); }
+  .filechooser-row.sel.is-file { color: var(--surface); }
   .filechooser-empty { padding: 10px 12px; color: var(--fg-muted); font-size: 12px; }
   .filechooser-foot { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line); }
   .filechooser-actions { display: flex; align-items: center; gap: 8px; }
   /* ON A PHONE THE FOOT WRAPS (redesign slice 7). One row inside the panel's `overflow: hidden` put
      Cancel and Choose past its right edge at 375px, so an upload started from a page with no folder
-     could not be finished there. test/system/phone_strip_test.rb clicks Choose at 375px. */
+     could not be finished there. test/system/phone_topbar_test.rb clicks Choose at 375px. */
   @media (max-width: 640px) {
     .filechooser-foot { flex-wrap: wrap; }
     .filechooser-actions { flex-wrap: wrap; justify-content: flex-end; margin-left: auto; }
   }
-  .filechooser-sel { max-width: 240px; font: 400 12px/1.4 var(--font-mono); color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .filechooser-sel { max-width: 240px; font-size: 12px; color: var(--fg-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* BACK IS VISIBLE AT EVERY WIDTH, ON PURPOSE. The pre-2026-09 sheets hid it here and showed it
      below 640px — but the button also carries `.btn`, and projects.css's later `.btn` definition
      outranked this file's `display: none`, so Back has always rendered at desktop width, and
@@ -857,12 +662,13 @@
 
   /* --- Shell: the skip link and the unreachable-library banner (F onboarding, 2026-10-13) --- */
   /* THE SKIP LINK is the first element in <body> (layouts/application.html.erb) and jumps to
-     main#main. ABSOLUTELY POSITIONED, so it takes no part in the shell's layout; translated above the viewport until it has focus. `:focus` rather than
+     main#main. ABSOLUTELY POSITIONED, so it takes no cell of body.app-shell's grid and the rail
+     keeps the first column; translated above the viewport until it has focus. `:focus` rather than
      `:focus-visible`, so it shows for any focus that lands on it. */
   .skip-link {
     position: absolute; top: var(--space-2); left: var(--space-2); z-index: 100;
-    padding: var(--space-2) var(--space-3); border: 1.5px solid var(--line-strong); border-radius: var(--radius-control);
-    background: var(--surface); color: var(--fg); font: 700 13.5px/20px var(--font-ui); white-space: nowrap;
+    padding: var(--space-2) var(--space-3); border: 1px solid var(--line-strong); border-radius: var(--radius-control);
+    background: var(--surface); color: var(--fg); font: 500 14px/20px var(--font-ui); white-space: nowrap;
     transform: translateY(-200%);
   }
   .skip-link:focus { transform: none; text-decoration: none; }
@@ -870,15 +676,15 @@
      only the flash stack floats (rule 10). It leads with its words in <strong>, so the warn tone is
      never the only signal (rule 13). */
   .library-unreachable {
-    margin: 0 0 var(--space-4); padding: 10px 12px; border: 1.5px solid var(--warn); border-radius: 0;
-    background: var(--warn-soft); color: var(--fg); font-size: 13.5px; overflow-wrap: anywhere;
+    margin: 0 0 var(--space-4); padding: 10px 12px; border: 1px solid var(--warn); border-radius: var(--radius-panel);
+    background: var(--warn-soft); color: var(--fg); font-size: 14px; overflow-wrap: anywhere;
   }
   /* THE DEMO BANNER (layouts/_demo_banner, H 2026-10-14): the same inline box in the INFO tone, because
      it states a fact about the account rather than a fault -- and when both show, the warning must
      still read as the different thing. Leads with its words in <strong>, like the one above. */
   .demo-banner {
-    margin: 0 0 var(--space-4); padding: 10px 12px; border: 1.5px solid var(--info); border-radius: 0;
-    background: var(--info-soft); color: var(--fg); font-size: 13.5px; overflow-wrap: anywhere;
+    margin: 0 0 var(--space-4); padding: 10px 12px; border: 1px solid var(--info); border-radius: var(--radius-panel);
+    background: var(--info-soft); color: var(--fg); font-size: 14px; overflow-wrap: anywhere;
   }
 /* --- The calculator (layouts/_calculator.html.erb, calculator_controller.js; 2026-10-21). A
    native <dialog> opened with showModal(), so it sits in the top layer above every page and its
@@ -887,31 +693,31 @@
    a 375px screen scrolls sideways (design-system.md rule 11). --- */
 dialog.calculator {
   width: min(460px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow-y: auto;
-  border: 1.5px solid var(--line-strong); border-radius: var(--radius-control); box-shadow: var(--shadow-float);
-  background: var(--surface); color: var(--fg); font: 400 13.5px/1.4 var(--font-ui);
+  border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
+  background: var(--surface); color: var(--fg); font: 400 14px/1.4 var(--font-ui);
 }
 dialog.calculator::backdrop { background: var(--scrim); }
-.calculator-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 2px solid var(--line-strong); }
-.calculator-head h2 { margin: 0; font-size: 16px; font-weight: 800; }
+.calculator-head { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-bottom: 1px solid var(--line); }
+.calculator-head h2 { margin: 0; font-size: 15px; font-weight: 600; }
 .calculator-close { min-width: var(--control-height-small); min-height: var(--control-height-small); background: none; border: 0; border-radius: var(--radius-control); color: var(--fg-muted); font-size: 20px; line-height: 1; cursor: pointer; }
 .calculator-close:hover { background: var(--raised); color: var(--fg); }
 .calculator-entry { padding: 14px 16px 0; }
-.calculator-input-label { display: block; margin-bottom: 4px; color: var(--fg-muted); font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase; }
+.calculator-input-label { display: block; margin-bottom: 4px; font-size: 12px; color: var(--fg-muted); }
 .calculator-input-row { display: flex; gap: var(--space-2); }
 .calculator-input-row .calculator-input { flex: 1; min-width: 0; font: 400 16px/22px var(--font-mono); }
 .calculator-equals { min-width: 44px; font-size: 18px; }
 .calculator-answer { padding: 10px 16px 4px; min-height: 52px; overflow-wrap: anywhere; }
-.calculator-result { display: block; font: 700 22px/1.3 var(--font-mono); color: var(--fg); }
+.calculator-result { display: block; font: 600 22px/1.3 var(--font-mono); color: var(--fg); }
 .calculator-result.stale { color: var(--fg-muted); }
 .calculator-result-alt { display: block; font: 400 13px/1.4 var(--font-mono); }
-.calculator-error { margin: 0; padding: 6px 10px; border-radius: 0; background: var(--danger-soft); color: var(--danger); font-size: 13px; }
+.calculator-error { margin: 0; padding: 6px 10px; border-radius: var(--radius-control); background: var(--danger-soft); color: var(--danger); font-size: 13px; }
 .calculator-fraction { display: flex; align-items: center; gap: var(--space-2); padding: 4px 16px 10px; font-size: 12px; }
 .calculator-section { margin: 0 16px; border-top: 1px solid var(--line); }
-.calculator-section > summary { padding: 10px 0; font-weight: 700; cursor: pointer; }
+.calculator-section > summary { padding: 10px 0; font-weight: 500; cursor: pointer; }
 .calculator-section[open] > summary { padding-bottom: 6px; }
 .calculator-section[open] { padding-bottom: 12px; }
 .calculator-history { list-style: none; margin: 0 0 8px; padding: 0; max-height: 180px; overflow-y: auto; }
-.calculator-history-item { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; width: 100%; padding: 6px 8px; border: 0; border-radius: 0; background: none; color: var(--fg); font: 400 13px/1.4 var(--font-mono); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.calculator-history-item { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--radius-control); background: none; color: var(--fg); font: 400 13px/1.4 var(--font-mono); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
 .calculator-history-item:hover { background: var(--raised); }
 .calculator-history-item code { font: inherit; }
 .calculator-history-result { color: var(--fg-muted); }
@@ -920,8 +726,8 @@ dialog.calculator::backdrop { background: var(--scrim); }
 .calculator-field select, .calculator-field input { width: 100%; min-width: 0; box-sizing: border-box; }
 .calculator-save-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); margin-top: var(--space-2); }
 .calculator-save-what { font: 400 12px/1.4 var(--font-mono); overflow-wrap: anywhere; }
-.calculator-saved { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: 0; background: var(--ok-soft); color: var(--fg); font-size: 13px; }
-.calculator-save-error { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: 0; background: var(--danger-soft); color: var(--danger); font-size: 13px; }
+.calculator-saved { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: var(--radius-control); background: var(--ok-soft); color: var(--fg); font-size: 13px; }
+.calculator-save-error { margin: 0 0 var(--space-2); padding: 6px 10px; border-radius: var(--radius-control); background: var(--danger-soft); color: var(--danger); font-size: 13px; }
 .calculator-save-hint { margin: 0 0 var(--space-2); font-size: 13px; }
 .calculator-help { margin: 0; padding: 10px 16px 14px; border-top: 1px solid var(--line); font-size: 12px; line-height: 1.6; }
 .calculator-help code { font: 400 12px/1 var(--font-mono); white-space: nowrap; }

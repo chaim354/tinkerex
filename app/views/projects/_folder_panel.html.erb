@@ -47,7 +47,7 @@
         caller knows it — Layout holds node ids and PANEL_LABELS names no folder — so it is passed
         in, and the maker's own title wins over it when there is one. %>
     <h2><%= panel_title(@panel_layout, key, dir.name) %></h2>
-    <%= section_note(key, count, pluralize(count, "file")) %>
+    <span class="mono muted"><%= pluralize(count, "file") %></span>
     <%# WHERE IT IS, not just what: the subfolder's path, linked to it in the Library. The Files
         panel's own `panel-path` reads "Open folder →" since slice 6, with the path as its title —
         that folder is the page's own subject, where a subfolder's path is the news. %>
@@ -55,8 +55,8 @@
     <% if dir.repo? %><span class="badge">repo</span><% end %>
     <div class="panel-actions">
       <% if dir.repo? %>
-        <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn", data: { turbo_prefetch: false } %>
-        <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn", data: { turbo_prefetch: false } %>
+        <%= link_to "Commits", repo_commit_path(dir.node_id), class: "linkbtn" %>
+        <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn" %>
       <% end %>
       <%# THIS PANEL'S VIEW BUTTONS, all three of Maker::Project::VIEWS (projects/_view_toggle, which
           says why they are buttons and how a press replaces this section alone). The Files panel
@@ -67,10 +67,6 @@
     </div>
   </div>
   <%= panel_intro(@panel_layout, key) %>
-  <%# VERSION STACKS, THIS PANEL'S OWN SWITCH (spec §9): not in the browser, which lists every file. %>
-  <% if count > 1 && view != "browser" %>
-    <%= render "projects/stack_switch", key: key, label: dir.name %>
-  <% end %>
 
   <% if empty %>
     <%# QUIET, NOT OMITTED (S4-1's quiet-panel rule). The maker put this folder in the layout — it
@@ -78,7 +74,7 @@
         answer an empty Tasks panel gives. Omitting it is the VISITOR's page's rule, not this one. %>
     <p class="muted">Empty folder.</p>
   <% else %>
-    <div data-controller="thumbs filemenu stack" data-thumbs-url-value="<%= thumbnails_files_path %>">
+    <div data-controller="thumbs filemenu" data-thumbs-url-value="<%= thumbnails_files_path %>">
       <%# THE CARD COMES FIRST IN EVERY VIEW — the README rendered, the latest commit, the current
           tag — which is the order _file_tree_section already puts it in for a nested repository.
           @repo_cards holds one for every repo? Dir on the page (ProjectsController#show), so a
@@ -92,21 +88,12 @@
             the nested sections rather than sitting above them. %>
         <%= render "projects/repo_browser", dir: %>
       <% else %>
-        <%# THE FILES, AS FIGURES: a stack stands once where its first member stood, and a backup it
-            holds joins it from the Files panel's Backups group (ProjectsHelper#stack_figures). %>
-        <% figures = stack_figures(visible, folder_id: dir.node_id) %>
-        <% if figures.any? %>
+        <% if visible.any? %>
           <% if view == "list" %>
-            <%= render "file_rows", rows: visible, figures: figures %>
+            <%= render "file_rows", rows: visible %>
           <% else %>
             <div class="attachments-grid">
-              <% figures.each do |figure| %>
-                <% if figure.is_a?(ProjectsHelper::StackFigure) %>
-                  <%= render "projects/stack_tile", figure: figure %>
-                <% else %>
-                  <%= render "file_tile", row: figure %>
-                <% end %>
-              <% end %>
+              <%= render partial: "file_tile", collection: visible, as: :row %>
             </div>
           <% end %>
         <% end %>

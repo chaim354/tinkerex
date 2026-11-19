@@ -143,8 +143,8 @@ end
       break if top == settled || Time.now > deadline
       settled = top
     end
-    bar_bottom = page.evaluate_script("document.querySelector('header.strip').getBoundingClientRect().bottom")
-    assert_operator settled, :>=, bar_bottom - 1, "the pane's head is under the strip (#{settled}px < #{bar_bottom}px)"
+    bar_bottom = page.evaluate_script("document.querySelector('header.topbar').getBoundingClientRect().bottom")
+    assert_operator settled, :>=, bar_bottom - 1, "the pane's head is under the top bar (#{settled}px < #{bar_bottom}px)"
     assert_no_console_errors
   ensure
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")

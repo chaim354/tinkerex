@@ -43,7 +43,7 @@ module Maker
       # indistinguishable from the outside, which is exactly why the pin is on the RESOLVED value
       # rather than on the constant.
       THUMBNAIL_REVISIONS = {
-        "a.asm"   => 3, # TextThumb  — 62 extensions route here; 3 = Shop manual ink (2026-11-18)
+        "a.asm"   => 2, # TextThumb  — 62 extensions route here; 2 = the palette ink (2026-10-21)
         "a.bmp"   => 1, # ImageThumb — 6
         "a.iges"  => 2, # Mesh       — 14 (obj/step/stp/iges/igs/brep/gltf/…); 2 = ink on paper
         "a.pdf"   => 1, # Pdf

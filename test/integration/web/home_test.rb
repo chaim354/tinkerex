@@ -18,22 +18,19 @@ module Web
                           updated_at: at, parent_node_id: parent)
     end
 
-    # ONE EMPTY STATE, AND IT POINTS AT THE STRIP'S UPLOAD. Since F onboarding (2026-10-13) it is the
+    # ONE EMPTY STATE, AND IT POINTS AT THE TOP BAR. Since F onboarding (2026-10-13) it is the
     # getting-started panel, in place of a Recently changed panel with nothing in it; what it says
     # per backend is where_files_come_from_test.rb's. Active projects and Needs attention are absent
     # rather than empty, and the panel does not grow an upload control of its own — a second one
-    # would duplicate the strip's input id.
-    test "an empty account sees one empty state, pointing at the strip's Upload" do
+    # would duplicate the top bar's input id and spend the accent twice.
+    test "an empty account sees one empty state, pointing at the top bar's Upload" do
       get root_path
       assert_response :success
-      # TODAY (Shop manual slice 7): the title, a lead, and the screen's two outlined buttons. Neither
-      # is a second upload control: "Add files" forwards to the strip's own Upload button.
-      assert_select ".page-head h1", text: "Today"
-      assert_select ".page-head .page-lead", text: "No project is open. Nothing needs a look."
-      assert_select ".page-head .page-actions button.btn.home-add-files[data-action='upload-forward#open']", text: "Add files"
-      assert_select ".page-head .page-actions a.btn[href=?]", new_project_path, text: "New project"
-      assert_select "main .btn.primary", count: 0
-      assert_select ".home-section.getting-started .file-sources", text: /Upload, under Add at the top of the page/
+      assert_select ".page-head h1", text: "Recent"
+      # The head is the heading alone: New ▾ in the top bar already has Project.
+      assert_select ".page-head > *", count: 1
+      assert_select "main a[href=?]", new_project_path, count: 0
+      assert_select ".home-section.getting-started .file-sources", text: /Upload, in the top bar/
       assert_select ".home-section", count: 1
       assert_select ".home-files", count: 0
       assert_select ".home-projects", count: 0
@@ -103,7 +100,7 @@ module Web
       assert_select ".home-attention .attention-row", text: /failed/i
       # "LOG A PRINT" OPENS THE PRINT LOG (UX audit 2026-11-01, E6): the Details pane with the composer
       # open, never the pane the model page picks for itself (its instructions PDF, when it has one).
-      assert_select ".home-attention .attention-row a.linkbtn[href=?]",
+      assert_select ".home-attention .attention-row a.btn[href=?]",
                     model_path(model, file: "details", log: 1, anchor: "print-log"), text: "Log a print"
     end
 
@@ -139,7 +136,7 @@ module Web
       assert_select ".home-attention .attention-row.attention-row--warn",
                     text: /M3×8 screw: 12 each left, minimum 50/
       # Restock lands on the item\x27s composer already set to Restocked (`?reason=`), not to Consumed.
-      assert_select ".home-attention .attention-row a.linkbtn[href=?]", inventory_item_path(low, reason: "restocked"), text: "Restock"
+      assert_select ".home-attention .attention-row a.btn[href=?]", inventory_item_path(low, reason: "restocked"), text: "Restock"
       assert_select ".home-attention .attention-row", text: /Aardvark bracket/, count: 0
     end
 
@@ -158,31 +155,6 @@ module Web
       end
       get root_path
       assert_select ".home-attention .attention-row.attention-row--warn", count: HomeController::ATTENTION_STOCK
-    end
-
-    # THE NUMBERS ARE THE PAGE'S READING ORDER, AND THE COLUMN READS THE SAME LIST (HomeHelper
-    # #home_sections, Shop manual slice 7): the left stack's next steps and projects, then the right
-    # stack's attention and files, numbered 1 to 4 with no gap whatever is absent, each column row the
-    # same number and words as the head it links to, and a lead counted off the same lists. Every
-    # section present, so a numbering that skipped or reordered one would show.
-    #
-    # MUTATION-CHECKED (§15): numbering the sections from 0 in HomeHelper reddened the heads'
-    # assertion ("0 Active projects" for "1 Active projects"), and a column row reading the
-    # section's label without its number reddened the column's.
-    test "the sections are numbered in reading order, and the column numbers them the same way" do
-      lamp = @user.maker_projects.create!(name: "Desk Lamp", status: "active")
-      @user.maker_tasks.create!(title: "Check the flicker", taskable: lamp)
-      file("lamp.stl", at: 1.hour.ago)
-      low = @user.maker_inventory_items.create!(name: "M3 bolt", unit: "each", min_quantity: 5)
-      Maker::InventoryTransaction.apply!(item: low, user: @user, delta: 2, reason: "initial")
-      get root_path
-
-      heads = css_select("main .home-section .panel-head h2").map { |h| h.text.squish }
-      assert_equal [ "1 Carry on", "2 Active projects", "3 Needs attention", "4 Recently changed" ], heads
-      rows = css_select("aside.column a.column-row[href^='#']").map { |a| [ a.at_css(".column-row-name").text.squish, a["href"] ] }
-      assert_equal [ [ "1 Carry on", "#home-carry-on" ], [ "2 Active projects", "#home-projects" ],
-                     [ "3 Needs attention", "#home-attention" ], [ "4 Recently changed", "#home-recent" ] ], rows
-      assert_select ".page-head .page-lead", text: "One project is open. One thing needs a look."
     end
   end
 end

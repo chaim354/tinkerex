@@ -26,35 +26,14 @@
 <% node = row.node %>
 <% ext = File.extname(node.name).delete(".").upcase.first(4) %>
 <% note = local_assigns.fetch(:notes, {})[row.node_id] %>
-<%# A FIGURE SINCE THE SHOP MANUAL (2026-11-19; its spec §6): `plate-figure`, the component's 118px
-    frame, the name at 600 on one line and a mono fact under it — the file's type and size, which the
-    listing already holds.
-    ITS NUMBER (spec §9): the red disc at the frame's top left and `data-fig` on the figure, from the
-    page's one walk (ProjectsHelper#figure_number). A stack's MEMBER carries none: it is drawn inside
-    its stack's opened figure, which carries the stack's. `repeat` is the Recently changed row's: a
-    second look at a file filed below, which shows the number and is never where the find box lands. %>
-<% member = local_assigns[:member] %>
-<% number = member ? nil : figure_number(row.node_id) %>
-<%= tag.div class: "attachment-tile plate-figure", data: (member ? {} : figure_data(row.node_id, repeat: local_assigns.fetch(:repeat, false))) do %>
+<div class="attachment-tile">
   <%= link_to file_path(row.node_id), class: "grid-card file-cell",
               data: file_open_data(thumb_cell_data(row.node_id, ext)
                                      .merge(file_menu_data(node, @addon_origins[row.node_id]))) do %>
     <%= render "files/thumb", thumb: @page_thumbs.thumb(row.node_id), ext_label: ext,
-               url: preview_src(@page_thumbs.thumb(row.node_id)), fig: fig_num_tag(number) %>
-    <span class="grid-name plate-name" title="<%= node.name %>"><%= node.name %></span>
-    <span class="plate-facts"><%= safe_join([ ext.presence, (number_to_human_size(node.size) if node.size) ].compact, " · ") %></span>
+               url: preview_src(@page_thumbs.thumb(row.node_id)) %>
+    <span class="grid-name"><%= node.name %></span>
   <% end %>
   <% if note %><p class="tile-note muted"><%= note %></p><% end %>
-  <%# A STACK'S MEMBER SAYS WHICH IT IS and can leave the stack; a file pulled out of its stack offers
-      to go back, quietly (Shop manual spec §9). `member` is the role, "latest" or "older", given by
-      projects/_stack_tile; @stacks is ProjectsController#show's. %>
-  <% if member %>
-    <span class="stack-role"><%= member %></span>
-    <%= button_to "Pull out", file_stack_exclusion_path(row.node_id), method: :post, class: "linkbtn stack-pull-out",
-                  form_class: "stack-pull-out-form", aria: { label: "Pull #{node.name} out of its stack" } %>
-  <% elsif @stacks&.pulled_out?(row.node_id) %>
-    <%= button_to "Put back", file_stack_exclusion_path(row.node_id), method: :delete, class: "linkbtn stack-put-back",
-                  form_class: "stack-put-back-form", aria: { label: "Put #{node.name} back in its stack" } %>
-  <% end %>
   <%= render "projects/linked_actions", row: row, node: node, tile: true %>
-<% end %>
+</div>

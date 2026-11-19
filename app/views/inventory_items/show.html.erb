@@ -4,69 +4,22 @@
   <nav class="breadcrumb" aria-label="Inventory path">
     <%= link_to "Inventory", inventory_items_path %>
     <span class="sep" aria-hidden="true">/</span>
-    <% if @item.location %>
-      <%= link_to @item.location.name, inventory_items_path(location: @item.location.id) %>
-      <span class="sep" aria-hidden="true">/</span>
-    <% end %>
     <span aria-current="page"><%= @item.name %></span>
   </nav>
 <% end %>
 
-<%# THE ITEM'S OWN COLUMN (Shop manual slice 7): its sections as numbered in-page links, then the
-    other things kept in the same place, each with what is on hand: ONE capped query
-    (InventoryHelper#inventory_place_items), whatever the place holds. An item page lights no row
-    (ShellHelper#inventory_current), so the item itself is listed and not lit. %>
-<% content_for :column do %>
-  <div class="column-group">
-    <h2 class="column-head">On this page</h2>
-    <%= column_row safe_join([ tag.span(1, class: "column-row-num"), " ", "Stock" ]), "#item-stock" %>
-    <%= column_row safe_join([ tag.span(2, class: "column-row-num"), " ", "Adjust stock" ]), "#item-adjust" %>
-    <%= column_row safe_join([ tag.span(3, class: "column-row-num"), " ", "History" ]), "#item-history", note: @ledger_total %>
-  </div>
-  <% if @item.location %>
-    <div class="column-group">
-      <h2 class="column-head">In <%= @item.location.name %></h2>
-      <% inventory_place_items(@item).each do |neighbour| %>
-        <%= column_row neighbour.name, inventory_item_path(neighbour), note: inventory_quantity(neighbour.quantity_cached) %>
-      <% end %>
-      <%= column_row "Everything here", inventory_items_path(location: @item.location.id), class: "column-row--more" %>
-    </div>
-  <% end %>
-<% end %>
-
-<div class="page-head item-head">
+<div class="page-head">
   <div class="page-title">
     <h1><%= @item.name %></h1>
     <% if @item.low_stock? %><span class="badge low-stock">Low stock</span><% end %>
   </div>
   <div class="page-actions">
-    <%= link_to "Edit", edit_inventory_item_path(@item), class: "btn" %>
-    <%= button_to "Delete", inventory_item_path(@item), method: :delete, class: "linkbtn muted",
+    <%= link_to "Edit", edit_inventory_item_path(@item), class: "btn small" %>
+    <%= button_to "Delete", inventory_item_path(@item), method: :delete, class: "btn small danger",
           form: { data: { turbo_confirm: "Delete #{@item.name}?" } } %>
   </div>
 </div>
 
-<%# THE ITEM AS NUMBERED SECTIONS (Shop manual slice 7; the screen `inventory-item`): Stock and Adjust
-    stock side by side, History under Stock, in that order in the page too, so a phone reads the
-    composer before the ledger (pages/inventory.css lays them out). The left column lists them. The
-    screen's "Needed by" is the BOM's half of a later behaviour (spec §9's To buy) and is not here. %>
-<div class="inventory-item-sections">
-<section class="panel inventory-item-stock" id="item-stock">
-<div class="panel-head"><h2><span class="panel-num">1</span> Stock</h2></div>
-<%# THE TWO NUMBERS FIRST, as figures: on hand (in the accent while it is at or under its minimum, a
-    mark beside the head's Low stock flag) and the minimum, where one is set. %>
-<div class="stock-figures">
-  <div class="stock-figure<%= " is-low" if @item.low_stock? %>">
-    <span class="stock-figure-num"><%= inventory_quantity(@item.quantity_cached) %></span>
-    <span class="stock-figure-label">On hand<%= ", #{@item.unit}" unless @item.unit == "each" %></span>
-  </div>
-  <% if @item.min_quantity.positive? %>
-    <div class="stock-figure">
-      <span class="stock-figure-num"><%= inventory_quantity(@item.min_quantity) %></span>
-      <span class="stock-figure-label">Minimum</span>
-    </div>
-  <% end %>
-</div>
 <dl class="meta">
   <dt>Part #</dt><dd><%= @item.part_number.presence || "—" %></dd>
   <dt>Category</dt><dd><%= @item.category.presence || "—" %></dd>
@@ -82,11 +35,7 @@
 <% if @item.notes.present? %>
   <p class="item-notes"><%= @item.notes %></p>
 <% end %>
-</section>
 
-
-<section class="panel inventory-item-adjust" id="item-adjust">
-<div class="panel-head"><h2><span class="panel-num">2</span> Adjust stock</h2></div>
 <%# scope: :transaction — there is no @transaction model backing this form (the ledger is
     append-only and posted through InventoryTransaction.apply!, never built-and-saved here), so
     form_with needs an explicit scope to name its fields transaction[...] at all; without one a
@@ -129,12 +78,7 @@
       For Adjusted, type the correction with its sign: −2 takes two away, 2 adds two.</p>
   <% end %>
 </details>
-</section>
-<section class="panel inventory-item-history" id="item-history">
-<div class="panel-head">
-  <h2><span class="panel-num">3</span> History</h2>
-  <span class="panel-note"><%= count_label(@ledger_total, "change") %></span>
-</div>
+
 <p class="muted ledger-note">Stock changes are recorded here; the balance is the sum.</p>
 <table class="table ledger">
   <thead>
@@ -164,5 +108,3 @@
 <% if @ledger_total > @ledger.size %>
   <p class="muted ledger-truncated">Showing <%= @ledger.size %> of <%= @ledger_total %> entries.</p>
 <% end %>
-</section>
-</div>

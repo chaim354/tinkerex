@@ -1,38 +1,8 @@
 <% content_for :title, "Projects — Tinkerex" %>
 
-<%# THE INDEX'S COLUMN (Shop manual slice 7; the screen `projects`): the filters slice 3's default lists
-    (layouts/column/_projects), each with its count, as the screen draws them. The counts come off the
-    list this page already loaded, so they are given only while it is the whole list — no tag, type or
-    search narrowing it — and never cost a query; a narrowed page shows the rows without them. %>
-<% whole = @tag.blank? && @kind.blank? && @q.blank? %>
-<% live_counts = whole && !@archived_view ? @projects.group_by(&:kind).transform_values(&:size) : nil %>
-<% content_for :column do %>
-  <div class="column-group">
-    <h2 class="column-head">Projects</h2>
-    <%= column_row "All", projects_path, key: [ :all_projects ], note: (@projects.size if live_counts) %>
-    <%= column_row "Archived", projects_path(archived: 1), key: [ :archived_projects ], note: (@archived_count if whole) %>
-  </div>
-  <% if @project_kinds.any? %>
-    <div class="column-group">
-      <h2 class="column-head">Type</h2>
-      <% @project_kinds.each do |kind| %>
-        <%= column_row Maker::ProjectKind.label(kind), projects_path(kind: kind), key: [ :project_kind, kind ],
-                       note: (live_counts.fetch(kind, 0) if live_counts) %>
-      <% end %>
-    </div>
-  <% end %>
-<% end %>
-
-<%# THE HEAD (Shop manual slice 7, the screen `projects`): the title, a lead counted off the list this
-    page loaded (ProjectsIndexHelper#projects_lead), then New project, the page's one ink primary. %>
 <div class="page-head">
   <h1><%= @archived_view ? "Archived projects" : "Projects" %></h1>
-  <% if (lead = projects_lead) %><p class="page-lead"><%= lead %></p><% end %>
-  <% unless @archived_view %>
-    <div class="page-actions">
-      <%= link_to new_project_path, class: "btn primary" do %><%= rail_icon(:plus) %>New project<% end %>
-    </div>
-  <% end %>
+  <%= link_to "New project", new_project_path, class: "btn primary" unless @archived_view %>
 </div>
 
 <%# Tag filter chips (stage 2, S2-5) -- only when the user has at least one tagged project, same
@@ -121,16 +91,9 @@
     </div>
   <% end %>
 <% else %>
-  <%# ONE LIST, NUMBERED IN THE ORDER IT RENDERS (the screen's rows): a number is a place on this
-      page, never a stored thing, and it follows the sort. `projects-grid` keeps its name and its
-      contract (each project one `.project-tile`, its Unarchive inside it); `projects-rows` lays it
-      out as rows (pages/home.css, the index's section). `projects-rows--steps` gives every row the
-      column for its next step, and only while some project here has a task, so a list with none
-      keeps the room for its descriptions. %>
-  <div class="projects-grid projects-rows<%= " projects-rows--steps" if @progress.any? %>" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
-    <% projects_in_order(@projects, @sort).each_with_index do |project, i| %>
-      <%= render "card", project: project, thumb: @covers.thumb(project.cover_node_id), number: i + 1, detail: true,
-                         next_step: @next_steps[project.id], progress: @progress[project.id] %>
+  <div class="projects-grid" data-controller="thumbs" data-thumbs-url-value="<%= thumbnails_files_path %>">
+    <% projects_in_order(@projects, @sort).each do |project| %>
+      <%= render "card", project:, thumb: @covers.thumb(project.cover_node_id) %>
     <% end %>
   </div>
 <% end %>

@@ -4,29 +4,27 @@
     Tinkerex::MailSettings.deliverable?, as confirmations/new does, and is the same for every address,
     so it tells a visitor nothing about which ones have accounts (account_enumeration_test.rb). %>
 <% content_for :title, "Forgot your password — Tinkerex" %>
-<%= render layout: "users/shared/door" do %>
-  <section class="auth-box" aria-labelledby="auth-title">
-    <h1 class="auth-box-head" id="auth-title">Forgot your password?</h1>
-    <div class="auth-box-body">
-      <% unless Tinkerex::MailSettings.deliverable? %>
-        <p class="auth-hint">This server can't send email yet, so no reset link will arrive. An
-          administrator can set a new password for you under Settings → Users.</p>
-      <% end %>
+<div class="auth-card">
+  <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
+  <h1>Forgot your password?</h1>
 
-      <%= form_for(resource, as: resource_name, url: password_path(resource_name), html: { method: :post }) do |f| %>
-        <%= render "users/shared/error_messages", resource: resource %>
+  <% unless Tinkerex::MailSettings.deliverable? %>
+    <p class="auth-hint">This server can't send email yet, so no reset link will arrive. An
+      administrator can set a new password for you under Settings → Users.</p>
+  <% end %>
 
-        <div class="field">
-          <%= f.label :email %>
-          <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
-        </div>
+  <%= form_for(resource, as: resource_name, url: password_path(resource_name), html: { method: :post }) do |f| %>
+    <%= render "users/shared/error_messages", resource: resource %>
 
-        <div class="actions">
-          <%= f.submit "Send a reset link", class: "primary" %>
-        </div>
-      <% end %>
+    <div class="field">
+      <%= f.label :email %>
+      <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
     </div>
-  </section>
+
+    <div class="actions">
+      <%= f.submit "Send a reset link", class: "primary" %>
+    </div>
+  <% end %>
 
   <%= render "users/shared/links" %>
-<% end %>
+</div>

@@ -3,7 +3,7 @@ module Files
   # docs/superpowers/specs/2026-10-20-zip-upload-unpacks-models-design.md).
   #
   # THE SERVER MAKES FOLDERS AND THE BROWSER MOVES BYTES — Maker::GerberArchive's "the server lists,
-  # the browser extracts", applied to writing. The strip's Upload reads a selected zip with JSZip
+  # the browser extracts", applied to writing. The top bar's Upload reads a selected zip with JSZip
   # (lib/zip_bundle.js); when it holds a model-role file the page asks #create for a folder map,
   # uploads each entry through the ordinary per-file doors (FilesController#create on share/s3,
   # #begin_upload/#finalize_upload on chunk_remote), then posts #finish once. No zip byte reaches

@@ -933,40 +933,6 @@ Both scopes go on `FilesController#index`'s `scope =` assignment, **not** the `.
 `@match_count`/`@child_count` read the same object, so one line lower the truncation banner and the
 pager count rows the page never renders.
 
-## Version stacks are a DISPLAY grouping, computed on every read
-
-`Maker::VersionStacks` (Shop manual spec §9) groups a folder's versions, backups and copies of one
-part into one figure; its header holds the rule and `version_stacks_test.rb` pins it on catan's
-names. The Library's rows and tiles, a project's Files and folder panels, and Search's Files group
-draw it. Six things not to undo:
-
-- **Nothing is stored but a pull-out.** A stack is recomputed from `nodes` on every read, so a rename
-  regroups at once and `nodes` gains no column; `Maker::StackExclusion` is keyed by `node_id` so a
-  pulled-out file stays out through a move (§14b). Never cache a stack on a row.
-- **A paged folder pages FIGURES.** `FilesController#index` groups the WHOLE folder (`in_folder`, two
-  queries), then drops every member but one from the paged query: the one `folder_page_order` puts
-  first (`#stack_anchor`), so the stack stands where its first member would and no page shifts. The
-  count, the page count and the OFFSET then all count what the page draws. Grouping one page's rows
-  instead splits a stack that straddles a page edge into two.
-- **Constant in N, on all three pages** (`page_query_budget_test.rb`'s three stacked probes): the
-  members a paged folder left out are ONE query (`#stack_members_beyond_page`), and every per-row
-  read (stat_all, thumbnails, notes, addon origins) is asked about the page's rows and those members
-  in the same one call. The project page groups the listing's rows in memory and asks one query for
-  the pull-outs (`VersionStacks.for_records`); Search's Files group is five queries.
-- **A stack opens in place.** Its row's name or its figure is a BUTTON (`stack_controller.js`), never
-  a link and never a selection item: its members are drawn, hidden, beside it, each the row or card a
-  file standing alone would be, so Details, the file menu, the poll and the row actions keep working
-  on them. Don't make the stack itself selectable: it is not a file.
-- **The switch is a cookie in the Library and Search, and a project row's map on the project page.**
-  `StackSwitch#resolve_stacks` reads `files_stacks` (`?stacks=0|1` sets it), `resolve_hidden`'s idiom
-  and reason. A panel's switch is `panels["unstacked"]`, OFF-ONLY so a new panel stacks, written by
-  `Projects::PanelsController#update_stack` and carried through the editor's Save, which writes the
-  column whole and would otherwise turn every panel's stacks back on.
-- **A backup that stacks leaves the Backups group.** The project page diverts LightBurn and MillMage
-  rescue copies into the Files panel's Backups group; in a stacking panel a backup that stacks with
-  a file beside it is drawn in that stack instead, and one that stacks with nothing stays in Backups
-  (`ProjectsController#load_version_stacks`). A file draws once.
-
 ## The inspector is ONE node's frame, and it must stay that
 
 `FilesController#inspector` (structural redesign, slice 3) is the Library's right-hand panel for one

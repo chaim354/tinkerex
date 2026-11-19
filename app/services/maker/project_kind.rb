@@ -39,8 +39,7 @@ module Maker
   #     dropped the same way), then to .default_view: the browser for a working tree, tiles for
   #     every other folder and for every fixed key — which is today's page exactly (decision 6).
   #   * `widths`, `titles` AND `intros` ARE PER PANEL TOO (2026-09-09, the page editor): a width in
-  #     WIDTHS, else the default (#default_width: half, but the README and a panel holding a
-  #     repository; it was a stylesheet rule once, and Files went half in 2026-11); plain one-line
+  #     WIDTHS, else the default that used to be a stylesheet rule (#default_width); plain one-line
   #     text under TITLE_MAX / INTRO_MAX, else dropped. Same totality, same reason.
   #   * A BLOCK (`block:<key>`) IS THE THIRD KIND OF KEY (2026-09-09, content blocks): the caller
   #     supplies `blocks:` as [key, kind] pairs the way it supplies `folders:`; an unnamed block
@@ -209,10 +208,6 @@ module Maker
     # is a NEW folder to this layout — its placement, its view and its HIDDEN state all reset to the
     # defaults, which puts a folder the maker had hidden back on the visitor's page and into the
     # bundle until they hide it again. Totality is what makes that a reset rather than a stale key.
-    # THE SAME RESET REACHES `unpublished` (2026-11-19): a folder kept off the public page and then
-    # renamed in Finder on share or s3 is published again — page, bundle and downloads — until the
-    # maker unticks it on the Publishing tab again. Recorded, not solved: a path key would break on
-    # every chunk_remote move instead.
     FOLDER_PREFIX = "folder:".freeze
 
     # `block:<key>` — a content block (2026-09-09, content blocks; spec §4). The key is the row's own
@@ -258,49 +253,15 @@ module Maker
     # `shelf_views` AND `shelf_groups` ARE THE FOLDERS' SHELVES (2026-10-20), keyed by folder key:
     # a shelf's default view (only values in Maker::Project::VIEWS) and its group's name. Neither is
     # the maker's choice on this project, so neither is in `views` — #view_for asks `views` first.
-    #
-    # `root_repo` IS WHETHER THE PROJECT'S FOLDER IS ITSELF A WORKING TREE (2026-11-19,
-    # Maker::ProjectFolderListing#root_repo?), so Files — which holds that repository's card — keeps
-    # the full width a repository needs (#width_for). False for a caller holding no listing.
-    #
-    # `unstacked` IS THE PANELS WHOSE VERSION STACKS THE MAKER TURNED OFF (Shop manual spec §9: "a
-    # toggle per panel"), stored beside `views` because it is the same kind of thing — one panel's
-    # way of drawing its files, chosen in its head and saved on the row (Projects::PanelsController).
-    # SPARSE AND OFF-ONLY: stacking is the default, so an absent key stacks, and a panel added later
-    # stacks without anyone having saved it. Only keys that draw files may be named (.stacks?).
-    #
-    # `unpublished` IS THE PANELS THE PUBLIC PAGE LEAVES OUT (2026-11-19, the Shop manual's published
-    # view; its spec §3 and §9), chosen on the edit area's Publishing tab. A DIFFERENT QUESTION FROM
-    # `hidden`, which arranges the MAKER's page and so reaches the visitor's only as a side effect:
-    # an unpublished panel stays on the maker's page and leaves the visitor's, and #published is the
-    # one place the two are combined. Filtered like `hidden` — the vocabulary without the tab keys,
-    # minus ALWAYS — so the folder root and the photos are always on a published page.
     Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids, :block_kinds,
-                         :shelf_views, :shelf_groups, :root_repo, :unstacked, :unpublished) do
-      # SHELVES ARE OPTIONAL (2026-10-20): a caller with no shelves passes none. So is the root's
-      # repository (2026-11-19): a caller with no listing knows of none. So are the stack switches
-      # (2026-11-19): a caller that never read them stacks everywhere, the default. And so is
-      # publishing (2026-11-19): a layout built with no choice publishes every panel it shows.
-      def initialize(shelf_views: {}, shelf_groups: {}, root_repo: false, unstacked: [], unpublished: [], **rest) =
-        super(shelf_views:, shelf_groups:, root_repo:, unstacked:, unpublished:, **rest)
-
-      # Does this panel draw its versions as stacks? The default for every panel that can.
-      def stacked?(key) = ProjectKind.stacks?(key) && !unstacked.include?(key.to_s)
+                         :shelf_views, :shelf_groups) do
+      # SHELVES ARE OPTIONAL (2026-10-20): a caller with no shelves passes none.
+      def initialize(shelf_views: {}, shelf_groups: {}, **rest) = super(shelf_views:, shelf_groups:, **rest)
 
       def visible = order - hidden
       # `to_s` like `folder?` and `view_for` below, so a Symbol asks the same question a String does.
       def visible?(key) = order.include?(key.to_s) && !hidden.include?(key.to_s)
       def hidden?(key) = hidden.include?(key.to_s)
-      def unpublished?(key) = unpublished.include?(key.to_s)
-
-      # THE PUBLISHED VIEW: this layout as a visitor's page reads it — every panel the maker hid OR
-      # left off the public page is hidden. Data#with, never a write. Maker::PublicProject#layout is
-      # its caller, and that one layout feeds the public page, its feed, its bundle and its BOM CSV,
-      # so a panel left out here is left out of all four with no gate of its own (design-system.md
-      # rule 14). `unpublished` rides along unchanged, because Maker::PublicProject#permits? asks it
-      # and must not mistake a panel the maker merely hid for one they kept private.
-      def published = with(hidden: hidden | unpublished)
-
       def folder?(key) = key.to_s.start_with?(FOLDER_PREFIX)
       def folder_id(key) = key.to_s.delete_prefix(FOLDER_PREFIX)
       def block?(key) = key.to_s.start_with?(BLOCK_PREFIX)
@@ -345,17 +306,8 @@ module Maker
       # THE WIDTH IS DATA, NOT A STYLESHEET RULE (2026-09-09): pages/projects.css used to name
       # `.attachments-panel, .photos-panel, .folder-panel` as the panels that span both columns.
       # Both pages now render `panel--<width>` from this answer, so a layout can carry a width and
-      # be shared as YAML. (Those three went half with the Shop manual, 2026-11-19: .default_width.)
-      # THE DEFAULT ASKS WHETHER THE PANEL HOLDS A REPOSITORY (2026-11-19): a working-tree folder
-      # panel, or Files while the project's folder is one, stays full (.default_width says why).
-      def width_for(key) = widths[key.to_s] || ProjectKind.default_width(key, block_kind: block_kinds[key.to_s], repo: holds_repo?(key))
-
-      # DOES THIS PANEL HOLD A REPOSITORY? A folder key asks `repo_ids` — the same `folder?` guard
-      # #view_for keeps, so a fixed key is never asked about node ids — and Files asks `root_repo`.
-      def holds_repo?(key)
-        k = key.to_s
-        folder?(k) ? repo_ids.include?(folder_id(k)) : (k == "attachments" && root_repo)
-      end
+      # be shared as YAML, and every existing project renders exactly as it did.
+      def width_for(key) = widths[key.to_s] || ProjectKind.default_width(key, block_kind: block_kinds[key.to_s])
 
       # THE CALLER SUPPLIES THE DEFAULT because only the caller knows it: PANEL_LABELS for a fixed
       # key, the folder's own name for a folder key — this struct holds node ids, never names.
@@ -406,11 +358,6 @@ module Maker
     # toggle rendered with nothing active). Files has no `Dir` of its own to hand the browser
     # unless the folder is itself a working tree, so it offers tiles and list; a folder panel
     # offers all three; a fixed panel with no view offers none and the door refuses the write.
-    # WHICH PANELS DRAW VERSION STACKS (spec §9): the ones that draw files as tiles and rows, which is
-    # exactly the panels that offer views — Files and every folder panel. The switch renders for
-    # these, the door validates against this, and Layout#stacked? asks it, so the three agree.
-    def self.stacks?(key) = offered_views(key).any?
-
     def self.offered_views(key)
       k = key.to_s
       return Maker::Project::VIEWS if k.start_with?(FOLDER_PREFIX)
@@ -422,26 +369,20 @@ module Maker
     WIDTHS = %w[full half].freeze
     TITLE_MAX = 60
     INTRO_MAX = 200
-    # EVERY PANEL IS HALF A COLUMN BY DEFAULT, FILES INCLUDED (the Shop manual, 2026-11-19; its spec
-    # §3, §8's slice 5 and proposal 4): Files, Photos and the folder panels pack two abreast as the
-    # screens draw them, where until then a stylesheet rule (and then this method) spanned all three.
-    # Two things stay full. A README is a document, and half a column is where a table in it stops
-    # being readable. And A PANEL STAYS FULL WHILE IT HOLDS A REPOSITORY (spec §4's gap, settled for
-    # slice 5): its card and the Finder browser are where half a column stops being usable. That is a
-    # folder panel whose node is a working tree, and Files while the project's folder is itself one —
-    # `repo:`, which only the Layout can answer (#width_for). A STORED WIDTH STILL WINS over every
-    # default here, and a layout Save writes every panel's width (Maker::LayoutDocument#column), so
-    # only projects whose layout was never saved re-flow.
-    FULL_BY_DEFAULT = %w[readme].freeze
+    # Today's page, written down: Files and Photos spanned both columns by a stylesheet rule that
+    # also named `.folder-panel`; a folder panel holds a tile grid, nested sections or the browser,
+    # and half a column is where the browser stops being usable. A README is a document, and half a
+    # column is where a table in it stops being readable.
+    FULL_BY_DEFAULT = %w[readme attachments photos].freeze
 
-    def self.default_width(key, block_kind: nil, repo: false)
+    def self.default_width(key, block_kind: nil)
       k = key.to_s
       # A TAB HAS NO WIDTH AT ALL, and nil is the honest answer rather than "full": the separator is
       # not a grid cell, so a caller that renders `panel--#{width_for(key)}` must not get a class.
       return nil if k.start_with?(TAB_PREFIX)
       return BLOCK_DEFAULT_WIDTHS.fetch(block_kind.to_s, "full") if k.start_with?(BLOCK_PREFIX)
 
-      repo || FULL_BY_DEFAULT.include?(k) ? "full" : "half"
+      k.start_with?(FOLDER_PREFIX) || FULL_BY_DEFAULT.include?(k) ? "full" : "half"
     end
 
     # THE MAKER'S ANSWER WINS, INCLUDING "nothing hidden" — which is why the test below is `key?`
@@ -459,7 +400,7 @@ module Maker
     # AN UNKNOWN KIND FALLS BACK TO `other`'s PRESET rather than raising: `kind` is validated on the
     # way in, but a row written before a kind was retired, or by a future version, must still
     # render a page.
-    def self.layout_for(kind:, overrides:, folders: [], blocks: [], root_repo: false)
+    def self.layout_for(kind:, overrides:, folders: [], blocks: [])
       preset = PRESETS.fetch(kind.to_s, PRESETS.fetch(DEFAULT))
       over = overrides.is_a?(Hash) ? overrides : {}
       folder_keys = Array(folders).map { |id, _repo| folder_key(id) }
@@ -485,18 +426,12 @@ module Maker
       # "Add block" did a moment ago, and first is where the editor puts a new one.
       order = (block_keys - order) + order
       hidden = (over.key?("hidden") ? known(over["hidden"], panel_vocabulary) : preset[:hidden]) - ALWAYS
-      # NO PRESET LEAVES ANYTHING OFF THE PUBLIC PAGE (2026-11-19, the published view): a kind's guess
-      # arranges a page, and what is published is the maker's answer alone, so a column with no
-      # `unpublished` publishes every panel the page shows — every project before this key existed.
-      unpublished = known(over["unpublished"], panel_vocabulary) - ALWAYS
       ordered = order & vocabulary
       Layout.new(order: ordered, hidden:, views: stored_views(over["views"], panel_vocabulary),
                  widths: stored_widths(over["widths"], panel_vocabulary),
                  titles: stored_text(over["titles"], vocabulary, TITLE_MAX),
                  intros: stored_text(over["intros"], panel_vocabulary, INTRO_MAX),
-                 repo_ids:, block_kinds:, shelf_views:, shelf_groups:, root_repo: root_repo == true,
-                 unstacked: known(over["unstacked"], panel_vocabulary).select { |key| stacks?(key) },
-                 unpublished:)
+                 repo_ids:, block_kinds:, shelf_views:, shelf_groups:)
     end
 
     # THE PANELS THIS KIND'S PRESET HIDES AND THE MAKER HAS NOT ANSWERED (2026-11-02, the UX audit's

@@ -63,7 +63,7 @@ module Web
     test "the file field offers multiple, on the page a maker actually uses" do
       get files_path
       assert_response :success
-      assert_select "header.strip form.uploader input[type=file][multiple]", 1,
+      assert_select "header.topbar form.uploader input[type=file][multiple]", 1,
                     "the top bar's uploader must accept a selection, not one file"
     end
 
@@ -80,8 +80,8 @@ module Web
     # the uploader gone from the page altogether, the `0` would pass over nothing.
     test "neither uploader renders the hidden empty-value companion" do
       get files_path
-      assert_select "header.strip form.uploader input[type=file][name='file[]']", 1
-      assert_select "header.strip form.uploader input[type=hidden][name='file[]']", 0,
+      assert_select "header.topbar form.uploader input[type=file][name='file[]']", 1
+      assert_select "header.topbar form.uploader input[type=hidden][name='file[]']", 0,
                     "the empty marker puts a bare String at the head of params[:file]"
     end
 

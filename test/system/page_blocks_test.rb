@@ -36,7 +36,7 @@ class PageBlocksTest < ApplicationSystemTestCase
 
   def open_editor
     visit edit_layout_project_path(@project)
-    assert_selector ".layout-bar", text: /Editing page layout/i
+    assert_selector ".layout-bar", text: "Editing page layout"
   end
 
   # A `<template>`'s contents are INERT in a browser — a DocumentFragment, not part of the document
@@ -292,11 +292,7 @@ class PageBlocksTest < ApplicationSystemTestCase
     tall_r, short_r, third_r = rect(tall.layout_key), rect(short.layout_key), rect(third.layout_key)
 
     assert_in_delta short_r[2], third_r[2], 1, "the third half sits in the short one's column"
-    # ONE GAP IS THE GRID'S OWN `--panel-gap` (40px between the page's sections since the Shop manual's
-    # slice 5; masonry_controller.js reads the same property), so the bound follows the page.
-    gap = page.evaluate_script("parseFloat(getComputedStyle(document.querySelector('div.project-panels')).getPropertyValue('--panel-gap'))")
-    assert_equal 40, gap, "the page's sections stand 40px apart (the screens' gap)"
-    assert_operator third_r[0] - short_r[1], :<=, gap + 1, "no gap: the third starts within one gap of the short one's bottom"
+    assert_operator third_r[0] - short_r[1], :<=, 17, "no gap: the third starts within one gap of the short one's bottom"
     assert_operator tall_r[1], :>, third_r[0], "and that is above the tall neighbour's bottom, i.e. a gap was actually closed"
   end
 end

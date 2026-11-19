@@ -33,33 +33,26 @@ module Web
       assert_select ".workspace .workspace-main .preview-row"
       assert_select ".workspace .workspace-side dl.meta"
       assert_select ".workspace .workspace-side section.connections-panel"
-      assert_select ".workspace .workspace-main section.notes-panel#notes"
+      assert_select ".workspace .workspace-side section.notes-panel#notes"
       # The page head stays ABOVE the wrapper, unchanged.
       assert_select ".workspace .page-head", count: 0
     end
 
-    # THE TWO COLUMNS AS THE SHOP MANUAL'S FILE SCREEN LAYS THEM OUT (slice 6): under the picture what
-    # the file belongs to (Used in, the attach control) and what was written about it (Notes); beside
-    # it the facts, the rename/move composer under the facts it changes (F, 2026-10-13 — a file
-    # outside a git working tree only), then the connections. Until slice 6 every block but the
-    # picture sat in the side column, read outward-in. A project exists so the attach block renders
-    # at all (it is absent with none).
-    test "the two columns hold their blocks in order" do
+    # The side column reads facts, the rename/move composer under the facts it changes (F,
+    # 2026-10-13 — a file outside a git working tree only), projects, connections, notes —
+    # outward-in, the order the page already had. A project exists so the attach block renders at
+    # all (it is absent with none).
+    test "the side column holds its five blocks in order" do
       @user.maker_projects.create!(name: "Shop Stool")
 
       get file_path(@file.node_id)
-      main = css_select(".workspace-main > *").map { |el| el["id"] }
-      assert_equal %w[preview projects notes], main
-      assert_select ".workspace-main > #projects .attach-to-project"
-      side = css_select(".workspace-side > *").map { |el| el["id"] }
-      assert_equal %w[details connections], side
-      details = css_select(".workspace-side > #details > *").map { |el| el["class"].to_s.split.first }
-      assert_equal %w[file-section-head meta rename-move], details
+      side = css_select(".workspace-side > *").map { |el| el["class"].to_s.split.first }
+      assert_equal %w[meta rename-move attach-to-project connections-panel notes-panel], side
     end
 
     test "the breadcrumb walks to the file's folder and that link reselects the file" do
       get file_path(@file.node_id)
-      assert_select "main .page-path nav.breadcrumb" do
+      assert_select "header.topbar nav.breadcrumb" do
         assert_select "a[href=?]", files_path, text: "Library"
         assert_select "a[href=?]", files_path(folder: @dir.node_id, selected: @file.node_id), text: "legs"
         assert_select "[aria-current='page']", text: "leg.lbrn2"
@@ -73,7 +66,7 @@ module Web
       @dir.update!(parent_node_id: shop.node_id)
 
       get file_path(@file.node_id)
-      assert_select "main .page-path nav.breadcrumb" do
+      assert_select "header.topbar nav.breadcrumb" do
         assert_select "a[href=?]", files_path(folder: shop.node_id), text: "shop"
         assert_select "a[href=?]", files_path(folder: @dir.node_id, selected: @file.node_id), text: "legs"
       end
@@ -85,19 +78,20 @@ module Web
       loose = @user.nodes.create!(node_id: "n-loose", name: "loose.stl", kind: "file", mtime: 1, size: 3)
 
       get file_path(loose.node_id)
-      assert_select "main .page-path nav.breadcrumb" do
+      assert_select "header.topbar nav.breadcrumb" do
         assert_select "a[href=?]", files_path(selected: loose.node_id), text: "Library"
         assert_select "a", count: 1
       end
     end
 
     # NOW INTENDED: @crumbs on the file page is the same ancestor chain #index sets, and
-    # ShellHelper#sidebar_current reads it, so a file lights its own folder's row in the Library's
-    # column — the same row the folder's own listing lights. Exactly one lit row, as everywhere.
-    test "a file's page lights its folder in the Library column" do
+    # ShellHelper#sidebar_current reads it, so a file inside a pinned folder lights that pin — the
+    # same answer the folder's own listing gives. Exactly one lit link, as everywhere.
+    test "a file inside a pinned folder lights the pin" do
+      @user.maker_pins.create!(node_id: @dir.node_id)
+
       get file_path(@file.node_id)
-      assert_select "aside.column .column-row[aria-current='page']", count: 1, text: "legs"
-      assert_select "header.strip a.strip-place[aria-current='page']", count: 1, text: "Library"
+      assert_select "aside.rail a.rail-link[aria-current='page']", count: 1, text: "legs"
     end
   end
 end

@@ -4,69 +4,40 @@
     <%= render "layouts/head" %>
   </head>
 
-  <%# `shell` (shell_controller.js) on the signed-in body only: the search shortcuts and the column's
-      sheet below 960px. Turbo swaps the body on every visit, so it reconnects with each page. %>
-  <%= tag.body class: body_classes, data: ({ controller: "shell" } if shell_signed_in?) do %>
+  <body class="<%= body_classes %>">
     <%# THE FIRST ELEMENT IN BODY ON BOTH BRANCHES: a keyboard user's first Tab lands here and jumps
-        past the strip and the left column to main#main, which both main elements below carry
+        past the rail and the top bar to main#main, which both main elements below carry
         (skip_link_test.rb). Hidden above the viewport until focused; positioned absolutely, so it
-        never takes a place in the shell's layout (components.css). %>
+        never takes a cell of body.app-shell's grid (components.css). %>
     <a href="#main" class="skip-link">Skip to content</a>
     <%# `shell_signed_in?`, not `user_signed_in?` — a PUBLIC page (Public::BaseController, stage 3,
         S3-4) renders the visitor's shell even for its signed-in owner, because what a maker wants
         from their own public URL is an honest preview of what a visitor sees. %>
     <% if shell_signed_in? %>
-      <%# THE LEFT COLUMN IS A SLOT (Shop manual spec §7): a page supplies its own with
-          `content_for :column`, and otherwise its section's default renders
-          (layouts/column/_<name>, ShellHelper::COLUMNS). Rendered BEFORE the strip so the strip's
-          Contents button knows whether there is a column to open; drawn after it. A section with
-          none (Search) gets no column, and main takes the width. %>
-      <% column = content_for?(:column) ? content_for(:column) : render("layouts/column") %>
-      <%= render "layouts/strip", column: column.present? %>
-      <%= tag.div class: class_names("shell-body", "shell-body--column": column.present?) do %>
-        <% if column.present? %>
-          <%# A LANDMARK, NOT A SECOND MAIN NAV: the strip's four places are "Main"; this lists what
-              is inside the lit one. Below 960px it is the sheet the strip's Contents button opens
-              (shell_controller.js), and the scrim after it closes it. %>
-          <aside class="column" id="column" aria-label="Contents" data-shell-target="column"
-                 data-action="keydown.esc->shell#closeColumn">
-            <%= column %>
-          </aside>
-          <div class="column-scrim" data-action="click->shell#closeColumn" aria-hidden="true"></div>
-        <% end %>
-        <div class="shell-main">
-          <%= render "layouts/flash" %>
-          <%# Pages that need the full width opt in with content_for :container_class, "container-wide"
-              (the addon host page does, from its manifest). Inert everywhere else.
+      <%= render "layouts/rail" %>
+      <div class="shell-main">
+        <%= render "layouts/topbar" %>
+        <%= render "layouts/flash" %>
+        <%# Pages that need the full width opt in with content_for :container_class, "container-wide"
+            (the addon host page does, from its manifest). Inert everywhere else.
 
-              fileopen_controller.js is mounted ONCE, here, so every file link on a signed-in page can
-              opt in through FilesHelper#file_open_data (a click opens the file, a double-click opens
-              it in a new tab). The visitor's main below has none: public pages are out of scope
-              (docs/superpowers/specs/2026-10-21-file-click-and-model-page-design.md). %>
-          <main id="main" class="container <%= content_for(:container_class) %>" data-controller="fileopen">
-            <%# Renders nothing unless this request's port call failed (the partial decides). Signed-in
-                only: a visitor is never told about the owner's storage, and a Public:: controller
-                has no `capabilities` helper to name a cause with. %>
-            <%= render "layouts/library_unreachable" %>
-            <%= render "layouts/demo_banner" %>
-            <%# THE PAGE HEAD'S CAPS PATH (spec §7; design-system.md rule 9): the page's breadcrumb
-                through `content_for :crumbs`, or its title when it supplies none. It left the top
-                bar for the head of the page, and it carries no control. %>
-            <div class="page-path">
-              <% if content_for?(:crumbs) %>
-                <%= content_for(:crumbs) %>
-              <% else %>
-                <span class="page-path-title"><%= page_title_text %></span>
-              <% end %>
-            </div>
-            <%= yield %>
-          </main>
-        </div>
-      <% end %>
+            fileopen_controller.js is mounted ONCE, here, so every file link on a signed-in page can
+            opt in through FilesHelper#file_open_data (a click opens the file, a double-click opens
+            it in a new tab). The visitor's main below has none: public pages are out of scope
+            (docs/superpowers/specs/2026-10-21-file-click-and-model-page-design.md). %>
+        <main id="main" class="container <%= content_for(:container_class) %>" data-controller="fileopen">
+          <%# Renders nothing unless this request's port call failed (the partial decides). Signed-in
+              only: a visitor is never told about the owner's storage, and a Public:: controller
+              has no `capabilities` helper to name a cause with. %>
+          <%= render "layouts/library_unreachable" %>
+          <%= render "layouts/demo_banner" %>
+          <%= yield %>
+        </main>
+      </div>
       <%= render "layouts/tabbar" %>
       <%# THE CALCULATOR MODAL, once per signed-in page and closed until something carrying
           `data-calculator-open` opens it (layouts/_calculator.html.erb). Last in the shell, so its
-          dialog is never the first Tab stop. %>
+          dialog is never a grid cell of body.app-shell and never the first Tab stop. %>
       <%= render "layouts/calculator" %>
     <% else %>
       <%# STAGE 4, S4-5: THE VISITOR'S ONLY CHROME, ON A PUBLIC SURFACE ALONE. Devise's pages share
@@ -82,5 +53,5 @@
         <%= yield %>
       </main>
     <% end %>
-  <% end %>
+  </body>
 </html>

@@ -34,8 +34,7 @@ module Projects
     def blocks = @blocks ||= @project.blocks.to_a
 
     def current_layout
-      @project.panel_layout(folders: @listing.panel_folders, blocks: blocks.map { |b| [ b.key, b.kind ] },
-                            root_repo: @listing.root_repo?)
+      @project.panel_layout(folders: @listing.panel_folders, blocks: blocks.map { |b| [ b.key, b.kind ] })
     end
 
     # THE FOLDER'S IMAGE FILES, BY PATH RELATIVE TO THE FOLDER — what an image block or the cover

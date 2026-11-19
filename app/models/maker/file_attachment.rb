@@ -201,7 +201,7 @@ module Maker
     # hash, so a hand-posted node id is refused whatever the picker showed.
     IMAGE_EXTS = ROLE_BY_EXT.filter_map { |ext, role| ext if role == "image" }.freeze
 
-    # WHAT THE STRIP'S UPLOAD CALLS A MODEL when it decides whether a zip unpacks (2026-10-21,
+    # WHAT THE TOP BAR'S UPLOAD CALLS A MODEL when it decides whether a zip unpacks (2026-10-21,
     # lib/zip_unpack.js) — DERIVED, like IMAGE_EXTS above, so a model extension added to ROLE_BY_EXT
     # makes a zip holding it unpack with no second edit. The importer (importer_controller.js) is
     # handed the whole of ROLE_BY_EXT by its page, so it has no list of its own either.

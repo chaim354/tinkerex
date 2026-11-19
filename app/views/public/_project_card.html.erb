@@ -3,21 +3,14 @@
   from drifting about what a project looks like. Every link is public: the project page, the
   maker's page, and each tag's /explore filter.
 
-  A ROW OF THE LIST SINCE SHOP MANUAL SLICE 8 (the `public-explore` screen): its number (a CSS
-  counter on `.project-card-grid`, so nothing here counts), the cover, the name over its sentence
-  and a mono line of facts, and the date with "Read" at the right. `.grid-card.project-card` and
-  the `card-*` names are the ones the tests and the private sheets read, kept (design-system.md
-  rule 12); pages/public.css lays them out as a row.
-
   Locals: project (Maker::Project, publicly listed), thumb (Maker::Preview or nil).
 %>
-<% href = public_project_path(project.user.handle, project.slug) %>
 <article class="grid-card project-card">
   <%#
     THE COVER (stage 4, S4-5; story 5.7). `thumb` is a Maker::Preview or nil — the private
     projects/_card's shape, minus the poll: /files/thumbnails is session-authed, so a visitor's
     spinner has nothing that could ever resolve it. A card with no cover node gets the same neutral
-    placeholder the private card uses (the Projects glyph — no emoji in the interface), never
+    placeholder the private card uses (the rail's projects icon — no emoji in the interface), never
     a forever-spinner.
 
     `thumb` IS ALLOWED TO BE nil AND /explore ALWAYS PASSES nil (this slice's Amendment 9).
@@ -29,7 +22,7 @@
   %>
   <%# NAMED BY THE PROJECT (UX audit I): its only content is an image with `alt=""` or an
       aria-hidden placeholder, so without a label it is a link a screen reader announces as nothing. %>
-  <%= link_to href, class: "card-cover", aria: { label: project.name } do %>
+  <%= link_to public_project_path(project.user.handle, project.slug), class: "card-cover", aria: { label: project.name } do %>
     <%# THE PUBLIC PREVIEW ROUTE, NEVER `url_for(thumb.asset)` (hardening, 2026-09-08;
         tinkerex#278). A blob URL is unauthenticated and never expires, so this card's cover kept
         answering after its project went private — the route asks `Maker::PublicProject#deliverable!`
@@ -45,23 +38,20 @@
       <span class="thumb project-thumb-empty" aria-hidden="true"><%= rail_icon(:projects) %></span>
     <% end %>
   <% end %>
-  <div class="card-body">
-    <%# An h2: the card sits directly under the page's h1 on both lists (UX audit I, Headings). %>
-    <h2 class="card-title"><%= link_to project.name, href %></h2>
-    <% if project.description.present? %>
-      <p class="card-blurb"><%= truncate(project.description, length: 160) %></p>
-    <% end %>
-    <%# THE FACTS, IN THE MONO OF DATA: the maker, then each tag as its /explore filter. %>
-    <p class="card-facts">
-      <%= link_to "@#{project.user.handle}", public_user_path(project.user.handle) %>
+  <%# An h2: the card sits directly under the page's h1 on both lists (UX audit I, Headings). %>
+  <h2 class="card-title">
+    <%= link_to project.name, public_project_path(project.user.handle, project.slug) %>
+  </h2>
+  <span class="muted">by <%= link_to "@#{project.user.handle}", public_user_path(project.user.handle) %></span>
+  <% if project.description.present? %>
+    <p class="muted card-blurb"><%= truncate(project.description, length: 160) %></p>
+  <% end %>
+  <% if project.tags.any? %>
+    <div class="tag-chips">
       <% project.tags.sort_by(&:name).each do |t| %>
-        <span class="sep" aria-hidden="true">·</span>
-        <%= link_to t.name, public_explore_path(tag: t.name), class: "card-tag" %>
+        <%= link_to t.name, public_explore_path(tag: t.name), class: "tag-chip" %>
       <% end %>
-    </p>
-  </div>
-  <div class="card-side">
-    <%= time_at(project.updated_at, style: :date, class: "card-time") %>
-    <%= link_to "Read", href, class: "card-read", aria: { label: "Read #{project.name}" } %>
-  </div>
+    </div>
+  <% end %>
+  <%= time_at(project.updated_at, style: :date, class: "muted card-time") %>
 </article>

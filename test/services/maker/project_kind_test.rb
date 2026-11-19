@@ -424,61 +424,27 @@ module Maker
 
     # --- widths, titles, intros (2026-09-09, the page editor; spec §3) -------------------------
 
-    # THE SHOP MANUAL'S DEFAULTS (2026-11-19; its spec §3, §8's slice 5 and proposal 4): Files,
-    # Photos and the folder panels went half with everything else. The README stays full, and so does
-    # a panel while it holds a repository — `repo:`, which the Layout answers (next two tests).
-    test "default_width: every panel is half but the README, and a panel holding a repository is full" do
-      %w[attachments photos schematics build_log tasks bom wiring releases sheets models calculations].each do |k|
+    test "default_width: Files, Photos and every folder are full, the rest half — today's CSS rule as data" do
+      assert_equal "full", Maker::ProjectKind.default_width("attachments")
+      assert_equal "full", Maker::ProjectKind.default_width("photos")
+      assert_equal "full", Maker::ProjectKind.default_width(key(MODELS))
+      %w[schematics build_log tasks bom wiring releases sheets].each do |k|
         assert_equal "half", Maker::ProjectKind.default_width(k), k
       end
-      assert_equal "half", Maker::ProjectKind.default_width(key(MODELS))
-      assert_equal "full", Maker::ProjectKind.default_width("readme")
-      assert_equal "full", Maker::ProjectKind.default_width(key(FIRMWARE), repo: true)
-      assert_equal "full", Maker::ProjectKind.default_width("attachments", repo: true)
-    end
-
-    # FIRMWARE IS A WORKING TREE IN `FOLDERS` AND MODELS IS NOT, so one layout answers both halves of
-    # the rule, and the project folder itself is no repository here, so Files goes half.
-    test "a folder panel holding a repository stays full, a plain one goes half, and a stored width wins" do
-      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: nil, folders: FOLDERS)
-      assert_equal "full", layout.width_for(key(FIRMWARE))
-      assert_equal "half", layout.width_for(key(MODELS))
-      assert_equal "half", layout.width_for("attachments"), "the project's own folder is no repository here"
-      assert_equal "half", layout.width_for("photos")
-      refute layout.root_repo
-
-      stored = Maker::ProjectKind.layout_for(kind: "other", folders: FOLDERS,
-                                             overrides: { "widths" => { key(FIRMWARE) => "half", key(MODELS) => "full" } })
-      assert_equal "half", stored.width_for(key(FIRMWARE)), "a stored width wins over a repository's full"
-      assert_equal "full", stored.width_for(key(MODELS))
-    end
-
-    test "Files stays full while the project's folder is itself a working tree, and only Files" do
-      layout = Maker::ProjectKind.layout_for(kind: "other", overrides: nil, folders: FOLDERS, root_repo: true)
-      assert layout.root_repo
-      assert_equal "full", layout.width_for("attachments")
-      assert_equal "half", layout.width_for("photos")
-      assert_equal "half", layout.width_for(key(MODELS)), "a plain subfolder of a repository is still a plain folder panel"
-      assert_equal "half", layout.width_for("tasks")
-      assert_equal "half", Maker::ProjectKind.layout_for(kind: "other", root_repo: true,
-                                                         overrides: { "widths" => { "attachments" => "half" } }).width_for("attachments"),
-                   "a stored width wins here too"
-      assert_equal "half", Maker::ProjectKind.layout_for(kind: "other", overrides: nil, root_repo: "yes").width_for("attachments"),
-                   "only `true` is a repository: the flag is a boolean, never a truthy guess"
     end
 
     test "width_for answers the stored width, else the default, and filters junk" do
       layout = Maker::ProjectKind.layout_for(
         kind: "other",
-        overrides: { "widths" => { "tasks" => "full", "photos" => "full", key(MODELS) => "wide",
+        overrides: { "widths" => { "tasks" => "full", "photos" => "half", key(MODELS) => "wide",
                                    "nope" => "full", :bom => :full } },
         folders: FOLDERS
       )
 
       assert_equal "full", layout.width_for("tasks")
-      assert_equal "full", layout.width_for("photos")
+      assert_equal "half", layout.width_for("photos")
       assert_equal "full", layout.width_for(:bom), "symbol keys and values are stringified"
-      assert_equal "half", layout.width_for(key(MODELS)), "a value outside WIDTHS falls back to the default"
+      assert_equal "full", layout.width_for(key(MODELS)), "a value outside WIDTHS falls back to the default"
       refute layout.widths.key?("nope"), "a key outside the vocabulary is dropped"
       assert_equal "half", layout.width_for("wiring")
     end
@@ -520,7 +486,7 @@ module Maker
       refute layout.widths.key?(gone)
       refute layout.titles.key?(gone)
       refute layout.intros.key?(gone)
-      assert_equal "half", layout.width_for(gone), "the stale key still answers a default, never raises"
+      assert_equal "full", layout.width_for(gone), "the stale key still answers a default, never raises"
     end
 
     # PUBLISH LEFT THE PAGE (2026-10-26, the edit area; spec 2026-10-26-project-edit-area §4): its
@@ -697,55 +663,5 @@ test "groups keeps a non-empty top group beside the tabs, and an empty tab betwe
   tail = Maker::Project::PANELS - %w[attachments photos tasks publish]
   assert_equal [ [ tk(TAB_A), [] ], [ tk(TAB_B), [ "tasks", *tail ] ] ], g.tabs.map { |t| [ t.key, t.keys ] }
 end
-
-    # --- the published view (2026-11-19) --------------------------------------------------------
-
-    # `unpublished` IS READ LIKE `hidden`: against the folders that exist now, minus ALWAYS, minus
-    # the tab keys — and NO PRESET supplies one, so a column that names none keeps nothing back.
-    test "unpublished reads the column against the vocabulary, never Files or Photos, and no preset adds any" do
-      layout = Maker::ProjectKind.layout_for(kind: "laser", folders: FOLDERS, overrides: {
-        "order" => [ "attachments", tk(TAB_A) ],
-        "unpublished" => [ "bom", key(MODELS), key("gone"), "attachments", "photos", tk(TAB_A), "../etc" ]
-      })
-      assert_equal [ "bom", key(MODELS) ], layout.unpublished
-      assert layout.unpublished?(key(MODELS))
-      assert layout.unpublished?(:bom), "a Symbol asks what a String does"
-      refute layout.unpublished?("attachments")
-
-      assert_empty Maker::ProjectKind.layout_for(kind: "laser", overrides: nil, folders: FOLDERS).unpublished,
-                   "a kind's preset arranges a page; it never decides what is published"
-      assert_empty Maker::ProjectKind::Layout.new(order: [], hidden: [], views: {}, widths: {}, titles: {}, intros: {},
-                                                  repo_ids: [], block_kinds: {}).unpublished
-    end
-
-    # THE TWO QUESTIONS STAY APART: the maker's layout shows an unpublished panel, the published view
-    # hides it, and a panel the maker hid is hidden on both — while `unpublished` itself still says
-    # which of the two hidden panels was a publishing choice (Maker::PublicProject#permits? asks it).
-    test "the published view hides what is hidden or unpublished, and the maker's layout only what is hidden" do
-      layout = Maker::ProjectKind.layout_for(kind: "other", folders: FOLDERS,
-                                             overrides: { "hidden" => %w[tasks], "unpublished" => [ "bom", key(MODELS) ] })
-      assert layout.visible?("bom")
-      assert layout.visible?(key(MODELS))
-      refute layout.visible?("tasks")
-
-      published = layout.published
-      refute published.visible?("bom")
-      refute published.visible?(key(MODELS))
-      refute published.visible?("tasks")
-      assert published.visible?("build_log")
-      assert_equal layout.order, published.order
-      assert_equal [ "bom", key(MODELS) ], published.unpublished, "the choice rides along for #permits?"
-      refute published.unpublished?("tasks"), "a hidden panel is not an unpublished one"
-    end
-
-    # A COLUMN HOLDING ONLY THE CHOICE IS A LAYOUT NEVER SAVED: the preset still hides and orders.
-    test "a column holding only the choice still reads the kind's preset for everything else" do
-      only = Maker::ProjectKind.layout_for(kind: "laser", folders: FOLDERS, overrides: { "unpublished" => %w[build_log] })
-      never = Maker::ProjectKind.layout_for(kind: "laser", folders: FOLDERS, overrides: nil)
-      assert_equal never.order, only.order
-      assert_equal never.hidden, only.hidden
-      assert_equal never.widths, only.widths
-      assert_equal never.hidden, Maker::ProjectKind.preset_hidden(kind: "laser", overrides: { "unpublished" => %w[build_log] })
-    end
   end
 end

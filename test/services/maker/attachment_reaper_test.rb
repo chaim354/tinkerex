@@ -249,21 +249,5 @@ module Maker
       assert_equal 2, Maker::AttachmentReaper.reap_all!(grace: 30.days)
       assert_equal %w[pin-fresh pin-live], @user.maker_pins.order(:node_id).pluck(:node_id)
     end
-
-    # A PULL-OUT WAITS WITH ITS FILE (Maker::StackExclusion): a fresh tombstone keeps it, so a
-    # restored file comes back still pulled out of its stack.
-    test "a file pulled out of its stack is reaped with the file, on the same grace" do
-      ids = %w[out-gone out-old out-fresh out-live]
-      ids.each do |id|
-        @user.nodes.create!(node_id: id, name: "#{id} v1.svg", kind: "file")
-        Maker::StackExclusion.pull_out!(@user, id)
-      end
-      @user.nodes.find_by!(node_id: "out-gone").destroy!
-      @user.nodes.find_by!(node_id: "out-old").update_columns(deleted: true, updated_at: 31.days.ago)
-      @user.nodes.find_by!(node_id: "out-fresh").update_columns(deleted: true)
-
-      assert_equal 2, Maker::AttachmentReaper.reap_all!(grace: 30.days)
-      assert_equal %w[out-fresh out-live], @user.maker_stack_exclusions.order(:node_id).pluck(:node_id)
-    end
   end
 end

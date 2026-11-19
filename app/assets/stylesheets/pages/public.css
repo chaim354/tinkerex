@@ -6,37 +6,17 @@
    (§14m rule 3: a component selector is defined once). What follows is this surface's OWN classes,
    plus the container qualifications a component needs inside them. */
 @layer pages {
-  /* The anonymous layout branch defaults `main` to `.auth-main`, the door's full window. A public
-     page opts out of that with `content_for :container_class, "public-main"`; `main.container`'s
-     own max-width then applies, and the padding is the screens' (34px over 44px at the sides). */
-  .public-main { max-width: 1360px; padding: 34px 44px 48px; }
-  @media (max-width: 959px) { .public-main { padding: 20px 16px 48px; } }
+  /* The anonymous layout branch defaults `main` to `.auth-main` (a 440px column for the sign-in
+     card). A public page opts out of that with `content_for :container_class, "public-main"`;
+     `main.container`'s own max-width then applies, so this rule only has to exist, not to do
+     much. */
+  .public-main { max-width: 1360px; }
 
-  /* THE HEAD (Shop manual slice 8; the `public-project` and `public-explore` screens): a caps line,
-     the title up to 60px, a lead, then the page's buttons; on a project, the cover stands at the
-     head's right and wraps under it on a narrow window. The head's two slots are the title column
-     and the actions (template_hygiene_test.rb), so the title column stacks its own lines here. */
-  .public-main .page-head .page-title { flex-direction: column; align-items: flex-start; gap: 14px; }
-  .public-main .page-head .page-title .mono { font-size: 12.5px; }
-  .public-top { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 24px 36px; margin: 0 0 40px; }
-  .public-top .public-head { flex: 1 1 380px; min-width: 0; margin: 0; }
-  .public-head h1 { font-size: clamp(36px, 2.6vw + 24px, 60px); line-height: .95; }
-  .public-head .breadcrumb { display: block; margin: 0; }
-  .public-head .public-byline {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin: 0; color: var(--fg-muted);
-    font: 700 12px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
-  }
-  .public-head .public-byline a { color: var(--fg); text-decoration: none; }
-  .public-head .public-byline a:hover { text-decoration: underline; }
-  .public-head .project-description { margin: 0; max-width: 34em; font-size: 18px; line-height: 1.45; white-space: pre-wrap; }
-  .public-head .head-actions { gap: 8px 16px; }
-  .public-top .project-hero { flex: 0 1 360px; min-width: 0; margin: 0; }
-  .public-top .project-hero-img { max-height: 260px; }
-  .public-top .project-hero-name { font-size: 12.5px; }
-  .public-tags { margin: -16px 0 32px; }
+  .public-head .public-byline { display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin: 4px 0 0; font-size: 13px; color: var(--fg-muted); }
+  .public-head .public-byline a { color: var(--fg); }
 
-  /* A FOLDER PANEL'S SUBFOLDER HEADING: the caps label's mono face, but a folder's NAME keeps its case. */
-  .public-section { margin: 14px 0 4px; color: var(--fg-muted); font: 700 12.5px/16px var(--font-mono); }
+  .public-section { margin: 14px 0 4px; font-size: 13px; font-weight: 600; color: var(--fg-muted); }
 
   /* THE BUNDLE BUTTON AND ITS STATUS (stage 3, S3-6). A flex row that WRAPS, because the status is
      a whole sentence — "Fetching 7 of 30: models/bracket-v3-final.stl", or the failure line naming
@@ -45,8 +25,8 @@
      `overflow-wrap: anywhere` for the same reason a long file NAME needs it in the tables. */
   /* The div carries `page-actions` too, which is where the flex/wrap/align/gap come from — this
      rule held a verbatim copy of all four until 2026-09-10. Only the margin is the bundle's own. */
-  .bundle { margin: 0; }
-  .bundle .muted { font: 400 12.5px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+  .bundle { margin-top: 8px; }
+  .bundle .muted { font-size: 12px; overflow-wrap: anywhere; }
 
   /* 40px, matching `table.files .thumb` — the same row height the owner's file list has. */
   .public-files .col-thumb .thumb { width: 40px; height: 40px; flex: 0 0 40px; }
@@ -65,60 +45,27 @@
   .public-photos .photo-cell .thumb { width: 100%; height: 120px; }
   .entry-photos .photo-cell .thumb { width: 96px; height: 96px; }
 
-  /* FIGURE NUMBERS ON THE VISITOR'S PAGE (the Shop manual spec §9; Maker::PublicProject#figure_numbers):
-     the disc at a picture's top left, the 26px one on the cover, and a first mono column in a table,
-     as the maker's page draws them (pages/projects.css). */
-  .public-tiles .thumb > .fig-num, .public-photos .thumb > .fig-num { position: absolute; left: 5px; top: 5px; z-index: 1; }
-  .public-top .project-hero-link { position: relative; display: block; }
-  .public-top .project-hero-link > .fig-num { position: absolute; left: 8px; top: 8px; z-index: 1; }
-  .public-files .col-fig, .public-bom .col-fig { width: 3em; white-space: nowrap; }
-  .public-files td.col-fig { font-weight: 700; font-variant-numeric: tabular-nums; }
-
-  /* THE LIST OF PROJECTS (/explore and /u/:handle; the `public-explore` screen): a numbered row each
-     under a 2px ink rule, hairlines between. The number is a counter, so the partial counts nothing.
-     A row is the shared `.grid-card.project-card`, laid out here as the list's own row: the number,
-     a 132 by 96 cover, the name over its sentence and its facts, then the date and Read at the right.
-     Below 720px the side column folds under the text; below 480px the cover leaves. */
-  .project-card-grid { display: block; counter-reset: card; border-top: 2px solid var(--fg); }
-  .project-card-grid .project-card {
-    display: grid; grid-template-columns: 26px 132px minmax(0, 1fr) auto; align-items: start; gap: 14px 22px;
-    padding: 18px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; background: none;
-  }
-  .project-card-grid .project-card::before {
-    counter-increment: card; content: counter(card); font: 700 22px/1.1 var(--font-mono); color: var(--fg);
-  }
-  /* THE COVER SLOT (stage 4, S4-5) is a fixed 132px box, so the trap the private card's `.project-tile`
-     comment records (a shrink-to-fit anchor starving `.thumb`'s 100%) cannot reach it. Declared BEFORE
-     the phone rules below, which hide it: the same specificity later in the sheet would show it again. */
-  .project-card-grid .card-cover { display: block; }
-  .project-card-grid .card-cover .thumb { width: 132px; height: 96px; padding: 6px; }
-  .project-card-grid .card-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-  .project-card-grid .card-title { margin: 0; font-size: 24px; line-height: 1.05; font-weight: 800; letter-spacing: -.02em; overflow-wrap: anywhere; }
-  .project-card-grid .card-title a { color: var(--fg); }
-  .project-card-grid .card-blurb { margin: 0; max-width: 38em; font-size: 14.5px; }
-  .project-card-grid .card-facts { display: flex; flex-wrap: wrap; gap: 0 8px; margin: 0; color: var(--fg-muted); font: 400 12.5px/1.6 var(--font-mono); }
-  .project-card-grid .card-facts a { color: var(--fg-muted); }
-  .project-card-grid .card-facts a:hover { color: var(--fg); }
-  .project-card-grid .card-side { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; text-align: right; }
-  .project-card-grid .card-time { color: var(--fg-muted); font: 400 12.5px/1.4 var(--font-mono); }
-  .project-card-grid .card-read { font-weight: 700; text-decoration: underline; text-underline-offset: 3px; }
-  @media (max-width: 719px) {
-    .project-card-grid .project-card { grid-template-columns: 22px 88px minmax(0, 1fr); gap: 10px 14px; }
-    .project-card-grid .card-cover .thumb { width: 88px; height: 64px; }
-    .project-card-grid .card-side { grid-column: 3; flex-direction: row; align-items: baseline; gap: 12px; }
-  }
-  @media (max-width: 479px) {
-    .project-card-grid .project-card { grid-template-columns: 22px minmax(0, 1fr); }
-    .project-card-grid .card-cover { display: none; }
-    .project-card-grid .card-side { grid-column: 2; }
-  }
+  .project-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 16px; margin-top: 12px; }
+  .project-card-grid .card-title { font-size: 14px; margin: 0; }
+  .project-card-grid .card-blurb { font-size: 12px; margin: 0; }
+  .project-card-grid .card-time { font: 11px/1.4 var(--font-mono); }
   /* The pager sits BELOW the grid here, where files/index.html.erb puts it above its list, so the
      component's bottom margin is the wrong side: a qualified override (design-system.md rule 3),
      not a second component. */
   .public-main .pager { margin: 16px 0 0; }
+  /* THE COVER SLOT (stage 4, S4-5). `width: 100%` IS THE WHOLE RULE, AND IT IS NOT DECORATION:
+     `.project-card` is `align-items: center` (pages/projects.css), which sizes a block child to
+     shrink-to-fit in the cross axis — so `.project-card .thumb`'s own `width: 100%` would resolve
+     against the anchor's content width and starve the cover down to the icon, exactly the trap
+     that sheet's `.project-tile` comment already records for the private card. Nothing else is
+     needed: the cell's size comes from `.project-card .thumb` and the placeholder icon's from
+     `.project-card .project-thumb-empty .rail-icon`, both in pages/projects.css and both correct here —
+     a second copy is what §14m rule 3 exists to stop. */
+  .project-card-grid .card-cover { display: block; width: 100%; }
 
   /* The chosen chip is drawn by components.css, from the `aria-current` its link carries. */
-  .explore-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -8px 0 28px; }
+  .explore-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 4px; }
 
   /* COLUMN DROPS: Size is the least useful cell to a visitor on a phone, the thumbnail the next
      least; Name and Download survive at every width. READABILITY, NOT OVERFLOW SAFETY, and the

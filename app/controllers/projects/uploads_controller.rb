@@ -8,8 +8,8 @@ module Projects
   #
   # ONE TARGET SINCE F-S21-1 (2026-10-19). This controller also served a project-level route,
   # POST /projects/:slug/uploads, the project page's own uploader until redesign slice 4 moved the
-  # hub's Upload into the top bar (the strip's Add since Shop manual slice 3), which posts to
-  # FilesController with the project's folder as the parent, and the intake sweep attaches. The old route kept no caller in the app, and it gave
+  # hub's Upload into the top bar. The top bar posts to FilesController with the project's folder as
+  # the parent, and the intake sweep attaches. The old route kept no caller in the app, and it gave
   # "upload into this project" a second answer that disagreed with the first: a different folder
   # lookup, an attach ahead of the sweep, a different landing page and different wording. It is
   # gone, and so are the second target type and the attach-before-intake ordering rule it alone

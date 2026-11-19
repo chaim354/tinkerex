@@ -1,30 +1,10 @@
 <%#
-  One project on a list: Home's Active projects and the Projects index, both drawn as ROWS since the
-  Shop manual (slice 7; the screens `home` and `projects`). `thumb` is a Maker::Preview or nil (cover).
-  The `.file-cell` + data-node-id wiring lets the shared `thumbs` controller poll a pending cover to
-  ready — but only when a cover node exists. No cover -> a neutral placeholder, never a
-  forever-spinner: the Projects glyph (structural redesign slice 6; no emoji in the interface).
-
-  THE INDEX PASSES `number:` AND `detail: true`: its rows are numbered in the order they render (a
-  place on the page, never a stored thing) and carry the project's description. Home's rows are the
-  compact kind: the cover, the name, its facts, when it last changed.
-
-  THE LINK IS THE COVER AND THE NAME, and the row's other parts sit beside it: the badges are never
-  inside it (`.project-card .badge` stays empty, projects_flow_test.rb). pages/home.css places each
-  part on the row's grid, for both pages.
-
-  THE NEXT STEP AND THE PROGRESS (Shop manual spec §9, "next step on Home and Projects"): `progress`
-  is a Maker::Task::Progress or nil (no tasks), `next_step` a Maker::Task or nil, both looked up by
-  the caller from one query each for the whole list (Maker::Task.next_steps_for / .progress_for),
-  never per row. Home's row adds "1 of 4 steps done" to its facts (its Carry on section shows the
-  step itself); the index's row gives them a column of their own, the step under a caps "Next".
+  One project on the list. `thumb` is a Maker::Preview or nil (cover). The `.file-cell` +
+  data-node-id wiring lets the shared `thumbs` controller poll a pending cover to ready — but only
+  when a cover node exists. No cover -> a neutral placeholder, never a forever-spinner: the rail's
+  projects icon (structural redesign slice 6; no emoji in the interface).
 %>
-<% number = local_assigns[:number] %>
-<% detail = local_assigns.fetch(:detail, false) %>
-<% progress = local_assigns[:progress] %>
-<% next_step = local_assigns[:next_step] %>
 <div class="project-tile">
-  <% if number %><span class="project-num"><%= number %></span><% end %>
   <%= link_to project_path(project), class: "project-card" do %>
     <% if project.cover_node_id %>
       <span class="thumb file-cell" data-thumbs-target="cell"
@@ -36,14 +16,12 @@
     <% end %>
     <span class="project-name"><%= project.name %></span>
   <% end %>
-  <% if detail && project.description.present? %>
-    <p class="project-blurb"><%= truncate(project.description, length: 160) %></p>
-  <% end %>
   <%#
-    ONE STATUS BADGE PER ROW, ALWAYS (2026-11-02, the UX audit's C7). Every card on the seeded
+    ONE STATUS BADGE PER CARD, ALWAYS (2026-11-02, the UX audit's C7). Every card on the seeded
     audit read "New" beside its status, and a planning project read nothing at all — two words for
-    one state on some cards and none on others. Now every row carries exactly one, in the words
-    and component classes the project page's own head uses, OUTSIDE the link.
+    one state on some cards and none on others. Now every card carries exactly one, in the words
+    and component classes the project page's own head uses, OUTSIDE the link (`.project-card
+    .badge` stays empty, projects_flow_test.rb).
 
     "NEW" IS THE STATUS WORD OF A PROJECT THAT IS STILL NEW (stage 4, S4-6; story 1.1): an
     auto-created project the owner has not opened yet, still at the column's first status. That is
@@ -55,43 +33,24 @@
     leaves it nil on purpose (a project you made is never new to you). It clears itself on the
     first open — ProjectsController#show stamps `opened_at` — so nothing has to be dismissed. All
     three columns come off the row this card already holds, so the badge costs no query on the
-    index or on Home.
-
-    THE KIND, WHERE THE PROJECT IS LISTED (stage 4, S4-7). A NON-DEFAULT kind only: `other` is
-    the column default, and badging a default kind is noise (a status is different: it is always
-    one of five things worth saying). The label comes from Maker::ProjectKind, never
-    `kind.humanize` -- "Cnc" is not a word. On the index the visibility follows as a word, as the
-    facts line the screen draws ends with it: Private, Unlisted or Public.
+    index or on Recent.
   %>
-  <span class="project-facts">
-    <% if project.status == "planning" && project.discovered_at.present? && project.opened_at.nil? %>
-      <span class="badge project-new status-planning">New</span>
-    <% else %>
-      <span class="badge status-<%= project.status %>"><%= project.status.humanize %></span>
-    <% end %>
-    <% unless project.kind == Maker::ProjectKind::DEFAULT %>
-      <span class="badge project-kind"><%= Maker::ProjectKind.label(project.kind) %></span>
-    <% end %>
-    <% if detail %>
-      <span class="project-visibility"><%= project.visibility.humanize %></span>
-    <% elsif progress %>
-      <span class="project-steps"><%= steps_done(progress, noun: "step") %></span>
-    <% end %>
-  </span>
-  <% if detail && (next_step || progress) %>
-    <%# A project with tasks but none open (every step done) shows its progress alone, with no "Next". %>
-    <span class="project-next">
-      <% if next_step %>
-        <span class="project-next-label">Next</span>
-        <span class="project-next-step"><%= next_step.title %></span>
-      <% end %>
-      <span class="project-steps"><%= steps_done(progress, noun: "step") %></span>
-    </span>
+  <% if project.status == "planning" && project.discovered_at.present? && project.opened_at.nil? %>
+    <span class="badge project-new status-planning">New</span>
+  <% else %>
+    <span class="badge status-<%= project.status %>"><%= project.status.humanize %></span>
   <% end %>
-  <span class="project-side">
-    <span class="project-when"><%= time_at(project.updated_at, style: :relative) %></span>
-    <% if project.status == "archived" %>
-      <%= button_to "Unarchive", unarchive_project_path(project), method: :patch, class: "linkbtn" %>
-    <% end %>
-  </span>
+  <%# THE KIND, WHERE THE PROJECT IS LISTED (stage 4, S4-7). A NON-DEFAULT kind only: `other` is
+      the column default, and badging a default kind is noise (a status is different: it is always
+      one of five things worth saying). Beside the status rather than inside the link_to, so the
+      tile's badges are one group and none of them is part of the card's own click target.
+      `.badge` is a component (design-system rule 3); `project-kind` is a qualifier, and
+      components.css is not touched. The label comes from Maker::ProjectKind, never `kind.humanize`
+      -- "Cnc" is not a word. %>
+  <% unless project.kind == Maker::ProjectKind::DEFAULT %>
+    <span class="badge project-kind"><%= Maker::ProjectKind.label(project.kind) %></span>
+  <% end %>
+  <% if project.status == "archived" %>
+    <%= button_to "Unarchive", unarchive_project_path(project), method: :patch, class: "linkbtn" %>
+  <% end %>
 </div>

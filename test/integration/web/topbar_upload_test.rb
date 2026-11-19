@@ -1,12 +1,10 @@
 require "test_helper"
 
 module Web
-  # THE STRIP'S UPLOAD (structural redesign spec §4.2 and §8, slice 4; inside the strip's Add since
-  # Shop manual slice 3): it uploads into the folder the page shows and Add's menu says which, and on
-  # a page that shows no folder it asks with the folder chooser instead of guessing. Both flows carry
-  # the destination, so every assertion branches on the flow this leg renders (`port_writable?`):
-  # asserting the form alone is red on chunk_remote. Upload carries no accent on any page: Add is an
-  # outlined button everywhere.
+  # THE TOP BAR'S UPLOAD (structural redesign spec §4.2 and §8, slice 4): it uploads into the folder the
+  # page shows and says which, and on a page that shows no folder it asks with the folder chooser
+  # instead of guessing. Both flows carry the destination, so every assertion branches on the flow
+  # this leg renders (`port_writable?`): asserting the form alone is red on chunk_remote.
   class TopbarUploadTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
@@ -22,23 +20,23 @@ module Web
 
     def assert_destination(node_id)
       if FileLayer.current.capabilities.port_writable?
-        assert_select "header.strip .topbar-upload form.uploader[action=?] input[type=hidden][name='parent_node_id'][value=?]",
+        assert_select "header.topbar .topbar-upload form.uploader[action=?] input[type=hidden][name='parent_node_id'][value=?]",
                       files_path, node_id
       else
-        assert_select "header.strip .topbar-upload section.uploader[data-controller='uploader'][data-uploader-parent-node-id-value=?]",
+        assert_select "header.topbar .topbar-upload section.uploader[data-controller='uploader'][data-uploader-parent-node-id-value=?]",
                       node_id
       end
     end
 
     def assert_caption(text)
-      assert_select "header.strip .strip-add-menu .topbar-upload-caption", text: "Saves to #{text}"
+      assert_select "header.topbar .topbar-upload-caption", text: "Saves to #{text}"
     end
 
-    test "on a folder, Upload carries that folder and Add names it" do
+    test "on a folder, Upload carries that folder, is the page's primary, and names it" do
       get files_path(folder: "d-jigs")
       assert_response :success
       assert_destination "d-jigs"
-      assert_select "header.strip .topbar-upload button.upload-btn:not(.primary) span", text: "Upload"
+      assert_select "header.topbar .topbar-upload button.upload-btn.primary span", text: "Upload"
       assert_caption "cad/jigs"
       # The page head's own uploader moved here; one Upload, not two.
       assert_select "main .uploader", count: 0
@@ -55,12 +53,13 @@ module Web
     test "a stale ?folder= uploads to the root it shows, and New creates there too" do
       get files_path(folder: "gone")
       assert_destination ""
-      assert_select "header.strip form[action=?] input[name='parent_node_id'][value=?]", library_folders_path, ""
+      assert_select "header.topbar form[action=?] input[name='parent_node_id'][value=?]", library_folders_path, ""
     end
 
-    test "the workspace saves beside its file" do
+    test "the workspace saves beside its file, quietly" do
       get file_path("n-plate")
       assert_destination "d-jigs"
+      assert_select "header.topbar .topbar-upload button.upload-btn:not(.primary)"
       assert_caption "cad/jigs"
     end
 
@@ -69,6 +68,7 @@ module Web
       folder = project_folder_rows!(@user, project)
       get project_path(project)
       assert_destination folder.node_id
+      assert_select "header.topbar .topbar-upload button.upload-btn.primary"
       assert_caption "Projects/desk-lamp"
       assert_select ".attachments-panel .uploader", count: 0
     end
@@ -78,43 +78,45 @@ module Web
     # target landing anywhere else would leave the chunk flow uploading to the root.
     test "a page with no folder asks with the chooser, quietly, and names nothing yet" do
       get settings_path
-      assert_select "header.strip .strip-add[data-controller='upload-pick'][data-upload-pick-children-url-value=?][data-upload-pick-create-url-value=?]",
+      assert_select "header.topbar .topbar-upload[data-controller='upload-pick'][data-upload-pick-children-url-value=?][data-upload-pick-create-url-value=?]",
                     library_children_path, library_folders_path
       assert_destination ""
-      assert_select "header.strip .strip-add .topbar-upload button.upload-btn[data-action=?]", "click->upload-pick#pick"
-      assert_select "header.strip .topbar-upload input[type=file][data-upload-pick-target='input']", 1
+      assert_select "header.topbar .topbar-upload button.upload-btn:not(.primary)[data-action=?]", "click->upload-pick#pick"
+      assert_select "header.topbar .topbar-upload input[type=file][data-upload-pick-target='input']", 1
       if FileLayer.current.capabilities.port_writable?
-        assert_select "header.strip .topbar-upload form.uploader input[type=hidden][name='parent_node_id'][data-upload-pick-target='parent']", 1
+        assert_select "header.topbar .topbar-upload form.uploader input[type=hidden][name='parent_node_id'][data-upload-pick-target='parent']", 1
       else
-        assert_select "header.strip .topbar-upload section.uploader[data-controller='uploader'][data-upload-pick-target='uploader']", 1
+        assert_select "header.topbar .topbar-upload section.uploader[data-controller='uploader'][data-upload-pick-target='uploader']", 1
       end
-      assert_select "header.strip .strip-add-menu .topbar-upload-caption[hidden][data-upload-pick-target='caption']"
+      assert_select "header.topbar .topbar-upload-caption[hidden][data-upload-pick-target='caption']"
     end
 
-    # HOME SHOWS NO FOLDER, so its Upload asks with the chooser like any page without one. (It was
-    # Recent's accent while Upload sat in the top bar, FolderDestination's retired upload_primary!.)
-    test "Home's Upload asks with the chooser" do
+    # RECENT IS THE ONE PAGE WITH NO FOLDER WHOSE UPLOAD IS ITS ACCENT (slice 6; FolderDestination's
+    # upload_primary!). Both halves in one selector: the weight changed (`primary`) and the destination
+    # did not — it still asks with the chooser, because Recent has no folder to name. The settings test
+    # above is the other half: the flag must not leak to every page without a folder.
+    test "Recent's Upload is its primary, and still asks with the chooser" do
       get root_path
-      assert_select "header.strip .strip-add[data-controller='upload-pick'] button.upload-btn:not(.primary)[data-action=?]",
+      assert_select "header.topbar .topbar-upload[data-controller='upload-pick'] button.upload-btn.primary[data-action=?]",
                     "click->upload-pick#pick"
       assert_destination ""
-      assert_select "header.strip .topbar-upload-caption[hidden][data-upload-pick-target='caption']"
+      assert_select "header.topbar .topbar-upload-caption[hidden][data-upload-pick-target='caption']"
     end
 
     # A page WITH a folder wires none of the chooser: no controller, no targets, no action. Asked so
     # a refactor that always rendered the chooser step would have to say so here.
     test "a page with a folder renders no chooser step" do
       get files_path(folder: "d-jigs")
-      assert_select "header.strip .strip-add[data-controller]", 0
-      assert_select "header.strip [data-upload-pick-target]", 0
-      assert_select "header.strip [data-action*='upload-pick']", 0
+      assert_select "header.topbar .topbar-upload[data-controller]", 0
+      assert_select "header.topbar [data-upload-pick-target]", 0
+      assert_select "header.topbar [data-action*='upload-pick']", 0
     end
 
     test "New creates where Upload saves, and its tools open there" do
       get file_path("n-plate")
-      assert_select "header.strip form[action=?] input[name='parent_node_id'][value=?]", library_folders_path, "d-jigs"
-      assert_select "header.strip a.menu-item[href=?]", new_files_text_file_path(parent_node_id: "d-jigs")
-      assert_select "header.strip turbo-frame#new-menu-tools[src=?]", tools_new_menu_path(in: "d-jigs")
+      assert_select "header.topbar form[action=?] input[name='parent_node_id'][value=?]", library_folders_path, "d-jigs"
+      assert_select "header.topbar a.menu-item[href=?]", new_files_text_file_path(parent_node_id: "d-jigs")
+      assert_select "header.topbar turbo-frame#new-menu-tools[src=?]", tools_new_menu_path(in: "d-jigs")
     end
   end
 end

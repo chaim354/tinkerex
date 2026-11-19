@@ -55,7 +55,6 @@ module Library
         @user.maker_file_links.where.not(from_node_id: kept).or(@user.maker_file_links.where.not(to_node_id: kept))
              .delete_all
         @user.maker_pins.where.not(node_id: kept).delete_all
-        @user.maker_stack_exclusions.where.not(node_id: kept).delete_all
         @user.maker_repo_edits.where.not(node_id: kept).delete_all
         Maker::AddonFile.where(addon_state_id: @user.maker_addon_states.select(:id)).where.not(node_id: kept)
                         .delete_all

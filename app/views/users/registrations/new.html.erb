@@ -1,48 +1,45 @@
 <%# SIGN-UP (Users::RegistrationsController#new), reached only while Tinkerex::Registration.open? --
     a closed server answers with registrations/closed instead. Two cards: the first-run card while the
     server has no account (the same one the sign-in page shows then), and the ordinary sign-up
-    otherwise. Neither names an environment variable to a visitor (UX audit F5). Both stand in the
-    door (users/shared/_door), as every signed-out page does. %>
+    otherwise. Neither names an environment variable to a visitor (UX audit F5). %>
 <% state = Tinkerex::Registration.state %>
 <% if state == :first_owner %>
   <%= render "users/registrations/owner_card" %>
 <% else %>
   <% content_for :title, "Sign up — Tinkerex" %>
-  <%= render layout: "users/shared/door" do %>
-    <section class="auth-box" aria-labelledby="auth-title">
-      <h1 class="auth-box-head" id="auth-title">Sign up</h1>
-      <div class="auth-box-body">
-        <% if state == :open_no_mail %>
-          <p class="auth-hint">This server can't send email yet, so a new account can't be confirmed. Ask
-            its administrator to add your account for you.</p>
-        <% end %>
+  <div class="auth-card">
+    <div class="brand"><span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span></div>
+    <h1>Sign up</h1>
 
-        <%= form_for(resource, as: resource_name, url: registration_path(resource_name)) do |f| %>
-          <%= render "users/shared/error_messages", resource: resource %>
+    <% if state == :open_no_mail %>
+      <p class="auth-hint">This server can't send email yet, so a new account can't be confirmed. Ask
+        its administrator to add your account for you.</p>
+    <% end %>
 
-          <div class="field">
-            <%= f.label :email %>
-            <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
-          </div>
+    <%= form_for(resource, as: resource_name, url: registration_path(resource_name)) do |f| %>
+      <%= render "users/shared/error_messages", resource: resource %>
 
-          <div class="field">
-            <%= f.label :password %>
-            <%= f.password_field :password, autocomplete: "new-password" %>
-            <span class="field-hint auth-hint"><%= @minimum_password_length || Devise.password_length.min %> characters minimum</span>
-          </div>
-
-          <div class="field">
-            <%= f.label :password_confirmation %>
-            <%= f.password_field :password_confirmation, autocomplete: "new-password" %>
-          </div>
-
-          <div class="actions">
-            <%= f.submit "Sign up", class: "primary" %>
-          </div>
-        <% end %>
+      <div class="field">
+        <%= f.label :email %>
+        <%= f.email_field :email, autofocus: true, autocomplete: "email" %>
       </div>
-    </section>
+
+      <div class="field">
+        <%= f.label :password %>
+        <%= f.password_field :password, autocomplete: "new-password" %>
+        <span class="auth-hint"><%= @minimum_password_length || Devise.password_length.min %> characters minimum</span>
+      </div>
+
+      <div class="field">
+        <%= f.label :password_confirmation %>
+        <%= f.password_field :password_confirmation, autocomplete: "new-password" %>
+      </div>
+
+      <div class="actions">
+        <%= f.submit "Sign up", class: "primary" %>
+      </div>
+    <% end %>
 
     <%= render "users/shared/links" %>
-  <% end %>
+  </div>
 <% end %>

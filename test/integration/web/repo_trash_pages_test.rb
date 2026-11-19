@@ -25,8 +25,8 @@ module Web
       assert_select ".page-head h1", text: "Trash"
       # THE WAY BACK IS THE BREADCRUMB (UX audit A4): Library / Trash in the top bar, and no
       # parent-named button left in the head.
-      assert_select "main .page-path nav.breadcrumb a[href=?]", files_path, text: "Library"
-      assert_select "main .page-path nav.breadcrumb [aria-current='page']", text: "Trash"
+      assert_select "header.topbar nav.breadcrumb a[href=?]", files_path, text: "Library"
+      assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "Trash"
       assert_select ".page-head a.btn.ghost", count: 0
       assert_select "table.files th.col-name", text: "Name"
       assert_select "table.files td.col-name", text: "old-bracket.stl"

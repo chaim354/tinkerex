@@ -1,0 +1,161 @@
+<%# The places sidebar (structural redesign spec §4.1, slice 2). Still `aside.rail` with `.rail-link`s
+    — restyle and restructure, never rename (design-system.md rule 12). EXACTLY ONE `.rail-link`
+    carries aria-current: ShellHelper#sidebar_current decides which. In the icon rail a project or a
+    pinned folder shows as its monogram tile (`rail_monogram`, UX audit A2), so it stays visible and
+    lit there; a pinned ADDON hides, and Tools wears `rail-family-lit` for it (sidebar_family_lit?). %>
+<aside class="rail" id="rail" data-controller="rail">
+  <%= link_to root_path, class: "brand", "aria-label": "Tinkerex home" do %>
+    <span class="brand-mark" aria-hidden="true"></span><span class="brand-name">Tinkerex</span>
+  <% end %>
+
+  <nav class="rail-nav" aria-label="Main">
+    <ul>
+      <li>
+        <%= link_to root_path, class: "rail-link", title: "Recent", "aria-current": sidebar_aria([ :home ]) do %>
+          <%= rail_icon(:recent) %><span class="rail-label">Recent</span>
+        <% end %>
+      </li>
+      <li>
+        <%= link_to files_path, class: "rail-link", title: "Library", "aria-current": sidebar_aria([ :library ]) do %>
+          <%= rail_icon(:files) %><span class="rail-label">Library</span>
+        <% end %>
+      </li>
+    </ul>
+
+    <h2 class="rail-group-head">Projects</h2>
+    <ul>
+      <% sidebar_projects.each do |project| %>
+        <li>
+          <%= link_to project_path(project), class: "rail-link rail-project", title: project.name,
+                      "aria-current": sidebar_aria([ :project, project.id ]) do %>
+            <%= rail_monogram(project.name) %><span class="rail-label"><%= project.name %></span>
+          <% end %>
+        </li>
+      <% end %>
+      <li>
+        <%= link_to projects_path, class: "rail-link", title: "All projects",
+                    "aria-current": sidebar_aria([ :all_projects ]) do %>
+          <%= rail_icon(:projects) %><span class="rail-label">All projects</span>
+        <% end %>
+      </li>
+    </ul>
+
+    <h2 class="rail-group-head">Places</h2>
+    <ul>
+      <li>
+        <%= link_to files_models_path, class: "rail-link", title: "3D models", "aria-current": sidebar_aria([ :models ]) do %>
+          <%= rail_icon(:models) %><span class="rail-label">3D models</span>
+        <% end %>
+      </li>
+      <% sidebar_pins.each do |pin, name| %>
+        <li>
+          <%= link_to files_path(folder: pin.node_id), class: "rail-link rail-pin", title: name,
+                      "aria-current": sidebar_aria([ :pin, pin.node_id ]) do %>
+            <%= folder_glyph %><%= rail_monogram(name) %><span class="rail-label"><%= name %></span>
+          <% end %>
+        </li>
+      <% end %>
+    </ul>
+  </nav>
+
+  <%# `toolmenu` for the pinned tools' right-click Unpin (toolmenu_controller.js). %>
+  <nav class="rail-nav rail-nav--foot" aria-label="Tools and trash" data-controller="toolmenu">
+    <ul>
+      <li>
+        <%= link_to tools_path, class: class_names("rail-link", "rail-family-lit": sidebar_family_lit?(:tools)),
+                    title: "Tools", "aria-current": sidebar_aria([ :tools ]) do %>
+          <%= rail_icon(:tools) %><span class="rail-label">Tools</span>
+        <% end %>
+      </li>
+      <%# THE PINNED TOOLS, under Tools in the order they were pinned (2026-10-22; Maker::ToolPins).
+          Pinned and unpinned on its Tools card, by the card's own "Pin to sidebar" toggle or a right
+          click, and unpinned here by a right click on the pinned link. They are read
+          from the user row the request already loaded, so they cost the rail no query, and NEVER
+          from the addon registry (an addon's title was copied in when it was pinned).
+
+          THE CALCULATOR OPENS THE MODAL rather than going anywhere (`data-calculator-open`,
+          calculator_controller.js), so it never carries aria-current and the one-lit-link rule is
+          untouched. A real href all the same: a modified click, or a page whose script failed,
+          lands on the Tools card that opens it. Its title, the collapsed rail's tooltip, names the
+          keyboard shortcut. It has its own glyph, so it stays in the icon rail.
+
+          AN ADDON is a link to its page, lit there (sidebar_current's [:tool, key]). It wears the
+          Tools glyph and not its manifest's icon, which is an emoji, and the interface draws none
+          (design-system.md rule 13); so it hides in the icon rail (`.rail-tool-pin`, shell.css) and
+          Tools wears the lit mark for it there. (A pinned folder or a project shows as a monogram
+          tile there instead, UX audit A2.) %>
+      <% current_user.tool_pins.each do |pin| %>
+        <li>
+          <% if pin.calculator? %>
+            <%= link_to tools_path(anchor: "calculator"), class: "rail-link rail-calculator",
+                        title: "Calculator (#{calculator_shortcut})", "aria-haspopup": "dialog",
+                        "aria-keyshortcuts": CalculationsHelper::CALCULATOR_KEYS,
+                        data: tool_menu_data(pin.key, pin.label, calculator_open: "") do %>
+              <%= rail_icon(:calculator) %><span class="rail-label">Calculator</span>
+            <% end %>
+          <% else %>
+            <%= link_to tools_addon_path(pin.key), class: "rail-link rail-tool-pin", title: pin.label,
+                        "aria-current": sidebar_aria([ :tool, pin.key ]), data: tool_menu_data(pin.key, pin.label) do %>
+              <%= rail_icon(:tools) %><span class="rail-label"><%= pin.label %></span>
+            <% end %>
+          <% end %>
+        </li>
+      <% end %>
+      <% if sidebar_inventory? %>
+        <li>
+          <%= link_to inventory_items_path, class: "rail-link", title: "Inventory",
+                      "aria-current": sidebar_aria([ :inventory ]) do %>
+            <%= rail_icon(:inventory) %><span class="rail-label">Inventory</span>
+          <% end %>
+        </li>
+      <% end %>
+      <li>
+        <%= link_to trash_index_path, class: "rail-link", title: "Trash", "aria-current": sidebar_aria([ :trash ]) do %>
+          <%= rail_icon(:trash) %><span class="rail-label">Trash</span>
+        <% end %>
+      </li>
+    </ul>
+  </nav>
+
+  <div class="rail-foot">
+    <%# THE THEME BUTTON NAMES ITS NEXT STEP (UX audit A6): "Switch to dark", "Use system theme",
+        "Switch to light" (ShellHelper::THEME_ACTIONS, handed to the controller as a value so the
+        words live once). aria-label and title carry the same words, because the span hides in the
+        icon rail. A choice made anywhere else on the page (the Settings row, the phone's More
+        sheet) renames this button at once: theme_controller.js broadcasts every change. %>
+    <button type="button" class="rail-btn rail-theme" data-controller="theme" data-action="theme#cycle"
+            data-theme-actions-value="<%= ShellHelper::THEME_ACTIONS.to_json %>"
+            aria-label="<%= theme_action_label %>" title="<%= theme_action_label %>">
+      <%= rail_icon(:theme) %><span data-theme-target="label"><%= theme_action_label %></span>
+    </button>
+    <%# COLLAPSE OR EXPAND, WHICHEVER THE RAIL WILL DO (UX audit A2). The server renders the cookie's
+        answer; rail_controller.js corrects it on connect and on every resize to what is DRAWN, since
+        below 1100px with no cookie the rail is icons whatever the server guessed. The arrow turns
+        with it (shell.css, inside the icon-rail block). %>
+    <button type="button" class="rail-btn rail-collapse" data-action="rail#toggle" data-rail-target="toggle"
+            aria-expanded="<%= rail_collapsed? ? "false" : "true" %>"
+            aria-label="<%= rail_collapsed? ? "Expand navigation" : "Collapse navigation" %>"
+            title="<%= rail_collapsed? ? "Expand navigation" : "Collapse navigation" %>">
+      <%= rail_icon(:collapse) %><span data-rail-target="toggleLabel"><%= rail_collapsed? ? "Expand" : "Collapse" %></span>
+    </button>
+    <span class="rail-user" title="<%= current_user.email %>"><%= current_user.email %></span>
+    <%# ICONS ONLY IN THE ICON RAIL (collapsed, or below 1100px unless expanded), where shell.css hides each
+        `.rail-btn span` — so a foot control's NAME cannot live in its span alone: every one of them,
+        Theme and Collapse included, carries `aria-label` for a screen reader and `title` for a
+        pointer (the last two since UX audit A7). Sign out was a bare-text `button_to` with no span
+        to hide, and in the 40px button it wrapped onto two lines (slice 7; shell_test.rb measures it).
+        Help sits beside Settings and lights on its own page the same way (onboarding, 2026-10-13). %>
+    <%= link_to help_path, class: "rail-btn rail-help", title: "Help", "aria-label": "Help",
+                "aria-current": (sidebar_current == [ :help ] ? "page" : nil) do %>
+      <%= rail_icon(:help) %><span>Help</span>
+    <% end %>
+    <%= link_to settings_path, class: "rail-btn rail-settings", title: "Settings", "aria-label": "Settings",
+                "aria-current": (sidebar_current == [ :settings ] ? "page" : nil) do %>
+      <%= rail_icon(:settings) %><span>Settings</span>
+    <% end %>
+    <%= button_to destroy_user_session_path, method: :delete, class: "rail-btn",
+                  title: "Sign out", "aria-label": "Sign out" do %>
+      <%= rail_icon(:sign_out) %><span>Sign out</span>
+    <% end %>
+  </div>
+</aside>

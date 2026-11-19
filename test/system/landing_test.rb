@@ -57,40 +57,4 @@ class LandingSystemTest < ApplicationSystemTestCase
       page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
     end
   end
-
-  # THE DOOR (Shop manual slice 8; users/shared/_door, the `sign-in` screen). Every signed-out Devise
-  # page stands in two halves at desktop width: the product's name and its figure LEFT of the page's
-  # boxes, the Sign in box on the first screen. On a phone the halves stack, the figure leaves so the
-  # form reaches the first screen, and nothing scrolls sideways (design-system.md rule 11). Demo mode
-  # is on here (the setup), so the demo's box stands above the form, as it does on the public box.
-  # Mutation-checked (2026-11-19), each red line as it printed: `.auth-card { display: block }` gave
-  # "the intro should stand left of the boxes at desktop width"; dropping `.auth-figure` from the
-  # 899px `display: none` gave `expected not to find visible css ".auth-figure", found 1 match`;
-  # `white-space: nowrap` on `.auth-slogan` gave "the door scrolls sideways at 375px (scrollWidth 574)".
-  test "the sign-in door stands its intro beside its boxes at desktop width, and stacks on a phone" do
-    visit new_user_session_path
-    assert_selector ".auth-card .auth-box h1", text: /\Asign in\z/i
-    assert_selector ".auth-card .demo-entry"
-    assert_operator rect(".auth-intro")["right"], :<=, rect(".auth-forms")["left"] + 1,
-                    "the intro should stand left of the boxes at desktop width"
-    assert_selector ".auth-figure img", visible: true
-    assert_operator rect(".auth-box")["bottom"], :<=, page.evaluate_script("window.innerHeight"),
-                    "the Sign in box should be on the first screen"
-
-    page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
-                                    width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
-    begin
-      visit new_user_session_path
-      assert_selector ".auth-card .auth-box h1", text: /\Asign in\z/i
-      assert page.evaluate_script("document.documentElement.scrollWidth <= window.innerWidth"),
-             "the door scrolls sideways at 375px (scrollWidth #{page.evaluate_script('document.documentElement.scrollWidth')})"
-      assert_operator rect(".auth-forms")["top"], :>=, rect(".auth-intro")["bottom"] - 1,
-                      "the boxes should stack under the intro on a phone"
-      assert_no_selector ".auth-figure", visible: true, wait: 0
-      assert_operator rect(".auth-box")["top"], :<, 812, "the Sign in box should start on a phone's first screen"
-    ensure
-      page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
-    end
-    assert_no_console_errors
-  end
 end

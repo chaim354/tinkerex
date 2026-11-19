@@ -33,8 +33,7 @@ class OnboardingSystemTest < ApplicationSystemTestCase
     click_on "Next: your first project"
     fill_in "project[name]", with: "Wall Bracket"
     click_on "Create project"
-    # The caption heads the strip's closed Add menu, so it is read hidden; it is still the wait.
-    assert_selector "header.strip .topbar-upload-caption", text: "Saves to Projects/wall-bracket", visible: :all
+    assert_selector "header.topbar .topbar-upload-caption", text: "Saves to Projects/wall-bracket"
     attach_file("topbar_upload_file", stl.to_s, make_visible: true)
 
     assert_selector ".page-head h1", text: "Wall Bracket is ready"
@@ -54,10 +53,10 @@ class OnboardingSystemTest < ApplicationSystemTestCase
     fill_in "project[name]", with: "Panel"
     select "Laser cutting", from: "project[kind]"
     click_on "Create project"
-    # THE CAPTION IS THE WAIT, NOT DECORATION. Every page carries the strip's file input, the Project
+    # THE CAPTION IS THE WAIT, NOT DECORATION. Every page carries the top bar's file input, the Project
     # step's included (with no folder), so an attach that outruns the redirect uploads from THAT page
     # into the library root and lands on the file's own page (observed on the first run).
-    assert_selector "header.strip .topbar-upload-caption", text: "Saves to Projects/panel", visible: :all
+    assert_selector "header.topbar .topbar-upload-caption", text: "Saves to Projects/panel"
     attach_file("topbar_upload_file", svg.to_s, make_visible: true)
 
     assert_selector ".page-head h1", text: "Panel is ready"
@@ -70,7 +69,7 @@ class OnboardingSystemTest < ApplicationSystemTestCase
   test "Skip for now leaves the wizard for good" do
     visit root_path
     click_on "Skip for now"
-    assert_selector ".page-head h1", text: "Today"
+    assert_selector ".page-head h1", text: "Recent"
     visit root_path
     assert_current_path root_path
   end

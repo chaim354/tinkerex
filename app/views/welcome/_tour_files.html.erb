@@ -1,12 +1,12 @@
 <%# THE FILES TRACK'S CARDS. Sentences reused from the landing page (landings/show) and
     shared/_where_files_come_from, which were checked against the code; the previews sentence is
-    checked against the renderers in app/services/maker/previews/, the pointers to the four places
-    against layouts/_strip, and the tools named against the addons bundle's manifests and code. The first card's heading is the Help page's ("Your library"), never
+    checked against the renderers in app/services/maker/previews/, the sidebar pointers against
+    layouts/_rail, and the tools named against the addons bundle's manifests and code. The first card's heading is the Help page's ("Your library"), never
     "a folder": the partial under it says bucket on s3 and the desktop app on a sync server. %>
 <article class="panel welcome-card">
   <h2>Your library</h2>
   <%= render "shared/where_files_come_from", projects: false %>
-  <p class="welcome-where">It is <%= link_to "Library", files_path %>, along the top.</p>
+  <p class="welcome-where">It is <%= link_to "Library", files_path %>, in the sidebar.</p>
 </article>
 <article class="panel welcome-card">
   <h2>Previews for what you make</h2>
@@ -31,5 +31,5 @@
   <h2>Tools that make files</h2>
   <p>The Box Generator, Labels and Text to Outline make cut files and save them straight into your
     library.</p>
-  <p class="welcome-where"><%= link_to "Tools", tools_path %>, along the top.</p>
+  <p class="welcome-where"><%= link_to "Tools", tools_path %>, in the sidebar.</p>
 </article>

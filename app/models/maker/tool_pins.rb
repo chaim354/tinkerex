@@ -1,15 +1,14 @@
 module Maker
   # THE TOOLS PINNED TO THE SIDEBAR (2026-10-22): the built-in calculator and any addon, in the order
-  # the maker pinned them. A right click on a tool's card in the gallery, or on its pinned row in
-  # the left column, pins or unpins it (toolmenu_controller.js, Tools::PinsController).
+  # the maker pinned them. A right click on a tool's card in the gallery, or on its pinned link in
+  # the rail, pins or unpins it (toolmenu_controller.js, Tools::PinsController).
   #
   # HELD IN `users.pinned_tools`, A JSON LIST, AND AN ADDON'S TITLE IS COPIED IN AT PIN TIME. The
-  # pins are rows in the layout's left column (Home's Pinned group and the Tools column, Shop manual
-  # slice 3), and THE LAYOUT NEVER READS THE ADDON REGISTRY (docs/invariants/addons.md;
+  # rail renders on every page and THE LAYOUT NEVER READS THE ADDON REGISTRY (docs/invariants/addons.md;
   # new_menu_test.rb counts it) — a manifest fetch over HTTP behind a five-minute cache, whose outage
-  # must cost a page nothing. So the column draws from what the user row already holds, and a renamed
+  # must cost a page nothing. So the rail draws from what the user row already holds, and a renamed
   # addon shows its old title until it is pinned again. A pinned addon the source no longer serves
-  # stays in the column, its link a 404, until the maker unpins it there; unpinning reads only this
+  # stays in the rail, its link a 404, until the maker unpins it there; unpinning reads only this
   # list, never the registry, so it always can.
   #
   # The column is client-shaped data only in the sense that this class wrote it; it is still read
@@ -22,7 +21,7 @@ module Maker
     Pin = Data.define(:key, :title) do
       def calculator? = key == CALCULATOR
 
-      # What the column and the menus call it. The calculator is built in, so its name lives here and
+      # What the rail and the menus call it. The calculator is built in, so its name lives here and
       # not in the row; an addon falls back to its key only if its copied title was lost.
       def label = calculator? ? "Calculator" : title.presence || key
     end
@@ -37,7 +36,7 @@ module Maker
 
     def find(key) = pins.find { |pin| pin.key == key.to_s }
 
-    # Appends, so the column keeps the order things were pinned in. Pinning what is already pinned
+    # Appends, so the rail keeps the order things were pinned in. Pinning what is already pinned
     # changes nothing (a double click, or two tabs).
     def pin!(key, title: nil)
       return if pinned?(key)

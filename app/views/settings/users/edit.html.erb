@@ -2,7 +2,7 @@
 
 <%# ONE ACCOUNT, FOR AN ADMIN (Settings::UsersController): reset its password, make or unmake it an
     admin, sign out its desktop devices, delete it. Never the signed-in account, which set_user
-    sends to the Account page. "Set password" is the primary (design-system.md rule 13); Delete is the danger button, behind a typed
+    sends to the Account page. "Set password" is the accent (design-system.md rule 13); Delete is the danger button, behind a typed
     address rather than a click-through confirm, because it cannot be undone. %>
 <%= render "settings/crumbs", trail: [ [ "Users", settings_users_path ] ], current: @user.email %>
 

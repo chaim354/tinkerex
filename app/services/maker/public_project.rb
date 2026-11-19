@@ -38,38 +38,6 @@ module Maker
     # that a plain download would not already have moved (§15).
     BundleFile = Data.define(:path, :size, :url)
 
-    # THE FIXED PANELS A VISITOR'S PAGE CAN DRAW, AND THE PARTIAL THAT DRAWS EACH (stage 4, S4-7; a
-    # constant since 2026-11-19). THE MAP IS THE WHOLE DEFINITION OF "HAS A PUBLIC FACE": `tasks`,
-    # `sheets`, `calculations` and `models` are absent from it and are therefore absent from a
-    # visitor's page WHATEVER the order says — a maker who drags Tasks to the top does not publish
-    # their task list. It lived in public/projects/_page.html.erb until the Publishing tab had to
-    # list the same panels (#keepable); a second copy there is how the tab would offer a choice the
-    # page never draws, or miss one it does.
-    #
-    # EVERY PARTIAL IS NAMED WITH ITS FULL PATH, AND MUST STAY THAT WAY. A bare `render "photos"`
-    # resolves against the CONTROLLER's prefixes, so under ProjectsController#preview it would be
-    # projects/_photos, the maker's OWN panel with its composer, rendered with nothing going red.
-    PANEL_PARTIALS = { "readme"      => "public/projects/readme",
-                       "attachments" => "public/projects/files",
-                       "photos"      => "public/projects/photos",
-                       "schematics"  => "public/projects/schematics",
-                       "build_log"   => "public/projects/build_log",
-                       "bom"         => "public/projects/bom",
-                       "releases"    => "public/projects/releases" }.freeze
-
-    # WIRING IS THE ONE FIXED PANEL DRAWN BY THE SHARED projects/_wiring rather than a public partial
-    # (public/projects/_page says why), so it has a public face without a map entry.
-    FACED = (PANEL_PARTIALS.keys + %w[wiring]).freeze
-
-    # Does this key draw anything on a visitor's page? A fixed panel in FACED, any folder, any block.
-    def self.faced?(layout, key) = FACED.include?(key.to_s) || layout.folder?(key) || layout.block?(key)
-
-    # THE PANELS THE PUBLISHING TAB OFFERS TO LEAVE OFF THE PUBLIC PAGE (2026-11-19, the published
-    # view), in page order: every faced panel, the ones the maker hid included (their choice holds
-    # when they show them again), minus ALWAYS — the folder root and the photos are what publishing
-    # a project IS, and the bundle's own argument (#bundle_files) rests on the root being there.
-    def self.keepable(layout) = layout.order.select { |key| faced?(layout, key) } - Maker::ProjectKind::ALWAYS
-
     attr_reader :project, :owner, :listing, :tree
 
     def initialize(project)
@@ -121,9 +89,9 @@ module Maker
     # columns off a row this object already holds: no query, and no session (Public::BaseController
     # stands on ActionController::Base and has none to read).
     #
-    # WHICH OF THESE HAVE A PUBLIC FACE IS NOT THE LAYOUT'S QUESTION — see PANEL_PARTIALS above,
-    # whose absent keys (tasks, sheets, calculations, models) are the whole definition of "private
-    # only".
+    # WHICH OF THESE HAVE A PUBLIC FACE IS THE TEMPLATE'S QUESTION, not this one's — see
+    # public/projects/_page.html.erb's partial map, whose absent keys (tasks, sheets, publish) are
+    # the whole definition of "private only".
     #
     # ONE LAYOUT PER PAGE, MEMOISED, AND IT KNOWS THE FOLDERS (2026-09-08, folder panels). Every
     # question this object answers about the arrangement — which panels render, which folders are
@@ -136,20 +104,8 @@ module Maker
     # AND IT KNOWS THE BLOCKS (2026-09-09, content blocks): a block is a panel of the layout, so its
     # key has to be in the vocabulary here or the maker's own order would be filtered down to the
     # panels alone on the page a visitor sees — every block dropped, silently, by the totality rule.
-    #
-    # AND WHETHER THE FOLDER IS A REPOSITORY (2026-11-19): Files keeps the full width a repository
-    # needs on both pages, from the same listing's in-memory answer.
-    #
-    # AND IT IS THE PUBLISHED VIEW (2026-11-19; the Shop manual's spec §3 and §9): `Layout#published`,
-    # so every panel the maker left off the public page on the Publishing tab is hidden here while
-    # their own page keeps it. Nothing below asks a second question to get that: the page loop, the
-    # feed, the bundle (through `#shown_rows`), the BOM CSV and its manifest URL, the Photos and
-    # Schematics panels, the repository cards, the hero and the image blocks all read this one
-    # layout's `hidden`, so a panel left out here is left out of every one of them. What hiding
-    # cannot say — whether the FILES of a folder left out still deliver — is `#permits?`'s, below.
     def layout = @layout ||= project.panel_layout(folders: listing.panel_folders,
-                                                  blocks: blocks.map { |b| [ b.key, b.kind ] },
-                                                  root_repo: listing.root_repo?).published
+                                                  blocks: blocks.map { |b| [ b.key, b.kind ] })
 
     # THE PROJECT'S CONTENT BLOCKS, ONE QUERY, memoised for the page like everything else here. Read
     # BEFORE `layout` needs them and indexed for the loop, one read for both — a block created
@@ -185,8 +141,7 @@ module Maker
     # rule. A new derived reader is now right because of what it reads.
     # AUTHORED prose does not start here. A README's own links and images, a text block and a BOM
     # line's file link are things the maker wrote that name a file, so they read `listing` and
-    # `permits?` (decision 2: hidden is not unpermitted). A folder left OFF THE PUBLIC PAGE is
-    # unpermitted (2026-11-19), so those links go quiet for it: `#authored_url_for`.
+    # `permits?` (decision 2: hidden is not unpermitted).
     #
     # HIDDEN IS DECIDED BY ANCESTRY, walking up from a file to the project folder and no further
     # (`.depth_one_dir`), NEVER BY THE CAPPED LISTING. `permits?` refuses the capped listing as its
@@ -230,13 +185,12 @@ module Maker
       source = readme_source
       @readme = source && Maker::Readme.render(
         source, base_path: listing.path, index: listing.path_index,
-        link: ->(id) { authored_url_for(id) }, image_link: ->(id) { image_url_for(id) },
-        context: Maker::Readme::Live::Context.new(user: owner, project:, listing:, bom_lines:, tasks:, entries:, thumbs:,
-                                                  figures: figure_numbers)
+        link: ->(id) { file_url_for(id) }, image_link: ->(id) { image_url_for(id) },
+        context: Maker::Readme::Live::Context.new(user: owner, project:, listing:, bom_lines:, tasks:, entries:, thumbs:)
       )
     end
 
-    def tasks = @tasks ||= project.tasks.in_panel_order.to_a
+    def tasks = @tasks ||= project.tasks.order(:position, :created_at).to_a
 
     # The README's own ROW, or nil — the same row `#readme` renders, asked for as a row so the
     # bundle manifest can name it (`readme_path`) without rendering anything. `Maker::Readme.row_in`
@@ -355,15 +309,11 @@ module Maker
     # and past FILE_CAP alike, so there is nothing to reject here.
     #
     # THE FILE ITSELF STILL ANSWERS ITS DIRECT LINK, and that is the same decision: permission is by
-    # folder claim (`#permits?`), never by a panel the maker HID, so `#deliverable!` is untouched and
-    # a URL a README or a BOM row already handed out keeps working. What changes is only what this
-    # page ADVERTISES. Maker::BomCsv agrees by construction. Its `file` column names
-    # `#bundle_path_for`, which reads this same list, so a BOM line pointing at a hidden folder's
-    # file or at a backup names the bare file. It never names a path the zip does not carry.
-    #
-    # A FOLDER LEFT OFF THE PUBLIC PAGE (2026-11-19) leaves this list by the same `hidden?` — the
-    # published layout hides it — and, unlike a hidden one, stops answering its links as well
-    # (`#permits?`), so the CSV then names neither its path nor its file.
+    # folder claim (`#permits?`), never by panel, so `#deliverable!` is untouched and a URL a README
+    # or a BOM row already handed out keeps working. What changes is only what this page ADVERTISES.
+    # Maker::BomCsv agrees by construction. Its `file` column names `#bundle_path_for`, which reads
+    # this same list, so a BOM line pointing at a hidden folder's file or at a backup names the bare
+    # file. It never names a path the zip does not carry.
     def bundle_files
       @bundle_files ||= shown_rows.map { |row| BundleFile.new(path: bundle_path(row), size: row.node.size.to_i,
                                                               url: file_url_for(row.node_id, download: true)) }
@@ -408,7 +358,7 @@ module Maker
         dirs.index_by(&:node_id).transform_values do |dir|
           Maker::RepoCard.for(user: owner, dir:, root_node: roots[dir.node_id], listing:,
                               capabilities: FileLayer.current.capabilities,
-                              link: ->(id) { authored_url_for(id) })
+                              link: ->(id) { file_url_for(id) })
         end
       end
     end
@@ -562,39 +512,11 @@ module Maker
     # whatever a client synced, so `.git/config` has a plain name, sits under the folder, and would
     # pass both checks above. Share and s3 never index those keys; this is the one door that must
     # not depend on that.
-    #
-    # A FOLDER LEFT OFF THE PUBLIC PAGE DELIVERS NOTHING (2026-11-19, the published view). Its panel
-    # is what makes its files public, so a file the published view reaches only through that panel
-    # is refused here, and the page, the bundle, a README link, a BOM row, a release row and a
-    # direct URL all agree because they all ask this. ASKED BEFORE `claimed?` AND BY LOCATION, NEVER
-    # BY ARM: Maker::ProjectIntake attaches every file under the folder to the project, so an
-    # attachment arm left open would keep the whole folder downloadable and the choice would do
-    # nothing for any file the sweep ever saw. Hidden is still not unpermitted (decision 2): a panel
-    # the maker hid arranges their page, while one they left off the public page is a publishing
-    # choice, and only the second reaches this door.
     def permits?(node)
       return false unless node && node.kind == "file" && !node.deleted
       return false unless visible_entry?(node)
-      return false if kept_back?(node)
 
       self.class.claimed?(node, tree:, folder_node_id: project.folder_node_id, attached: attached_ids)
-    end
-
-    # IS THIS FILE REACHABLE ONLY THROUGH A PANEL THE PUBLISHED VIEW LEAVES OUT? True for a file at
-    # any depth under a depth-one folder the maker left off the public page — walked by ancestry, so
-    # a file past FILE_CAP or deep in a repository is caught like any other — with ONE exception: a
-    # build-log entry's own photo while the build log is on the page. The entry is authored, it is
-    # what the maker published that photo WITH, and the build log draws it wherever it lives
-    # (public/projects/_build_log asks `#permitted_node`); the Photos panel still leaves it out,
-    # because Photos reads `#shown_rows`' rule (`hidden?`). The build log being on the page is
-    # `panel_visible?`, so a build log the maker hid or left off takes that exception with it.
-    #
-    # Public because the README's and a text block's links ask it through `#authored_url_for`, and
-    # nil-safe so a caller holding a row that may not exist need not branch.
-    def kept_back?(node)
-      return false unless node && kept_back_dir?(node.parent_node_id)
-
-      !(entry_attached_ids.include?(node.node_id) && panel_visible?("build_log"))
     end
 
     # THE FOLDER-OR-ATTACHED RULE, WRITTEN ONCE, for `permits?` (one node against this project) and
@@ -664,14 +586,6 @@ module Maker
     # `next if` here: ask `.depth_one_dir` of the cover's parent, then ask the project's own
     # `panel_layout(folders:)`, built over that one folder, whether its key is hidden. Both inputs
     # are already in hand, so it adds no query.
-    #
-    # A COVER IN A FOLDER LEFT OFF THE PUBLIC PAGE IS REFUSED (2026-11-19, the published view), and
-    # that one is not left for later: `#permits?` refuses the file, so the card would draw a picture
-    # whose URL answers 404. It is the `next if` above, asked of `unpublished` — `.depth_one_dir` of
-    # the cover's parent, then the project's own layout built over that one folder — so it adds no
-    # query either. STRICTER THAN `#permits?` BY ONE CASE, deliberately: a build-log photo kept in
-    # such a folder still delivers, but the hero (`#cover_node`, which asks `#shown?`) refuses it
-    # too, and the card follows the hero rather than the file route.
     def self.permitted_cover_ids(owner, projects)
       wanted = projects.filter_map { |p| [ p.id, p.cover_node_id ] if p.cover_node_id }.to_h
       return {} if wanted.empty?
@@ -690,22 +604,11 @@ module Maker
       projects.each_with_object({}) do |project, out|
         node = nodes[wanted[project.id]]
         next unless node && visible.include?(node.node_id)
-        next if kept_back_cover?(project, node, tree:)
 
         out[project.id] = node.node_id if claimed?(node, tree:, folder_node_id: project.folder_node_id,
                                                          attached: attached[project.id])
       end
     end
-
-    # The cover's depth-one folder, if it has one, asked against this project's own layout built
-    # over that folder alone: in memory, over a row the page already holds.
-    def self.kept_back_cover?(project, node, tree:)
-      depth_one = depth_one_dir(node.parent_node_id, tree:, folder_node_id: project.folder_node_id)
-      return false unless depth_one
-
-      project.panel_layout(folders: [ [ depth_one, false ] ]).unpublished?(Maker::ProjectKind.folder_key(depth_one))
-    end
-    private_class_method :kept_back_cover?
 
     # The file route's whole authorization: resolve in the OWNER's library, then ask `permits?`.
     # A refusal and a nonexistent node are the SAME answer on purpose — a public visitor must not
@@ -724,19 +627,6 @@ module Maker
       params = link_params
       params = params.merge(download: 1) if download
       Rails.application.routes.url_helpers.public_file_path(handle, project.slug, node_id, filename:, **params)
-    end
-
-    # WHERE A LINK THE MAKER WROTE POINTS: the byte URL, or nil for a file in a folder they left off
-    # the public page (2026-11-19, the published view). A README, a repository's README and a text
-    # block resolve their relative links through the listing, and the listing holds every file in
-    # the folder, kept back or not — so without this a README naming `drafts/notes.pdf` would hand a
-    # visitor a link the file route answers with 404. nil is the resolver's "unresolvable", which
-    # unwraps the link to its own words (Maker::Markdown.folder_resolver), the answer a link to a
-    # file outside the folder already gets. NO QUERY: a listed row is a visible entry already, so
-    # `#kept_back?` is the only question left, and it is asked of the tree in memory.
-    def authored_url_for(node_id)
-      row = listing.row_for(node_id)
-      file_url_for(node_id) unless row && kept_back?(row.node)
     end
 
     # THE VIEW PAGE'S URL, beside #file_url_for's byte URL (stage 4, S4-5). Same link_params, same
@@ -766,12 +656,6 @@ module Maker
     # WHICH FILES ARE PICTURES IS `Maker::Readme::Live.picture?`'s ONE ANSWER — the inline-image
     # list plus SVG — shared with the `image` emitter and the maker's arm, so the file, the maker's
     # page and a visitor's cannot disagree about which files draw from their own bytes.
-    #
-    # NO KEPT-BACK CHECK HERE, AND ITS ABSENCE IS THE ARGUMENT (2026-11-19): Maker::Readme asks this
-    # only of an id the README's `link` already issued a URL for (`render_markdown`'s `issued`), and
-    # `#authored_url_for` issues none for a file in a folder left off the public page, so its picture
-    # is already gone. A check here could never be reached — measured: removing it left the README
-    # test green — and would read as a second guard where there is one.
     def image_url_for(node_id)
       row = listing.row_for(node_id)
       return file_url_for(node_id) if row.nil? || Maker::Readme::Live.picture?(row.node.name)
@@ -796,42 +680,7 @@ module Maker
       permits?(node) ? file_url_for(node.node_id, filename: node.name) : nil
     end
 
-    # FIGURE NUMBERS ON THE VISITOR'S PAGE (the Shop manual spec §9 and §11.3): the maker's page's
-    # rule — panel order, then file order, the cover first, a file numbered where it first appears
-    # (Maker::FigureNumbers) — walked over THIS page's own figures, which are the published panels
-    # only: a hidden panel, a hidden folder's files and a file this page does not show draw nothing,
-    # so they number nothing and leave no gap. The visitor's page has no stacks and no browser, so
-    # each file is one figure, in the order public/projects/_page and its partials draw them: the
-    # Files table's rows, a folder panel's sections, Photos, Schematics' list, an image block. In
-    # memory over what the page already loads; no query (page_query_budget_test.rb).
-    def figure_numbers
-      @figure_numbers ||= Maker::FigureNumbers.build do |numbers|
-        numbers.figure(cover_node.node_id, place: "hero") if cover_node
-        groups = layout.groups(visible_panels)
-        (groups.top + groups.tabs.flat_map(&:keys)).each do |key|
-          public_figure_rows(key).each { |row| numbers.figure(row.node_id, place: key) }
-        end
-      end
-    end
-
-    def figure_number(node_id) = figure_numbers.number(node_id)
-
     private
-
-    # The rows one panel of this page draws as figures, in its order (each partial named).
-    def public_figure_rows(key)
-      if layout.block?(key)
-        block = blocks_by_key[key]
-        node = block&.kind == "image" && block_image_node(block)
-        node ? [ node ] : []
-      elsif layout.folder?(key)
-        dir = folder_dir(key)
-        dir ? folder_sections(dir).flat_map(&:last) : []
-      else
-        { "attachments" => -> { loose_rows }, "photos" => -> { photo_rows }, "schematics" => -> { kicad_rows } }
-          .fetch(key) { -> { [] } }.call
-      end
-    end
 
     # THE ONE SECTION WALK, for `#sections` (the whole folder) and `#folder_sections` (one panel).
     # Depth-first, a dir before its children, dirs with no files of their own skipped — the order
@@ -901,28 +750,10 @@ module Maker
     # Every node attached to the project itself or to one of its build-log entries, in TWO queries
     # regardless of how many entries there are — never one per entry. The second is expressed as a
     # subselect on the entries rather than loading their ids, so it stays one statement.
-    # THE ENTRIES' HALF IS ITS OWN SET (2026-11-19) because `#kept_back?` asks it alone; the union
-    # is the same two plucks it always was.
-    def attached_ids = @attached_ids ||= project.file_attachments.pluck(:node_id).to_set | entry_attached_ids
-
-    def entry_attached_ids
-      @entry_attached_ids ||= Maker::FileAttachment.where(user: owner, attachable_type: "Maker::BuildLogEntry",
-                                                          attachable_id: project.build_log_entries.select(:id))
-                                                   .pluck(:node_id).to_set
-    end
-
-    # IS THIS DIRECTORY UNDER (OR ITSELF) A DEPTH-ONE FOLDER THE MAKER LEFT OFF THE PUBLIC PAGE? The
-    # same walk as `#hidden_dir?` — up from the dir, stopping at the project folder — asked of
-    # `unpublished` rather than `hidden`, which is the difference between a page the maker arranged
-    # and one they published. Memoised per dir. NO LAYOUT FOR A FILE OUTSIDE A SUBFOLDER: a file at
-    # the folder's root, or outside it, has no depth-one folder, so the file route serving one never
-    # builds the layout (two queries) to learn what it could not have said.
-    def kept_back_dir?(dir_id)
-      @kept_back_dirs ||= {}
-      return @kept_back_dirs[dir_id] if @kept_back_dirs.key?(dir_id)
-
-      depth_one = self.class.depth_one_dir(dir_id, tree:, folder_node_id: listing.folder_id)
-      @kept_back_dirs[dir_id] = !depth_one.nil? && layout.unpublished?(Maker::ProjectKind.folder_key(depth_one))
+    def attached_ids
+      @attached_ids ||= (project.file_attachments.pluck(:node_id) +
+                         Maker::FileAttachment.where(user: owner, attachable_type: "Maker::BuildLogEntry",
+                                                     attachable_id: project.build_log_entries.select(:id)).pluck(:node_id)).to_set
     end
 
     def flatten_dirs(dirs) = dirs.flat_map { |d| [ d ] + flatten_dirs(d.children) }

@@ -107,7 +107,7 @@ class Autosave {
 // data-turbo-track="reload" — a Turbo Drive visit, not just a hard load, has to be accounted for).
 //
 // LEAVING NEVER DROPS AN EDIT QUIETLY, and each way out gets what that way out allows:
-//   - A Turbo visit (a link, the strip, a redirect) WAITS: `turbo:before-visit` is held until the
+//   - A Turbo visit (a link, the rail, a redirect) WAITS: `turbo:before-visit` is held until the
 //     save has landed and then made again. Only a save that was refused asks.
 //   - The page's own Rename reloads the page from the database, so the save goes before it
 //     (`saveFirst`); its CSV link is a download, and the file should hold what the grid shows

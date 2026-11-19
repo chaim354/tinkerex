@@ -171,7 +171,7 @@ class FilesSelectionTest < ApplicationSystemTestCase
     # ... then the view toggle's links.
     details_for("table.files a", "bracket.stl")
     assert_selector ".inspector .inspector-name", text: "bracket.stl"
-    within(".view-toggle") { click_link "Tiles" }
+    within(".view-toggle") { click_link "Grid" }
     assert_selector ".grid-card.is-selected", text: "bracket.stl"
     assert_selector ".inspector .inspector-name", text: "bracket.stl"
     assert_no_console_errors

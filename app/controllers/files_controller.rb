@@ -53,8 +53,8 @@ class FilesController < ApplicationController
   # #intake_project_folder, called from #create and #finalize_upload below, with the sentences that
   # report both. Shared with Projects::UploadsController, the build-log entries' photo uploader,
   # which takes the loop and the sentences but not the nudge: its photos land at the library root,
-  # which no project owns. The project page's own Upload has been the shell's (the top bar's, the
-  # strip's Add since Shop manual slice 3), into this controller, since redesign slice 4. See ProjectFolderIntake's header for why a concern rather
+  # which no project owns. The project page's own Upload has been the top bar's, into this
+  # controller, since redesign slice 4. See ProjectFolderIntake's header for why a concern rather
   # than a second copy.
   include UploadBatch
   include ProjectFolderIntake
@@ -63,8 +63,6 @@ class FilesController < ApplicationController
   # #show below and shared with ProjectsController#show, whose attachment tiles carry the same
   # right-click menu. See the concern for why the Registry lookup is second and conditional.
   include AddonOrigins
-  # Whether the Library draws version stacks (#index; Shop manual spec §9). Shared with Search.
-  include StackSwitch
 
   # THE UPLOAD BRANCH. Two flows, one per deployment, and BOTH refusals are honest: neither
   # deployment can do the other's flow.
@@ -225,11 +223,6 @@ class FilesController < ApplicationController
     # both pass it, so one request cannot answer the question two ways across flat and folder mode
     # (§14a) — the same reason `.outside_repo_metadata` is on both.
     @show_hidden = resolve_hidden
-    # VERSION STACKS (Shop manual spec §9): on unless the maker turned them off, remembered in a
-    # cookie like the dot-file switch (#resolve_stacks). Read before either scope, because a stacked
-    # folder pages its FIGURES, which changes what the folder query selects.
-    @stacking = resolve_stacks
-    @stacks = Maker::VersionStacks::EMPTY
     # FLAT MODE. An extension filter is a question about the LIBRARY, not about a folder, so
     # ?folder= is ignored outright rather than intersected -- "show me every .stl" that quietly
     # meant "in this folder" would be the wrong answer to the only question the chips can ask.
@@ -271,11 +264,6 @@ class FilesController < ApplicationController
       sort_key = (@exts.empty? && @sort == "type") ? "name" : @sort
       @nodes = scope.order(flat_order(@exts, sort_key, @dir)).limit(FLAT_LIMIT).to_a
       @truncated = @match_count > FLAT_LIMIT
-      # AMONG THE ROWS THIS PAGE HOLDS: a stack never crosses a folder, so a flat view's stacks are
-      # each folder's own, and the page holds every member of every stack it can show (for_nodes
-      # groups only the ids it is given). Past FLAT_LIMIT a member may sit beyond the cut, and the
-      # stack is then the members this page has, which the truncation banner already owns up to.
-      @stacks = Maker::VersionStacks.for_nodes(current_user, @nodes.select(&:file?).map(&:node_id)) if @stacking
     else
       @folder = current_folder
       @crumbs = folder_crumbs(@folder)
@@ -307,17 +295,6 @@ class FilesController < ApplicationController
                           .visible_entries(@show_hidden)
       # PAGED ONLY UNDER THE NAME SORT — see #paged_folder? for why the other two cannot be.
       @paged = paged_folder?
-      # THE WHOLE FOLDER'S STACKS, never one page's: a stack whose members straddle a page edge
-      # would otherwise be two stacks on two pages. in_folder reads the same live, visible files
-      # this scope lists, in two queries whatever the folder's size.
-      @stacks = Maker::VersionStacks.in_folder(current_user, @folder&.node_id, show_hidden: @show_hidden) if @stacking
-      # A PAGED FOLDER PAGES FIGURES (spec §9): every member but one leaves the query, so the count,
-      # the page count and the OFFSET all count what the page draws. The one that stays is the
-      # member the name order puts first, so the stack stands where its first member would have
-      # and no page shifts under it; #stack_members_beyond_page loads the rest for the open stack.
-      if @paged && @stacks.stacks.any?
-        scope = scope.where.not(node_id: @stacks.stacks.flat_map { |s| s.node_ids - [ stack_anchor(s, @dir) ] })
-      end
       if @paged
         @child_count = scope.count
         @pages = [ (@child_count / FOLDER_PAGE.to_f).ceil, 1 ].max
@@ -331,17 +308,12 @@ class FilesController < ApplicationController
       end
       @truncated = false
     end
-    # The strip's Add creates here, Upload included (FolderDestination). The VALIDATED folder: a stale
+    # The top bar's Upload and New create here (FolderDestination). The VALIDATED folder: a stale
     # ?folder= renders the root's listing and must upload to the root it shows. Flat mode has no
     # folder, so it is the root too.
-    use_folder_destination(@folder&.node_id, path: Array(@crumbs).map(&:name).join("/"))
-    # THE MEMBERS A PAGED FOLDER LEFT OUT OF ITS QUERY, for the stacks this page shows: ONE query,
-    # and none at all when no stack stands on the page. Everything below asks about them with the
-    # page's own rows, in the same one call each, so a stack costs no query per member.
-    @stack_extra = stack_members_beyond_page
-    @info_by_node = FileLayer.current.stat_all(current_user, node_ids: (@nodes + @stack_extra).map(&:node_id))
+    use_folder_destination(@folder&.node_id, path: Array(@crumbs).map(&:name).join("/"), primary: true)
+    @info_by_node = FileLayer.current.stat_all(current_user, node_ids: @nodes.map(&:node_id))
     @nodes.select! { |node| @info_by_node.key?(node.node_id) }
-    @stack_extra.select! { |node| @info_by_node.key?(node.node_id) }
     # AFTER select!, so a node that vanished between the two queries is gone before it can be
     # given a sort position (and before sort_key asks @info_by_node for an mtime it does not
     # have); BEFORE the note/thumbnail loads, which only need the final list.
@@ -366,48 +338,28 @@ class FilesController < ApplicationController
     # page boundaries, and files_pagination_test.rb goes red when you do), so the invariant worth
     # keeping is "one order, expressed once", not "this line is load-bearing today".
     @nodes = sort_nodes(@nodes, @info_by_node, @sort, @dir) unless @flat || @paged
-    # WHAT THE PAGE DRAWS, IN ORDER: a node id for a file or folder that stands alone, a Stack where
-    # its first member stood (VersionStacks::Result#collapse). AFTER the sort, so a stack follows
-    # the order the maker chose. A stack one of whose members vanished between the two reads
-    # (no stat for it) is drawn as its surviving files, never as a stack with a hole in it.
-    @node_by_id = (@nodes + @stack_extra).index_by(&:node_id)
-    @figures = @stacks.collapse(@nodes.map(&:node_id)).flat_map do |figure|
-      next [ figure ] unless figure.is_a?(Maker::VersionStacks::Stack)
-
-      live = figure.node_ids.select { |id| @node_by_id.key?(id) }
-      live.size == figure.size ? [ figure ] : live
-    end
-    # THE COUNTS THE TOOLBAR AND THE PAGER SAY: every item, and the figures they make. A paged
-    # folder counted figures in SQL (the members left its query), so the items are those plus what
-    # the stacks fold; a flat view counted every match.
-    @figure_count, @item_count =
-      if @flat then [ @match_count - @stacks.folded, @match_count ]
-      elsif @paged then [ @child_count, @child_count + @stacks.folded ]
-      else [ @figures.size, @nodes.size ]
-      end
     # THE SELECTION (structural redesign §5.1): a FILE in THIS listing, or nothing. A stale, foreign,
     # folder or off-page id is ignored rather than an error — a shared link outlives its file. Asked
     # of the rows already in hand, AFTER select!, so it costs no query and can never name a node the
     # page does not render (files_selection_test.rb).
     requested = params[:selected].presence
-    @selected = requested if requested && @node_by_id[requested]&.file?
+    @selected = requested if requested && @nodes.any? { |n| n.node_id == requested && n.file? }
     # Only the flat view needs it — a folder view already tells you where you are, and this is a
     # query the folder view would pay for and never read.
     @folder_paths = @flat ? folder_paths_for(@nodes) : {}
     # Note counts for the badge — one grouped query, never N+1.
-    shown_ids = @node_by_id.keys
-    @note_counts = current_user.maker_notes.where(node_id: shown_ids).group(:node_id).count
+    @note_counts = current_user.maker_notes.where(node_id: @nodes.map(&:node_id)).group(:node_id).count
     # "Edit in <Addon>" for whichever of these files an addon produced. AFTER the select!/sort, so
     # it is asked about exactly the rows that will render, and — like @note_counts beside it — a
     # whole page at a time rather than per row (page_query_budget_test.rb asserts the constancy).
     # Both list and grid read it, so it is set here rather than in either branch above.
-    @addon_origins = addon_origins_for(shown_ids)
+    @addon_origins = addon_origins_for(@nodes.map(&:node_id))
     # Current-version, current-build thumbnails, plus a bounded backfill of the ones that have no
     # row yet. ONE call, and it is the same class the 3D models and Projects pages go through: this
     # controller held the only copy of both rules (the renderer-revision filter and the backfill),
     # which is exactly how those pages came to have neither. `@info_by_node` is passed in rather
     # than re-stat'd — on share a second stat_all is a filesystem stat per node, doubled.
-    @thumb_by_node = Maker::Previews::ThumbnailMap.from_info(current_user, shown_ids,
+    @thumb_by_node = Maker::Previews::ThumbnailMap.from_info(current_user, @nodes.map(&:node_id),
                                                             @info_by_node, backfill: true)
     # The type filter's options — see #ext_facets. Library-wide in BOTH modes, deliberately: it is
     # the control for choosing a whole-library type view, so scoping it to the folder you happen to
@@ -678,7 +630,8 @@ class FilesController < ApplicationController
     parent = @node.parent_node_id &&
              current_user.nodes.present.find_by(node_id: @node.parent_node_id, kind: "dir")
     @crumbs = folder_crumbs(parent)
-    # The strip's Add creates beside this file, Upload included (FolderDestination).
+    # The top bar's Upload and New create beside this file (FolderDestination) — quietly: the
+    # workspace's one action is the file, not an upload.
     use_folder_destination(parent&.node_id, path: @crumbs.map(&:name).join("/"))
   end
 
@@ -1426,23 +1379,6 @@ class FilesController < ApplicationController
     cookies[:files_hidden] == "1"
   end
 
-  # THE MEMBER OF A STACK THAT STANDS IN A PAGED FOLDER'S QUERY: the one folder_page_order puts
-  # first, by the same two keys (LOWER(name), then name), so the stack takes its first member's
-  # place on the page.
-  def stack_anchor(stack, dir)
-    names = stack.members.sort_by { |m| [ m.name.downcase, m.name ] }
-    (dir == "desc" ? names.last : names.first).node_id
-  end
-
-  # The members of the stacks standing on this page that the page's own query did not load (a
-  # paged folder keeps one member per stack, #index). Live nodes, ONE query; none without a stack.
-  def stack_members_beyond_page
-    on_page = @nodes.to_set(&:node_id)
-    missing = @stacks.stacks.select { |s| s.node_ids.any? { |id| on_page.include?(id) } }
-                     .flat_map(&:node_ids).reject { |id| on_page.include?(id) }
-    missing.empty? ? [] : current_user.nodes.present.where(node_id: missing).to_a
-  end
-
   # Sort key + direction. THE SAME WHITELIST IDIOM AS resolve_view, and for the same reason: an
   # unknown `?sort=` or a tampered cookie must fall back to the default rather than reach the
   # sorter as an arbitrary string. Stored as one "key:dir" cookie value, so the choice survives
@@ -1994,7 +1930,7 @@ class FilesController < ApplicationController
   # WHERE THE WIZARD'S UPLOAD GOES BACK TO, or nil for every other upload. `return_to` IS AN
   # ALLOWLISTED FLAG NAMING A TRACK, NEVER A URL (rename_move_landing's rule, below), and the project
   # is found from the folder the bytes went into, so the flag on an upload anywhere else changes
-  # nothing. layouts/_strip_add renders it, on WelcomeController#files alone.
+  # nothing. layouts/_topbar_upload renders it, on WelcomeController#files alone.
   WELCOME_RETURNS = { "welcome_files" => "files", "welcome_models" => "models" }.freeze
 
   def welcome_return_path(parent_node_id)

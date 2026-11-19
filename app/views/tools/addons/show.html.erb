@@ -18,15 +18,14 @@
 <% end %>
 
 <%# The title alone: the manifest's `icon` is an emoji by convention and is not drawn anywhere
-    (tools/home/_addon_mark, UX audit G1). The description is the page's lead, in ink at the lead's
-    size (Shop manual slice 7); `.page-subtitle` is the lead's older name, which the bundles build too. %>
-<div class="page-head addon-head"><h1><%= @addon.title %></h1>
-  <p class="page-subtitle"><%= @addon.description %></p>
+    (tools/home/_addon_mark, UX audit G1). %>
+<div class="page-head"><h1><%= @addon.title %></h1>
+  <p class="page-subtitle muted"><%= @addon.description %></p>
 </div>
 
 <%#
   AN ADDON THAT CANNOT RUN HERE SAYS SO INSTEAD OF MOUNTING (2026-11-02, UX audit G3). A greyed
-  card is not a link, but a pinned row in the column, a bookmark or a typed URL still reaches this page, and
+  card is not a link, but a pinned rail link, a bookmark or a typed URL still reaches this page, and
   mounting the bundle there produced whatever its first failing call said — "Service request failed
   (404)" for a missing sidecar. The sentence is the gallery card's, `Addon#unavailable_reason`.
 
@@ -37,10 +36,8 @@
 %>
 <% if @addon.available? %>
 
-<%# WHAT THE TOOL CAN DO, under the caps label the gallery's card sets it under, a row a permission. %>
 <% if @addon.permissions.any? %>
-  <p class="addon-can">This tool can</p>
-  <ul class="addon-permissions">
+  <ul class="addon-permissions muted">
     <% @addon.permissions.each do |permission| %>
       <li>
         <%= Maker::Addons::Permissions.label_for(permission["name"]) %>

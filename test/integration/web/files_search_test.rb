@@ -46,7 +46,7 @@ module Web
     test "a search is flat: the folder is ignored and the breadcrumb says so" do
       get files_path(folder: "dir-sub", q: "stl")
       assert_equal [ "Lamp-Base.stl", "root.stl" ], listed_names.sort
-      assert_select "main .page-path nav.breadcrumb [aria-current='page']", text: /Search “stl”/
+      assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: /Search “stl”/
       assert_select "nav.breadcrumb a[href=?]", files_path(folder: "dir-sub"), count: 0
       # THE FILES PAGE'S OWN SEARCH BOX, not the top bar's -- the top bar now posts to
       # SearchController (stage 2, S2-5) and no longer echoes this page's own @q (shell_layout_test.rb

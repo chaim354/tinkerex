@@ -13,16 +13,12 @@
   .settings-fact { font: 11px/1.4 var(--font-mono); color: var(--fg-muted); }
   .settings-list .settings-remove { margin-left: auto; }
   .settings-add { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; max-width: 640px; }
-  /* ONE FIELD STYLE (UX audit F8): an add form's label reads like `.field > span` everywhere else,
-     whether its markup carries `.field` or not -- the Suppliers and Locations forms do not. Since the
-     Shop manual that is the caps label (spec §5: mono 700 11px over a field, tracked, uppercase,
-     muted); the input inside the label keeps its own face, which the UA resets for a control. A
-     `.field` in a row form drops its bottom margin, which would lift the inputs above the row's
-     button; the label's own gap does that job. */
-  .settings-add label {
-    display: flex; flex-direction: column; gap: var(--space-1); color: var(--fg-muted);
-    font: 700 11px/16px var(--font-mono); letter-spacing: .08em; text-transform: uppercase;
-  }
+  /* ONE FIELD STYLE (UX audit F8): an add form's label reads like `.field > span` everywhere else
+     (13px, weight 500, ink), whether its markup carries `.field` or not -- the Suppliers and
+     Locations forms do not. It was 11px and muted, a third label style beside the two `.field`
+     spellings. A `.field` in a row form drops its bottom margin, which would lift the inputs above
+     the row's button; the label's own gap does that job. */
+  .settings-add label { display: flex; flex-direction: column; gap: var(--space-1); font-size: 13px; font-weight: 500; color: var(--fg); }
   .settings-add .field { margin-bottom: 0; }
   .settings-add .field > span { margin-bottom: 0; }
   /* A refusal inside a row form takes the whole row, above its fields (UX audit B3). */
@@ -38,22 +34,8 @@
      specificity trick is needed. */
   @media (min-width: 900px) { .connect-steps { grid-template-columns: max-content minmax(0, 1fr); } }
   .connect-secret, .connect-cmd { font-family: var(--font-mono); font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; margin: 0; flex: 1 1 240px; min-width: 0; }
-  /* THE HUB AS NUMBERED SECTIONS (Shop manual slice 7; the screen `settings`): two to a row, each a
-     section head — the number, the setting's name at 800 20px, its fact in mono at the right — over a
-     2px ink rule, then its sentence. The rule is each head cell's own bottom border, with no column
-     gap between the cells, so it runs unbroken under the whole head. */
-  .settings-list.settings-hub {
-    display: grid; grid-template-columns: repeat(auto-fill, minmax(min(440px, 100%), 1fr)); gap: 36px 40px; max-width: none;
-  }
-  .settings-hub li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; gap: 10px 0; padding: 0; border: 0; }
-  .settings-hub li > .panel-num, .settings-hub .settings-name, .settings-hub .settings-fact { padding-bottom: 6px; border-bottom: 2px solid var(--line-strong); }
-  .settings-hub li > .panel-num { margin: 0; padding-right: 12px; font-size: 20px; line-height: 1.2; }
-  .settings-hub .settings-name { padding-right: 12px; color: var(--fg); font-size: 20px; font-weight: 800; line-height: 1.2; letter-spacing: -.01em; overflow-wrap: anywhere; }
-  .settings-hub a.settings-name:hover { text-decoration: underline; text-underline-offset: 3px; }
-  .settings-hub .settings-fact { margin: 0; font-size: 13px; line-height: 1.6; text-align: right; overflow-wrap: anywhere; }
-  .settings-hub .settings-about { grid-column: 1 / -1; max-width: 38em; margin: 0; font-size: 14.5px; line-height: 1.45; }
-  .settings-hub .settings-theme .settings-name { grid-column: 2 / -1; }
-  .settings-hub .settings-theme .theme-choice { grid-column: 1 / -1; }
+  /* The hub has no Remove button to anchor to the right, so its own fact takes that job. */
+  .settings-hub .settings-fact { margin-left: auto; }
   /* The pressed theme is drawn by components.css's one pressed rule, like every toggle button. */
   .theme-choice { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 
@@ -124,7 +106,7 @@
      not Devise's card stretched to the container. `.account-delete`'s own margin is shell.css's,
      from when the page was one card; here the grid's gap spaces every panel alike. A hint under a
      field is components.css's `.field-hint`, a quiet sentence and not a second label. --- */
-  .account-page { display: grid; gap: 40px; max-width: 640px; }
+  .account-page { display: grid; gap: var(--space-4); max-width: 640px; }
   .account-page .account-delete { margin-top: 0; }
   .account-page .form-actions { margin-top: var(--space-2); }
 

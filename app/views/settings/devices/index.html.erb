@@ -1,7 +1,7 @@
 <% content_for :title, "Devices — Tinkerex" %>
 <%= render "settings/crumbs", current: "Devices" %>
 
-<%# YOUR DESKTOP DEVICES (Settings::DevicesController). No primary on this page: there is no one
+<%# YOUR DESKTOP DEVICES (Settings::DevicesController). No accent on this page: there is no one
     action it exists for, and signing out is a danger link on each row (design-system.md rule 13).
 
     WHAT IT IS FOR FIRST, THEN ONE HONEST NOTE (UX audit F6). On a sync-server library a device holds a
@@ -10,11 +10,12 @@
     step for a lost device. Elsewhere there is no second key, and the page never mentions one. %>
 <div class="page-head">
   <h1>Devices</h1>
-  <p class="page-lead">
-    The apps and assistants connected to your account, most recently used first. Sign one
-    out when you stop using it, or as soon as it is lost.
-  </p>
 </div>
+
+<p class="muted">
+  The apps and assistants connected to your account, most recently used first. Sign one
+  out when you stop using it, or as soon as it is lost.
+</p>
 <p class="muted">
   Signing a device out ends its access to this server, and it needs your password to sign in again.
   <% if capabilities.syncable? %>
@@ -47,7 +48,7 @@
     scoped field with no model falls back to an @device this page never sets. Turbo is off on this
     form: the answer is a page carrying a secret shown once, rendered rather than redirected to, and
     a full page load is the one shape every Turbo version renders. The submit is a quiet button:
-    this page has no primary (design-system.md rule 13). size: nil is load-bearing: given maxlength
+    this page has no accent (design-system.md rule 13). size: nil is load-bearing: given maxlength
     and no size, text_field copies 80 into size, an 80-character field that pushed this page to
     scrollWidth 609 at 375px (rule 11, measured). %>
 <%= form_with url: settings_devices_path, scope: :device, class: "settings-add", data: { turbo: false } do |f| %>

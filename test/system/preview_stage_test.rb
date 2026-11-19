@@ -14,7 +14,7 @@ require "application_system_test_case"
 # deleting the Measure stage's `background` reddens the Measure test in both themes; setting
 # Graphite's `--thumb-stage` back to `#ffffff` reddens every dark arm.
 class PreviewStageTest < ApplicationSystemTestCase
-  CARD = { "light" => "rgb(255, 255, 255)", "dark" => "rgb(182, 186, 191)" }.freeze
+  CARD = { "light" => "rgb(252, 251, 248)", "dark" => "rgb(191, 187, 178)" }.freeze
   SAMPLE = "sample.lbrn2".freeze
 
   setup do

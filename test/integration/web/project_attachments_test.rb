@@ -619,11 +619,6 @@ module Web
       # Backup detection (Row#backup?) reads the node's own name, wherever it sits in the tree.
       folder_file!(user, project, name: "sign.lbrn2", node_id: "n-sign", parent: laser.node_id)
       folder_file!(user, project, name: "sign_backup.lbrn2", node_id: "n-bak", parent: laser.node_id)
-      # WITH THE LASER PANEL'S STACKS OFF. Since version stacks (Shop manual spec §9) a backup of a
-      # file beside it is a member of that file's stack in a stacking panel, and leaves Backups —
-      # version_stacks_pages_test.rb pins that side. This pins the diversion itself, which is what
-      # every panel with its stacks off, and every backup that stacks with nothing, still gets.
-      project.update!(panels: { "unstacked" => [ "folder:d-laser" ] })
 
       get project_path(project)
       # THE LASER PANEL COUNTS ONE FILE, not two: the backup was diverted out of the tree entirely,

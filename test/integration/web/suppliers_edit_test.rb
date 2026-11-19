@@ -18,8 +18,8 @@ module Web
     test "the list's crumbs say Inventory › Suppliers, and there is no ghost button named for the parent" do
       get suppliers_path
       assert_select "title", text: "Suppliers — Tinkerex"
-      assert_select "main .page-path nav.breadcrumb a[href=?]", inventory_items_path, text: "Inventory"
-      assert_select "main .page-path nav.breadcrumb [aria-current='page']", text: "Suppliers"
+      assert_select "header.topbar nav.breadcrumb a[href=?]", inventory_items_path, text: "Inventory"
+      assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "Suppliers"
       assert_select ".page-head a[href=?]", inventory_items_path, count: 0
       assert_no_match(/ -- /, css_select("main").text, "prose uses an em dash, never a double hyphen")
       assert_select "li a.linkbtn[href=?]", edit_supplier_path(@supplier), text: "Edit"
@@ -29,8 +29,8 @@ module Web
       get edit_supplier_path(@supplier)
       assert_response :success
       assert_select "title", text: "Edit McMaster — Tinkerex"
-      assert_select "main .page-path nav.breadcrumb a[href=?]", suppliers_path, text: "Suppliers"
-      assert_select "header.strip a.strip-place[aria-current='page'][href=?]", inventory_items_path
+      assert_select "header.topbar nav.breadcrumb a[href=?]", suppliers_path, text: "Suppliers"
+      assert_select "aside.rail a.rail-link[aria-current='page'][href=?]", inventory_items_path
       assert_select "form[action=?]", supplier_path(@supplier) do
         assert_select "input[name='_method'][value='patch']"
         assert_select "input[name='supplier[name]'][value='McMaster']"
@@ -56,7 +56,7 @@ module Web
       assert_select ".form-errors.flash-alert", text: /Name can't be blank/
       assert_select "textarea[name='supplier[notes]']", text: "Keep this"
       # The crumbs and title name the supplier as it is saved, not the blank that was refused.
-      assert_select "main .page-path nav.breadcrumb [aria-current='page']", text: "McMaster"
+      assert_select "header.topbar nav.breadcrumb [aria-current='page']", text: "McMaster"
       assert_equal "McMaster", @supplier.reload.name
     end
 

@@ -33,17 +33,17 @@ class ShellToastTest < ApplicationSystemTestCase
     FileUtils.remove_entry(@root) if @root&.exist?
   end
 
-  test "a toast never covers Add, the account button or the tab bar, at desktop or phone width" do
+  test "a toast never covers New, Upload or the tab bar, at desktop or phone width" do
     assert_selector ".flash-stack .flash-notice"
-    assert_empty overlaps(".flash-stack .flash", [ "header.strip .strip-add-menu > summary", "header.strip .strip-account > summary" ]),
-                 "a toast covers a strip control at 1400px"
+    assert_empty overlaps(".flash-stack .flash", [ "header.topbar .topbar-new > summary", "header.topbar .topbar-upload .upload-btn" ]),
+                 "a toast covers a top-bar control at 1400px"
 
     page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
                                     width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
     visit root_path
     append_toast("flash-notice", "Deleted plate.dxf. It is in Trash.")
-    assert_empty overlaps(".flash-stack .flash", [ "header.strip", "nav.tabbar" ]),
-                 "a toast covers the strip or the tab bar at 375px"
+    assert_empty overlaps(".flash-stack .flash", [ "header.topbar", "nav.tabbar" ]),
+                 "a toast covers the top bar or the tab bar at 375px"
     box, client = page.evaluate_script(
       "[(() => { const r = document.querySelector('.flash-stack .flash').getBoundingClientRect(); return [r.left, r.right]; })(), document.documentElement.clientWidth]")
     assert_operator box[0], :>=, 0

@@ -1,9 +1,9 @@
 <%#
   NO `content_for :crumbs` HERE, ON PURPOSE. The visitor's page carries its own breadcrumb
   (`@handle / Project`, public/projects/_page.html.erb), drawn in the body because the anonymous
-  branch of the layout renders no caps path to yield one. This page IS the signed-in branch, so a
+  branch of the layout renders no topbar to yield one. This page IS the signed-in branch, so a
   crumbs block here rendered a second `nav.breadcrumb` with the same accessible name directly above
-  the first (measured in review). The caps path falls back to the title, the banner below carries "Back
+  the first (measured in review). The topbar falls back to the title, the banner below carries "Back
   to the project", and the visitor's own breadcrumb stays exactly where a visitor sees it.
 %>
 <%= render "projects/preview_banner", project: @project %>

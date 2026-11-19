@@ -1,21 +1,22 @@
 <% content_for :title, "Users — Tinkerex" %>
 
 <%# ACCOUNTS, FOR AN ADMIN (Settings::UsersController). The list, then the add form, whose button is
-    the page's one primary (design-system.md rule 13). The signed-in row links to the Account page,
+    the page's one accent (design-system.md rule 13). The signed-in row links to the Account page,
     never to a page here: your own account is changed there, behind your password. %>
 <%= render "settings/crumbs", current: "Users" %>
 
 <div class="page-head">
   <h1>Users</h1>
-  <p class="page-lead">
-    <% if capabilities.syncable? %>
-      Each user has a library of their own on the sync server, made the first time it is used.
-    <% else %>
-      Every user on this server sees the same library folder, and can open, change and delete every
-      file in it. Add only people you would hand the folder to.
-    <% end %>
-  </p>
 </div>
+
+<p class="muted">
+  <% if capabilities.syncable? %>
+    Each user has a library of their own on the sync server, made the first time it is used.
+  <% else %>
+    Every user on this server sees the same library folder, and can open, change and delete every
+    file in it. Add only people you would hand the folder to.
+  <% end %>
+</p>
 
 <ul class="settings-list">
   <% @users.each do |user| %>
