@@ -118,7 +118,8 @@ module Maker
         svg = HtmlThumb.to_svg(512)
         expected = [ Palette::PAPER, Palette::INK, Palette::ACCENT, HtmlThumb::AMBER, HtmlThumb::SAGE ].sort
 
-        painted = svg.scan(/\b(?:fill|stroke|stop-color|color)="([^"]*)"/).flatten.uniq
+        # `none` paints nothing: the code mark is open strokes, so its group says fill="none".
+        painted = svg.scan(/\b(?:fill|stroke|stop-color|color)="([^"]*)"/).flatten.uniq - [ "none" ]
         assert_not_empty painted, "HtmlThumb's SVG paints nothing this scan can see"
         assert_equal expected, painted.sort
         assert_equal expected, svg.scan(/#\h{6}\b|#\h{3}\b/).uniq.sort

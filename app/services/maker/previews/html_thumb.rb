@@ -35,11 +35,17 @@ module Maker
       def available? = Maker::Previews::SvgRasterizer.available?
 
       # size×size PNG of the drawing. Returns { bytes:, content_type:, width:, height: }.
+      #
+      # `stylesheet: nil`, GERBER'S OPT-OUT: the rasterizer's default stylesheet pins every stroke
+      # to 1.5px for hairline CAD sources, and this drawing's widths are real — through it, the
+      # window came out a hairline. Pinned in html_thumb_test.rb.
       def render(_bytes, size: 512)
-        png = Maker::Previews::SvgRasterizer.to_png(to_svg(size), size:)
+        png = Maker::Previews::SvgRasterizer.to_png(to_svg(size), size:, stylesheet: nil)
         { bytes: png.b, content_type: "image/png", width: size, height: size }
       end
 
+      # The `</>` is two chevrons and a slash in round-capped strokes, NEVER a <text>: a glyph is
+      # whatever face the box resolves, and strokes draw the same picture everywhere.
       def to_svg(size)
         <<~SVG
           <svg xmlns="http://www.w3.org/2000/svg" width="#{size}" height="#{size}" viewBox="0 0 512 512">
@@ -49,7 +55,11 @@ module Maker
           <circle cx="120" cy="144" r="11" fill="#{Palette::ACCENT}"/>
           <circle cx="154" cy="144" r="11" fill="#{AMBER}"/>
           <circle cx="188" cy="144" r="11" fill="#{SAGE}"/>
-          <text x="256" y="324" text-anchor="middle" font-family="DejaVu Sans Mono, monospace" font-weight="700" font-size="104" fill="#{Palette::ACCENT}">&lt;/&gt;</text>
+          <g fill="none" stroke="#{Palette::ACCENT}" stroke-width="22" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="208,250 162,292 208,334"/>
+          <line x1="276" y1="238" x2="236" y2="346"/>
+          <polyline points="304,250 350,292 304,334"/>
+          </g>
           </svg>
         SVG
       end

@@ -46,8 +46,12 @@ contract (`EXTENSIONS`, `available?`, `render(bytes, size:)`):
 - a rounded browser window outlined in `Palette::INK`, with a title-bar rule beneath three dots;
 - the dots, left to right: `Palette::ACCENT`, then amber `#e0a526`, then sage `#6b8f5e` — the
   last two are `HtmlThumb` constants, decoration of this one drawing, not palette colours;
-- `</>` centred in the window, bold monospace (`DejaVu Sans Mono`, which the image ships for
-  `TextThumb`), in `Palette::ACCENT`.
+- `</>` centred in the window in `Palette::ACCENT`, drawn as two chevrons and a slash in
+  round-capped strokes — never a `<text>`, whose glyph would be whatever face the box resolves.
+
+It is rasterised with **`stylesheet: nil`**, `Gerber`'s opt-out: the rasterizer's default stylesheet
+pins every stroke to 1.5px for hairline CAD sources, and through it the window came out a hairline
+(found by rendering the first build and looking at it).
 
 The mockup is the reference picture: `tmp/html-thumb-mockups.png`, option 1 (not committed).
 
@@ -85,7 +89,9 @@ project page's file rows, public pages.
 ## Tests
 
 - **`html_thumb_test.rb` (new):** two different HTML documents render byte-identical PNGs of the
-  requested size; the SVG paints exactly `PAPER`, `INK`, `ACCENT` and the two dot colours.
+  requested size; the SVG draws its mark in strokes with no `<text>`; `render` differs from the
+  same SVG rasterised through the hairline stylesheet.
+- **`palette_test.rb`:** the SVG paints exactly `PAPER`, `INK`, `ACCENT` and the two dot colours.
 - **`registry_test.rb`:** `for_filename("a.html")` is `HtmlThumb`, and `TextThumb::EXTENSIONS`
   does not include `html`.
 - **`thumbnail_revision_test.rb`:** `"a.html" => 3` in the absolute table.
