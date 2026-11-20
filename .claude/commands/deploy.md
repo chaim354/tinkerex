@@ -158,11 +158,53 @@ And where a change spans a compiled artifact AND server code that depends on it 
 `*_REVISION` bump), **verify both halves**: they ship in one image but fail independently, and each
 half alone is worse than neither.
 
+## 3a. Redraw the thumbnails the deploy made stale — on share, after every deploy
+
+A stored thumbnail is redrawn only when a page that shows its file renders (capped per page), or
+when someone runs `previews:backfill_missing`. So a deploy that changes how a thumbnail is drawn — a
+`THUMBNAIL_REVISION` bump, a `Palette` colour, a newly registered extension — leaves every folder
+nobody opens on the old picture, indefinitely. **Measured 2026-11-20 (`tinkerex#581`):** the
+2026-10-21 preview restyle (`tinkerex#459`) bumped five renderers, nobody swept share, and 3,692
+thumbnails sat on pre-restyle pictures for a month — 1,309 of them in one firmware repo nobody opens —
+beside 50 `.ai` files that had never had one. A deploy's restart can also drop a render in flight.
+
+After all three destinations have rolled and verified, dry-run the sweep on share (the one
+deployment with real data):
+
+```bash
+ssh -o BatchMode=yes kamal1@192.168.1.95 'docker exec -e DRY_RUN=1 $(docker ps -qf name=^tinkerex-web-share-) bin/docker-entrypoint bin/rails previews:backfill_missing'
+```
+
+Read its count against what this deploy shipped, from the baseline SHA you took in §1:
+
+```bash
+git diff <baseline-sha>..<new-sha> -- app/services/maker/previews/ \
+  | grep -E '^[-+].*(THUMBNAIL_REVISION|PAPER|INK|MATERIAL|ACCENT) =|^[-+][[:space:]]+"[a-z0-9]+"[[:space:]]+=>'
+```
+
+- **The range changes a revision, the palette or the registry:** expect every file of the affected
+  types. Run the sweep — the same command without `-e DRY_RUN=1`.
+- **It changes none of them:** expect a handful, the renders the restart dropped. Run the sweep.
+- **A large count with no such change is a FINDING, not a chore.** Stop and report it before
+  enqueueing anything: something other than this deploy is making rows stale.
+
+The sweep writes only preview rows and jobs, and a row keeps its current picture while it redraws
+(`rebuilding`). Wait for the queue to empty — 3,742 renders drained in about four minutes on
+2026-11-20 —
+
+```bash
+ssh -o BatchMode=yes kamal1@192.168.1.95 'docker exec -i $(docker ps -qf name=^tinkerex-web-share-) bin/docker-entrypoint bin/rails runner -' \
+  <<< 'puts SolidQueue::ReadyExecution.joins(:job).where(solid_queue_jobs: { class_name: "Maker::GeneratePreviewJob" }).count'
+```
+
+— then dry-run again: it must read **0**. Failed renders are not retried by the sweep and do not
+count. Put both counts in the deploy record's note (§4).
+
 ## 4. Report
 
-Give the user: the image SHA now running, a per-backend table (container, image, `/up`), and the
-direct evidence that the change is live. If anything was skipped or only partly rolled, say so
-explicitly.
+Give the user: the image SHA now running, a per-backend table (container, image, `/up`), the
+direct evidence that the change is live, and the redraw sweep's counts (§3a). If anything was
+skipped or only partly rolled, say so explicitly.
 
 **RECORD THE DEPLOY AS THE LAST STEP OF THE DEPLOY — NOT AS A SEPARATE PR LATER.**
 
@@ -196,3 +238,5 @@ named exception is gone with it.
 - Build before the share mount check has printed `library ok` — a stale mount fails the share
   deploy at create, after base has rolled
 - Report success from an exit code alone
+- Finish without §3a's dry run on share — a thumbnail change nobody sweeps stays on the old picture
+  in every folder nobody opens
