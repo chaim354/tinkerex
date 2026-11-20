@@ -813,7 +813,7 @@ wraps the file page's viewer chain in a Rendered / Source toggle (`.view-toggle`
 **`.html` OPENS ON A RENDERED VIEW TOO (2026-11-19, embedded files; spec
 `docs/superpowers/specs/2026-11-19-embedded-files-design.md`)**: `files/_html_view` wraps the chain in
 the Markdown page's Rendered / Source toggle (same controller), and Rendered is `files/viewers/_html` —
-the page itself in a frame served by `SandboxController` (`GET /sandbox/:token/*path`). Eight rules:
+the page itself in a frame served by `SandboxController` (`GET /sandbox/:token/*path`). Nine rules:
 
 - **NEVER `allow-same-origin`, in the header or on the `<iframe>`.** User HTML at this origin is stored
   XSS — the reason `FileDelivery::SAFE_INLINE_TYPES` refuses `text/html`. The door's ENFORCING
@@ -845,6 +845,15 @@ the page itself in a frame served by `SandboxController` (`GET /sandbox/:token/*
   role, and giving it one MOVES files on the NAS.
 - **SOURCE IS THE SAME CHAIN, MOUNTED HIDDEN**, by the same editability rule (`editable_here?`): an
   `.html` outside a working tree is the read-only viewer.
+- **ITS TILE IS A DRAWING, NOT ITS SOURCE (2026-11-20; spec
+  `docs/superpowers/specs/2026-11-20-html-thumbnail-design.md`).** `Maker::Previews::HtmlThumb` claims
+  `html` over `TextThumb` and draws one picture — an ink browser window, three dots, an orange `</>` —
+  whatever the page holds; it never reads the bytes. `TextThumb::EXTENSIONS` subtracts it, or the
+  contract test goes red. **Its `THUMBNAIL_REVISION` is never 1 or 2**: `TextThumb` stamped HTML rows
+  with those, and a row is current when its revision EQUALS the renderer's, so either value serves the
+  old source picture forever (§14h). Pinned by `thumbnail_map_test.rb`, red on that mutation. It
+  rasterises with **`stylesheet: nil`** (Gerber's opt-out: the default pins every stroke to 1.5px and
+  made the window a hairline) and draws `</>` in strokes, never a `<text>` whose face the box picks.
 
 ## A File block frames a file's preview area, never a second viewer
 

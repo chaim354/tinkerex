@@ -247,6 +247,20 @@ module Maker
         assert_predicate ThumbnailMap.for(@user, [ "n-stale" ]).thumb("n-stale"), :showable?
       end
 
+      # AN HTML TILE TEXTTHUMB DREW MUST REDRAW (spec 2026-11-20-html-thumbnail-design.md). Every
+      # such row is stamped with TextThumb's revision; HtmlThumb's differs on purpose, so the row
+      # is stale rather than current, and the page render re-enqueues it. Set HtmlThumb's revision
+      # to TextThumb's and this goes red: the old source picture would be served forever.
+      test "an HTML tile TextThumb drew is stale and redraws as HtmlThumb's drawing" do
+        serve info("n-html", name: "viewer.html", token: "tok")
+        row = @user.maker_previews.create!(node_id: "n-html", version_id: "tok", kind: "thumbnail",
+                                           status: "ready",
+                                           renderer_revision: Maker::Previews::TextThumb::THUMBNAIL_REVISION)
+        row.asset.attach(io: StringIO.new("\x89PNG".b), filename: "t.png", content_type: "image/png")
+        assert_enqueued_with(job: Maker::GeneratePreviewJob) { ThumbnailMap.for(@user, [ "n-html" ]) }
+        assert_equal Maker::Previews::HtmlThumb::THUMBNAIL_REVISION, row.reload.renderer_revision
+      end
+
       # ------------------------------------------------------------------------------------
       # GAP 3: a row whose job was LOST. The backfill skipped every node whose row was current, so
       # a row wedged at `pending`/`processing` on current content never reached the

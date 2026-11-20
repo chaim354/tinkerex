@@ -22,7 +22,8 @@ module Maker
       # A TEXT EXTENSION WITH A RICHER RENDERER IS NOT THIS RENDERER'S TO CLAIM — `Registry`
       # merges its explicit format table OVER these, and `renderer_contract_test.rb` turns red if
       # that ever happens, rather than letting a shadowed claim sit here reading as coverage.
-      EXTENSIONS = Maker::FileAttachment::TEXT_EXTENSIONS
+      # `html` is the one today (HtmlThumb's fixed drawing, 2026-11-20), subtracted here.
+      EXTENSIONS = (Maker::FileAttachment::TEXT_EXTENSIONS - Maker::Previews::HtmlThumb::EXTENSIONS).freeze
 
       MAX_LINES = 16
       MAX_COLS  = 46 # ~fits a 512px page at the font size below; longer lines clip at the edge

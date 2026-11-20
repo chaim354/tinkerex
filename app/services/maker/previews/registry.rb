@@ -67,6 +67,10 @@ module Maker
         # DIFFERENT FORMAT than the name claimed — the same shape as GerberZip below. (Gerber also
         # refuses by content, but on EMPTINESS — a layer that plots nothing — never on identity.)
         "ai"    => Maker::Previews::Pdf,
+        # AN HTML PAGE'S TILE IS A DRAWING, NOT ITS SOURCE (2026-11-20). `html` is a text extension,
+        # so this entry is merged OVER TextThumb's — the one overlap, pinned in registry_test.rb —
+        # and TextThumb::EXTENSIONS subtracts it so the contract test agrees.
+        "html"  => Maker::Previews::HtmlThumb,
         # GERBER: tracespace under node (tools/gerber-svg), the SAME pinned bundle the browser's
         # viewer runs, so the tile and the viewer are one picture. DERIVED FROM THE `pcb` ROLE and
         # never listed twice — Gerber::EXTENSIONS is `ROLE_BY_EXT`'s pcb keys minus `gbrjob`, whose

@@ -44,6 +44,7 @@ module Maker
       # rather than on the constant.
       THUMBNAIL_REVISIONS = {
         "a.asm"   => 2, # TextThumb  — 62 extensions route here; 2 = the palette ink (2026-10-21)
+        "a.html"  => 3, # HtmlThumb  — a fixed drawing; never 1 or 2, TextThumb's stamps on HTML rows
         "a.bmp"   => 1, # ImageThumb — 6
         "a.iges"  => 2, # Mesh       — 14 (obj/step/stp/iges/igs/brep/gltf/…); 2 = ink on paper
         "a.pdf"   => 1, # Pdf

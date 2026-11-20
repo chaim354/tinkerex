@@ -26,6 +26,7 @@ module Maker
         Maker::Previews::ImageThumb => "sample.png", # libvips downscale
         Maker::Previews::Pdf     => "sample.pdf",    # pdfium page-1 render (PDFIUM_BIN in dev/CI)
         Maker::Previews::TextThumb => "sample.txt",  # first-lines "document" PNG via resvg
+        Maker::Previews::HtmlThumb => "sample.html", # the fixed "code" drawing via resvg
         # Mesh covers obj/step/stp/iges/igs and, since the viewer widening, gltf/glb/ply/off/dae/wrl/3ds/fbx/brep
         # (mesh_test.rb renders an OFF through the assimp plugin). OBJ is the fixture because it is the one extension
         # Mesh owns that needs no CAD kernel. F3D ships in the deploy image but is not a test-env

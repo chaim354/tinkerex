@@ -118,8 +118,8 @@ module Maker
       # entries while the vocabulary called 37 extensions text; the other 33 resolved to nil, which
       # `Enqueue.call` reads as "don't litter the table" — so no row, no job, a permanently blank
       # grid cell for every `.rb`, `.py`, `.gcode` and `.yml` in the library.
-      test "every text extension the vocabulary knows resolves to TextThumb" do
-        exts = Maker::FileAttachment::TEXT_EXTENSIONS
+      test "every text extension the vocabulary knows resolves to TextThumb, but HTML's" do
+        exts = Maker::FileAttachment::TEXT_EXTENSIONS - Maker::Previews::HtmlThumb::EXTENSIONS
         assert_operator exts.size, :>, 50, "the sweep needs a subject"
         exts.each do |ext|
           assert_equal Maker::Previews::TextThumb, Maker::Previews::Registry.for(ext), ext
@@ -135,12 +135,23 @@ module Maker
       #
       # `renderer_contract_test.rb` catches the same collision from the other side (TextThumb's own
       # EXTENSIONS must resolve back to TextThumb), so neither is the only thing standing.
-      test "no format renderer claims an extension the vocabulary calls text" do
+      #
+      # THE OVERLAP IS NO LONGER EMPTY, BY INTENT (2026-11-20): `html` is text on its page (the
+      # Source view) and a drawing on its tile (HtmlThumb). The tripwire now names that one
+      # extension, so the NEXT overlap still fails here and is confirmed rather than discovered.
+      test "the one text extension a format renderer claims is HTML's" do
         overlap = Maker::Previews::Registry::FORMAT_RENDERERS.keys &
                   Maker::FileAttachment::TEXT_EXTENSIONS
-        assert_empty overlap,
+        assert_equal Maker::Previews::HtmlThumb::EXTENSIONS.sort, overlap.sort,
                      "FORMAT_RENDERERS wins the merge, so these text extensions no longer get " \
-                     "TextThumb. Intended? Then drop them from TEXT_EXTENSIONS' inputs too."
+                     "TextThumb. Intended? Then say so here, and subtract them from TextThumb::EXTENSIONS."
+      end
+
+      # AN HTML FILE IS STILL TEXT ON ITS PAGE (the Source view) — only its TILE is the drawing.
+      test "an HTML file's tile is HtmlThumb's drawing, and TextThumb no longer claims it" do
+        assert_equal Maker::Previews::HtmlThumb, Maker::Previews::Registry.for_filename("viewer.html")
+        assert_not_includes Maker::Previews::TextThumb::EXTENSIONS, "html"
+        assert_includes Maker::FileAttachment::TEXT_EXTENSIONS, "html"
       end
 
       test "for_filename derives the extension from a filename or node path" do
