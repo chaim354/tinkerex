@@ -849,9 +849,12 @@ the page itself in a frame served by `SandboxController` (`GET /sandbox/:token/*
   `docs/superpowers/specs/2026-11-20-html-thumbnail-design.md`).** `Maker::Previews::HtmlThumb` claims
   `html` over `TextThumb` and draws one picture — an ink browser window, three dots, an orange `</>` —
   whatever the page holds; it never reads the bytes. `TextThumb::EXTENSIONS` subtracts it, or the
-  contract test goes red. **Its `THUMBNAIL_REVISION` is never 1 or 2**: `TextThumb` stamped HTML rows
-  with those, and a row is current when its revision EQUALS the renderer's, so either value serves the
-  old source picture forever (§14h). Pinned by `thumbnail_map_test.rb`, red on that mutation. It
+  contract test goes red. **Its `THUMBNAIL_REVISION` is never 1, 2 or 3** (it is 4): `TextThumb`
+  stamped HTML rows with all three — 3 while the reverted Shop manual redesign was deployed — and a row
+  is current when its revision EQUALS the renderer's, so any of them serves a source picture forever
+  (§14h). It shipped at 3 and one tile on share kept the redesign's picture. Pinned by
+  `thumbnail_map_test.rb` (each stamp must turn its row `rebuilding`) and `thumbnail_revision_test.rb`'s
+  BURNED table. It
   rasterises with **`stylesheet: nil`** (Gerber's opt-out: the default pins every stroke to 1.5px and
   made the window a hairline) and draws `</>` in strokes, never a `<text>` whose face the box picks.
 

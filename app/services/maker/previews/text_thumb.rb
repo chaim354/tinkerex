@@ -35,6 +35,10 @@ module Maker
       #   1 -> (undeclared — `Enqueue::BASE_REVISION`) white page, cool `#1c2230` ink.
       #   2 -> the palette's ink on paper (2026-10-21): `Palette::PAPER` and `Palette::INK`; was a
       #        cool #1c2230.
+      #   3 -> SPENT. The Shop manual redesign (0edba844, Libre Franklin / Courier Prime) bumped to
+      #        3 and was DEPLOYED; its revert (7b04b903, 2026-11-19) came back to 2, but rows it drew
+      #        still say 3. The next bump is 4 — returning to 3 would serve the reverted look as
+      #        current (thumbnail_revision_test.rb's BURNED table).
       THUMBNAIL_REVISION = 2
 
       # One kind (`thumbnail`); the signature matches the measurable renderers' so

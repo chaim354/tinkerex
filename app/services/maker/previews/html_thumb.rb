@@ -24,11 +24,14 @@ module Maker
       AMBER = "#e0a526".freeze
       SAGE = "#6b8f5e".freeze
 
-      # NEVER 1 OR 2 (§14h). Before this renderer, TextThumb drew every HTML tile and stamped it
-      # with ITS revision (1, then 2). A stored row is current when its revision EQUALS the
-      # renderer's (`Enqueue.revision_current?`), so either value here would serve the old
-      # source-text picture forever. At 3 every one of those rows is stale and redraws.
-      THUMBNAIL_REVISION = 3
+      # NEVER 1, 2 OR 3 (§14h). Before this renderer, TextThumb drew every HTML tile and stamped it
+      # with ITS revision: 1, then 2, and 3 while the Shop manual redesign (0edba844) was deployed,
+      # before its revert (7b04b903) took TextThumb back to 2. A stored row is current when its
+      # revision EQUALS the renderer's (`Enqueue.revision_current?`), so any of those here serves a
+      # source-text picture forever. This shipped at 3 and one HTML tile on share kept the
+      # redesign's picture (measured 2026-11-20); at 4 every one of them is stale and redraws.
+      # `thumbnail_revision_test.rb`'s BURNED table holds all three.
+      THUMBNAIL_REVISION = 4
 
       def payload_revision(_kind) = THUMBNAIL_REVISION
 

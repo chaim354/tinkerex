@@ -21,6 +21,14 @@
 > so. `measure_controller.js` branches on NO file type — a fifth format is a server-side traversal
 > and not a line of JavaScript, and it should stay that way.
 
+- **A REVISION NUMBER ONCE DEPLOYED IS SPENT, EVEN WHEN THE CHANGE IS REVERTED (2026-11-20).** A
+  stored row keeps the revision it was drawn at and is current when that EQUALS the renderer's, so
+  a renderer that comes back to a number some deployed build stamped serves that build's output as
+  current, forever. A revert therefore never frees its number: the next bump moves PAST it. Found when
+  the Shop manual redesign (0edba844) took `TextThumb` 2 -> 3, was deployed and reverted, and
+  `HtmlThumb` then shipped at 3 — one HTML tile on share kept the redesign's picture.
+  `thumbnail_revision_test.rb`'s BURNED table lists the spent numbers; extend it when a deployed bump
+  is reverted. The same holds for every `PAYLOAD_REVISION`.
 - **A CHANGE IN `Geometry` MUST BUMP EVERY FORMAT'S `PAYLOAD_REVISION`, NOT ONE.** Each format
   declares its own and `Enqueue` compares it per row, so a fix to the shared `simplify` that bumps
   only `LbrnGeometry` leaves every already-measured `.dxf` and `.svg` serving the old algorithm

@@ -247,18 +247,33 @@ module Maker
         assert_predicate ThumbnailMap.for(@user, [ "n-stale" ]).thumb("n-stale"), :showable?
       end
 
-      # AN HTML TILE TEXTTHUMB DREW MUST REDRAW (spec 2026-11-20-html-thumbnail-design.md). Every
-      # such row is stamped with TextThumb's revision; HtmlThumb's differs on purpose, so the row
-      # is stale rather than current, and the page render re-enqueues it. Set HtmlThumb's revision
-      # to TextThumb's and this goes red: the old source picture would be served forever.
-      test "an HTML tile TextThumb drew is stale and redraws as HtmlThumb's drawing" do
-        serve info("n-html", name: "viewer.html", token: "tok")
-        row = @user.maker_previews.create!(node_id: "n-html", version_id: "tok", kind: "thumbnail",
-                                           status: "ready",
-                                           renderer_revision: Maker::Previews::TextThumb::THUMBNAIL_REVISION)
-        row.asset.attach(io: StringIO.new("\x89PNG".b), filename: "t.png", content_type: "image/png")
-        assert_enqueued_with(job: Maker::GeneratePreviewJob) { ThumbnailMap.for(@user, [ "n-html" ]) }
-        assert_equal Maker::Previews::HtmlThumb::THUMBNAIL_REVISION, row.reload.renderer_revision
+      # AN HTML TILE TEXTTHUMB DREW MUST REDRAW (spec 2026-11-20-html-thumbnail-design.md), AT
+      # EVERY REVISION TEXTTHUMB EVER STAMPED — not only the one it declares today. Before
+      # HtmlThumb, TextThumb drew every HTML tile: at 1, at 2, and at 3 while the Shop manual
+      # redesign (0edba844) was deployed, before its revert (7b04b903) took TextThumb back to 2.
+      # HtmlThumb shipped at 3, and on share one HTML row stamped 3 by that redesign read as
+      # current and kept its source picture (measured 2026-11-20). Any of these three values in
+      # HtmlThumb::THUMBNAIL_REVISION turns this red.
+      TEXT_THUMB_STAMPS = [ 1, 2, 3 ].freeze
+
+      test "an HTML tile TextThumb drew, at any revision it ever stamped, redraws as HtmlThumb's drawing" do
+        TEXT_THUMB_STAMPS.each do |stamped|
+          id = "n-html-#{stamped}"
+          serve info(id, name: "viewer.html", token: "tok")
+          row = @user.maker_previews.create!(node_id: id, version_id: "tok", kind: "thumbnail",
+                                             status: "ready", renderer_revision: stamped)
+          row.asset.attach(io: StringIO.new("\x89PNG".b), filename: "t.png", content_type: "image/png")
+          # WHAT A REDRAW CHANGES, NOT THE REVISION ALONE: with HtmlThumb at the stamp, a current row
+          # keeps that very number, so comparing it to HtmlThumb's passes over the bug (it did, on
+          # the first draft of this loop). A redraw turns the row `rebuilding` and queues one job.
+          queue_adapter.enqueued_jobs.clear
+          ThumbnailMap.for(@user, [ id ])
+          row.reload
+          assert_equal "rebuilding", row.status,
+                       "an HTML row TextThumb stamped #{stamped} was read as current: no redraw"
+          assert_equal Maker::Previews::HtmlThumb::THUMBNAIL_REVISION, row.renderer_revision
+          assert_enqueued_jobs 1, only: Maker::GeneratePreviewJob
+        end
       end
 
       # ------------------------------------------------------------------------------------
