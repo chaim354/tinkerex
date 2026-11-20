@@ -8,6 +8,11 @@
 
 **Tech Stack:** Rails 8, Minitest, resvg (already shipped), `Maker::Previews::Palette`.
 
+> **Amended in the build (commit "The HTML tile draws at its real stroke widths and needs no font"):**
+> Task 2's code below is the first build. Rendering it showed a hairline window, so `render` passes
+> `stylesheet: nil` (Gerber's opt-out) and the `</>` is two polylines and a line, not a `<text>`.
+> `app/services/maker/previews/html_thumb.rb` and the spec are the current truth.
+
 Spec: `docs/superpowers/specs/2026-11-20-html-thumbnail-design.md`. Run Ruby from the worktree root; a bare `bin/rails test` needs `LIBRARY_PATH` (memory: bare-rails-test-needs-library-path), so every test command below is prefixed with `LIBRARY_PATH=$(mktemp -d)`.
 
 ---
