@@ -121,6 +121,99 @@ module Web
       assert_empty response.body, "when accelerated Rack replaces the body -- WE must not serve"
     end
 
+    # --- HTTP Range (2026-11-20, the video player) -----------------------------------------
+    #
+    # A `<video>` asks for byte ranges before it will play — Safari's first request is
+    # `bytes=0-1`, and a 200 to it means no playback at all — and every seek is another range.
+    # `send_file` answers none of them, so FileDelivery#answer_range does, and these drive it
+    # through the real route. Every byte of DIGITS is readable by position, so a slice that is off
+    # by one shows up as the wrong digits rather than as a plausible body of the right length.
+    DIGITS = ("0123456789" * 10).freeze
+
+    test "a video is served inline and says it takes ranges" do
+      id = index!("build.mp4", DIGITS)
+      get blob_file_path(id)
+
+      assert_response :success
+      assert_equal "video/mp4", response.media_type
+      assert_match(/\Ainline/, response.headers["Content-Disposition"])
+      assert_equal "bytes", response.headers["Accept-Ranges"]
+      assert_equal DIGITS, response.body
+    end
+
+    test "one range is a 206 carrying exactly those bytes, under the whole file's policy" do
+      id = index!("build.mp4", DIGITS)
+      get blob_file_path(id), headers: { "Range" => "bytes=12-25" }
+
+      assert_response :partial_content
+      assert_equal "bytes 12-25/100", response.headers["Content-Range"]
+      assert_equal "14", response.headers["Content-Length"]
+      assert_equal DIGITS[12..25], response.body
+      assert_equal "video/mp4", response.media_type
+      assert_match(/\Ainline/, response.headers["Content-Disposition"])
+      assert_equal "nosniff", response.headers["X-Content-Type-Options"]
+    end
+
+    test "Safari's probe, an open end, a suffix and an end past the file all answer as ranges" do
+      id = index!("build.mp4", DIGITS)
+      { "bytes=0-1" => 0..1, "bytes=90-" => 90..99, "bytes=-5" => 95..99, "bytes=95-500" => 95..99 }.each do |header, range|
+        get blob_file_path(id), headers: { "Range" => header }
+        assert_response :partial_content, header
+        assert_equal "bytes #{range.begin}-#{range.end}/100", response.headers["Content-Range"], header
+        assert_equal DIGITS[range], response.body, header
+      end
+    end
+
+    # FileSlice reads 64 KiB at a time, so a range that starts and ends inside different reads is
+    # the case a wrong `left` arithmetic gets wrong; the 100-byte file above never takes a second read.
+    test "a range spanning several reads is exact at both ends" do
+      bytes = Random.new(7).bytes(200_000)
+      id = index!("long.mp4", bytes)
+      get blob_file_path(id), headers: { "Range" => "bytes=70000-140000" }
+
+      assert_response :partial_content
+      assert_equal "70001", response.headers["Content-Length"]
+      assert_equal bytes.byteslice(70_000, 70_001), response.body.b
+    end
+
+    test "a range wholly past the end is a 416 that names the size" do
+      id = index!("build.mp4", DIGITS)
+      get blob_file_path(id), headers: { "Range" => "bytes=100-" }
+
+      assert_response :range_not_satisfiable
+      assert_equal "bytes */100", response.headers["Content-Range"]
+    end
+
+    test "several ranges, a unit that is not bytes, or an If-Range get the whole file" do
+      id = index!("build.mp4", DIGITS)
+      [ { "Range" => "bytes=0-1,5-6" }, { "Range" => "lines=1-2" },
+        { "Range" => "bytes=0-1", "If-Range" => '"some-etag"' } ].each do |headers|
+        get blob_file_path(id), headers: headers
+        assert_response :success, headers.inspect
+        assert_equal DIGITS, response.body, headers.inspect
+      end
+    end
+
+    test "a range of an attachment is still an attachment" do
+      id = index!("bracket.stl", DIGITS)
+      get blob_file_path(id, download: 1), headers: { "Range" => "bytes=0-9" }
+
+      assert_response :partial_content
+      assert_match(/\Aattachment/, response.headers["Content-Disposition"])
+      assert_equal DIGITS[0..9], response.body
+    end
+
+    # THE PARTIAL BODY HAS NO `to_path`, ON PURPOSE: a proxy handed the path would send the whole
+    # file under our 206. The whole file keeps its acceleration (the test above this block).
+    test "a range is served by Rails even where a sendfile variation is configured" do
+      id = index!("accel.mp4", DIGITS)
+      get blob_file_path(id), headers: { "Range" => "bytes=10-19" }, env: { "sendfile.type" => "x-sendfile" }
+
+      assert_response :partial_content
+      assert_nil response.headers["x-sendfile"]
+      assert_equal DIGITS[10..19], response.body
+    end
+
     test "another user's node is 404, never their bytes" do
       id = index!("mine.stl", "secret")
       other = User.create!(email: "o-#{SecureRandom.hex(4)}@example.com",

@@ -1,0 +1,13 @@
+<%# locals: (name:, blob_url:) %>
+<%# A video the browser plays itself (2026-11-20), straight from the byte route like the :image and
+    :pdf branches: FileDelivery serves `video/mp4` and `video/webm` inline, and answers the byte
+    ranges a player asks for — on share and chunk_remote itself, on s3 by redirecting to the store,
+    which always has. Shared by the maker's file page, the model pane, an embedded file block and a
+    visitor's page: `blob_url` is /files/:id/blob for the owner and the public route for a visitor.
+
+    `preload="metadata"` fetches the header and the first frame, never the whole file, so opening
+    the page of a long video costs a few ranges until Play is pressed. `playsinline` keeps an
+    iPhone from going full screen on Play. No poster: there is no server-made frame for a video
+    (nothing in the image renders one), and the browser's first frame is what preload shows. %>
+<video src="<%= blob_url %>" class="preview-video" controls preload="metadata" playsinline
+       aria-label="<%= name %> (video)"></video>

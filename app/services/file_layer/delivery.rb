@@ -27,9 +27,21 @@ module FileLayer
   # path, so it does not certify that its path is inside the library root — `Share#download` does,
   # by resolving through the same #absolute_path #read uses. The controller must never construct
   # one, and must never validate one either: one choke point, or two that drift.
+  #
+  # A STREAM MAY ALSO NAME ITS SIZE AND HAND BACK ANY BYTE RANGE OF ITSELF (2026-11-20, the video
+  # player), and the two travel together. A `<video>` element asks for ranges before it will play
+  # (Safari refuses a file whose server answers its `bytes=0-1` with a 200) and every seek is another
+  # one, so FileDelivery answers an HTTP Range request from `slice.call(first..last)` — an enumerator
+  # of exactly those bytes — instead of reading everything before them. chunk_remote's manifest knows
+  # every chunk's length, so it can say which chunks a range covers and fetch only those. Both nil
+  # means "the whole file only", which is what a Stream built without them still is. The other two
+  # variants need neither: a Redirect's store answers ranges itself, and a SendFile's path is a file
+  # the controller can seek in.
   module Delivery
     Redirect = Data.define(:url)
     SendFile = Data.define(:path)
-    Stream = Data.define(:enum)
+    Stream = Data.define(:enum, :size, :slice) do
+      def initialize(enum:, size: nil, slice: nil) = super
+    end
   end
 end

@@ -190,8 +190,16 @@ module FileLayer
       manifest = manifest_for(user, node.current_version_id)
       raise NotFound, "no manifest for node #{node_id.inspect}" if manifest.empty?
 
+      # ONE PRESIGN SERVES BOTH SHAPES, AND IT STAYS EAGER: a sync server that is down must surface
+      # here as FetchError (a 503 with headers still unsent), not mid-body. A ranged request pays
+      # the same one POST a whole download does, then fetches only the chunks its range covers.
       urls = presign(user, manifest.map(&:chunk_hash))
-      Delivery::Stream.new(enum: Enumerator.new { |y| manifest.each { |c| y << fetch_chunk(c, urls) } })
+      Delivery::Stream.new(
+        enum: Enumerator.new { |y| manifest.each { |c| y << fetch_chunk(c, urls) } },
+        # SUMMED OVER ENTRIES, for #read's reason: the stream above emits every entry, repeats included.
+        size: manifest.sum(&:length),
+        slice: ->(range) { byte_range(manifest, urls, range) }
+      )
     end
 
     # ── METADATA MUTATIONS: DECIDED LOCALLY, PERFORMED REMOTELY ──────────────────────────────
@@ -418,6 +426,37 @@ module FileLayer
       raise NotFound, "chunk #{chunk.chunk_hash} could not be fetched" if bytes.nil?
 
       bytes
+    end
+
+    # THE BYTES `first..last` OF THE STREAM #download EMITS, fetching ONLY the chunks they fall in
+    # (2026-11-20, the video player: a seek near the end of a long video must not pull everything
+    # before it through Rails). Positions come from the manifest's LENGTHS summed in seq order —
+    # the very concatenation the whole-file enumerator emits — never from the mirrored `offset`
+    # column, so a range and the whole file cannot disagree about where a byte is.
+    #
+    # A CHUNK WHOSE BYTES ARE NOT ITS RECORDED LENGTH RAISES rather than being sliced: every
+    # position after it would be wrong, and the controller has already promised a Content-Length.
+    # A lazy enumerator, like the whole-file one, so the fetches happen as the body is written.
+    def byte_range(manifest, urls, range)
+      position = 0
+      covering = manifest.filter_map do |chunk|
+        start = position
+        position += chunk.length
+        [ chunk, start ] if start <= range.end && position > range.begin
+      end
+
+      Enumerator.new do |y|
+        covering.each do |chunk, start|
+          bytes = fetch_chunk(chunk, urls)
+          unless bytes.bytesize == chunk.length
+            raise NotFound, "chunk #{chunk.chunk_hash} is #{bytes.bytesize} bytes; the manifest says #{chunk.length}"
+          end
+
+          from = [ range.begin - start, 0 ].max
+          to = [ range.end - start, chunk.length - 1 ].min
+          y << bytes.byteslice(from, to - from + 1)
+        end
+      end
     end
 
     # `#move`'S OWN DEFERRAL CHECK, KEPT OUT OF `#refresh!` ITSELF SO `#refresh!` STAYS THE ONE

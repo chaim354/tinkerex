@@ -110,6 +110,22 @@ module Web
       end
     end
 
+    # `media-src`, FOR THE VIDEO PLAYER (2026-11-20): a `<video>` follows the same 302 to the bucket
+    # that the viewers' fetches do, and an absent directive falls back to `default-src 'self'`. Pinned
+    # per leg the way connect-src is — the s3 leg must name the store, the other two nothing but
+    # 'self' — and on BOTH page kinds, since a visitor's page plays the same video.
+    test "media-src names the presigned origin on a presignable backend and only 'self' elsewhere" do
+      port = FileLayer.current
+      expected = port.capabilities.presignable? ? "'self' #{port.presigned_origin}" : "'self'"
+
+      [ files_path, public_explore_path ].each do |path|
+        get path
+        assert_response :success
+        csp = response.headers["Content-Security-Policy-Report-Only"]
+        assert_equal expected, csp[/media-src ([^;]+)/, 1], path
+      end
+    end
+
     test "frame-ancestors is 'self', not 'none' — the app frames its own PDF previews" do
       # files/show and models/show embed blob_file_path in a same-origin <iframe>. 'none' would
       # refuse to let our own page frame our own endpoint, blanking every PDF preview the moment

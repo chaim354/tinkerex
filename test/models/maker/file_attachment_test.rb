@@ -81,6 +81,29 @@ module Maker
       assert_equal :image, kind.send(:preview_kind, "lid.png")
     end
 
+    # THE BROWSER'S VIDEO LIST IS NOT A ROLE EITHER (2026-11-20): a player on the file page moves no
+    # file, so the three stay `other` and file where they always did. NAMED, so shrinking the
+    # constant goes red here where a sweep over it would pass over a smaller set.
+    test "the videos a browser plays are inline and keep the role they had" do
+      %w[build.mp4 clip.M4V demo.webm].each do |name|
+        assert Maker::FileAttachment.inline_video?(name), "#{name} plays in the browser"
+        assert_equal "other", Maker::FileAttachment.role_for(name), "#{name} must not move on the NAS"
+      end
+      assert_not Maker::FileAttachment.inline_video?("IMG_0001.MOV"), "a .mov's codec decides; no promise"
+      assert_not Maker::FileAttachment.inline_video?("mp4"), "an extensionless name is not a video"
+    end
+
+    # THE PAGE OFFERS A PLAYER ONLY WHERE THE BYTE ROUTE WILL SERVE INLINE. `<video>` plays an
+    # attachment just the same today, so a type missing from the allowlist would look fine — and be
+    # the one video the browser was told to save rather than show, and the one whose S3 URL is signed
+    # as an attachment. Asked of Marcel, the same question FileDelivery asks.
+    test "every inline video's content type is one FileDelivery serves inline" do
+      Maker::FileAttachment::INLINE_VIDEO_EXTS.each do |ext|
+        type = Marcel::MimeType.for(name: "clip.#{ext}")
+        assert_includes FileDelivery::SAFE_INLINE_TYPES, type, ".#{ext} (#{type}) would be served as an attachment"
+      end
+    end
+
     test "vector and laser extensions derive their distinct roles" do
       assert_equal "vector", Maker::FileAttachment.role_for("panel.svg")
       assert_equal "vector", Maker::FileAttachment.role_for("Panel.DXF")

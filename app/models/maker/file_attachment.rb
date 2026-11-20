@@ -219,6 +219,23 @@ module Maker
       INLINE_IMAGE_EXTS.include?(File.extname(name.to_s).downcase.delete("."))
     end
 
+    # WHAT A BROWSER CAN PLAY IN A `<video>` ELEMENT (2026-11-20) — the file page's :video branch
+    # asks this, and for INLINE_IMAGE_EXTS' reason it is not a role: it is a question about the
+    # BROWSER, not about where a file files, so these three keep the `other` role they had and
+    # nothing moves on the NAS. `mp4` and `m4v` are one container (Marcel answers `video/mp4` for
+    # both) and `webm` is the other one every target browser plays.
+    #
+    # `.mov` IS DELIBERATELY ABSENT. It is what an iPhone writes, but whether a browser plays one
+    # depends on the codec inside — Safari plays HEVC, Firefox does not, Chrome only with hardware
+    # decoding — so a player on every `.mov` page would promise a picture many visitors cannot see.
+    # FileDelivery's inline allowlist names the same two content types, and file_attachment_test.rb
+    # pins that the two lists agree.
+    INLINE_VIDEO_EXTS = %w[mp4 m4v webm].freeze
+
+    def self.inline_video?(name)
+      INLINE_VIDEO_EXTS.include?(File.extname(name.to_s).downcase.delete("."))
+    end
+
     # PHOTO_EXTS — the image formats a CAMERA writes. A tile of one is cropped to fill its stage
     # (`.thumb.photo`); PNG, GIF, WebP, BMP and TIFF keep `contain`, being more often screenshots,
     # renders or scans, where a crop cuts off the point. A DISPLAY choice only: the role stays
