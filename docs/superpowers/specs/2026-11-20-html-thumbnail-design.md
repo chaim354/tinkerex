@@ -55,6 +55,12 @@ pins every stroke to 1.5px for hairline CAD sources, and through it the window c
 
 The mockup is the reference picture: `tmp/html-thumb-mockups.png`, option 1 (not committed).
 
+> **Amended 2026-11-20, after deploy: the revision is 4, not 3.** This section counted only the
+> revisions `TextThumb` declares in main's history (1 and 2). The Shop manual redesign (0edba844)
+> had taken it to 3, been deployed, and been reverted (7b04b903), so HTML rows stamped 3 existed;
+> on share one of them read as current under `HtmlThumb` 3 and kept its source picture. A deployed
+> number is spent even when reverted (measure-view.md).
+
 ### Why revision 3, not 1
 
 A stored thumbnail is current only when its `renderer_revision` **equals** the revision of the

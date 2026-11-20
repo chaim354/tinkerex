@@ -44,7 +44,7 @@ module Maker
       # rather than on the constant.
       THUMBNAIL_REVISIONS = {
         "a.asm"   => 2, # TextThumb  — 62 extensions route here; 2 = the palette ink (2026-10-21)
-        "a.html"  => 3, # HtmlThumb  — a fixed drawing; never 1 or 2, TextThumb's stamps on HTML rows
+        "a.html"  => 4, # HtmlThumb  — a fixed drawing; never 1, 2 or 3 (BURNED below)
         "a.bmp"   => 1, # ImageThumb — 6
         "a.iges"  => 2, # Mesh       — 14 (obj/step/stp/iges/igs/brep/gltf/…); 2 = ink on paper
         "a.pdf"   => 1, # Pdf
@@ -58,6 +58,29 @@ module Maker
         "a.gtl"   => 1, # Gerber     — every pcb extension but gbrjob (23 of them)
         "a.zip"   => 1  # GerberZip
       }.freeze
+
+      # A NUMBER ONCE DEPLOYED IS SPENT, EVEN WHEN THE CHANGE IS REVERTED. A stored row keeps the
+      # revision it was drawn at, and a row is current when that EQUALS the renderer's — so a
+      # renderer that returns to a number some deployed build already stamped serves that build's
+      # pictures as current, forever. Measured 2026-11-20: the Shop manual redesign (0edba844)
+      # took TextThumb 2 -> 3 and was deployed, its revert (7b04b903) went back to 2, and rows it
+      # drew still say 3. HtmlThumb then shipped at 3 and one HTML tile kept the redesign's source
+      # picture. A bump moves PAST every number listed here; extend the list when a bump is
+      # deployed and reverted.
+      BURNED = {
+        "a.asm"  => [ 3 ],       # TextThumb: the reverted Shop manual redesign's revision
+        "a.html" => [ 1, 2, 3 ]  # HtmlThumb: every revision TextThumb stamped on HTML rows
+      }.freeze
+
+      test "no renderer returns to a revision a deployed build already stamped" do
+        BURNED.each do |filename, spent|
+          current = Enqueue.revision_for_name(filename, "thumbnail")
+          assert_not_includes spent, current,
+                              "#{filename} is at revision #{current}, which a deployed build already " \
+                              "stamped on stored rows; those rows would read as current. Move past " \
+                              "#{spent.max}."
+        end
+      end
 
       test "a renderer's thumbnail revision moves only when this pin moves with it" do
         THUMBNAIL_REVISIONS.each do |filename, expected|
