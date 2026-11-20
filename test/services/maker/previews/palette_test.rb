@@ -23,8 +23,9 @@ module Maker
       CRATE = Rails.root.join("tools/stl-thumbnailer/src/lib.rs")
       HEX = /\A#\h{6}\z/
 
-      test "the palette is three lowercase six-digit hex colours" do
-        { PAPER: Palette::PAPER, INK: Palette::INK, MATERIAL: Palette::MATERIAL }.each do |name, value|
+      test "the palette is four lowercase six-digit hex colours" do
+        { PAPER: Palette::PAPER, INK: Palette::INK, MATERIAL: Palette::MATERIAL,
+          ACCENT: Palette::ACCENT }.each do |name, value|
           assert_match HEX, value, "Palette::#{name}"
           assert_equal value.downcase, value, "Palette::#{name} — the comparisons below are exact"
         end
@@ -56,6 +57,17 @@ module Maker
         assert_not_nil fg, "the Paper :root block no longer defines --fg"
         assert_equal Palette::INK, fg.strip.downcase,
                      "Paper's --fg is #{fg.strip}; Palette::INK is #{Palette::INK}"
+      end
+
+      # PAPER'S, LIKE INK: the card is light in both themes (design-system.md rule 5), so the
+      # drawing's orange is the light theme's accent wherever it is shown.
+      test "ACCENT is Paper's --accent, the first :root block's" do
+        block = css[/^\s*:root\s*\{(.*?)^\s*\}/m, 1]
+        assert_not_nil block, "application.css has no :root { … } block"
+        accent = block[/^\s*--accent:\s*([^;]+);/, 1]
+        assert_not_nil accent, "the Paper :root block no longer defines --accent"
+        assert_equal Palette::ACCENT, accent.strip.downcase,
+                     "Paper's --accent is #{accent.strip}; Palette::ACCENT is #{Palette::ACCENT}"
       end
 
       test "the STL crate's BG is Palette::PAPER" do
@@ -100,6 +112,16 @@ module Maker
         assert_equal [ Palette::INK, Palette::PAPER ].sort, painted.sort
 
         assert_equal [ Palette::INK, Palette::PAPER ].sort, svg.scan(/#\h{6}\b|#\h{3}\b/).uniq.sort
+      end
+
+      test "HtmlThumb paints the palette, its two dots, and no other colour" do
+        svg = HtmlThumb.to_svg(512)
+        expected = [ Palette::PAPER, Palette::INK, Palette::ACCENT, HtmlThumb::AMBER, HtmlThumb::SAGE ].sort
+
+        painted = svg.scan(/\b(?:fill|stroke|stop-color|color)="([^"]*)"/).flatten.uniq
+        assert_not_empty painted, "HtmlThumb's SVG paints nothing this scan can see"
+        assert_equal expected, painted.sort
+        assert_equal expected, svg.scan(/#\h{6}\b|#\h{3}\b/).uniq.sort
       end
 
       test "Mesh hands f3d Palette::PAPER as the ground and Palette::MATERIAL as the fallback colour" do

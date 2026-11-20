@@ -24,14 +24,19 @@ module Maker
     # these and the CSS tokens — equal, STATICALLY: the CI runner image bakes the binary at image
     # build time, so no Ruby test may assert what an STL render's pixels are.
     #
+    # ACCENT IS PAPER'S `--accent`, drawn only by `HtmlThumb` — its `</>` and first title-bar dot
+    # (2026-11-20). Paper's because the card is light in both themes; `palette_test.rb` holds the
+    # two equal, as it does INK and `--fg`.
+    #
     # CHANGING A VALUE HERE IS A RE-RENDER. Bump the `THUMBNAIL_REVISION` of every renderer that
-    # paints it (§14h) — `Stl` (and `ThreeMf` with it), `Mesh`, `TextThumb` — or the library keeps
-    # the old picture forever; and a MATERIAL change also needs the crate rebuilt (measure-view.md:
-    # ship both or neither).
+    # paints it (§14h) — `Stl` (and `ThreeMf` with it), `Mesh`, `TextThumb`, `HtmlThumb` — or the
+    # library keeps the old picture forever; and a MATERIAL change also needs the crate rebuilt
+    # (measure-view.md: ship both or neither).
     module Palette
       PAPER = "#ffffff".freeze
       INK = "#1b1c19".freeze
       MATERIAL = "#7f7b73".freeze
+      ACCENT = "#c2410c".freeze
     end
   end
 end
