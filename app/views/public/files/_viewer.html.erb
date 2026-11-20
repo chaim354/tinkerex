@@ -20,6 +20,8 @@
     <%= render "files/viewers/image", name: node.name, blob_url: blob %>
   <% elsif kind == :pdf %>
     <%= render "files/viewers/pdf", name: node.name, blob_url: blob %>
+  <% elsif kind == :video %>
+    <%= render "files/viewers/video", name: node.name, blob_url: blob %>
   <% elsif kind == :kicanvas %>
     <%= render "files/viewers/kicanvas", named_url: named, controls: "full" %>
   <% elsif kind == :gerber %>

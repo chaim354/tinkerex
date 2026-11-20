@@ -278,6 +278,9 @@ module Web
       # 2026-10-21: the workbook viewer, files/viewers/_spreadsheet. The page renders only the shell
       # (the grid fetches its data), so a row with a content token is all it needs.
       file!("n-xlsx", "bom.xlsx", parent_node_id: folder.node_id)
+      # 2026-11-20: the video player, files/viewers/_video. A row with a content token is all the
+      # page needs; the player reads the bytes itself.
+      file!("n-video", "build.mp4", parent_node_id: folder.node_id)
       entry = @project.build_log_entries.create!(user: @user, body: "Cut the base tonight.",
                                                  logged_at: Time.current)
       entry.file_attachments.create!(user: @user, node_id: photo, role: "image", position: 0)
@@ -564,6 +567,7 @@ module Web
         "file detail (gerber)" => file_path("n-pcb-0"),
         "file detail (other)" => file_path("n-other"),
         "file detail (spreadsheet)" => file_path("n-xlsx"),
+        "file detail (video)" => file_path("n-video"),
         # 2026-11-19, embedded files: an HTML file's page (files/_html_view, files/viewers/_html), the
         # bare preview area a File block frames (files/embed, layouts/embed); its missing-file
         # answer is UNSWEPT_TEMPLATES' (a 404; FileEmbedTest checks its body).

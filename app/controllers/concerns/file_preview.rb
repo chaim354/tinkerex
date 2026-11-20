@@ -194,6 +194,11 @@ module FilePreview
     # PDF before the :thumbnail branch: the detail view EMBEDS the whole PDF for the browser's own
     # viewer (a full, scrollable preview), while pdf is ALSO in Registry for a page-1 grid thumbnail.
     return :pdf   if ext == "pdf"
+    # A VIDEO THE BROWSER PLAYS ITSELF (2026-11-20), from the byte route like :image and :pdf — and
+    # like :image, THE BROWSER'S LIST rather than a role. No renderer is registered for these, so
+    # without this line they fell through to :other and a Download button. Order is not
+    # load-bearing: no other branch claims these three extensions.
+    return :video if Maker::FileAttachment.inline_video?(name)
     # BEFORE the :text branch, matching the comment on :measure/:image/:pdf above — though for a
     # different reason: these two can never reach that branch anyway (they are outside ROLE_BY_EXT,
     # so Maker::FileAttachment.text? has never heard of them). The early return is here so the

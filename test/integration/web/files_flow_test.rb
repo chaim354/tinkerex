@@ -263,6 +263,17 @@ module Web
       assert_no_match(/No inline preview/, response.body)
     end
 
+    # A VIDEO PLAYS ON ITS OWN PAGE (2026-11-20) instead of offering only a Download: the player
+    # reads the byte route, which serves it inline (share_delivery_test.rb holds the ranges).
+    test "an mp4 detail page plays the video from the byte route" do
+      sign_in
+      node_id = upload("build.mp4", "fake mp4 bytes".b)
+
+      get file_path(node_id)
+      assert_response :success
+      assert_select "video.preview-video[controls][preload=metadata][src=?]", blob_file_path(node_id)
+    end
+
     # ---- Interactive 3D viewer — client-side, supersedes the static thumbnail ----
 
     test "an STL detail page renders the 3D viewer button-gated (lazy), not auto-loading" do

@@ -31,6 +31,7 @@ module Web
       @laser = make_file!(@user, "sign.lbrn2", @f[:folder], body: "<LightBurnProject/>")
       @gtl   = make_file!(@user, "driver.gtl", @f[:models], body: "%FSLAX46Y46*%\nM02*\n")
       @doc   = make_file!(@user, "manual.pdf", @f[:folder], body: "%PDF-1.4\n")
+      @clip  = make_file!(@user, "build.mp4", @f[:folder], body: "fake mp4 bytes")
       # A CONTENT TOKEN IS WHAT PUTS A VIEWER ON THE PAGE AT ALL, and neither `create_node!` nor
       # PublicFixture#make_file! stamps one — the four S3-4 suites never needed it, because a
       # download reads `storage_path` and a README is read through the port. This page opens with
@@ -39,7 +40,7 @@ module Web
       # `content_token` is `content_hash` on share/s3 and `current_version_id` on chunk_remote
       # (§14a; template_hygiene_test.rb's own `file!` says the same). Stamped HERE rather than in
       # the shared fixture: four other suites assert about that fixture's contents.
-      [ @f[:base], @f[:pic], @f[:kicad], @f[:readme], @laser, @gtl, @doc ].each do |node|
+      [ @f[:base], @f[:pic], @f[:kicad], @f[:readme], @laser, @gtl, @doc, @clip ].each do |node|
         node.update!(content_hash: "h-#{node.node_id}", current_version_id: "v-#{node.node_id}")
       end
       # ONE READY THUMBNAIL, so the 3D viewer's poster takes its READY branch on the page this suite
@@ -142,6 +143,17 @@ module Web
       get view_path_for(@f[:kicad].node_id)
       assert_select "[data-kicanvas-url-value=?]",
                     public_file_path("ada", @project.slug, @f[:kicad].node_id, filename: "driver.kicad_sch")
+    end
+
+    # A VIDEO PLAYS FROM THE PUBLIC BYTE ROUTE (2026-11-20) — the shared files/viewers/_video partial
+    # takes its URL as a strict local, so the visitor's chain hands it the public one and the page
+    # names no private route.
+    test "a permitted video gets the player, pointed at the PUBLIC byte route" do
+      get view_path_for(@clip.node_id)
+
+      assert_response :success
+      assert_select "video.preview-video[controls][src=?]", public_file_path("ada", @project.slug, @clip.node_id)
+      assert_no_private_urls
     end
 
     # A JOB FILE'S BOARD IS FILTERED BY `permits?`, ONE SIBLING AT A TIME. The sibling walk is

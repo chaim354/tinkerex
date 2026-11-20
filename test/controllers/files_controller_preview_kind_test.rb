@@ -51,6 +51,14 @@ class FilesControllerPreviewKindTest < ActiveSupport::TestCase
     assert_equal :model3d, kind("bracket.stl")
   end
 
+  # THE `:video` BRANCH (2026-11-20). Until it existed these three fell through to `:other` and a
+  # Download button — no renderer claims them, so not even a thumbnail. `.mov` keeps that answer on
+  # purpose (Maker::FileAttachment::INLINE_VIDEO_EXTS says why).
+  test "a video the browser plays gets the player, and a .mov keeps the download" do
+    %w[build.mp4 clip.m4v demo.webm CAPS.MP4].each { |name| assert_equal :video, kind(name), name }
+    assert_equal :other, kind("IMG_0001.mov")
+  end
+
   # THE `:model3d` BRANCH, DERIVED FROM THE ONE VOCABULARY since 2026-09-06 — the same collapse the
   # `:text` branch got, and for the same reason: ModelsController#show offers the SAME viewer off
   # the SAME constant, so a literal here would let the file page and the model page disagree about

@@ -72,6 +72,8 @@ module FileLayer
             end
           elsif path.to_s.start_with?("/blob/")
             hash = path.split("/").last
+            # Every chunk GET, in order, so a ranged download can be held to the chunks it covers.
+            (@fetched ||= []) << hash
             if @blob_failure then [ 503, "text/plain", "try again" ]
             elsif @blobs.key?(hash) then [ 200, "application/octet-stream", @blobs[hash] ]
             else [ 404, "text/plain", "no" ]
@@ -123,6 +125,56 @@ module FileLayer
                                     chunk_hash: Digest::SHA256.hexdigest(tail), offset: 4, length: 4)
 
         assert_equal "AAAABBBB", adapter.read(@user, node_id: id)
+      end
+
+      # ── BYTE RANGES (2026-11-20, the video player) ──────────────────────────────────────────
+      #
+      # A three-chunk file, AAAA BBBB CCCC. The point of `slice` over skipping through the whole
+      # stream is the FETCH LIST: a seek into the last chunk of a long video must not pull every
+      # chunk before it through Rails, so each case asserts which chunks were fetched as well as
+      # which bytes came back.
+      def three_chunk_file!
+        id = create_file!(name: "clip.mp4", bytes: "AAAA")
+        version_id = @user.nodes.find_by(node_id: id).current_version_id
+        %w[BBBB CCCC].each.with_index(1) do |part, seq|
+          @blobs[Digest::SHA256.hexdigest(part)] = part.b
+          RemoteManifestChunk.create!(user_id: @user.id, version_id:, seq:,
+                                      chunk_hash: Digest::SHA256.hexdigest(part), offset: seq * 4, length: 4)
+        end
+        id
+      end
+
+      test "a download names its size and slices any range out of the chunks it covers" do
+        d = adapter.download(@user, node_id: three_chunk_file!, disposition: "inline")
+        assert_equal 12, d.size
+
+        hash = ->(part) { Digest::SHA256.hexdigest(part) }
+        { 5..9 => [ "BBBCC", %w[BBBB CCCC] ], 0..0 => [ "A", %w[AAAA] ], 11..11 => [ "C", %w[CCCC] ],
+          4..7 => [ "BBBB", %w[BBBB] ], 0..11 => [ "AAAABBBBCCCC", %w[AAAA BBBB CCCC] ] }.each do |range, (bytes, parts)|
+          @fetched = []
+          assert_equal bytes, d.slice.call(range).to_a.join, range.inspect
+          assert_equal parts.map(&hash), @fetched, "#{range.inspect} fetched chunks outside its range"
+        end
+      end
+
+      # POSITIONS ARE THE LENGTHS SUMMED IN ORDER, NOT THE MIRRORED `offset` COLUMN — a range and the
+      # whole file must agree about where a byte is, and only the lengths decide the whole file.
+      test "a range is positioned by the chunk lengths, whatever the offset column says" do
+        id = three_chunk_file!
+        RemoteManifestChunk.where(user_id: @user.id).update_all(offset: 0)
+        d = adapter.download(@user, node_id: id, disposition: "inline")
+
+        assert_equal "BBBCC", d.slice.call(5..9).to_a.join
+      end
+
+      # A chunk shorter than its recorded length would shift every byte after it, under a
+      # Content-Length the controller has already sent: raise, never slice.
+      test "a chunk whose bytes are not its recorded length raises rather than shifting the range" do
+        id = three_chunk_file!
+        RemoteManifestChunk.where(user_id: @user.id, seq: 1).update_all(length: 5)
+        d = adapter.download(@user, node_id: id, disposition: "inline")
+
+        assert_raises(FileLayer::NotFound) { d.slice.call(4..7).to_a }
       end
 
       # ── #put_chunk (CLAUDE.md §14a; Arc B Task 2) ─────────────────────────────────────────

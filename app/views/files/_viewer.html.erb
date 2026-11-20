@@ -30,6 +30,8 @@
   <%= render "files/viewers/image", name: viewer.node.name, blob_url: blob_file_path(viewer.node.node_id) %>
 <% elsif viewer.kind == :pdf %>
   <%= render "files/viewers/pdf", name: viewer.node.name, blob_url: blob_file_path(viewer.node.node_id) %>
+<% elsif viewer.kind == :video %>
+  <%= render "files/viewers/video", name: viewer.node.name, blob_url: blob_file_path(viewer.node.node_id) %>
 <% elsif viewer.kind == :kicanvas %>
   <%= render "files/viewers/kicanvas", controls: "full",
              named_url: named_blob_file_path(viewer.node.node_id, filename: viewer.node.name) %>
