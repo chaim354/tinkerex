@@ -153,6 +153,10 @@ module Web
 
       assert_response :success
       assert_select "video.preview-video[controls][src=?]", public_file_path("ada", @project.slug, @clip.node_id)
+      # "Use this frame as preview" is the maker's write (2026-11-22): a visitor's chain passes the
+      # partial no `preview_url:`, so neither the control nor its door reaches this page.
+      assert_select "[data-controller='videoframe']", 0
+      assert_select "button[data-action='videoframe#capture']", 0
       assert_no_private_urls
     end
 

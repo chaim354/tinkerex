@@ -160,6 +160,27 @@ module FilesHelper
     { thumbs_target: "cell", node_id:, ext: ext_label }
   end
 
+  # DOES THIS FILE'S TILE HOLD A PICTURE? A renderer claims its name, or the maker chose its picture
+  # in the browser — `thumb` is the page's CURRENT row for the node (ThumbnailMap, or the inspector's
+  # `current_thumbnail`), and a `viewer` row there is a picture of this content.
+  #
+  # THE SECOND HALF IS WHAT GIVES A VIDEO A TILE (2026-11-22). No renderer draws one (§9: the image
+  # ships no permissive frame decoder), so the Registry alone sends every video to the badge, and a
+  # frame chosen with "Use this frame as preview" was stored, current, and drawn nowhere. The six
+  # Library-side surfaces that branch before rendering files/_thumb — the grid, the list, both stack
+  # figures, the inspector and Recent's cards — ask this one question, so no two can disagree.
+  #
+  # `viewer?`, NOT "any row": a v1 client can create a row for a name no renderer handles, and its
+  # job writes `unsupported`; that row is no picture, and the badge already says so.
+  def thumb_cell?(name, thumb)
+    Maker::Previews::Registry.for_filename(name).present? || thumb&.viewer? == true
+  end
+
+  # A TILE THAT FILLS ITS STAGE ON THE PHOTO MATTE (`.thumb.photo`, design-system.md rule 5): a
+  # camera image, and a video, whose only tile is a frame of its footage. A frame is not ink on
+  # paper, so multiplying it onto the card would darken it on Graphite like any other photo.
+  def photo_tile?(name) = Maker::FileAttachment.photo?(name) || Maker::FileAttachment.inline_video?(name)
+
   # A FILE TILE IS A SELECTION ITEM FOR DETAILS (2026-10-21). A click opens the file
   # (fileopen_controller.js, through file_open_data) and a double-click opens it in a new tab; the
   # side panel opens from the file menu's Details, which dispatches `filemenu:details` on the tile and

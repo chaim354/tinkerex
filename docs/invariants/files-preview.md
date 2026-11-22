@@ -737,11 +737,50 @@ page, the model pane, an embedded file block and a visitor's page (`files/viewer
 - **`media-src` is `connect-src`'s lambda, not a copy of it.** A `<video>` follows the blob route's
   302 to the bucket just as the viewers' fetches do, and an absent `media-src` falls back to
   `default-src 'self'`.
-- **There is no grid thumbnail for a video, and that is a licence decision, not an omission.**
-  Nothing in the image can decode a frame: Debian's `ffmpeg` is built `--enable-gpl` (§9), so no
-  renderer is registered, `Registry.for` answers nil, and the grid shows the extension badge
-  ("Preview not supported"). On the file page `preload="metadata"` lets a desktop browser show the
-  first frame without a poster (iOS Safari draws nothing until Play).
+- **No RENDERER draws a video, and that is a licence decision, not an omission.** Nothing in the
+  image can decode a frame: Debian's `ffmpeg` is built `--enable-gpl` (§9), so no renderer is
+  registered and `Registry.for` answers nil. On the file page `preload="metadata"` lets a desktop
+  browser show the first frame without a poster (iOS Safari draws nothing until Play).
+
+### A video's only tile is a frame the maker chooses, in the browser (2026-11-22)
+
+"Use this frame as preview" on the player (`videoframe_controller.js`) draws the frame on screen
+into a canvas, longest side at most 512 and never scaled UP, and posts the PNG to
+`Files::PreviewsController` — the 3D viewer's door — which stores a `viewer` row, `ready`. Every
+rule below follows from a picture with NO renderer behind it.
+
+- **The Library's tiles ask `FilesHelper#thumb_cell?`, never the Registry alone.** Six surfaces
+  branch before rendering `files/_thumb` (the grid, the list, both stack figures, the inspector,
+  Recent's cards); asking the Registry, they sent every video to the badge, and a chosen frame was
+  stored, current, and drawn nowhere. The second half is **`viewer?`, not "any row"**: the v1 API
+  makes a row for a name no renderer handles and its job writes `unsupported`, which is no picture.
+  `photo_tile?` gives the tile the photo matte (design-system.md rule 5): a frame is footage, not
+  ink on paper. Surfaces that render `_thumb` straight from the map (project tiles, public pages)
+  already drew a current row and needed nothing.
+- **The control rides `files/_viewer`'s `save:`** — the file page and the embedded block, never the
+  model pane — and a visitor's chain passes no `preview_url:` at all, `_model3d`'s rule.
+- **Remove DROPS the row** (`#destroy`). Handed back to the renderer, it waited on a job that could
+  only write `unsupported`; and a lost job left it `rebuilding` — SHOWABLE — for good, because every
+  heal skips a name with no renderer (`Enqueue.call` answers nil, `ThumbnailMap`'s backfill passes it
+  by). No row is the state the file had before a frame was chosen.
+- **A frame of older content is not drawn, and nothing repoints it.** `current_preview?` drops the
+  row once the token moves, so the tile is the badge until the maker chooses again, and that
+  choice reuses the stale row (`find_or_initialize_by`).
+- **THE PLAYER CARRIES NO `crossorigin`, AND ON S3 THE FRAME IS READ THROUGH A TWIN.** Measured
+  against SeaweedFS: the byte route's 302 makes the player cross-origin, so its frame TAINTS the
+  canvas (`getImageData`/`toBlob` throw `SecurityError`). A `crossorigin="anonymous"` player is not
+  the fix — against a bucket whose CORS rule does not list this origin it does not play at all
+  (`MEDIA_ERR_SRC_NOT_SUPPORTED`) where a plain one does, and DEPLOY.md promises a missing CORS rule
+  degrades a viewer, never breaks one. So only on a taint does the capture load a second, detached,
+  crossorigin element at the player's position (under a second, locally) — readable under the same
+  bucket CORS rule the 3D viewer needs — and without that rule it SAYS so and saves nothing. Share
+  and chunk_remote stream from Rails, are same-origin, and draw the player's own frame.
+- **A PAUSED PLAYER IS SEEKED TO ITS OWN POSITION BEFORE THE DRAW, AND A CANVAS WITH NO PAINTED
+  PIXEL IS REFUSED.** Measured in Chrome on a tab not on screen: a paused player reported
+  `HAVE_ENOUGH_DATA` at 0 s, `drawImage` painted nothing and tainted nothing, and a transparent PNG
+  became the tile. The seek decodes that exact frame; the alpha check is what stands behind it (the
+  one a system test can reach on demand). An element holding NOTHING (`preload="none"`, which is
+  how iOS treats every element) is `load()`ed inside the click first, or its metadata never comes.
 
 ## The workbook viewer: an `.xlsx` is a grid, and a save is operations on its XML
 

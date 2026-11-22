@@ -14,7 +14,8 @@
 <% latest = @node_by_id[stack.latest.node_id] %>
 <% info = @info_by_node[latest.node_id] %>
 <% dom = stack_dom_id(stack) %>
-<% renderable = Maker::Previews::Registry.for_filename(latest.name).present? %>
+<% thumb = @thumb_by_node.thumb(latest.node_id) %>
+<% renderable = thumb_cell?(latest.name, thumb) %>
 <% ext_label = File.extname(latest.name).delete(".").upcase.first(4) %>
 <% count = stack_count_label(stack) %>
 <div class="grid-item stack-item">
@@ -22,8 +23,7 @@
                  aria: { expanded: "false", controls: "#{dom}-open", label: "#{stack.name}, #{count}" },
                  data: (renderable ? thumb_cell_data(latest.node_id, ext_label) : {}).merge(action: "stack#toggle")) do %>
     <% if renderable %>
-      <% thumb = @thumb_by_node.thumb(latest.node_id) %>
-      <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: Maker::FileAttachment.photo?(latest.name) %>
+      <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: photo_tile?(latest.name) %>
     <% else %>
       <span class="thumb generic-thumb" aria-hidden="true"><%= ext_label.presence || "FILE" %></span>
     <% end %>

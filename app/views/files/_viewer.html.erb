@@ -31,7 +31,11 @@
 <% elsif viewer.kind == :pdf %>
   <%= render "files/viewers/pdf", name: viewer.node.name, blob_url: blob_file_path(viewer.node.node_id) %>
 <% elsif viewer.kind == :video %>
-  <%= render "files/viewers/video", name: viewer.node.name, blob_url: blob_file_path(viewer.node.node_id) %>
+  <%# "USE THIS FRAME AS PREVIEW" RIDES `save:` (2026-11-22): choosing a file's picture is a write,
+      which is the file page's and the embedded block's and not the model pane's, the same line the
+      Measure bar's Save twins draw. %>
+  <%= render "files/viewers/video", name: viewer.node.name, blob_url: blob_file_path(viewer.node.node_id),
+             preview_url: (file_preview_path(viewer.node.node_id) if save), viewer_preview: viewer.thumbnail&.viewer? %>
 <% elsif viewer.kind == :kicanvas %>
   <%= render "files/viewers/kicanvas", controls: "full",
              named_url: named_blob_file_path(viewer.node.node_id, filename: viewer.node.name) %>

@@ -5,11 +5,13 @@
     Maker::Previews::ThumbnailMap over these nodes; `origins` is AddonOrigins#addon_origins_for's hash. %>
 <% ext_label = File.extname(node.name).delete(".").upcase.first(4) %>
 <% href = file_path(node.node_id) %>
-<% if Maker::Previews::Registry.for_filename(node.name).present? %>
+<% thumb = covers.thumb(node.node_id) %>
+<%# FilesHelper#thumb_cell?: a renderer's picture, or one the maker chose (a video's only kind). %>
+<% if thumb_cell?(node.name, thumb) %>
   <%= link_to href, class: "grid-card file-cell",
               data: file_open_data(thumb_cell_data(node.node_id, ext_label).merge(file_menu_data(node, origins[node.node_id]))) do %>
-    <%= render "files/thumb", thumb: covers.thumb(node.node_id), ext_label: ext_label,
-               url: preview_src(covers.thumb(node.node_id)), photo: Maker::FileAttachment.photo?(node.name) %>
+    <%= render "files/thumb", thumb: thumb, ext_label: ext_label,
+               url: preview_src(thumb), photo: photo_tile?(node.name) %>
     <span class="grid-name"><%= node.name %></span>
   <% end %>
 <% else %>
