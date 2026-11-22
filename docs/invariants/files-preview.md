@@ -696,6 +696,53 @@ blocks the fetch"; the policy is report-only, so it never did — the bucket had
 latterly, no reachable endpoint. Pinned per leg by `content_security_policy_test.rb` and, for the
 port's answer, by the shared adapter contract.
 
+## `:video` is the browser's own player, and a byte range is answered by whoever holds the bytes
+
+`.mp4`, `.m4v` and `.webm` (2026-11-20) get a `<video controls preload="metadata">` on the file
+page, the model pane, an embedded file block and a visitor's page (`files/viewers/_video`, strict
+`blob_url` local), read from the byte route like `:image` and `:pdf`.
+
+- **`Maker::FileAttachment::INLINE_VIDEO_EXTS` is the BROWSER's list, like `INLINE_IMAGE_EXTS`,
+  not a role.** The three keep the `other` role, so nothing files differently or moves on the NAS.
+  **`.mov` is deliberately absent**: whether a browser plays one depends on the codec inside (HEVC
+  plays in Safari, not in Firefox), so a player there would promise a picture many visitors cannot
+  see. It keeps `:other` and the Download button.
+- **`FileDelivery::SAFE_INLINE_TYPES` must name every one of those extensions' Marcel types**
+  (`video/mp4` covers `.m4v`). `<video>` plays an attachment just as well, so a missing type looks
+  fine and is the one video the browser was told to save, and whose S3 URL is signed as an
+  attachment. `file_attachment_test.rb` asks Marcel the same question FileDelivery asks.
+- **A player needs HTTP Range, and each of the three mechanisms answers it differently.** Safari
+  will not play a file whose server answers its `bytes=0-1` with a 200, and every seek is another
+  range. **Redirect** (s3) needs nothing: the store answers ranges itself. **SendFile** (share) and
+  **Stream** (chunk_remote) go through ONE rule, `FileDelivery#answer_range`: a single satisfiable
+  range is a 206 with Content-Range, a range wholly past the end is a 416 with `bytes */size`, and
+  everything else (several ranges, a malformed header, an `If-Range` with no validator of ours to
+  match, a zero-byte file) is the whole file with a 200, which RFC 9110 permits. `send_file` itself
+  answers no ranges at all.
+- **`FileDelivery::FileSlice` has NO `to_path`, and must not get one.** Rack::Sendfile accelerates
+  only a body that answers `to_path`, and a proxy handed the PATH would send the whole file under
+  our 206. A range is therefore always served by Rails, while the whole file keeps `send_file` and
+  its acceleration (`share_delivery_test.rb` pins both).
+- **A Stream answers ranges only if it names `size:` and `slice:` (`FileLayer::Delivery`), and
+  chunk_remote's slice fetches ONLY the chunks a range covers.** Skipping through the whole-file
+  enumerator would also be correct, and a seek into the last minute of a long video would then pull
+  every chunk before it through Rails. Positions are the manifest's **lengths summed in seq order**,
+  the same concatenation the whole-file stream emits, **never the mirrored `offset` column**, so a
+  range and the whole file cannot disagree about where a byte is. A chunk whose bytes are not its
+  recorded length **raises** rather than being sliced, because every position after it would be
+  wrong under a Content-Length already sent. The presign stays eager and covers the whole manifest,
+  one POST per request as before: a dead sync server must surface as a 503 before the headers go
+  out, never mid-body (`chunk_remote/contract_test.rb` pins the fetch list, the journey suite pins a
+  range across a real chunk boundary).
+- **`media-src` is `connect-src`'s lambda, not a copy of it.** A `<video>` follows the blob route's
+  302 to the bucket just as the viewers' fetches do, and an absent `media-src` falls back to
+  `default-src 'self'`.
+- **There is no grid thumbnail for a video, and that is a licence decision, not an omission.**
+  Nothing in the image can decode a frame: Debian's `ffmpeg` is built `--enable-gpl` (§9), so no
+  renderer is registered, `Registry.for` answers nil, and the grid shows the extension badge
+  ("Preview not supported"). On the file page `preload="metadata"` lets a desktop browser show the
+  first frame without a poster (iOS Safari draws nothing until Play).
+
 ## The workbook viewer: an `.xlsx` is a grid, and a save is operations on its XML
 
 `:spreadsheet` (2026-10-21; `files/viewers/_spreadsheet`, `spreadsheet_controller.js`,

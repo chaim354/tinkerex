@@ -50,10 +50,16 @@ Rails.application.configure do
     # Object with a single `download`) and answers nothing else, and this middleware runs on every
     # HTML response those tests render. The three real adapters are contract-bound to answer
     # (`adapter_contract.rb`), and the s3 leg's CSP test goes red if this ever yields nothing there.
-    policy.connect_src :self, lambda {
+    presigned_store = lambda {
       port = FileLayer.current
       port.presigned_origin if port.respond_to?(:presigned_origin)
     }
+    policy.connect_src :self, presigned_store
+    # `media-src` NAMES THE SAME STORE FOR THE SAME REASON (2026-11-20, the video player). A
+    # `<video src="/files/:id/blob">` follows that 302 to the bucket too, and an absent `media-src`
+    # falls back to `default-src 'self'`, so every video on s3 would be reported today and refused
+    # once this enforces. The SAME lambda, so the two directives cannot name different stores.
+    policy.media_src :self, presigned_store
     policy.object_src  :none
     # `'wasm-unsafe-eval'` BUYS THE WEBASSEMBLY IMPORTERS AND NOTHING ELSE, which is the whole
     # reason it exists as a source separate from `'unsafe-eval'`. Chrome refuses

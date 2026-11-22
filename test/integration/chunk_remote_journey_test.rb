@@ -74,6 +74,40 @@ class ChunkRemoteJourneyTest < ActionDispatch::IntegrationTest
                  "the bytes that came back are not the bytes that went in"
   end
 
+  # A VIDEO SEEKS THROUGH THE SYNC SERVER (2026-11-20). A `<video>` will not play without byte
+  # ranges, and on this backend Rails is the one answering them, from the chunks a range covers
+  # (ChunkRemote#byte_range). TWO CHUNKS, uploaded as such, so the range below starts in the first
+  # and ends in the second: a slice that dropped or doubled a chunk boundary would show up here
+  # against the real wire, not only against the contract suite's fake server. Content varies per
+  # run (the dedupe note on the test above).
+  test "a ranged request for a two-chunk video answers a 206 cut across the chunk boundary" do
+    skip_unless_remote_server
+    sign_in
+    parts = [ "first-#{journey_prefix}-".b, "second-#{journey_prefix}".b ]
+    bytes = parts.join.b
+    manifest = [ { hash: Digest::SHA256.hexdigest(parts[0]), offset: 0, length: parts[0].bytesize },
+                 { hash: Digest::SHA256.hexdigest(parts[1]), offset: parts[0].bytesize, length: parts[1].bytesize } ]
+
+    post begin_upload_files_path,
+         params: { name: "#{journey_prefix}-clip.mp4", size: bytes.bytesize, manifest: }, as: :json
+    assert_response :success, "begin_upload failed: #{response.body}"
+    begun = JSON.parse(response.body)
+    (begun["put_urls"] || {}).each do |hash, url|
+      put_bytes_to_storage(url, parts.find { |part| Digest::SHA256.hexdigest(part) == hash })
+    end
+    post finalize_upload_files_path, params: { commit_id: begun["commit_id"] }, as: :json
+    assert_response :success, "finalize_upload failed: #{response.body}"
+
+    first = parts[0].bytesize - 3
+    last = parts[0].bytesize + 4
+    get blob_file_path(begun["node_id"]), headers: { "Range" => "bytes=#{first}-#{last}" }
+
+    assert_response :partial_content
+    assert_equal "bytes #{first}-#{last}/#{bytes.bytesize}", response.headers["Content-Range"]
+    assert_equal bytes.byteslice(first, last - first + 1), response.body.b
+    assert_equal "video/mp4", response.media_type
+  end
+
   # A DEDICATED FOLDER, NOT THE LIBRARY ROOT. This suite is explicitly designed to be re-run
   # against one long-lived sync server that never rolls back (see journey_prefix's own comment), so
   # every prior run's uploads accumulate at the root forever. `FilesController::FOLDER_PAGE` is 250
