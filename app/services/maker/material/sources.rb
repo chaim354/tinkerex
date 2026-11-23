@@ -82,7 +82,9 @@ module Maker
       # overflows a Puma request thread's stack. Unnamed, it would escape both rescues and 500 the
       # page. Rescuing it is safe, because the stack has unwound by the time it arrives here.
       def upload_parts(file)
-        name = File.basename(file.original_filename.to_s).first(255).presence || "upload"
+        # `scrub`: a multipart filename is the browser's bytes, tagged UTF-8 whether or not they are,
+        # and `basename` raises on an invalid one — which turned a good SVG into "could not be read".
+        name = File.basename(file.original_filename.to_s.scrub).first(255).presence || "upload"
         return [ Part.refused(name:, reason: Maker::Previews::Dimensions::UNSUPPORTED) ] unless Maker::Previews::Dimensions.measurable_name?(name)
         return [ Part.refused(name:, reason: too_big) ] if file.size.to_i > max_bytes
 

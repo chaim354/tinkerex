@@ -47,6 +47,19 @@ module Maker
         assert_empty added.notes
       end
 
+      # A multipart filename arrives tagged UTF-8 whatever its bytes are; one that is not valid UTF-8
+      # is still that file, measured, under a readable name.
+      test "an upload whose filename is not valid UTF-8 is still measured" do
+        # Rack::Test refuses to build one with such a name, so the name is set on the built upload.
+        file = upload("plate.svg")
+        def file.original_filename = (+"\xFF\xFE.svg").force_encoding(Encoding::UTF_8)
+        part = Sources.uploads([ file ]).parts.first
+        assert part.measured?, part.reason
+        assert_equal [ 80.0, 40.0 ], [ part.width, part.height ]
+        assert part.name.valid_encoding?
+        assert part.name.end_with?(".svg")
+      end
+
       test "a multi-page upload is one part per page that has something on it" do
         added = Sources.uploads([ upload("pages.lbrn2") ])
         assert_equal [ [ "pages.lbrn2", "Page 1", 205.0, 50.0, nil ], [ "pages.lbrn2", "Back", 50.0, 50.0, nil ] ], sizes(added)
