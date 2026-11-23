@@ -6,25 +6,25 @@
   page is still one a manifest made — which is what test/controllers/tools/home_controller_test.rb
   counts. The inner head/icon/title/description classes are shared for their look.
 
-  The card OPENS the modal (`data-calculator-open`); a right click pins it. At phone width, where
-  the tab bar keeps its four destinations and there is no rail, this card IS the way to the
-  calculator (the Tools tab). `id="calculator"` is where the pinned rail link's href lands when its
-  click is not the controller's to handle (a modified click).
+  THE TITLE IS THE CONTROL, AS ON AN ADDON CARD (2026-11-23, the owner's call: no Open button on any
+  card). It is a <button>, not a link, because it opens the modal (`data-calculator-open`) rather
+  than going anywhere, and `.addon-card-link` stretches it over the card (pages/tools.css), so a
+  click anywhere on the card opens the calculator; a right click pins it. At phone width, where the
+  tab bar keeps its four destinations and there is no rail, this card IS the way to the calculator
+  (the Tools tab). It is also what Esc from the right-click menu hands focus back to
+  (toolmenu_controller.js takes the first control in a card), and what the modal hands focus back
+  to when it closes. `id="calculator"` is where the pinned rail link's href lands when its click is
+  not the controller's to handle (a modified click).
 %>
 <%= tag.div class: "tool-card calculator-card", id: "calculator",
             data: tool_menu_data(Maker::ToolPins::CALCULATOR, "Calculator") do %>
   <span class="addon-card-head">
     <span class="addon-icon" aria-hidden="true"><%= rail_icon(:calculator) %></span>
-    <span class="addon-title" id="tool-title-calculator">Calculator</span>
+    <button type="button" class="addon-title addon-card-link calculator-card-open" id="tool-title-calculator"
+            data-calculator-open aria-haspopup="dialog"
+            aria-keyshortcuts="<%= CalculationsHelper::CALCULATOR_KEYS %>">Calculator</button>
   </span>
   <span class="addon-desc muted">Lengths in mm, cm, m, inches and feet, inch fractions, and
     conversions. Save a result to a project. <span class="calculator-card-keys">Opens over any page
     with <kbd><%= calculator_shortcut %></kbd>.</span></span>
-  <div class="calculator-card-actions">
-    <%# Plain `.btn`: the accent is not spent on this page (design-system.md rule 13). It is the
-        control Esc from the right-click menu hands focus back to (toolmenu_controller.js takes
-        the first control in a card that is not a link). %>
-    <button type="button" class="btn small calculator-card-open" data-calculator-open aria-haspopup="dialog"
-            aria-keyshortcuts="<%= CalculationsHelper::CALCULATOR_KEYS %>">Open calculator</button>
-  </div>
 <% end %>

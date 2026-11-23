@@ -55,8 +55,9 @@ export default class extends Controller {
     document.querySelectorAll("[data-toolmenu-menu]").forEach((menu) => menu.remove())
     this.close()
 
-    // Where Esc returns focus: the tool itself when it is a link, else the control inside it (the
-    // calculator's card is a <div>, which cannot take focus, and its Open button can).
+    // Where Esc returns focus: the tool itself when it is a link (the rail's), else the control
+    // inside it. A card is a <div>, which cannot take focus; its title — a link, or the
+    // calculator's <button> — can.
     this.opener = cell.matches("a, button") ? cell : cell.querySelector("a, button") || cell
     this.menu = document.createElement("div")
     this.menu.className = "file-menu"

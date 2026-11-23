@@ -60,10 +60,12 @@ class CalculatorModalTest < ApplicationSystemTestCase
 
   def focus(selector) = page.execute_script("document.querySelector(arguments[0]).focus()", selector)
 
+  # THE WHOLE CARD IS THE OPENER (2026-11-23: no card has an Open button). Its title is a button
+  # stretched over the card, so the card is clicked as a whole here, not aimed at the title.
   test "the Tools card opens the modal; Enter evaluates; Esc closes and focus goes back to the card" do
     visit tools_path
     refute dialog_open?
-    find("#calculator .calculator-card-open").click
+    find("#calculator").click
 
     assert_selector "dialog.calculator[open]"
     assert_equal "calculator-input", focused, "focus lands in the input"
@@ -73,7 +75,7 @@ class CalculatorModalTest < ApplicationSystemTestCase
 
     find("#calculator-input").send_keys(:escape)
     assert_no_selector "dialog.calculator[open]"
-    assert_includes focused.to_s, "calculator-card-open", "focus goes back to the control that opened it"
+    assert_equal "tool-title-calculator", focused, "focus goes back to the card's title, which opened it"
     assert_no_console_errors
   end
 

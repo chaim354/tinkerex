@@ -389,9 +389,10 @@ class MaterialEstimateTest < ApplicationSystemTestCase
   end
 
   # AT PHONE WIDTH THE CARD STILL OPENS THE TOOL, AND THE PAGE DOES NOT SCROLL SIDEWAYS. The
-  # Material card's action row holds its "Open material estimate" link, the card's only way in, so
-  # the row must show at every width. (A `max-width: 719px` rule hid the cards' Pin toggle until the
-  # toggle itself was removed, 2026-11-23, and an earlier spelling of it hid this row too.) The
+  # Material card's title is its link, stretched over the card (2026-11-23: no card has an Open
+  # button), so a tap anywhere on the card is the way in, and it is clicked here as a whole rather
+  # than aimed at the title. (A `max-width: 719px` rule hid the cards' Pin toggle until the toggle
+  # was removed, and an earlier spelling of it hid the card's old Open row too.) The
   # viewport is set through CDP, never `resize_to`: headless Chrome will not make a window narrower
   # than 500px (shell_test.rb's 375px sweep measured it). The overflow is read against
   # `clientWidth`, which leaves out a classic scrollbar, because the Linux runners draw a 15px one
@@ -404,12 +405,9 @@ class MaterialEstimateTest < ApplicationSystemTestCase
     page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
                                     width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
     visit tools_path
-    within("#material") do
-      assert has_link?("Open material estimate", href: tools_material_path, visible: true),
-             "the Material card's Open link is hidden at 375px"
-    end
+    find("#material").click
+    assert_current_path tools_material_path
 
-    visit tools_material_path
     attach_file "material-uploads", [ fixture("plate.svg"), fixture("plate.dxf") ]
     assert_selector ".material-parts-table tbody tr", count: 2
     assert_selector "svg.material-sheet-svg"

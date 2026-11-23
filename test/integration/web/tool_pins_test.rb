@@ -229,7 +229,7 @@ module Web
     test "the Material estimate is a built-in card on the Tools page, and it pins like the calculator" do
       get tools_path
       assert_select "div.tool-card#material[data-tool-pin-url=?]", tools_pin_path("material") do
-        assert_select "a.btn[href=?]", tools_material_path, text: "Open material estimate"
+        assert_select "a.addon-card-link[href=?]", tools_material_path, text: "Material estimate"
       end
 
       post tools_pin_path("material")
