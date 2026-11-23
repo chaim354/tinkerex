@@ -1,9 +1,11 @@
 import { Controller } from "@hotwired/stimulus"
+import { chooseFolder } from "lib/file_chooser"
 
 // THE MATERIAL ESTIMATE PAGE (tools/materials/show; spec 2026-11-22-material-estimate-design.md).
 // It submits the one form at the right moments and nothing else — the server does every measurement
 // and every sum. A number typed re-figures after a pause; picking files submits them to the measure
-// action; a project or a chosen folder or file adds at once.
+// action; a chosen folder or file adds at once, and a project once the chooser opened inside its
+// folder has answered (#addProject).
 //
 // ONE SUBMISSION AT A TIME, AND IT IS FINISHED WHEN ITS ANSWER IS ON THE PAGE. Two in flight can
 // answer out of order, and an older answer landing last would put stale results on screen; Turbo also
@@ -44,7 +46,7 @@ const RESULTS_ID = "material-results"
 const PART_FIELD = /^parts\[(\d+)\](\[.*)$/
 
 export default class extends Controller {
-  static targets = [ "sheetWidth", "sheetHeight", "gap", "unit", "rotate", "uploads", "measure", "update" ]
+  static targets = [ "sheetWidth", "sheetHeight", "gap", "unit", "rotate", "uploads", "measure", "update", "projectFolder" ]
 
   connect() {
     this.inFlight = false
@@ -82,6 +84,33 @@ export default class extends Controller {
   add() {
     clearTimeout(this.timer)
     this.submit("form")
+  }
+
+  // A PROJECT WITH A LIBRARY FOLDER OPENS THE FOLDER CHOOSER INSIDE IT (2026-11-23), so a maker can
+  // add one folder of it — its laser/, say — rather than the whole project. The chooser starts at
+  // the project's folder and cannot walk out of it (`rootId`); Choose at that top level answers
+  // nodeId "" and adds the whole project, exactly as picking it did before; a subfolder's id goes
+  // into the hidden `add_project_folder_id`, which the server adds INSTEAD of the project. Cancel
+  // adds nothing and puts the menu back to Choose…, so the project is not sent by the next
+  // re-figure. A project without a live folder has no `data-folder-id` and adds at once.
+  //
+  // The menu and the field are LOOKED UP AGAIN once the chooser answers, never kept from before it
+  // opened: an answer that landed meanwhile replaced the parts list they live in, and its carry put
+  // the chosen project on the new menu.
+  async addProject(event) {
+    const option = event.target.selectedOptions?.[0]
+    const folderId = option?.dataset.folderId
+    if (!event.target.value || !folderId) return this.add()
+
+    const selection = await chooseFolder({ childrenUrl: event.target.dataset.childrenUrl, rootId: folderId,
+                                           rootLabel: option.textContent.trim(), heading: "Choose a folder to add" })
+    if (!selection) {
+      const menu = document.querySelector(`#${PARTS_ID} select[name="add_project_id"]`)
+      if (menu) menu.value = ""
+      return
+    }
+    if (this.hasProjectFolderTarget) this.projectFolderTarget.value = selection.nodeId
+    this.add()
   }
 
   upload() {

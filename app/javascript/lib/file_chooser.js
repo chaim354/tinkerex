@@ -53,16 +53,24 @@ function lineGlyph(isFile) {
 export class FileChooser {
   // `label` is the CURRENT selection's path, not decoration — see the note in #open.
   constructor({ mode = "folder", childrenUrl, createUrl, rootLabel = ROOT_LABEL, value = "", label = null,
-                extensions = null, rootId = null, fileUrlTemplate = null } = {}) {
+                extensions = null, rootId = null, fileUrlTemplate = null, heading = null } = {}) {
     this.mode = mode
+    // THE MODAL'S TITLE, when the caller's purpose is not the default's. Folder mode says "Choose a
+    // destination folder", which is right for a move or a save and wrong for the Material estimate,
+    // which reads the folder chosen and writes nothing there. Set as TEXT in #buildModal, never into
+    // the innerHTML template: a caller may build it from a project or file name.
+    this.heading = heading
     this.childrenUrl = childrenUrl
     this.createUrl = createUrl
     this.rootLabel = rootLabel
     this.value = value || ""
     this.label = label
-    // THE NODE ID THE FIRST COLUMN LISTS. null is the library root and is what every existing
-    // caller gets, so the modal is unchanged; `browse` passes a repository's dir node so the
-    // columns start INSIDE it and a maker cannot walk out of the repo they opened.
+    // THE NODE ID THE FIRST COLUMN LISTS. null is the library root and is what nearly every caller
+    // gets; `browse` passes a repository's dir node so the columns start INSIDE it and a maker
+    // cannot walk out of the repo they opened, and the Material estimate's folder modal passes a
+    // project's folder the same way. A folder-mode answer of nodeId "" means "the top level
+    // chosen" — the library root, or this folder when one was given: the caller passed the id, so
+    // it already knows it, and "" lets it tell the top apart from a folder inside.
     this.rootId = rootId || null
     // A string containing `__ID__`, which a file row's href is built from. THE SERVER WRITES IT
     // (projects/_repo_browser.html.erb renders `file_path("__ID__")`) so this module never learns
@@ -178,6 +186,10 @@ export class FileChooser {
     // await-guards inside it ask about it rather than about `this.overlay`, so an inline mount
     // (which has no overlay at all) drives exactly the same render.
     this.host = this.overlay.querySelector(".filechooser")
+    if (this.heading) {
+      this.overlay.querySelector(".filechooser-head span").textContent = this.heading
+      this.host.setAttribute("aria-label", this.heading)
+    }
     this.colsEl = this.overlay.querySelector(".filechooser-cols")
     this.crumbsEl = this.overlay.querySelector(".filechooser-crumbs")
     this.selEl = this.overlay.querySelector(".filechooser-sel")
@@ -239,8 +251,9 @@ export class FileChooser {
     const mine = ++this.renders
     const trail = [ ...this.trail ]
     this.colsEl.innerHTML = ""
-    // `rootId` IS null FOR EVERY MODAL CALLER, so this is the library root exactly as before; an
-    // inline browse mount passes the repository's own dir node and the first column lists that.
+    // `rootId` is null for every modal caller but one, so this is the library root exactly as
+    // before; an inline browse mount passes the repository's own dir node, and the Material
+    // estimate's project chooser its project's folder, and the first column lists that.
     const levels = [ { id: this.rootId, name: this.rootLabel }, ...trail ]
     for (let k = 0; k < levels.length; k++) {
       const entries = await this.childrenOf(levels[k].id)
@@ -287,6 +300,10 @@ export class FileChooser {
 
   // `allEntries` IS null WHEN THE LISTING COULD NOT BE LOADED, which is not an empty folder and
   // does not say it is one. Opening the folder again asks again (childrenOf forgets a failure).
+  //
+  // FOLDER MODE LISTS ONLY FOLDERS, so its empty column says "No folders inside", never "Empty
+  // folder" (2026-11-23): the Material estimate's chooser opened laser/ — two SVGs, about to be
+  // added — and the column under it read "Empty folder".
   columnEl(allEntries, depth, descendedId) {
     const entries = this.visible(allEntries || [])
     const col = document.createElement("div")
@@ -294,7 +311,8 @@ export class FileChooser {
     if (entries.length === 0) {
       const empty = document.createElement("div")
       empty.className = "filechooser-empty"
-      empty.textContent = allEntries === null ? "Could not load this folder. Open it again to retry." : "Empty folder"
+      const none = this.mode === "folder" ? "No folders inside" : "Empty folder"
+      empty.textContent = allEntries === null ? "Could not load this folder. Open it again to retry." : none
       col.appendChild(empty)
     }
     for (const entry of entries) {
@@ -449,8 +467,9 @@ export class FileChooser {
   async submitNewFolder(form, input) {
     const name = input.value.trim()
     if (!name) return
-    // FALLS BACK TO `rootId`, NOT TO null. Browse mode never renders New folder, so this is not
-    // reachable today — but a modal caller that ever passes `rootId` would otherwise create its
+    // FALLS BACK TO `rootId`, NOT TO null. Browse mode never renders New folder, and the one modal
+    // caller that passes `rootId` (the Material estimate) passes no createUrl, so this is not
+    // reachable today — but a modal caller that passed both would otherwise create its
     // folder at the LIBRARY ROOT while the crumbs said otherwise, which is the two-halves-
     // disagree defect recorded at #open one more time.
     const parentId = this.trail.length ? this.trail[this.trail.length - 1].id : this.rootId

@@ -134,6 +134,73 @@ module Web
       assert_includes response.body, "Found no such folder."
     end
 
+    # ---- a folder inside a project (2026-11-23) --------------------------------------------------
+
+    def dir!(name, parent: nil) = create_node!(@user, node_id: SecureRandom.uuid, name:, kind: "dir", parent_node_id: parent&.node_id)
+
+    def place!(name, parent:)
+      node = create_node!(@user, node_id: SecureRandom.uuid, name:, kind: "file", parent_node_id: parent.node_id,
+                                 content_hash: SecureRandom.hex(8))
+      @root.join(node.storage_path).binwrite(File.binread(Rails.root.join("test/fixtures/files/plate.svg")))
+      node
+    end
+
+    # Desk Lamp's folder holds laser/cut.svg and paper/sketch.svg, both attached to the project.
+    def desk_lamp!
+      lamp = @user.maker_projects.create!(name: "Desk Lamp")
+      folder = dir!("desk-lamp", parent: dir!("Projects"))
+      lamp.update_column(:folder_node_id, folder.node_id)
+      laser = dir!("laser", parent: folder)
+      files = { cut: place!("cut.svg", parent: laser), sketch: place!("sketch.svg", parent: dir!("paper", parent: folder)) }
+      files.each_value { |node| @user.maker_file_attachments.create!(attachable: lamp, node_id: node.node_id) }
+      [ lamp, folder, laser, files ]
+    end
+
+    # THE MENU TELLS THE BROWSER WHICH FOLDER TO OPEN THE CHOOSER IN, and only a LIVE one: a project
+    # with no folder, or with its folder in the Trash, carries none and adds whole at once.
+    test "the project menu carries each project's live folder, for the chooser to open inside" do
+      lamp, folder, = desk_lamp!
+      @user.maker_projects.create!(name: "No Folder")
+      trashed = @user.maker_projects.create!(name: "Trashed Folder")
+      gone = dir!("trashed-folder")
+      gone.update_columns(deleted: true)
+      trashed.update_column(:folder_node_id, gone.node_id)
+      @user.maker_projects.create!(name: "Put Away", status: "archived")
+
+      get tools_material_path
+      assert_response :success
+      assert_select "#material-parts select[name=add_project_id][data-action=?][data-children-url=?]",
+                    "change->material-estimate#addProject", library_children_path
+      options = css_select("select[name=add_project_id] option").reject { |o| o["value"].blank? }
+      assert_equal [ [ "Desk Lamp", lamp.id.to_s, folder.node_id ], [ "No Folder", nil, nil ], [ "Trashed Folder", nil, nil ] ],
+                   options.map { |o| [ o.text, (o["value"] if o["data-folder-id"]), o["data-folder-id"] ] }
+      assert_select "#material-parts input[type=hidden][name=add_project_folder_id][data-material-estimate-target=projectFolder]", 1
+    end
+
+    test "a folder chosen inside a project adds that folder's files instead of the whole project" do
+      lamp, _, laser, files = desk_lamp!
+
+      post tools_material_path, params: { add_project_id: lamp.id, **stock }, headers: STREAM
+      files.each_value { |node| assert_includes response.body, %(href="#{file_path(node.node_id)}") }
+
+      post tools_material_path, params: { add_project_id: lamp.id, add_project_folder_id: laser.node_id, **stock }, headers: STREAM
+      assert_includes response.body, %(href="#{file_path(files[:cut].node_id)}")
+      refute_includes response.body, %(href="#{file_path(files[:sketch].node_id)}")
+      refute_includes response.body, "parts[1]", "the folder replaces the project; it is not added beside it"
+    end
+
+    # A FOLDER THAT IS NOT THE USER'S answers like any missing folder, and the project is NOT added
+    # whole in its place: the maker chose a folder, and the note says it was not found.
+    test "a project folder that is not the user's adds nothing and says so" do
+      lamp, = desk_lamp!
+      other = User.create!(email: "other-#{SecureRandom.hex(4)}@example.com", password: PASSWORD, confirmed_at: Time.current)
+      theirs = other.nodes.create!(node_id: SecureRandom.uuid, name: "theirs", kind: "dir", mtime: 1, size: 0)
+
+      post tools_material_path, params: { add_project_id: lamp.id, add_project_folder_id: theirs.node_id, **stock }, headers: STREAM
+      assert_includes response.body, "Found no such folder."
+      refute_includes response.body, "parts[0]"
+    end
+
     # THE DEBT template_hygiene_test.rb's UNSWEPT_TEMPLATES names: update.turbo_stream and _sheet
     # render only for a POST, which its GET sweep cannot issue. A remove replaces the parts list, so
     # this one stream renders all four templates it touches.

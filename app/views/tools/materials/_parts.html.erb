@@ -17,10 +17,16 @@
                      data: { material_estimate_target: "measure" } %>
     </span>
     <% if projects.any? %>
+      <%# A PROJECT WITH A LIBRARY FOLDER OPENS THE CHOOSER INSIDE IT (2026-11-23): Choose at the top
+          adds the whole project, a subfolder adds only that folder, written into the hidden field
+          beside the menu (Tools::MaterialsController#project_addition). Its option carries the
+          folder as `data-folder-id`; a project without one adds whole at once. The field lives in
+          this list so the replace that answers an add clears it. %>
       <label class="material-add-field">Add a project
         <%= select_tag "add_project_id", options_for_select(projects), include_blank: "Choose…",
-                       data: { action: "change->material-estimate#add" } %>
+                       data: { action: "change->material-estimate#addProject", children_url: library_children_path } %>
       </label>
+      <%= hidden_field_tag "add_project_folder_id", nil, id: nil, data: { material_estimate_target: "projectFolder" } %>
     <% end %>
     <span class="material-add-field" data-action="filechooser:choose->material-estimate#add">
       <%= render "shared/folder_field", name: "add_folder_id", children_url: library_children_path,
