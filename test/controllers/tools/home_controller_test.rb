@@ -138,17 +138,20 @@ module Tools
 
     def manifest(key, title, **extra) = MANIFEST.merge("key" => key, "title" => title, **extra)
 
-    # The add-on sections the page draws, in order: each `.tools-section` AFTER the built-in one,
-    # read as [heading, [card titles]].
-    def addon_sections
-      css_select(".tools-home .tools-section").drop(1).map do |section|
-        [ section.css(".tools-section-head").text.strip, section.css(".addon-card .addon-title").map { |t| t.text.strip } ]
+    # The sections the page draws, in order, read as [heading, [card titles]]: a built-in tool's
+    # `.tool-card` and a manifest's `.addon-card` alike, in the order the section draws them.
+    def sections
+      css_select(".tools-home .tools-section").map do |section|
+        [ section.css(".tools-section-head").text.strip,
+          section.css(".tool-card .addon-title, .addon-card .addon-title").map { |t| t.text.strip } ]
       end
     end
 
     # FOUR SECTIONS IN A FIXED ORDER, EACH DRAWN ONLY WHEN POPULATED. The manifests are listed in
     # the reverse of the order the page must draw, so source order and the spec's order disagree.
-    test "the gallery groups add-ons by category, in a fixed order, drawing only populated sections" do
+    # THE BUILT-IN TOOLS ARE IN THEM, FIRST (2026-11-23): the Material estimate under Look inside a
+    # file, the calculator under Calculate and look up (Tools::HomeController::BUILT_IN).
+    test "the gallery groups its tools by category, in a fixed order, drawing only populated sections" do
       Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
         manifest("bare", "Bare Tool"),
         manifest("fasteners", "Fasteners", "category" => "reference"),
@@ -159,23 +162,24 @@ module Tools
       get tools_path
       assert_response :success
       assert_equal [ [ "Make a file", [ "Gears" ] ],
-                     [ "Look inside a file", [ "G-code Inspector", "Model Stats" ] ],
-                     [ "Calculate and look up", [ "Fasteners" ] ],
-                     [ "Other", [ "Bare Tool" ] ] ], addon_sections
+                     [ "Look inside a file", [ "Material estimate", "G-code Inspector", "Model Stats" ] ],
+                     [ "Calculate and look up", [ "Calculator", "Fasteners" ] ],
+                     [ "Other", [ "Bare Tool" ] ] ], sections
       # EVERY CARD IS STILL `.addon-card`, so the count the test above pins keeps meaning what it says.
       assert_select ".addon-card", count: 5
 
       # EACH HEADING SAYS WHAT ITS TOOLS HAVE IN COMMON (2026-11-23): the sentence directly under
       # it, from SECTIONS, so the order of the sentences is the order of the headings.
-      sentences = css_select(".tools-home .tools-section").drop(1).map do |section|
+      sentences = css_select(".tools-home .tools-section").map do |section|
         head = section.css(".tools-section-head").first
         assert_equal "tools-section-desc", head.next_element&.[]("class")&.split&.first,
                      "#{head.text} has no sentence directly under it"
         head.next_element.text.strip
       end
       assert_equal Tools::HomeController::SECTIONS.map(&:last), sentences
-      assert_select "#tools-built-in + p.tools-section-desc", text: /every server/
-      assert_select "#tools-add-ons + p.tools-section-desc", text: /Installed on this server/
+      # NO HEADING SORTS BY WHERE A TOOL COMES FROM: the "Built in" section and the "Add-ons" heading
+      # over the categories are gone, so the page's section headings are SECTIONS' and nothing else.
+      assert_equal Tools::HomeController::SECTIONS.map(&:first), css_select(".tools-section-head").map { |h| h.text.strip }
 
       # EVERY CARD'S MENU OPENS ITS OWN TOOL'S DIALOG. The cards are drawn by section and the
       # dialogs in registry order, so an id taken from the position in a SECTION would hand Gears
@@ -195,9 +199,36 @@ module Tools
       ])
       get tools_path
       assert_response :success
-      assert_equal [ [ "Make a file", [ "Gears" ] ], [ "Look inside a file", [ "Model Stats" ] ] ], addon_sections
+      assert_equal [ [ "Make a file", [ "Gears" ] ],
+                     [ "Look inside a file", [ "Material estimate", "Model Stats" ] ],
+                     [ "Calculate and look up", [ "Calculator" ] ] ], sections
       assert_select ".tools-section-head", text: "Other", count: 0
-      assert_select ".tools-section-head", text: "Calculate and look up", count: 0
+    end
+
+    # A SERVER WITH NO ADD-ONS STILL HAS ITS TWO TOOLS, each in its section, and the first-run state
+    # comes after them. It says "add-ons", never "No tools": two tools are on the page above it.
+    test "with no add-ons the built-in tools stand in their sections, above the first-run state" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [])
+      get tools_path
+      assert_response :success
+      assert_equal [ [ "Look inside a file", [ "Material estimate" ] ], [ "Calculate and look up", [ "Calculator" ] ] ], sections
+      assert_select ".addon-card", 0
+      assert_select ".tools-home > .tools-section:last-of-type + .empty", 1
+      assert_select ".empty", text: /No add-ons (came back|are installed)/
+      assert_select ".empty", text: /No tools/, count: 0
+    end
+
+    # EVERY BUILT-IN TOOL HAS ONE CARD, IN A SECTION THE GALLERY DRAWS. Maker::ToolPins::BUILT_IN is
+    # what may be pinned; a key there and not in BUILT_IN would be a sidebar link with no card, and
+    # a key under nil or an unnamed category would never be drawn.
+    test "every built-in tool is placed once, under a category the gallery draws" do
+      placed = Tools::HomeController::BUILT_IN.values.flatten
+      assert_equal Maker::ToolPins::BUILT_IN.keys.sort, placed.sort
+      assert_equal placed.uniq, placed
+      assert_empty Tools::HomeController::BUILT_IN.keys - Tools::HomeController::SECTIONS.map { |_, category, _| category }.compact
+      get tools_path
+      assert_response :success
+      Maker::ToolPins::BUILT_IN.each_key { |key| assert_select ".tools-section .tool-card##{key}", 1 }
     end
 
     # ---- the New menu ---------------------------------------------------------------------------

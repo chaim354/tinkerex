@@ -77,7 +77,7 @@ module Web
       if Maker::Addons::Source.configured?
         assert_select ".empty", text: /returned nothing/
       else
-        assert_select ".empty", text: /No tools are installed on this server/
+        assert_select ".empty", text: /No add-ons are installed on this server/
       end
     end
 

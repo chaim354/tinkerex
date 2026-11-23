@@ -238,7 +238,8 @@
   suffix the guard originally grepped for, and was silently unguarded until
   `test/deploy_hygiene_test.rb`'s pattern was widened to `/_SIDECAR_URL\z|\AADDON_SOURCE_URL\z/`
   — **any future accessory URL needs the same manual addition**, because the guard covers a
-  naming convention, not a category. Consequence for OVH today: an **empty tools gallery**,
+  naming convention, not a category. Consequence for OVH today: a **tools gallery with no add-ons**
+  (only the built-in calculator and Material estimate),
   degrading through `Registry`'s rescue rather than 500ing, until OVH gets its own addons
   accessory.
 - **The addon system test is hermetic by fixture, deliberately.**

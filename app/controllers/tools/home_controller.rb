@@ -18,14 +18,29 @@ module Tools
       [ "Other", nil, "Tools that do not say which kind they are." ]
     ].freeze
 
+    # THE BUILT-IN TOOLS SIT IN THE SAME SECTIONS, under the category a manifest would give them
+    # (2026-11-23, the owner's call). They had a "Built in" section of their own above the add-ons,
+    # which sorted them by where they come from on a page every other heading of which sorts by what
+    # a tool does, so each stood in two kinds at once. The Material estimate reads files you already
+    # have and says what is in them, as Model Stats and Print Cost does; the calculator is a
+    # calculator. Each key names its card's partial (tools/home/_<key>_card), and a built-in card
+    # comes first in its section, since it is there on every server. Every key in
+    # Maker::ToolPins::BUILT_IN is here once (home_controller_test.rb), or a new built-in tool would
+    # have a pin and no card.
+    BUILT_IN = {
+      "inspect" => [ Maker::ToolPins::MATERIAL ],
+      "reference" => [ Maker::ToolPins::CALCULATOR ]
+    }.freeze
+
     def index
       @addons = Maker::Addons::Registry.all
       # SECTIONS COMPUTED HERE, AN EMPTY ONE DROPPED: a heading over nothing reads as a tool that
-      # failed to load. Each addon lands in exactly one section, so the cards the page draws are
-      # exactly `@addons` — home_controller_test.rb counts them through the sections.
+      # failed to load. Each addon lands in exactly one section, so the add-on cards the page draws
+      # are exactly `@addons` — home_controller_test.rb counts them through the sections.
       @sections = SECTIONS.filter_map do |heading, category, description|
+        built_ins = BUILT_IN.fetch(category, [])
         addons = @addons.select { |addon| addon.category == category }
-        [ heading, description, addons ] if addons.any?
+        [ heading, description, built_ins, addons ] if built_ins.any? || addons.any?
       end
       # TWO WAYS TO HAVE NO TOOLS, AND THE PAGE SAYS WHICH (UI-cohesion spec §2.4). `Registry.all`
       # returns [] both when no source is configured at all and when a configured one is empty or

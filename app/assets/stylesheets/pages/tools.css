@@ -14,8 +14,8 @@
 
   /* --- Tools (addons) gallery --- */
   .tools-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
-  /* The gallery's two kinds (2026-10-21): Built in (the calculator, written in the view) above the
-     Add-ons a manifest makes. The heading is the page's section heading, quieter than the h1. */
+  /* The gallery's sections, by what a tool does (Tools::HomeController::SECTIONS); the built-in
+     tools sit in them beside the add-ons since 2026-11-23. The heading is quieter than the h1. */
   .tools-section { margin-bottom: var(--space-5); }
   .tools-section-head { margin: 0 0 var(--space-3); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
   /* WHAT A SECTION'S TOOLS HAVE IN COMMON, one sentence under its heading (2026-11-23,
@@ -32,8 +32,9 @@
   /* The shortcut, drawn the way the top bar draws its ⌘K (shell.css .topbar-kbd). */
   .calculator-card-keys { white-space: nowrap; }
   .calculator-card-keys kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
-  /* `.tool-card` is a built-in tool's card (the calculator): the same face, a different class, so
-     every `.addon-card` is still one a manifest made. It is not a link, so it takes no hover. */
+  /* `.tool-card` is a built-in tool's card (the calculator, the Material estimate): the same face,
+     a different class, so every `.addon-card` is still one a manifest made. It is not a link, so it
+     takes no hover. */
   .addon-card, .tool-card { display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-panel); background: var(--surface); color: var(--fg); }
   .addon-card:hover { text-decoration: none; border-color: var(--fg); }
   .addon-card.disabled { opacity: .6; }
