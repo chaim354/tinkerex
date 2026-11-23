@@ -12,13 +12,14 @@ module Tools
   class PinsController < ApplicationController
     # PINNING ASKS THE REGISTRY WHETHER THE TOOL IS REAL AND RUNS HERE, and copies its title, because
     # the rail may not ask later (Maker::ToolPins). A greyed-out addon is refused: its pinned link
-    # would open a tool that cannot work on this server. The calculator is built in and asks nothing.
+    # would open a tool that cannot work on this server. A built-in tool (Maker::ToolPins::BUILT_IN)
+    # asks nothing.
     def create
       key = params[:key].to_s
       title = pinnable_title(key)
       return redirect_back_or_to(tools_path, alert: "That tool can't be pinned here.") if title.nil?
 
-      current_user.tool_pins.pin!(key, title: key == Maker::ToolPins::CALCULATOR ? nil : title)
+      current_user.tool_pins.pin!(key, title: Maker::ToolPins::BUILT_IN.key?(key) ? nil : title)
       redirect_back_or_to tools_path, notice: "Pinned #{title} to the sidebar."
     end
 
@@ -35,7 +36,7 @@ module Tools
     private
 
     def pinnable_title(key)
-      return "Calculator" if key == Maker::ToolPins::CALCULATOR
+      return Maker::ToolPins::BUILT_IN[key] if Maker::ToolPins::BUILT_IN.key?(key)
 
       addon = Maker::Addons::Registry.find(key)
       addon.title if addon&.available?

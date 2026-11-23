@@ -9,8 +9,9 @@ and can also be measured.
    - `EXTENSIONS` → array of **lowercase** extensions it claims.
    - `render(bytes, size:) → { bytes:, content_type:, width:, height: }` — `content_type` must be
      an **inline-safe raster type** (`image/png` in almost all cases). If your source is 2D vector,
-     build an SVG and hand it to `Maker::Previews::SvgRasterizer.to_png` (that is what `Dxf`/`Lbrn2`
-     do) — do **not** emit `image/svg+xml`, the web layer will not inline it (SVG can carry script).
+     build an SVG and hand it to `Maker::Previews::Svg.rasterize` (that is what `Dxf`/`Lbrn2`/`Mage`
+     do; it carries no metadata, so any you store is your own file's, never the generated SVG's) —
+     do **not** emit `image/svg+xml`, the web layer will not inline it (SVG can carry script).
    - Raise a renderer-specific error (e.g. `RenderError`) on bad input, never a bare crash — the
      job classifies a known "no renderable content" condition as `unsupported`/`failed`.
    - **Paint ink on paper**: an opaque ground of exactly `Maker::Previews::Palette::PAPER` (white),

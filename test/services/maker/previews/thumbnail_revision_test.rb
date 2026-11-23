@@ -48,10 +48,10 @@ module Maker
         "a.bmp"   => 1, # ImageThumb — 6
         "a.iges"  => 2, # Mesh       — 14 (obj/step/stp/iges/igs/brep/gltf/…); 2 = ink on paper
         "a.pdf"   => 1, # Pdf
-        "a.svg"   => 1, # Svg
+        "a.svg"   => 2, # Svg        — 2 = the row stores the drawing's size (2026-11-22)
         "a.mage"  => 2, # Mage       — its own renderer for thumbnails, unlike its geometry leg; 2 = pages
         "a.stl"   => 3, # Stl        — 3 = ink on paper (2026-10-21)
-        "a.dxf"   => 3, # Dxf
+        "a.dxf"   => 4, # Dxf        — 4 = the row stores the drawing's size (2026-11-22)
         "a.3mf"   => 3, # ThreeMf    — in lockstep with Stl (its mesh fallback)
         "a.lbrn"  => 5, # Lbrn2      — 5 = pages (LightBurn 2.2)
         "a.lbrn2" => 5, # Lbrn2 again — see the delegation note above

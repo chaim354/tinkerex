@@ -179,7 +179,11 @@
   with Dxf" turns every SVG upside down, and it still draws a plausible picture. Only a positional
   assertion catches either direction.
 - **AN SVG'S UNITS COME FROM `width`/`height` OVER THE `viewBox`, FALLING BACK TO CSS px AT 96 dpi**
-  — which is by definition, and is what makes a viewBox-only file measurable at all. `%`, `em` and
+  — which is by definition, and is what makes a viewBox-only file measurable at all. **WITH NO
+  `viewBox` THE UNITS ARE CSS px WHATEVER UNIT `width` IS WRITTEN IN**: the width only sizes the
+  viewport, and nothing maps user space onto it, so `width="100mm"` over `<rect width="80">` is an
+  80 px rect — resvg draws it across 21% of the canvas, not 80%. Reading it in the width's unit made
+  every side 3.78× too big (`SvgGeometry::FORMAT_REVISION` 2 → 3, 2026-11-23). `%`, `em` and
   `ex` are **refused** rather than read as bare numbers. `preserveAspectRatio` `meet` uses
   **min(sx, sy) on both axes**; per-axis reports a stretch the renderer never applies.
 - **CURVE FLATTENING IS BOUNDED BY GEOMETRIC ERROR, NEVER BY A FIXED SAMPLE COUNT** — the same rule
@@ -1028,3 +1032,23 @@
   `test/system/measure_units_test.rb`, every test of which first asserts `mm` is pressed. A leaked
   `in` would turn other files' `mm` assertions red, and what prevents it is Capybara's own reset,
   which clears localStorage between tests (measured 2026-10-08, capybara 3.40).
+- **A FLAT FILE'S SIZE HAS ONE MEASURER, `Maker::Previews::Dimensions`, AND IT ADDS NO READING OF
+  ANY FORMAT (2026-11-22).** An SVG's size is its Measure payload's job box; a DXF's is measured in
+  `Dxf.drawing`, the walk that draws its thumbnail, and pinned equal to `DxfGeometry`'s job box;
+  LightBurn's and MillMage's are `Lbrn2.page_metadata`, as their panels always read. The thumbnail
+  rows of all four store the same Hash (`"job"`, and `"pages"` for a multi-page file), which the
+  facts list and the Material estimate tool read through one `from_metadata`. Storing it on SVG and
+  DXF rows was a per-kind THUMBNAIL bump (Svg 1 → 2, Dxf 3 → 4) with no geometry bump, because no
+  payload moved. An SVG thumbnail row stores `SvgGeometry`'s job box, so a change to what that box
+  measures must bump `Svg::THUMBNAIL_REVISION` as well as `SvgGeometry::FORMAT_REVISION`.
+- **THE DELEGATE RASTERIZE CARRIES NO METADATA.** `Svg.render` stores an `.svg` file's size;
+  `Svg.rasterize` is what Dxf, Lbrn2 and Mage call for an SVG they generated, and it must stay
+  metadata-free: a size measured off a generated document describes that document. Their own
+  `render` merges their metadata over the result, which is exactly why `svg_test.rb`'s
+  "the bare rasterize carries no size" is the only assertion that can see this break.
+- **THE DXF THUMBNAIL MEASURES IN ITS OWN LEX.** Calling `DxfGeometry` from the thumbnail path
+  would lex the file twice per render; `dxf_geometry_test.rb` counts one.
+- **METADATA HOLDING ONLY A SIZE IS NOT A RECIPE.** `files/show.html.erb` draws a Laser or CNC
+  panel only when `Dimensions.recipe?` — anything besides `job`/`pages` — because an SVG's size-only
+  row would otherwise draw an empty "Laser settings" panel. `layers` is not the test: LightBurn's
+  metadata compacts it away on a file with no layers.

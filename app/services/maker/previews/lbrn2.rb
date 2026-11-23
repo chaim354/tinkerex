@@ -205,7 +205,7 @@ module Maker
       def outline_thumbnail(lbrn2_bytes, size:)
         raise NoThumbnail, "LightBurn file has no embedded thumbnail" unless Maker::Previews::Svg.available?
 
-        Maker::Previews::Svg.render(to_svg(lbrn2_bytes, size:), size:)
+        Maker::Previews::Svg.rasterize(to_svg(lbrn2_bytes, size:), size:)
       end
 
       # Parse a LightBurn document.

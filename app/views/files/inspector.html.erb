@@ -33,7 +33,8 @@
           form: { data: { turbo_confirm: delete_confirm(@node.name, kind: @node.kind) } } %>
   </div>
 
-  <%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>
+  <%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path,
+                           dimensions: file_dimensions(@thumbnail) %>
 
   <%# THE FILE PAGE'S CONDITION, VERBATIM: files only, and not inside a git working tree
       (FilesController#inspector's @repo_root, the walk #rename and #move refuse on). The panel only

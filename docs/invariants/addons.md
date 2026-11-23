@@ -116,6 +116,9 @@
   green to 12 failures + 2 errors. It does **not** collide with `tools/addon_states/:id/params`
   (four segments; Rails requires a segment-count match) — an earlier draft of the routes comment
   claimed it did and was verified false via `Rails.application.routes.recognize_path`.
+- **A BUILT-IN TOOL'S KEY IS RESERVED (`Registry::RESERVED_KEYS`, 2026-11-22).** `material` is
+  routed above `tools/:key`, so an addon keyed it would be shadowed silently; `calculator` is the
+  calculator's pin key. `problem_with` refuses both, so the skip is reported like any other problem.
 - **AN ADDON DECLARING A SERVICE THIS DEPLOYMENT HAS NO URL FOR GREYS OUT, NAMING THE SERVICE** (the
   maker's sentence; since F, 2026-10-13, the ENV VAR is named in Help's operator section and
   `docs/INSTALL.md`, not on the card). This is a REGRESSION the openscad retirement would otherwise have shipped: the

@@ -157,6 +157,33 @@ module Maker
         assert_equal 1, thumbnail_lexes, "the thumbnail leg must lex the file once, got #{thumbnail_lexes}"
       end
 
+      test "the thumbnail is at revision 4, the build that stores the drawing's size" do
+        assert_equal 4, Dxf::THUMBNAIL_REVISION
+      end
+
+      # THE FACTS ROW AND THE MEASURE VIEW READ ONE NUMBER. The thumbnail measures in its own walk
+      # (one lex, below) rather than calling DxfGeometry, so the two boxes are pinned equal here.
+      test "the drawing's stored size is the Measure payload's job box" do
+        %w[plate.dxf sample.dxf].each do |name|
+          bytes = fixture(name)
+          job = DxfGeometry.build(bytes)["job"]
+          assert_operator job["w"], :>, 0, "#{name}: precondition — the fixture draws something"
+
+          _svg, drawn = Dxf.drawing(bytes)
+          assert_equal [ job["w"], job["h"] ], [ drawn["width"], drawn["height"] ],
+                       "#{name}: the thumbnail's size and the Measure view's disagree"
+        end
+      end
+
+      test "the thumbnail carries that size and its render still lexes the file once" do
+        skip "resvg not installed on this box" unless Svg.available?
+
+        result = nil
+        lexes = counting(:tokenize) { result = Dxf.render(fixture("plate.dxf"), size: 64) }
+        assert_equal 1, lexes, "measuring must ride the drawing's lex, not add one"
+        assert_equal({ "job" => { "width" => 80.0, "height" => 40.0 } }, result[:metadata])
+      end
+
       # THE BACKSTOP THAT LICENSES NOT BUMPING A REVISION. Handing `each_geometry` the pairs
       # instead of the bytes changed the traversal's plumbing and not its output, and these
       # digests are the evidence rather than the claim: they were taken from the pre-refactor code

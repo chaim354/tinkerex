@@ -29,8 +29,12 @@ module V1
       end
 
       test "re-POSTing a READY preview does NOT reset status or enqueue a job" do
+        # AT THE RENDERER'S CURRENT REVISION, read rather than defaulted: a row left at the column's
+        # default 1 went stale the day `Svg::THUMBNAIL_REVISION` moved past it, and a stale row
+        # re-enqueues by design — the thing this test asserts does not happen to a CURRENT one.
         preview = @user.maker_previews.create!(node_id: "ok.svg", version_id: "v1",
-                                               kind: "thumbnail", status: "ready")
+                                               kind: "thumbnail", status: "ready",
+                                               renderer_revision: ::Maker::Previews::Enqueue.revision_for_name("ok.svg", "thumbnail"))
 
         assert_no_enqueued_jobs(only: ::Maker::GeneratePreviewJob) do
           post "/v1/maker/previews",

@@ -96,7 +96,7 @@ module Maker
       # `plate.dxf`'s stayed still. The shared term still has not moved, which is the claim this
       # paragraph exists to defend. Left in the past tense rather than deleted because the argument
       # for the additive helper is what a reviewer arrives here asking about.
-      GEOMETRY_REVISIONS = { "a.lbrn2" => 7, "a.lbrn" => 7, "a.mage" => 7, "a.dxf" => 4, "a.svg" => 3 }.freeze
+      GEOMETRY_REVISIONS = { "a.lbrn2" => 7, "a.lbrn" => 7, "a.mage" => 7, "a.dxf" => 4, "a.svg" => 4 }.freeze
 
       test "a format's geometry revision moves only when this pin moves with it" do
         GEOMETRY_REVISIONS.each do |filename, expected|
@@ -147,6 +147,8 @@ module Maker
 
         assert_equal Maker::Previews::Lbrn2::THUMBNAIL_REVISION,
                      Enqueue.revision_for_name("a.lbrn2", "thumbnail")
+        assert_equal Maker::Previews::Svg::THUMBNAIL_REVISION, Enqueue.revision_for_name("a.svg", "thumbnail")
+        assert_equal Maker::Previews::Dxf::THUMBNAIL_REVISION, Enqueue.revision_for_name("a.dxf", "thumbnail")
       end
 
       # MEASURING NEEDS NO RASTERIZER, and a box without resvg must still do it. This is the whole

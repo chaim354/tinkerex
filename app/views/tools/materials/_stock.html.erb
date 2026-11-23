@@ -1,0 +1,26 @@
+<%# locals: (stock:) %>
+<%# THE STOCK. Never replaced by a stream, so typing here is never interrupted; the page's controller
+    remembers these in this browser (localStorage, a convenience) and converts the three numbers when
+    the unit changes. The hidden rotate=0 before the checkbox is what makes an untick reach the server. %>
+<fieldset class="material-stock">
+  <legend>Stock</legend>
+  <label>Sheet width
+    <%= number_field_tag "sheet_width", stock.width && recipe_num(stock.width), id: "sheet_width", step: "any", min: 0,
+                         data: { material_estimate_target: "sheetWidth", action: "input->material-estimate#stockChanged" } %></label>
+  <label>Sheet height
+    <%= number_field_tag "sheet_height", stock.height && recipe_num(stock.height), id: "sheet_height", step: "any", min: 0,
+                         data: { material_estimate_target: "sheetHeight", action: "input->material-estimate#stockChanged" } %></label>
+  <label>Gap
+    <%= number_field_tag "gap", recipe_num(stock.gap), id: "gap", step: "any", min: 0,
+                         data: { material_estimate_target: "gap", action: "input->material-estimate#stockChanged" } %></label>
+  <label>Unit
+    <%= select_tag "unit", options_for_select([ %w[mm mm], %w[in in] ], stock.unit), id: "unit",
+                   data: { material_estimate_target: "unit", action: "change->material-estimate#stockChanged" } %></label>
+  <label class="material-rotate">
+    <%= hidden_field_tag "rotate", "0", id: nil %>
+    <%= check_box_tag "rotate", "1", stock.rotate, id: "rotate",
+                      data: { material_estimate_target: "rotate", action: "change->material-estimate#stockChanged" } %>
+    Allow rotating parts 90°
+  </label>
+  <%= button_tag "Update", type: "submit", class: "btn small", data: { material_estimate_target: "update" } %>
+</fieldset>

@@ -108,6 +108,7 @@ module Web
       landings/show.html.erb
       projects/composer_page.html.erb
       settings/devices/connected.html.erb
+      tools/materials/_sheet.html.erb tools/materials/update.turbo_stream.erb
     ].freeze
     # projects/composer_page is rendered only by a REFUSED POST (Projects::ComposerRefusal, the no-JS
     # arm of a 422 composer re-render), never by a GET this sweep can issue; its body is swept for
@@ -115,6 +116,10 @@ module Web
     # settings/devices/connected is rendered only by POST /settings/devices (the assistant token is
     # shown once, never redirected to, 2026-11-04); its body is swept for the same three and its
     # comment's prose by SettingsDevicesConnectTest "the connected page leaks no template comment".
+    # tools/materials/update.turbo_stream and _sheet are rendered only by a POST (the Material
+    # estimate is stateless, so its GET page is always empty and draws no sheet, 2026-11-22); the
+    # stream that renders both, with the parts list and the results, is swept for the same three and
+    # each partial's comment prose by MaterialEstimateTest "the estimate's streams leak no template comment".
 
     setup do
       # HERMETIC BY FIXTURE (§14c): the addon pages below read `test/fixtures/addons`, never the
@@ -641,6 +646,7 @@ module Web
         "supplier edit" => edit_supplier_path(@supplier),
         "location edit" => edit_location_path(@location),
         "tools gallery" => tools_path,
+        "material estimate" => tools_material_path,
         # The New ▾ menu's lazy tool list (slice 2): a fragment, swept like a page so a comment
         # leak in it would show. The sweep's ADDON_SOURCE_PATH points at the fixtures, so it lists.
         "new menu tools" => tools_new_menu_path,

@@ -89,6 +89,11 @@ module Maker
       CACHE_KEY = "maker/addons/manifests"
       TTL = 5.minutes
       REQUIRED = %w[key title icon description api_version entry].freeze
+      # KEYS A BUILT-IN TOOL ALREADY ANSWERS TO (Maker::ToolPins::BUILT_IN). `material` has its own
+      # page at /tools/material, routed above `tools/:key`, so an addon keyed it would be unreachable
+      # with nothing to say why; `calculator` is the built-in calculator's pin key, so pinning an
+      # addon keyed it would pin the calculator. Refused like every problem: skipped and reported.
+      RESERVED_KEYS = Maker::ToolPins::BUILT_IN.keys.freeze
 
       # Sorted by [title, key]: sort_by is not stable, and source order must never be user-visible.
       #
@@ -118,6 +123,8 @@ module Maker
 
         missing = REQUIRED.reject { |k| manifest[k].present? }
         return "missing #{missing.join(', ')}" if missing.any?
+        key = manifest["key"].to_s
+        return "key #{key.inspect} is reserved for a built-in tool" if RESERVED_KEYS.include?(key)
         unless manifest["api_version"].to_s == API_VERSION
           return "api_version #{manifest['api_version'].to_s.inspect} — this host speaks #{API_VERSION.inspect}"
         end

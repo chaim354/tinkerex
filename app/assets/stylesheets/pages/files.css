@@ -188,4 +188,7 @@
   .model-strip-settings { margin-top: var(--space-3); grid-template-columns: max-content minmax(0, 1fr); }
   .model-strip-notes { margin-top: var(--space-3); }
   .model-strip .print-log { margin-top: var(--space-3); }
+
+  /* A multi-page file's Dimensions: one page per line (files/_meta). */
+  .file-dimensions-page { display: block; }
 }

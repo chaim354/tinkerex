@@ -52,7 +52,9 @@ module Maker
       #      them (`path_svg`), which also cuts the worst file's thumbnail nearly in half. The
       #      payload gains the matching descriptor in the same breath, so
       #      `DxfGeometry::FORMAT_REVISION` moves with this — one traversal, two artifacts.
-      THUMBNAIL_REVISION = 3
+      #   4  the row stores the drawing's size in mm (Maker::Previews::Dimensions), measured in the
+      #      same walk that draws it. The picture's bytes do not move.
+      THUMBNAIL_REVISION = 4
 
       def payload_revision(kind)
         kind == "geometry" ? Maker::Previews::DxfGeometry::PAYLOAD_REVISION : THUMBNAIL_REVISION
@@ -67,7 +69,9 @@ module Maker
       def render(dxf_bytes, size: 512, kind: "thumbnail")
         return Maker::Previews::DxfGeometry.render(dxf_bytes) if kind == "geometry"
 
-        Maker::Previews::Svg.render(to_svg(dxf_bytes, size:), size:)
+        svg, drawn = drawing(dxf_bytes, size:)
+        Maker::Previews::Svg.rasterize(svg, size:)
+                            .merge(metadata: Maker::Previews::Dimensions.job_metadata(drawn))
       end
 
       # ---- the one traversal -------------------------------------------------------------
@@ -1139,7 +1143,14 @@ module Maker
 
       # ---- SVG (the thumbnail) -----------------------------------------------------------
 
-      def to_svg(dxf_bytes, size: 512)
+      def to_svg(dxf_bytes, size: 512) = drawing(dxf_bytes, size:).first
+
+      # ONE LEX, ONE WALK, TWO ANSWERS: the thumbnail's SVG and the drawing's size in mm. The size is
+      # the box of the very points this walk draws, scaled by $INSUNITS — what DxfGeometry's job box
+      # reports (pinned equal in dxf_geometry_test.rb). It is measured HERE, not by calling
+      # DxfGeometry from the thumbnail path, because that would lex the file a second time per
+      # render — the cost this file's lex-once guard exists to refuse (§14h).
+      def drawing(dxf_bytes, size: 512)
         pairs = tokenize(dxf_bytes)
         colors = layer_colors(pairs)
         bbox = BBox.new
@@ -1151,7 +1162,7 @@ module Maker
           els << element_svg(flipped, closed, curve, colors[layer] || STROKE)
         end
 
-        wrap_svg(els, bbox, size)
+        [ wrap_svg(els, bbox, size), bbox.size_mm(mm_per_unit(pairs)) ]
       end
 
       # The exact primitive where `curve` offers one, else the flattened points. See
@@ -1483,6 +1494,14 @@ module Maker
         end
 
         def empty? = @min_x == Float::INFINITY
+
+        # The drawn extent in mm, rounded as Geometry rounds a job box, or nil when nothing was drawn.
+        def size_mm(scale)
+          return nil if empty?
+
+          { "width" => ((@max_x - @min_x) * scale).round(Maker::Previews::Geometry::PRECISION),
+            "height" => ((@max_y - @min_y) * scale).round(Maker::Previews::Geometry::PRECISION) }
+        end
 
         def viewbox(fallback:)
           return "0 0 #{fallback} #{fallback}" if empty?

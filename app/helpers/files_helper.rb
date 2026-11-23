@@ -336,4 +336,27 @@ module FilesHelper
     r = f.round(RECIPE_DECIMALS)
     (r == r.to_i ? r.to_i : r).to_s
   end
+
+  # A DRAWING'S SIZE IN BOTH UNITS — "120.5 × 80 mm · 4.74 × 3.15 in" — for the facts list and the
+  # recipe panels' Pages table (2026-11-22). mm through recipe_num (no trailing zeros); inches at two
+  # places always, since 0.01 in is finer than the 0.1 mm a LightBurn size is stored at. nil for
+  # anything that is not two numbers.
+  def dimensions_text(width, height)
+    w = Float(width, exception: false)
+    h = Float(height, exception: false)
+    return nil if w.nil? || h.nil?
+
+    inches = [ w, h ].map { |mm| format("%.2f", mm / Maker::Previews::Dimensions::MM_PER_INCH) }
+    "#{recipe_num(w)} × #{recipe_num(h)} mm · #{inches.join(' × ')} in"
+  end
+
+  # The size facts for the file page or the inspector, from the thumbnail row beside them, or nil.
+  # SHOWABLE ROWS ONLY: Enqueue repoints a row at new content without clearing its metadata, so a
+  # pending row still holds the PREVIOUS content's size until its render lands. A rebuilding row is
+  # a rebuild of this same content, and its size is this file's.
+  def file_dimensions(thumbnail)
+    return nil unless thumbnail&.showable?
+
+    Maker::Previews::Dimensions.from_metadata(thumbnail.metadata)
+  end
 end

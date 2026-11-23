@@ -1,0 +1,24 @@
+<% content_for :title, "Material estimate — Tinkerex" %>
+<div class="page-head"><h1>Material estimate</h1></div>
+
+<%# ONE FORM, THREE REGIONS (Tools::MaterialsController explains the statelessness): the parts list
+    and the results are replaced by turbo streams, the stock is never replaced, so the box being
+    typed in stays put. `multipart: true` because the upload button submits this same form to
+    tools_material_measure_path. `*_tag` helpers throughout, never a form builder's `fields_for`:
+    a form with no model and no scope emits bracketed names a builder mangles (§14d).
+
+    THE FORM-WIDE TOKEN: per-form CSRF tokens tie a token to the form's own action, and the Measure
+    button's `formaction` posts somewhere else, so without JavaScript (no X-CSRF-Token header) a
+    Measure click was refused with a 422. The session token is valid for every action.
+
+    THE HIDDEN FIRST BUTTON is the form's DEFAULT button, the one Enter in any field presses. Left
+    to tree order that was Measure uploads, so Enter in a quantity posted to the upload action. %>
+<%= form_with url: tools_material_path, method: :post, multipart: true, id: "material-form",
+              class: "material-estimate", authenticity_token: form_authenticity_token,
+              data: { controller: "material-estimate",
+                      action: "submit->material-estimate#gateSubmit turbo:submit-start->material-estimate#submitStart turbo:submit-end->material-estimate#submitEnd" } do %>
+  <%= button_tag "Update", type: "submit", hidden: true, tabindex: -1, class: "material-default-submit" %>
+  <%= render "tools/materials/parts", estimate: @estimate, projects: @projects %>
+  <%= render "tools/materials/stock", stock: @estimate.stock %>
+  <%= render "tools/materials/results", estimate: @estimate %>
+<% end %>

@@ -82,7 +82,7 @@ module Maker
       def outline_thumbnail(mage_bytes, size:)
         raise NoThumbnail, "MillMage file has no embedded thumbnail" unless Maker::Previews::Svg.available?
 
-        Maker::Previews::Svg.render(Maker::Previews::Lbrn2.to_svg(mage_bytes, size:), size:)
+        Maker::Previews::Svg.rasterize(Maker::Previews::Lbrn2.to_svg(mage_bytes, size:), size:)
       end
     end
   end

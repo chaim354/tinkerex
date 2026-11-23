@@ -1,0 +1,47 @@
+<%# locals: (estimate:) %>
+<%# THE RESULTS, replaced on every request. `aria-live` so a screen reader hears the new count. %>
+<section id="material-results" class="material-results" aria-live="polite" aria-labelledby="material-results-head">
+  <h2 id="material-results-head">Material</h2>
+  <% estimate.notes.each do |note| %>
+    <p class="material-note"><%= note %></p>
+  <% end %>
+
+  <% if estimate.errors.any? %>
+    <div class="form-errors flash-alert" role="alert">
+      <% estimate.errors.each do |error| %><p><%= error %></p><% end %>
+    </div>
+  <% elsif estimate.measured_parts.empty? %>
+    <p class="muted">Nothing to lay out yet.</p>
+  <% else %>
+    <dl class="material-summary">
+      <dt>Sheets</dt><dd class="material-sheet-count"><%= estimate.sheets.size %> × <%= material_stock_text(estimate.stock) %></dd>
+      <dt>Part area</dt><dd><%= material_area_text(estimate.total_area_mm2) %></dd>
+      <% if estimate.utilization %>
+        <dt>Sheet use</dt><dd><%= number_to_percentage(estimate.utilization * 100, precision: 0) %></dd>
+      <% end %>
+      <dt>Copies</dt><dd><%= estimate.copies %></dd>
+    </dl>
+
+    <% if estimate.unplaced.any? %>
+      <div class="form-errors flash-alert material-unplaced" role="status">
+        <p>Too big for this sheet:</p>
+        <ul>
+          <% estimate.unplaced.each do |part, count| %>
+            <li><%= part.label %> (<%= recipe_num(part.width) %> × <%= recipe_num(part.height) %> mm)<%= " × #{count}" if count > 1 %></li>
+          <% end %>
+        </ul>
+      </div>
+    <% end %>
+
+    <div class="material-sheets">
+      <% estimate.sheets.first(MaterialsHelper::SHEETS_DRAWN).each_with_index do |placements, i| %>
+        <%= render "tools/materials/sheet", placements: placements, stock: estimate.stock, number: i + 1 %>
+      <% end %>
+    </div>
+    <% if estimate.sheets.size > MaterialsHelper::SHEETS_DRAWN %>
+      <p class="muted">Drew the first <%= MaterialsHelper::SHEETS_DRAWN %> of <%= estimate.sheets.size %> sheets.</p>
+    <% end %>
+    <p class="muted material-caveat">Each part is laid out by its bounding box. Nesting software that
+      follows the real outline can often fit round or irregular parts tighter.</p>
+  <% end %>
+</section>

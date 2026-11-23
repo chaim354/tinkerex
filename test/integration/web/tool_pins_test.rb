@@ -236,5 +236,19 @@ module Web
       delete tools_pin_path("widgetkit")
       assert_redirected_to new_user_session_path
     end
+
+    test "the Material estimate is a built-in card on the Tools page, and it pins like the calculator" do
+      get tools_path
+      assert_select "div.tool-card#material[data-tool-pin-url=?]", tools_pin_path("material") do
+        assert_select "a.btn[href=?]", tools_material_path, text: "Open material estimate"
+      end
+
+      post tools_pin_path("material")
+      assert_equal [ { "key" => "material" } ], @user.reload.pinned_tools,
+                   "a built-in's name lives in Maker::ToolPins, never in the row"
+
+      get tools_path
+      assert_select "aside.rail a.rail-tool-pin[href=?]", tools_material_path, text: "Material estimate"
+    end
   end
 end

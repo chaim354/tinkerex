@@ -548,6 +548,13 @@ root to: "home#index"
   # route that is right there in this file. home_controller_test.rb's open_with tests are the
   # mutation check: move this line below `tools/:key` and they go red.
   get "tools/open_with", to: "tools/home#open_with", as: :tools_open_with
+  # THE MATERIAL ESTIMATE (2026-11-22; spec 2026-11-22-material-estimate-design.md), a BUILT-IN tool
+  # with a page of its own. Two-segment `/tools/*` routes, so ABOVE `tools/:key` for the reason that
+  # block states: below it, "material" is read as an addon key. The key is reserved in
+  # Maker::Addons::Registry::RESERVED_KEYS, so no addon can be shadowed by these silently.
+  get  "tools/material",         to: "tools/materials#show",    as: :tools_material
+  post "tools/material",         to: "tools/materials#create"
+  post "tools/material/measure", to: "tools/materials#measure", as: :tools_material_measure
 
   # A TOOL'S SIDEBAR PIN (2026-10-22; Tools::PinsController). Any tool: an addon by its key, or
   # `calculator`, the built-in modal, which has no `tools/:key` page of its own — this path was its

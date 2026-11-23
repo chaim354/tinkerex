@@ -205,8 +205,10 @@ module ShellHelper
       when "inventory" then [ :inventory ]
       when "tools"
         # A PINNED ADDON'S OWN PAGE LIGHTS ITS PINNED LINK, as a pinned folder beats Library. The
-        # calculator never lights: it is a modal over the page, not a page.
+        # calculator never lights: it is a modal over the page, not a page. The Material estimate is
+        # a page and lights the same way.
         key = params[:key].to_s if controller_path == "tools/addons"
+        key = Maker::ToolPins::MATERIAL if controller_path == "tools/materials"
         key && key != Maker::ToolPins::CALCULATOR && current_user.tool_pins.pinned?(key) ? [ :tool, key ] : [ :tools ]
       when "trash" then [ :trash ]
       when "settings" then [ :settings ]

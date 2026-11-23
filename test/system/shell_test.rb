@@ -660,7 +660,7 @@ class ShellTest < ApplicationSystemTestCase
         # three tabs, the widest new row these pages carry. (Page layout is measured in the project
         # page's branch below, where it always was.)
         edit_project_path(project), publishing_project_path(project),
-        file_path(long.node_id), file_path(kicad.node_id), file_path(gerbers[:gtl].node_id), tools_path, files_models_path, trash_index_path,
+        file_path(long.node_id), file_path(kicad.node_id), file_path(gerbers[:gtl].node_id), tools_path, tools_material_path, files_models_path, trash_index_path,
         inventory_items_path, inventory_item_path(item), suppliers_path, locations_path,
         project_bom_path(project),
         # STAGE 2, S2-5: the search results page (several groups populated -- see the tag_list:

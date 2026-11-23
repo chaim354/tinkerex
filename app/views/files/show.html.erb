@@ -99,7 +99,10 @@
     narrow square beside a table mostly made of whitespace. The viewer now has the whole main column
     and the recipe sits above the facts. `has-recipe` widens the side column for these pages only,
     because a five-column layer table does not fit the 340px every other file page keeps. %>
-<% recipe = @thumbnail&.metadata.presence %>
+<%# A RECIPE IS METADATA WITH SOMETHING BESIDES A SIZE (2026-11-22). An SVG or DXF thumbnail stores
+    only its drawing's size, which the facts list shows; read as a recipe it would draw an empty
+    Laser settings panel. Maker::Previews::Dimensions.recipe? owns the size keys. %>
+<% recipe = (@thumbnail.metadata.presence if Maker::Previews::Dimensions.recipe?(@thumbnail&.metadata)) %>
 <div class="workspace<%= " has-recipe" if recipe %>">
 <div class="workspace-main">
 <%# THE PAGE FINISHES ITS OWN PREVIEW (stage 4, S4-3). One `thumbs` controller on the row covers
@@ -218,7 +221,8 @@
     <%= render "files/lbrn_settings", meta: recipe %>
   <% end %>
 <% end %>
-<%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path %>
+<%= render "files/meta", info: @info, addon_origin: addon_origin, library_path: @library_path,
+                         dimensions: file_dimensions(@thumbnail) %>
 <%# RENAME OR MOVE, under the facts it changes rather than in the page head: an open composer there
     would stretch the head's row of buttons. FILES ONLY, and not inside a git working tree (the same
     @repo_root the banner and History read): exactly what FilesController#rename and #move accept,
