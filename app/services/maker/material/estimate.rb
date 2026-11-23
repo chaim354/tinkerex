@@ -27,8 +27,9 @@ module Maker
       attr_reader :parts, :stock, :notes
 
       # `parts` is the form's indexed Hash ({"0" => {"name" => …}, …}) or nil; `stock` its stock
-      # fields. A stock field the form did not send at all (a first visit) takes the default; one it
-      # sent blank or unreadable is an error the page names.
+      # fields. A stock field the form did not send at all (a first visit) takes the default. A sheet
+      # side sent blank or unreadable is an error the page names; a gap sent blank or unreadable is
+      # no gap, 0 mm, because clearing the field is how a person asks for none.
       def self.from_params(parts:, stock:)
         new(parts: parse_parts(parts), stock: parse_stock(stock))
       end

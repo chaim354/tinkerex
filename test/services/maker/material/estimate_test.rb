@@ -79,6 +79,17 @@ module Maker
         assert_in_delta 320_000.0, est.total_area_mm2, 1e-6
       end
 
+      # UTILIZATION IS THE PLACED PARTS' OWN AREA over the sheets used: never the gap-inflated size
+      # the packer works in, and never an unplaced part's area (which the total keeps). With a gap
+      # of 5 one 100 x 50 part fills a 200 x 100 sheet, so two sheets hold 10,000 of 40,000 mm².
+      # Gap-inflated would read 0.28875; dividing the total area would read 12.25.
+      test "utilization counts only the placed parts' own area" do
+        est = estimate([ row(qty: "2"), row(name: "big.svg", width: "400", height: "400", qty: "3") ], gap: "5")
+        assert_equal 2, est.sheets.size
+        assert_in_delta 490_000.0, est.total_area_mm2, 1e-6
+        assert_in_delta 0.25, est.utilization, 1e-9
+      end
+
       test "a bad sheet or gap is an error and nothing is packed" do
         assert_equal [ "Enter the sheet's width and height." ], estimate([ row ], sheet_width: "").errors
         assert_equal [ "Each side of the sheet must be between 1 and 10,000 mm." ], estimate([ row ], sheet_width: "0.5").errors
