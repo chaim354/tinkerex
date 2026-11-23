@@ -1,7 +1,7 @@
 module Maker
-  # THE TOOLS PINNED TO THE SIDEBAR (2026-10-22): the built-in calculator and any addon, in the order
-  # the maker pinned them. A right click on a tool's card in the gallery, or on its pinned link in
-  # the rail, pins or unpins it (toolmenu_controller.js, Tools::PinsController).
+  # THE TOOLS PINNED TO THE SIDEBAR (2026-10-22): the built-in calculator and Material estimate and
+  # any addon, in the order the maker pinned them. A right click on a tool's card in the gallery, or
+  # on its pinned link in the rail, pins or unpins it (toolmenu_controller.js, Tools::PinsController).
   #
   # HELD IN `users.pinned_tools`, A JSON LIST, AND AN ADDON'S TITLE IS COPIED IN AT PIN TIME. The
   # rail renders on every page and THE LAYOUT NEVER READS THE ADDON REGISTRY (docs/invariants/addons.md;
@@ -17,13 +17,20 @@ module Maker
     include Enumerable
 
     CALCULATOR = "calculator".freeze
+    MATERIAL = "material".freeze
+
+    # THE BUILT-IN TOOLS AND THEIR NAMES. A built-in's name lives here, not in the row, as the
+    # calculator's always has; Maker::Addons::Registry::RESERVED_KEYS keeps an addon off these keys.
+    BUILT_IN = { CALCULATOR => "Calculator", MATERIAL => "Material estimate" }.freeze
 
     Pin = Data.define(:key, :title) do
       def calculator? = key == CALCULATOR
+      def material? = key == MATERIAL
+      def built_in? = BUILT_IN.key?(key)
 
-      # What the rail and the menus call it. The calculator is built in, so its name lives here and
-      # not in the row; an addon falls back to its key only if its copied title was lost.
-      def label = calculator? ? "Calculator" : title.presence || key
+      # What the rail and the menus call it. An addon falls back to its key only if its copied title
+      # was lost.
+      def label = BUILT_IN[key] || title.presence || key
     end
 
     def initialize(user)

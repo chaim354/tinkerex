@@ -68,7 +68,7 @@ Every one of these must be present and non-empty, and `api_version` must be exac
 
 | Key | Type | Meaning |
 |---|---|---|
-| `key` | string | The addon's id. It is the URL segment (`/tools/<key>`), the asset directory name, and the default scope for saved states. |
+| `key` | string | The addon's id. It is the URL segment (`/tools/<key>`), the asset directory name, and the default scope for saved states. **`calculator` and `material` are reserved** for the host's built-in tools; a manifest using either is skipped and reported by `addons:check`. |
 | `title` | string | Display name in the gallery and the page heading. |
 | `icon` | string | Required, and not drawn: since 2026-11-02 the gallery shows a tile with the first letter of your `title` instead, because this interface draws no emoji. An emoji here is still accepted. |
 | `description` | string | One line, shown in the gallery and under the page heading. |

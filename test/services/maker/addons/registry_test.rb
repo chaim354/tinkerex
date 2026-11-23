@@ -643,6 +643,19 @@ module Maker
         end
       end
 
+      # A BUILT-IN TOOL'S KEY IS NOT AN ADDON'S. `material` has its own page routed above
+      # `tools/:key`, so an addon keyed it would be unreachable with nothing to say why; `calculator`
+      # is the built-in calculator's pin key. Refused like any other problem: skipped, and reported.
+      %w[material calculator].each do |key|
+        test "an addon keyed #{key} is skipped and reported, because a built-in tool answers to it" do
+          Source.stub = FakeAddonSource.new(manifests: [ MANIFEST.merge("key" => key) ])
+          Rails.cache.clear
+
+          assert_empty Registry.all
+          assert_equal [ { key:, reason: "key #{key.inspect} is reserved for a built-in tool" } ], Registry.problems
+        end
+      end
+
       private
 
       def with_env(pairs)

@@ -83,7 +83,9 @@
           Tools glyph and not its manifest's icon, which is an emoji, and the interface draws none
           (design-system.md rule 13); so it hides in the icon rail (`.rail-tool-pin`, shell.css) and
           Tools wears the lit mark for it there. (A pinned folder or a project shows as a monogram
-          tile there instead, UX audit A2.) %>
+          tile there instead, UX audit A2.)
+
+          THE MATERIAL ESTIMATE is a page, so it links and lights like an addon's, at its own route. %>
       <% current_user.tool_pins.each do |pin| %>
         <li>
           <% if pin.calculator? %>
@@ -92,6 +94,11 @@
                         "aria-keyshortcuts": CalculationsHelper::CALCULATOR_KEYS,
                         data: tool_menu_data(pin.key, pin.label, calculator_open: "") do %>
               <%= rail_icon(:calculator) %><span class="rail-label">Calculator</span>
+            <% end %>
+          <% elsif pin.material? %>
+            <%= link_to tools_material_path, class: "rail-link rail-tool-pin", title: pin.label,
+                        "aria-current": sidebar_aria([ :tool, pin.key ]), data: tool_menu_data(pin.key, pin.label) do %>
+              <%= rail_icon(:tools) %><span class="rail-label"><%= pin.label %></span>
             <% end %>
           <% else %>
             <%= link_to tools_addon_path(pin.key), class: "rail-link rail-tool-pin", title: pin.label,
