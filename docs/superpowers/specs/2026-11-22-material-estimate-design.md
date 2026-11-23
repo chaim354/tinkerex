@@ -94,10 +94,14 @@ New **`Maker::Previews::Dimensions`**, the one reader and the one measurer:
 `Dimensions.measure` from the same bytes in the same job. That is a change in what the row stores, so
 per §14h **`Svg::THUMBNAIL_REVISION` 1 → 2 and `Dxf::THUMBNAIL_REVISION` 3 → 4**. Every SVG and DXF
 thumbnail rebuilds once. The row goes `rebuilding` and keeps showing its old picture throughout.
-Geometry revisions do not move: no geometry payload changes.
+No geometry payload changes for this reason. (`SvgGeometry::FORMAT_REVISION` does move, 2 → 3, for a
+separate fix found in review: with no `viewBox`, SVG user units are CSS px whatever unit `width` is
+written in, and the old code read them as millimetres. So deploying also re-renders every stored SVG
+Measure payload once.)
 
-**THE DELEGATE PATH MUST NOT CARRY SVG METADATA.** `Svg.render` is also what `Dxf`, `Lbrn2` and `Mage`
-call to rasterize an SVG they generated. Metadata measured from that generated SVG would describe
+**THE DELEGATE PATH MUST NOT CARRY SVG METADATA.** `Dxf`, `Lbrn2` and `Mage` rasterize an SVG they
+generated, so the rasterize is split out as `Svg.rasterize`, which carries no metadata, while
+`Svg.render` (an `.svg` file's own thumbnail) adds its size. Metadata measured from that generated SVG would describe
 the wrong document (DXF's units are resolved before it; LightBurn's bed frame is in it). The `.svg`
 file's own thumbnail adds metadata; the shared rasterize does not. A test pins that a DXF's and a
 LightBurn file's thumbnail metadata is their own format's, not SVG-derived.
@@ -105,8 +109,10 @@ LightBurn file's thumbnail metadata is their own format's, not SVG-derived.
 **Precision is the format's own.** LightBurn and MillMage keep their existing 0.1 mm values; SVG and
 DXF store their geometry job box at 0.01 mm, the numbers the Measure view shows for the same file.
 
-**Which row the file page reads.** The facts row reads `@thumbnail.metadata` exactly as the recipe
-panel beside it does today, so the two never disagree on one page. On a box without `resvg` an SVG or
+**Which row the file page reads.** The facts row reads a **showable** row's metadata only
+(`FilesHelper#file_dimensions`): Enqueue repoints a row at new content without clearing its
+metadata, so a pending row still holds the previous content's size. A rebuilding row is a rebuild
+of the same content and shows. On a box without `resvg` an SVG or
 DXF thumbnail is `unsupported` and carries no size. That is accepted; the production image has resvg.
 
 ## Part 2 — the Material estimate tool
@@ -139,7 +145,9 @@ DXF thumbnail is `unsupported` and carries no size. That is accepted; the produc
    project (`Maker::FileAttachment`) with one of the four extensions.
 3. **The library** — the existing chooser (`shared/_folder_field`), once in folder mode and once in
    file mode. A folder adds its live files of the four formats **including subfolders**, walked by
-   the parent edge (`FileLayer::Subtree`), never under `.git`, sorted by path.
+   the parent edge (`FileLayer::Subtree`), sorted by name (a chunk_remote node has no stored path, and
+   building one is a parent walk per file). Nothing beneath a `.git` is added in practice: share and
+   s3 never index its contents, and git's own files carry none of the four extensions.
 
 Every lookup starts from `current_user`. Another user's project, folder or file answers like a
 missing one.
@@ -178,7 +186,8 @@ Adding the same library file twice is allowed (two rows).
 - **Sheets needed.**
 - **Total part area**, the sum of width × height × quantity over measured parts, in cm² and in², and
   in ft² as well once it reaches 1 ft².
-- **Sheet use**: part area ÷ (sheets × sheet area), as a percentage.
+- **Sheet use**: **placed** part area ÷ (sheets × sheet area), as a percentage. A part too big for
+  the sheet stays in the total area and out of this figure.
 - **A drawing of each sheet**: the sheet outline and each placed part as a labelled rectangle,
   drawn as server-rendered SVG markup. **Every label is escaped by ERB, never `raw`/`html_safe`**
   (filenames are user-controlled). At most 20 sheets are drawn; past that the page says how many more.
@@ -229,7 +238,7 @@ Each limit is a named constant, and each refusal says what was cut:
 | Total placements (sum of quantities) | 2,000 |
 | Files per upload submit | 20 |
 | Bytes per uploaded file | `PREVIEW_MAX_BYTES` (32 MB default), the preview ceiling |
-| Files added from one folder | 200, by path order, with "first 200 of N" |
+| Files added from one folder | 200, by name order, with "first 200 of N" |
 | Sheet side | 1–10,000 mm |
 | Gap | 0–100 mm |
 
@@ -283,7 +292,8 @@ Each limit is a named constant, and each refusal says what was cut:
 ## Rollout
 
 - Deploying rebuilds every SVG and DXF thumbnail once. Pictures stay up throughout (`rebuilding`), and
-  each file's Dimensions row appears as its rebuild lands.
+  each file's Dimensions row appears as its rebuild lands. Every stored SVG Measure payload also
+  re-renders once (`SvgGeometry::FORMAT_REVISION` 2 → 3, the no-`viewBox` unit fix).
 - The arc is recorded with `bin/log arc --from-pr <n>` when the PR opens (§15).
 
 ## Not in scope
