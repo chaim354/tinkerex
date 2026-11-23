@@ -74,7 +74,7 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
 
     find(".file-menu button").send_keys(:escape)
     assert_no_selector ".file-menu"
-    # The card is a <div> and cannot take focus; its Open button is where focus goes back to.
+    # The card is a <div> and cannot take focus; its title, a button, is where focus goes back to.
     assert page.evaluate_script(<<~JS), "focus did not go back to the tool"
       document.activeElement === document.querySelector("#calculator .calculator-card-open")
     JS

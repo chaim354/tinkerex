@@ -231,6 +231,26 @@ module Tools
       Maker::ToolPins::BUILT_IN.each_key { |key| assert_select ".tools-section .tool-card##{key}", 1 }
     end
 
+    # NO CARD HAS AN OPEN BUTTON (2026-11-23, the owner's call). A runnable card's one control is its
+    # title, stretched over the card (pages/tools.css `.addon-card-link`), built-in and addon alike:
+    # the Material estimate's is a link to its page, the calculator's a button that opens its modal.
+    test "a runnable card's one control is its title, built-in and addon alike" do
+      get tools_path
+      assert_response :success
+      cards = css_select(".tools-home .tool-card, .tools-home .addon-card:not(.disabled)")
+      assert_equal Maker::ToolPins::BUILT_IN.size + 1, cards.size
+      cards.each do |card|
+        controls = card.css("a, button")
+        label = card["id"] || card.text.squish
+        assert_equal 1, controls.size, "#{label} has #{controls.map { |c| c.text.strip }.inspect}"
+        assert_equal %w[addon-card-link addon-title], (controls.first["class"].split & %w[addon-title addon-card-link]).sort, label
+        assert_equal card.css(".addon-title").text.strip, controls.first.text.strip, label
+      end
+      assert_select "#material a.addon-card-link[href=?]", tools_material_path, text: "Material estimate"
+      assert_select "#calculator button.addon-card-link[type=button][data-calculator-open][aria-haspopup=dialog]", text: "Calculator"
+      assert_select ".tools-home", text: /Open (calculator|material estimate)/, count: 0
+    end
+
     # ---- the New menu ---------------------------------------------------------------------------
 
     # THE SOURCE MUST READ AS CONFIGURED, or #new_menu and #open_with list nothing: both ask
