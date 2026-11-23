@@ -2,14 +2,18 @@
 
 <div class="page-head"><h1>Tools</h1></div>
 
-<%# PINNING, TWO WAYS TO ONE DOOR (Tools::PinsController). Every runnable card carries a visible
-    Pin to sidebar toggle (tools/home/_pin_toggle), which a keyboard, a touch screen and a first-time
-    visitor can all find; a right click on the card does the same through `toolmenu`
-    (toolmenu_controller.js, ShellHelper#tool_menu_data), the calculator and each addon a manifest
-    made alike. The sentence that used to explain the right click is gone with the need for it
-    (UX audit G2). A greyed-out card has neither: it cannot run here, so a pinned link to it could
-    open nothing. `tools-home` scopes this page's card rules away from the bundles, which reuse
-    `.tools-grid` and `.addon-card` for their own galleries (pages/tools.css). %>
+<%# A CARD'S OWN MENU IS ITS RIGHT CLICK (`toolmenu`: toolmenu_controller.js, ShellHelper#tool_menu_data),
+    and it holds what a card no longer draws (2026-11-23, the owner's call): Pin to sidebar, on every
+    runnable card, the calculator and each addon a manifest made alike; and, on an addon's card,
+    Permissions…, which opens the dialog rendered for it at the foot of this page. The card's visible
+    Pin toggle (UX audit G2, 2026-11-02) and its "This tool can:" footer are GONE, so a card is its
+    mark, its name and its sentence. Two costs, both accepted: iOS fires no contextmenu, so there a
+    tool is pinned from nowhere (a phone has no sidebar to pin to anyway) and its permissions are
+    read on its own page (tools/addons/show lists them, with the author's reasons); and the menu is
+    invisible until tried, which is why Help says it in words. A greyed-out card has no menu: it
+    cannot run here, so a pinned link to it could open nothing. `tools-home` scopes this page's card
+    rules away from the bundles, which reuse `.tools-grid` and `.addon-card` for their own galleries
+    (pages/tools.css). %>
 <div class="tools-home" data-controller="toolmenu">
 
 <%#
@@ -20,13 +24,14 @@
   test/controllers/tools/home_controller_test.rb counts. Its own grid and heading keep the two
   kinds apart; the inner head/icon/title/description classes are shared for their look.
 
-  The card OPENS the modal (`data-calculator-open`); its Pin toggle, or a right click, pins it. At phone width,
+  The card OPENS the modal (`data-calculator-open`); a right click pins it. At phone width,
   where the tab bar keeps its four destinations and there is no rail, this card IS the way to the
   calculator (the Tools tab). `id="calculator"` is where the pinned rail link's href lands when its
   click is not the controller's to handle (a modified click).
 %>
 <section class="tools-section" aria-labelledby="tools-built-in">
   <h2 class="tools-section-head" id="tools-built-in">Built in</h2>
+  <p class="tools-section-desc muted">Part of Tinkerex, so they are here on every server.</p>
   <div class="tools-grid">
     <%= tag.div class: "tool-card calculator-card", id: "calculator",
                 data: tool_menu_data(Maker::ToolPins::CALCULATOR, "Calculator") do %>
@@ -37,15 +42,12 @@
       <span class="addon-desc muted">Lengths in mm, cm, m, inches and feet, inch fractions, and
         conversions. Save a result to a project. <span class="calculator-card-keys">Opens over any page
         with <kbd><%= calculator_shortcut %></kbd>.</span></span>
-      <%# A <div>, not a <span>: the pin toggle is a <form>, which phrasing content cannot hold. %>
       <div class="calculator-card-actions">
-        <%# Plain `.btn`: the accent is not spent on this page (design-system.md rule 13). %>
+        <%# Plain `.btn`: the accent is not spent on this page (design-system.md rule 13). It is the
+            control Esc from the right-click menu hands focus back to (toolmenu_controller.js takes
+            the first control in a card that is not a link). %>
         <button type="button" class="btn small calculator-card-open" data-calculator-open aria-haspopup="dialog"
                 aria-keyshortcuts="<%= CalculationsHelper::CALCULATOR_KEYS %>">Open calculator</button>
-        <%# After Open, so Esc from the right-click menu still hands focus back to Open
-            (toolmenu_controller.js takes the first control in a card that is not a link). %>
-        <%= render "tools/home/pin_toggle", key: Maker::ToolPins::CALCULATOR, name: "Calculator",
-                                            label_id: "tool-title-calculator" %>
       </div>
     <% end %>
     <%# THE MATERIAL ESTIMATE (2026-11-22), the second built-in: a PAGE, unlike the calculator's
@@ -60,14 +62,17 @@
         files needs, with each part's size and the total area.</span>
       <div class="tool-card-actions">
         <%= link_to "Open material estimate", tools_material_path, class: "btn small" %>
-        <%= render "tools/home/pin_toggle", key: Maker::ToolPins::MATERIAL, name: "Material estimate",
-                                            label_id: "tool-title-material" %>
       </div>
     <% end %>
   </div>
 </section>
 
 <h2 class="tools-section-head" id="tools-add-ons">Add-ons</h2>
+<%# Only over cards: with none, the first-run state below says what an add-on is in its own words. %>
+<% if @addons.any? %>
+  <p class="tools-section-desc muted">Installed on this server by whoever runs it, grouped below by
+    what they do. Each opens on its own page.</p>
+<% end %>
 
 <%# WHY A TOOL NEVER APPEARED, for the author editing a bundle — development and test only
     (Tools::HomeController#index decides). Production makers never see it; the log keeps the clue. %>
@@ -124,39 +129,33 @@
     still `.addon-card`, so the count home_controller_test.rb pins keeps meaning what it says. The
     same `.tools-section`/`.tools-section-head`/`.tools-grid` the built-in section draws with —
     no new selector (design-system.md). `index` is the card's position in @addons, not in its
-    section, so title ids stay unique across sections. %>
-<% @sections.each do |heading, addons| %>
+    section, so title and dialog ids stay unique across sections. %>
+<% @sections.each do |heading, description, addons| %>
 <% section_id = "tools-section-#{heading.parameterize}" %>
 <section class="tools-section" aria-labelledby="<%= section_id %>">
 <h2 class="tools-section-head" id="<%= section_id %>"><%= heading %></h2>
+<p class="tools-section-desc muted"><%= description %></p>
 <div class="tools-grid">
   <% addons.each do |addon| %>
     <% index = @addons.index(addon) %>
     <% if addon.available? %>
       <%#
-        A CARD THAT HOLDS A BUTTON IS NOT A LINK (2026-11-02). A <form> cannot sit inside an <a>, so
-        the card is a <div> and its TITLE is the link, stretched over the whole card by
-        `.addon-card-link::after` (pages/tools.css): the card still opens the tool from anywhere on
-        it, and the link's name is the tool's name instead of every word on the card. The pin form
-        sits above the stretch. The right-click data stays on the card, so a right click anywhere
-        on it still opens the menu, and the menu hands focus back to the title link.
+        THE CARD IS A <div> AND ITS TITLE IS THE LINK (2026-11-02), stretched over the whole card by
+        `.addon-card-link::after` (pages/tools.css): the card opens the tool from anywhere on it, and
+        the link's name is the tool's name instead of every word on the card. It became a <div> to
+        hold the pin <form>, which has gone (2026-11-23); it stays one because a link named by the
+        title alone is the better link. The right-click data is on the card, so a right click
+        anywhere on it opens the menu, and the menu hands focus back to the title link.
+        `tool-permissions` names this card's dialog below, which is what puts Permissions… in it.
       %>
       <% title_id = "tool-title-#{index}" %>
-      <%= tag.div class: "addon-card", data: tool_menu_data(addon.key, addon.title) do %>
+      <%= tag.div class: "addon-card",
+                  data: tool_menu_data(addon.key, addon.title, tool_permissions: "tool-permissions-#{index}") do %>
         <span class="addon-card-head">
           <%= render "tools/home/addon_mark", addon: %>
           <%= link_to addon.title, tools_addon_path(addon.key), class: "addon-title addon-card-link", id: title_id %>
         </span>
         <span class="addon-desc muted"><%= addon.description %></span>
-        <% if addon.permissions.any? %>
-          <span class="addon-permissions addon-card-foot muted">
-            This tool can:
-            <%= addon.permissions.map { |p| Maker::Addons::Permissions.label_for(p["name"]) }.to_sentence %>
-          </span>
-        <% end %>
-        <div class="tool-card-actions">
-          <%= render "tools/home/pin_toggle", key: addon.key, name: addon.title, label_id: title_id %>
-        </div>
       <% end %>
     <% else %>
       <%# NOT A LINK (UX audit G3): it cannot run here, and its page says the same sentence
@@ -176,5 +175,15 @@
       is the signal that an addon has not actually migrated. %>
 </div>
 </section>
+<% end %>
+
+<%# ONE PERMISSIONS DIALOG PER RUNNABLE ADDON, opened from its card's right-click menu. Out here,
+    not inside the card: a closed <dialog> costs nothing anywhere, but one inside the card would sit
+    under the card's contextmenu action and stretched link, so a right click or a click in the open
+    dialog would reach the card. Server-rendered, so the labels come from the one vocabulary
+    (Maker::Addons::Permissions) and no manifest string is ever assembled into markup in JS. %>
+<% @addons.each_with_index do |addon, index| %>
+  <% next unless addon.available? %>
+  <%= render "tools/home/permissions_dialog", addon:, dialog_id: "tool-permissions-#{index}" %>
 <% end %>
 </div>

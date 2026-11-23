@@ -598,6 +598,27 @@
   dialog.move-conflict p { margin: 0 0 10px; }
   dialog.move-conflict .dialog-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
   dialog.move-conflict form { display: inline; }
+  /* A MODAL: a native <dialog> opened with showModal() (2026-11-23; the first is a tool's
+     permissions, tools/home/_permissions_dialog). The top layer puts it above every page and its
+     ::backdrop is the scrim; the UA's border, padding and colours are reset to the floating face the
+     right-click menu wears. NEVER A `display` HERE: an author rule outranks the UA's
+     `dialog:not([open]) { display: none }` and would draw the dialog shut. At phone width it takes
+     the width less the gutter and scrolls inside itself (design-system.md rule 11). The
+     calculator's dialog predates this and keeps its own face (dialog.calculator, below). */
+  dialog.modal {
+    width: min(440px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; overflow-y: auto;
+    border: 1px solid var(--line); border-radius: var(--radius-float); box-shadow: var(--shadow-float);
+    background: var(--surface); color: var(--fg); font: 400 14px/1.45 var(--font-ui);
+  }
+  dialog.modal::backdrop { background: var(--scrim); }
+  .modal-head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: 12px 16px; border-bottom: 1px solid var(--line); }
+  .modal-head h2 { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+  .modal-head form { margin: 0; }
+  .modal-close { min-width: var(--control-height-small); min-height: var(--control-height-small); background: none; border: 0; border-radius: var(--radius-control); color: var(--fg-muted); font-size: 20px; line-height: 1; cursor: pointer; }
+  .modal-close:hover { background: var(--raised); color: var(--fg); }
+  .modal-body { padding: 14px 16px 16px; }
+  .modal-body > :first-child { margin-top: 0; }
+  .modal-body > :last-child { margin-bottom: 0; }
   details.composer > summary { list-style: none; }
   details.composer > summary::-webkit-details-marker { display: none; }
   details.composer[open] > summary { margin-bottom: 10px; }

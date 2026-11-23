@@ -669,8 +669,9 @@
   manifest can no longer redirect **its own saves** into another addon's namespace by declaration
   alone. Do not describe any of it as a boundary (spec §8.1 says so in those words; this repo's
   recorded failure shape is a guard everyone believed in that never worked). What the one check
-  buys is that an addon which starts reading the library must SAY SO on the card the operator reads
-  at publish time, in a deployment where publishing a bundle IS the deploy. **Do not add
+  buys is that an addon which starts reading the library must SAY SO where the operator reads
+  at publish time — its gallery card's Permissions dialog (the card's right-click menu, since
+  2026-11-23; a footer on the card before that) and its own page — in a deployment where publishing a bundle IS the deploy. **Do not add
   enforcement for the rest without the finished vocabulary:** `data:read:<addon>/<collection>` does
   not exist until PR 4, and `service:<name>` must reconcile with today's `services` key.
 - **THE PERMISSION VOCABULARY HAS ONE DEFINITION** (`Maker::Addons::Permissions`), distinct from

@@ -1,8 +1,8 @@
 module Tools
   # PINNING A TOOL TO THE SIDEBAR (2026-10-22). Any tool on the Tools page — the built-in calculator
-  # or an addon — is pinned or unpinned by its card's Pin toggle (tools/home/_pin_toggle, a
-  # `button_to`), or by a right click on its card or on its pinned link in the rail
-  # (toolmenu_controller.js posts here). The list lives on the user (Maker::ToolPins), so it
+  # or an addon — is pinned or unpinned by a right click on its card or on its pinned link in the
+  # rail (toolmenu_controller.js posts here). The card's visible Pin toggle that also posted here
+  # (2026-11-02) was removed on 2026-11-23, the owner's call. The list lives on the user (Maker::ToolPins), so it
   # follows the maker to every device; the rail's collapse state is a per-browser cookie because it
   # is about the screen, not the person. It began as the calculator's alone (2026-10-21), at this
   # same URL with `calculator` as the key.

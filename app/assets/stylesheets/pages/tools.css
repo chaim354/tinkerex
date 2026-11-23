@@ -18,20 +18,17 @@
      Add-ons a manifest makes. The heading is the page's section heading, quieter than the h1. */
   .tools-section { margin-bottom: var(--space-5); }
   .tools-section-head { margin: 0 0 var(--space-3); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
+  /* WHAT A SECTION'S TOOLS HAVE IN COMMON, one sentence under its heading (2026-11-23,
+     Tools::HomeController::SECTIONS). Pulled up under the heading's own margin so the two read as
+     one label, and in the body's size so it reads as a sentence rather than a second heading. */
+  .tools-section-desc { margin: calc(-1 * var(--space-2)) 0 var(--space-3); font-size: 13px; }
   /* A built-in tool's mark is its rail glyph, drawn at the tile's size (the calculator, the
      Material estimate). */
   .tool-card .addon-icon .rail-icon { width: 18px; height: 18px; }
+  /* A BUILT-IN card's row holds its Open — the calculator's button, the Material estimate's link,
+     which is that card's only way in. An addon card has no row: its title is the link, and its pin
+     and permissions are its right-click menu's (2026-11-23). */
   .calculator-card-actions, .tools-home .tool-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
-  /* A card's permission line already draws the rule above it, so the actions under it do not. */
-  .tools-home .addon-card-foot + .tool-card-actions { margin-top: 0; padding-top: 0; border-top: 0; }
-  /* THE PIN TOGGLE (tools/home/_pin_toggle). Pressed is drawn in ink by components.css's one
-     pressed rule, the way every toggle button is, and its word changes with it. A phone has no
-     sidebar to pin to, so the control goes with the rail. */
-  .tools-home .tool-pin-form { position: relative; z-index: 1; margin: 0; }
-  /* An ADDON card's action row holds only the toggle (its title is the link), so the row goes too.
-     A built-in card's row keeps its Open — the calculator's button, the Material estimate's link,
-     which is that card's only way in — and loses only the toggle. */
-  @media (max-width: 719px) { .tools-home .tool-pin-form, .tools-home .addon-card .tool-card-actions { display: none; } }
   /* The shortcut, drawn the way the top bar draws its ⌘K (shell.css .topbar-kbd). */
   .calculator-card-keys { white-space: nowrap; }
   .calculator-card-keys kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
@@ -55,16 +52,17 @@
   .tools-home .addon-card:has(.addon-card-link:focus-visible) { outline: 2px solid var(--focus); outline-offset: 2px; }
   .addon-title { font-weight: 600; font-size: 14px; }
   .addon-desc { font-size: 13px; line-height: 1.45; }
-  /* ONE CLASS, TWO ELEMENTS: a <span> on the gallery card, a <ul> on the addon page. Without the
-     13px it inherits body 15px and renders LARGER than the .addon-desc above it; without the list
-     reset the page's version carries UA bullets and a 40px indent. */
+  /* THE ADDON PAGE'S PERMISSION LIST (tools/addons/show). It was also a <span> footer on every
+     gallery card until 2026-11-23, when the card's permissions moved to a dialog (below). Without
+     the 12px it inherits body 15px; without the list reset it carries UA bullets and an indent. */
   .addon-permissions { font-size: 12px; }
-  /* THE GALLERY CARD'S FOOTER LINE ONLY — the addon page's <ul> (above) is a different element and
-     never carries this class, so this rule cannot reach it. margin-top: auto pins the footer to the
-     bottom of the flex column regardless of how many description lines precede it, so every card in
-     a row keeps its border-top at the same height. */
-  .addon-card-foot { margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); font: 11px/1.5 var(--font-mono); }
   ul.addon-permissions { list-style: none; margin: 0 0 18px; padding: 0; }
+  /* THE PERMISSIONS DIALOG's list (tools/home/_permissions_dialog, inside `dialog.modal`): each
+     permission's label, with the author's reason under it when the manifest gave one. */
+  .tool-permissions-list { list-style: none; margin: var(--space-2) 0 0; padding: 0; }
+  .tool-permissions-list li { display: flex; flex-direction: column; gap: 2px; padding: var(--space-2) 0; border-top: 1px solid var(--line); }
+  .tool-permission-name { font-weight: 500; }
+  .tool-permission-reason { font-size: 13px; overflow-wrap: anywhere; }
   /* The addon page's own states around the mount (tools/addons/show): loading, a bundle that would
      not load, and an addon this server cannot run. The raw error stays folded, left-aligned, and
      wraps rather than pushing the page sideways at 375px (design-system.md rule 11). */

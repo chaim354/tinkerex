@@ -1,0 +1,45 @@
+<%# locals: (addon:, dialog_id:) %>
+<%#
+  AN ADDON'S PERMISSIONS, IN A MODAL ITS CARD'S RIGHT-CLICK MENU OPENS (2026-11-23). They were a
+  "This tool can:" line on every card; the owner moved them here, so the card names the tool and
+  the menu's Permissions… opens this (toolmenu_controller.js#showPermissions). The addon's own page
+  still lists them first thing (tools/addons/show), which is where a phone, with no right click,
+  reads them.
+
+  "ASKS TO", NEVER "CAN": every name but `library:read` is declared and displayed, not enforced
+  (Maker::Addons::Permissions, docs/invariants/addons.md), so the dialog states what the author
+  declared rather than describing a boundary. The author's `reasoning` rides along, as on the
+  addon's page. An addon declaring nothing still gets a dialog, saying so: a menu entry that is
+  there on some cards and missing on others reads as a fault, and "asks for nothing" is an answer.
+
+  A NATIVE <dialog> OPENED WITH showModal(): the page behind goes inert, Esc closes it, and the ×
+  is a `method="dialog"` form, which closes it with no script and which Turbo leaves alone. A click
+  on the backdrop closes it too (toolmenu#backdrop), and closing hands focus back to the card's
+  title link (toolmenu#dialogClosed). `dialog.modal` is the component (components.css).
+%>
+<%= tag.dialog class: "modal tool-permissions", id: dialog_id, aria: { labelledby: "#{dialog_id}-title" },
+               data: { action: "click->toolmenu#backdrop close->toolmenu#dialogClosed" } do %>
+  <div class="modal-head">
+    <h2 id="<%= dialog_id %>-title"><%= addon.title %> permissions</h2>
+    <form method="dialog">
+      <button class="modal-close" aria-label="Close" title="Close (Esc)">×</button>
+    </form>
+  </div>
+  <div class="modal-body">
+    <% if addon.permissions.any? %>
+      <p>This tool asks to:</p>
+      <ul class="tool-permissions-list">
+        <% addon.permissions.each do |permission| %>
+          <li>
+            <span class="tool-permission-name"><%= Maker::Addons::Permissions.label_for(permission["name"]) %></span>
+            <% if permission["reasoning"].present? %>
+              <span class="tool-permission-reason muted"><%= permission["reasoning"] %></span>
+            <% end %>
+          </li>
+        <% end %>
+      </ul>
+    <% else %>
+      <p class="muted">This tool does not ask for any permissions.</p>
+    <% end %>
+  </div>
+<% end %>

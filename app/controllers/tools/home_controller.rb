@@ -6,11 +6,16 @@ module Tools
     # question, not the manifest's word: "generate" is what a tool does, "Make a file" is what the
     # maker came to do. "Other" holds the uncategorised, which is every bundle published before the
     # key existed — so it is a real section and not a dumping ground, and it comes last.
+    #
+    # EACH HEADING CARRIES ONE SENTENCE SAYING WHAT ITS TOOLS HAVE IN COMMON (2026-11-23): four
+    # uppercase headings in a row read as four arbitrary bins, and the owner asked what told them
+    # apart. The sentence describes the CATEGORY, never a tool in it, because a manifest chooses
+    # its own category and a bundle published tomorrow lands under the same words.
     SECTIONS = [
-      [ "Make a file", "generate" ],
-      [ "Look inside a file", "inspect" ],
-      [ "Calculate and look up", "reference" ],
-      [ "Other", nil ]
+      [ "Make a file", "generate", "Set a few measurements and get a new file, saved to your library." ],
+      [ "Look inside a file", "inspect", "Open a file you already have and see what is in it." ],
+      [ "Calculate and look up", "reference", "Calculators and reference tables for the shop." ],
+      [ "Other", nil, "Tools that do not say which kind they are." ]
     ].freeze
 
     def index
@@ -18,9 +23,9 @@ module Tools
       # SECTIONS COMPUTED HERE, AN EMPTY ONE DROPPED: a heading over nothing reads as a tool that
       # failed to load. Each addon lands in exactly one section, so the cards the page draws are
       # exactly `@addons` — home_controller_test.rb counts them through the sections.
-      @sections = SECTIONS.filter_map do |heading, category|
+      @sections = SECTIONS.filter_map do |heading, category, description|
         addons = @addons.select { |addon| addon.category == category }
-        [ heading, addons ] if addons.any?
+        [ heading, description, addons ] if addons.any?
       end
       # TWO WAYS TO HAVE NO TOOLS, AND THE PAGE SAYS WHICH (UI-cohesion spec §2.4). `Registry.all`
       # returns [] both when no source is configured at all and when a configured one is empty or

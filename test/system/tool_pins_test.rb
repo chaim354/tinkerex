@@ -1,7 +1,8 @@
 require "application_system_test_case"
 
-# PINNING A TOOL IS A RIGHT CLICK (2026-10-22; toolmenu_controller.js), and since 2026-11-02 also the
-# card's visible toggle, which test/system/tools_addon_page_test.rb drives. The request tests
+# PINNING A TOOL IS A RIGHT CLICK (2026-10-22; toolmenu_controller.js), and since 2026-11-23 ONLY a
+# right click: the card's visible toggle (2026-11-02) is gone. The same menu's Permissions… is
+# test/system/tool_permissions_test.rb's. The request tests
 # (test/integration/web/tool_pins_test.rb, calculator_shell_test.rb) see the data each tool carries
 # and what the door does with a POST; only a browser can see the two joined — that a right click on
 # a card opens the menu, that its entry says what it will do, that choosing it pins the tool, and
@@ -20,8 +21,7 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
     end
   end
 
-  # A <div> since 2026-11-02, its title the link (tools/home/index): a card holding a pin <form>
-  # cannot be an <a>. The right-click data is still on the card.
+  # A <div> since 2026-11-02, its title the link (tools/home/index). The right-click data is on the card.
   def card = find(".addon-card", text: "Box Generator")
 
   test "a right click on an addon's card pins it, and a right click on its rail link unpins it" do
@@ -31,7 +31,9 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
     # `right_click`, NOT `click(:left, ctrl: true)`: through this driver a ctrl+click arrives as a
     # plain left click with no `contextmenu` at all (box_revisions_test.rb measured it).
     card.right_click
-    assert_selector ".file-menu[role=menu] button[role=menuitem]", count: 1
+    # Pin first, then the addon's Permissions… (tool_permissions_test.rb opens it).
+    assert_equal [ "Pin to sidebar", "Permissions…" ],
+                 all(".file-menu[role=menu] button[role=menuitem]").map(&:text)
     find(".file-menu button", text: "Pin to sidebar").click
 
     assert_current_path tools_path
@@ -60,6 +62,8 @@ class ToolPinsSystemTest < ApplicationSystemTestCase
     assert page.evaluate_script(<<~JS), "the menu did not take focus"
       document.activeElement === document.querySelector(".file-menu button")
     JS
+    # A built-in tool declares nothing, so its menu is the pin alone.
+    assert_equal [ "Pin to sidebar" ], all(".file-menu button[role=menuitem]").map(&:text)
 
     # A second right click, on a tool in ANOTHER controller's scope (the rail's), replaces the menu.
     card.right_click

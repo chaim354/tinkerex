@@ -69,24 +69,12 @@ class ToolsAddonPageTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  test "the card's Pin toggle pins and unpins, and the rest of the card opens the tool" do
+  # The card's Pin toggle that this test used to press went on 2026-11-23 (the right click is the one
+  # way, test/system/tool_pins_test.rb), so what is left here is the card as a way in.
+  test "the whole card opens the tool" do
     visit tools_path
     card = find(".addon-card", text: "Widget Kit")
-    card.find("button.tool-pin[aria-pressed=false]", text: "Pin to sidebar").click
-
-    assert_selector ".flash", text: "Pinned Widget Kit to the sidebar."
-    assert_selector "aside.rail a.rail-tool-pin", text: "Widget Kit"
-    # PINNED IS DRAWN IN INK, beside its word (design-system.md rule 13), by the one pressed rule in
-    # components.css; a tool that is not pinned is not.
-    assert_equal ink_colour, background_of("button.tool-pin[aria-pressed=true]")
-    assert_not_equal ink_colour, background_of("button.tool-pin[aria-pressed=false]")
-    card = find(".addon-card", text: "Widget Kit")
-    card.find("button.tool-pin[aria-pressed=true]", text: "Pinned to sidebar").click
-
-    assert_selector ".flash", text: "Unpinned Widget Kit from the sidebar."
-    assert_no_selector "aside.rail a.rail-tool-pin"
-    card = find(".addon-card", text: "Widget Kit")
-    assert card.has_selector?("button.tool-pin[aria-pressed=false]", text: "Pin to sidebar")
+    assert_no_selector ".addon-card button, .addon-card form"
 
     # THE STRETCHED TITLE LINK: a click in the middle of the card, away from its title, still opens
     # the tool — the whole card stayed a way in when it stopped being an <a>. (The card itself is

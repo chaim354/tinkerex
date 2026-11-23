@@ -81,22 +81,57 @@ module Tools
     end
 
     # WHAT THE OPERATOR SEES AT PUBLISH TIME. The point of rendering these is scope drift: a
-    # republished bundle that quietly starts asking for more shows up on the card, in a deployment
-    # where publishing the bundle IS the deploy and Rails is never rebuilt.
-    test "a card lists the permissions its manifest declares, by label" do
+    # republished bundle that quietly starts asking for more shows up in its card's Permissions
+    # dialog, in a deployment where publishing the bundle IS the deploy and Rails is never rebuilt.
+    # The dialog, not the card, since 2026-11-23: the card names the tool, and its right-click
+    # menu's Permissions… opens the dialog its `data-tool-permissions` names.
+    test "a card's permissions dialog lists what its manifest declares, by label, with the reasons" do
       Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
-        MANIFEST.merge("permissions" => [ { "name" => "library:write" }, { "name" => "service:boxes" } ])
+        MANIFEST.merge("permissions" => [ { "name" => "library:write", "reasoning" => "to save the drawing" },
+                                          { "name" => "service:boxes" } ])
       ])
       get tools_path
       assert_response :success
-      assert_select ".addon-permissions", text: /Write files to your library/
-      assert_select ".addon-permissions", text: /Call the boxes service/
+      dialog_id = css_select("div.addon-card").first["data-tool-permissions"]
+      assert_equal "tool-permissions-0", dialog_id
+      assert_select "dialog.modal.tool-permissions##{dialog_id}[aria-labelledby=?]", "#{dialog_id}-title" do
+        assert_select "h2##{dialog_id}-title", "Generators permissions"
+        assert_select "form[method=dialog] button.modal-close[aria-label=Close]"
+        assert_select ".tool-permissions-list li", 2
+        assert_select ".tool-permissions-list li:nth-child(1) .tool-permission-name", "Write files to your library"
+        assert_select ".tool-permissions-list li:nth-child(1) .tool-permission-reason", "to save the drawing"
+        assert_select ".tool-permissions-list li:nth-child(2) .tool-permission-name", "Call the boxes service"
+        assert_select ".tool-permissions-list li:nth-child(2) .tool-permission-reason", 0
+      end
+      # NOTHING OF IT IS ON THE CARD ANY MORE, and the dialog is not inside the card either, so a
+      # click or a right click in the open dialog cannot reach the card's stretched link or menu.
+      assert_select ".addon-card .addon-permissions", 0
+      assert_select ".addon-card", text: /This tool can/, count: 0
+      assert_select ".addon-card dialog", 0
     end
 
-    test "a card with no declared permissions renders no permission list at all" do
+    test "an addon declaring no permissions still gets a dialog, which says so" do
       get tools_path
       assert_response :success
-      assert_select ".addon-permissions", count: 0
+      assert_select "div.addon-card[data-tool-permissions=tool-permissions-0]"
+      assert_select "dialog#tool-permissions-0" do
+        assert_select ".tool-permissions-list", 0
+        assert_select "p", "This tool does not ask for any permissions."
+      end
+    end
+
+    # A GREYED-OUT CARD HAS NO MENU (it cannot run here), so nothing could open a dialog for it, and
+    # none is drawn. Built-in tools declare nothing and have no Permissions… entry either.
+    test "a greyed-out addon and the built-in tools have no permissions dialog" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        MANIFEST.merge("min_host" => Maker::Addons::Host::LEVEL + 1, "permissions" => [ { "name" => "library:write" } ])
+      ])
+      get tools_path
+      assert_response :success
+      assert_select ".addon-card.disabled", 1
+      assert_select ".addon-card.disabled[data-tool-permissions]", 0
+      assert_select "dialog.tool-permissions", 0
+      assert_select ".tool-card[data-tool-permissions]", 0
     end
 
     # ---- the gallery in sections ----------------------------------------------------------------
@@ -129,6 +164,28 @@ module Tools
                      [ "Other", [ "Bare Tool" ] ] ], addon_sections
       # EVERY CARD IS STILL `.addon-card`, so the count the test above pins keeps meaning what it says.
       assert_select ".addon-card", count: 5
+
+      # EACH HEADING SAYS WHAT ITS TOOLS HAVE IN COMMON (2026-11-23): the sentence directly under
+      # it, from SECTIONS, so the order of the sentences is the order of the headings.
+      sentences = css_select(".tools-home .tools-section").drop(1).map do |section|
+        head = section.css(".tools-section-head").first
+        assert_equal "tools-section-desc", head.next_element&.[]("class")&.split&.first,
+                     "#{head.text} has no sentence directly under it"
+        head.next_element.text.strip
+      end
+      assert_equal Tools::HomeController::SECTIONS.map(&:last), sentences
+      assert_select "#tools-built-in + p.tools-section-desc", text: /every server/
+      assert_select "#tools-add-ons + p.tools-section-desc", text: /Installed on this server/
+
+      # EVERY CARD'S MENU OPENS ITS OWN TOOL'S DIALOG. The cards are drawn by section and the
+      # dialogs in registry order, so an id taken from the position in a SECTION would hand Gears
+      # (first under Make a file, fourth in the registry) Bare Tool's dialog.
+      css_select("div.addon-card").each do |card|
+        title = card.css(".addon-title").text.strip
+        dialog = css_select("dialog##{card["data-tool-permissions"]}").first
+        assert dialog, "#{title}'s card names no dialog that exists"
+        assert_equal "#{title} permissions", dialog.css("h2").text.strip
+      end
     end
 
     test "an empty section is not drawn, and a greyed-out tool stays in its section" do
