@@ -1,4 +1,4 @@
-<%# locals: (info:, addon_origin:, library_path:) %>
+<%# locals: (info:, addon_origin:, library_path:, dimensions: nil) %>
 <%# A FILE'S FACTS, SHARED BY THE FILE PAGE AND THE LIBRARY'S INSPECTOR (structural redesign
     slice 3) — extracted from files/show.html.erb so the two cannot drift. Not one of the eight
     viewer partials: both callers are session-authed, so `capabilities` below is the controller's
@@ -6,6 +6,23 @@
 <dl class="meta">
   <dt>Name</dt><dd><%= info.name %></dd>
   <dt>Size</dt><dd><%= info.content_token ? number_to_human_size(info.size) : "—" %></dd>
+  <%# THE DRAWING'S SIZE IN BOTH UNITS (2026-11-22; spec 2026-11-22-material-estimate-design.md), for
+      the four flat formats the server measures. `dimensions` is a Maker::Previews::Dimensions::Facts
+      or nil (FilesHelper#file_dimensions), and nil renders NO row: a dash would claim the file has no
+      size, when the page only does not know it. A multi-page LightBurn or MillMage file gets a line
+      per page, the saved page marked as the recipe panel's Pages table marks it. %>
+  <% if dimensions %>
+    <dt>Dimensions</dt>
+    <dd class="file-dimensions">
+      <% if dimensions.multi_page? %>
+        <% dimensions.pages.each do |page| %>
+          <span class="file-dimensions-page"><%= page.name %><% if page.current %> <span class="muted">(in preview)</span><% end %>: <%= page.sized? ? dimensions_text(page.width, page.height) : "empty" %></span>
+        <% end %>
+      <% else %>
+        <%= dimensions_text(dimensions.pages.first.width, dimensions.pages.first.height) %>
+      <% end %>
+    </dd>
+  <% end %>
   <%# THE LIST'S OWN LABEL — "LBRN2", "STL", "Folder" — never the MIME type, which read
       `application/octet-stream` for half a maker's formats and wrapped a 3MF's over three lines
       (UX audit D4, 2026-11-02). FilesHelper#file_type_label takes the FileInfo as it is. %>

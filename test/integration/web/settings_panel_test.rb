@@ -65,9 +65,7 @@ module Web
       # a column of its own that the side column's width truncated.
       assert_select "td.lbrn-op .lbrn-tool", text: "1.5 mm endmil · 1.5 mm"
       assert_select "td", text: "20000"
-      # "100 × 60", not "100.0 × 60.0": a whole number's trailing zero is noise. The decimals a
-      # value actually HAS are preserved — pinned by the test below, which is the half that broke.
-      assert_select "dd", text: "100 × 60 mm"
+      assert_select ".lbrn-settings dt", { text: "Job size", count: 0 }, "the size is the facts list's now (file_dimensions_test.rb)"
       assert_select "h2", { text: "Laser settings", count: 0 }, "the laser panel must not render"
     end
 
@@ -108,7 +106,7 @@ module Web
       assert_select "td", text: "6.67"
       assert_select "td", text: /42\.5%/
       assert_select "td", text: /12\.25%/
-      assert_select "dd", text: "292.1 × 144.6 mm"
+      assert_select ".lbrn-settings dt", { text: "Job size", count: 0 }, "the size is the facts list's now (file_dimensions_test.rb)"
     end
 
     # THE PANEL HEADS THE SIDE COLUMN (2026-10-25, at the user's request): it used to share the main

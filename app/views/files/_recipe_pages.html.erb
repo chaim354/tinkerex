@@ -16,7 +16,7 @@
         <td><%= page["name"] %><% if page["current"] %> <span class="muted">(in preview)</span><% end %></td>
         <td class="num">
           <% if page.dig("job", "width") %>
-            <%= recipe_num(page["job"]["width"]) %> × <%= recipe_num(page["job"]["height"]) %> mm
+            <%= dimensions_text(page["job"]["width"], page["job"]["height"]) %>
           <% else %>
             <span class="muted">empty</span>
           <% end %>
