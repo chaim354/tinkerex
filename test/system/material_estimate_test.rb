@@ -420,4 +420,56 @@ class MaterialEstimateTest < ApplicationSystemTestCase
   ensure
     page.driver.browser.execute_cdp("Emulation.clearDeviceMetricsOverride")
   end
+
+  # A FOLDER INSIDE A PROJECT (2026-11-23). Picking a project opens the folder chooser INSIDE its
+  # library folder: the project's name in the crumbs and its subfolders in the first column, never
+  # the library's top level. Cancel adds nothing and puts the menu back; a subfolder chosen adds
+  # only its files; Choose at the top adds the whole project, as picking it always did.
+  test "picking a project opens the chooser inside its folder, and a subfolder adds just its files" do
+    @root = use_fresh_share_library!
+    dir = ->(name, parent = nil) { create_node!(@user, node_id: SecureRandom.uuid, name:, kind: "dir", parent_node_id: parent&.node_id) }
+    svg = lambda do |name, parent|
+      node = create_node!(@user, node_id: SecureRandom.uuid, name:, kind: "file", parent_node_id: parent.node_id,
+                                 content_hash: SecureRandom.hex(8))
+      @root.join(node.storage_path).binwrite(File.binread(fixture("plate.svg")))
+      node
+    end
+    lamp = @user.maker_projects.create!(name: "Desk Lamp")
+    folder = dir.("desk-lamp", dir.("Projects"))
+    lamp.update_column(:folder_node_id, folder.node_id)
+    [ svg.("cut.svg", dir.("laser", folder)), svg.("sketch.svg", dir.("paper", folder)) ]
+      .each { |node| @user.maker_file_attachments.create!(attachable: lamp, node_id: node.node_id) }
+
+    visit tools_material_path
+    select "Desk Lamp", from: "add_project_id"
+    assert_selector ".filechooser-overlay .filechooser[aria-label='Choose a folder to add']"
+    assert_selector ".filechooser-overlay .filechooser-head", text: "Choose a folder to add"
+    assert_selector ".filechooser-overlay .filechooser-crumbs", text: "Desk Lamp"
+    within(".filechooser-overlay .filechooser-cols") do
+      assert_text "laser"
+      assert_text "paper"
+      assert_no_text "Projects"
+    end
+
+    find(".filechooser-overlay .filechooser-cancel").click
+    assert_no_selector ".filechooser-overlay"
+    assert_equal "", find("select[name=add_project_id]").value
+    assert_selector ".material-empty"
+
+    select "Desk Lamp", from: "add_project_id"
+    find(".filechooser-overlay .filechooser-row", text: "laser").click
+    # Folder mode lists only folders, so laser's column says it has none inside, not that it is
+    # empty: it holds the very file about to be added.
+    assert_selector ".filechooser-overlay .filechooser-empty", text: "No folders inside"
+    assert_no_selector ".filechooser-overlay .filechooser-empty", text: "Empty folder"
+    within(".filechooser-overlay") { click_on "Choose" }
+    assert_selector ".material-parts-table tbody tr", count: 1
+    assert_selector ".material-part-name", text: "cut.svg"
+
+    select "Desk Lamp", from: "add_project_id"
+    within(".filechooser-overlay") { click_on "Choose" }
+    assert_selector ".material-parts-table tbody tr", count: 3
+    assert_selector ".material-part-name", text: "sketch.svg"
+    assert_no_console_errors
+  end
 end
