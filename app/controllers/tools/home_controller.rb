@@ -6,21 +6,41 @@ module Tools
     # question, not the manifest's word: "generate" is what a tool does, "Make a file" is what the
     # maker came to do. "Other" holds the uncategorised, which is every bundle published before the
     # key existed — so it is a real section and not a dumping ground, and it comes last.
+    #
+    # EACH HEADING CARRIES ONE SENTENCE SAYING WHAT ITS TOOLS HAVE IN COMMON (2026-11-23): four
+    # uppercase headings in a row read as four arbitrary bins, and the owner asked what told them
+    # apart. The sentence describes the CATEGORY, never a tool in it, because a manifest chooses
+    # its own category and a bundle published tomorrow lands under the same words.
     SECTIONS = [
-      [ "Make a file", "generate" ],
-      [ "Look inside a file", "inspect" ],
-      [ "Calculate and look up", "reference" ],
-      [ "Other", nil ]
+      [ "Make a file", "generate", "Set a few measurements and get a new file, saved to your library." ],
+      [ "Look inside a file", "inspect", "Open a file you already have and see what is in it." ],
+      [ "Calculate and look up", "reference", "Calculators and reference tables for the shop." ],
+      [ "Other", nil, "Tools that do not say which kind they are." ]
     ].freeze
+
+    # THE BUILT-IN TOOLS SIT IN THE SAME SECTIONS, under the category a manifest would give them
+    # (2026-11-23, the owner's call). They had a "Built in" section of their own above the add-ons,
+    # which sorted them by where they come from on a page every other heading of which sorts by what
+    # a tool does, so each stood in two kinds at once. The Material estimate reads files you already
+    # have and says what is in them, as Model Stats and Print Cost does; the calculator is a
+    # calculator. Each key names its card's partial (tools/home/_<key>_card), and a built-in card
+    # comes first in its section, since it is there on every server. Every key in
+    # Maker::ToolPins::BUILT_IN is here once (home_controller_test.rb), or a new built-in tool would
+    # have a pin and no card.
+    BUILT_IN = {
+      "inspect" => [ Maker::ToolPins::MATERIAL ],
+      "reference" => [ Maker::ToolPins::CALCULATOR ]
+    }.freeze
 
     def index
       @addons = Maker::Addons::Registry.all
       # SECTIONS COMPUTED HERE, AN EMPTY ONE DROPPED: a heading over nothing reads as a tool that
-      # failed to load. Each addon lands in exactly one section, so the cards the page draws are
-      # exactly `@addons` — home_controller_test.rb counts them through the sections.
-      @sections = SECTIONS.filter_map do |heading, category|
+      # failed to load. Each addon lands in exactly one section, so the add-on cards the page draws
+      # are exactly `@addons` — home_controller_test.rb counts them through the sections.
+      @sections = SECTIONS.filter_map do |heading, category, description|
+        built_ins = BUILT_IN.fetch(category, [])
         addons = @addons.select { |addon| addon.category == category }
-        [ heading, addons ] if addons.any?
+        [ heading, description, built_ins, addons ] if built_ins.any? || addons.any?
       end
       # TWO WAYS TO HAVE NO TOOLS, AND THE PAGE SAYS WHICH (UI-cohesion spec §2.4). `Registry.all`
       # returns [] both when no source is configured at all and when a configured one is empty or

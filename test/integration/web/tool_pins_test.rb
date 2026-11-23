@@ -2,8 +2,9 @@ require "test_helper"
 require_relative "../../support/fake_addon_source"
 
 module Web
-  # ANY TOOL PINS TO THE SIDEBAR, BY ITS CARD'S TOGGLE OR A RIGHT CLICK (2026-10-22, the toggle
-  # 2026-11-02; Maker::ToolPins, Tools::PinsController, toolmenu_controller.js). The calculator's own
+  # ANY TOOL PINS TO THE SIDEBAR, BY A RIGHT CLICK ON ITS CARD (2026-10-22; the card's visible
+  # toggle came 2026-11-02 and went 2026-11-23; Maker::ToolPins, Tools::PinsController,
+  # toolmenu_controller.js). The calculator's own
   # pin is calculator_shell_test.rb's; this is the addons: what the gallery offers, what the door refuses, what the rail draws and lights, and that
   # the rail still never reads the addon registry. The menu opening on a right click, which only a
   # browser can see, is test/system/tool_pins_test.rb's.
@@ -64,36 +65,24 @@ module Web
       assert_select "main [data-controller=toolmenu] .addon-card:not(.disabled)", 1
     end
 
-    # PINNING YOU CAN SEE (UX audit G2): the sentence that explained the right click is gone, and
-    # every runnable card, the calculator's included, carries a toggle posting to the same door.
-    # Its state is the WORD and `aria-pressed` together — never the ink fill alone — and the button
-    # is described by the tool's title, since every card's button says the same thing.
-    test "every runnable card carries a visible pin toggle that says whether it is pinned" do
+    # THE RIGHT CLICK IS THE ONE WAY TO PIN (2026-11-23, the owner's call). The visible Pin toggle
+    # each card carried since 2026-11-02 (UX audit G2) is gone from every card, the built-in ones
+    # included; nothing on the page posts to the pin door, and the menu's data — which still says
+    # whether the tool is pinned — is what remains. Help says it in words, since a right click is
+    # invisible until tried (help_page_test.rb's to read).
+    test "no card carries a pin control; its right-click data is the only way to the pin door" do
       get tools_path
-      assert_select "main .tools-pin-hint", 0
-      assert_select "main", text: /Right-click a tool/, count: 0
-
-      card = css_select("div.addon-card:not(.disabled)").first
-      toggle = card.css("form.tool-pin-form[action='#{tools_pin_path("widgetkit")}'] button.tool-pin").first
-      assert toggle, "the runnable card has no pin toggle"
-      assert_equal "false", toggle["aria-pressed"]
-      assert_equal "Pin to sidebar", toggle.text.strip
-      assert_equal card.css("a.addon-card-link").first["id"], toggle["aria-describedby"],
-                   "the toggle is not described by the tool's title"
-      assert_empty card.css("form.tool-pin-form input[name=_method]"), "pinning is a POST"
-      assert_select ".addon-card.disabled .tool-pin", 0
-      assert_select "#calculator .calculator-card-actions form.tool-pin-form[action=?] button.tool-pin[aria-pressed=false][aria-describedby=tool-title-calculator]",
-                    tools_pin_path("calculator"), text: "Pin to sidebar"
+      assert_select ".tools-home .tool-pin, .tools-home .tool-pin-form", 0
+      # The dialogs' `method="dialog"` close forms are the only forms on the page.
+      assert_select ".tools-home form:not([method=dialog])", 0
+      assert_select ".tools-home [aria-pressed]", 0
+      assert_select "#calculator[data-tool-pin-url=?][data-tool-pinned=false]", tools_pin_path("calculator")
+      assert_select "#material[data-tool-pin-url=?][data-tool-pinned=false]", tools_pin_path(Maker::ToolPins::MATERIAL)
 
       post tools_pin_path("widgetkit"), headers: { "Referer" => tools_url }
       follow_redirect!
-      card = css_select("div.addon-card:not(.disabled)").first
-      toggle = card.css("button.tool-pin").first
-      assert_equal "true", toggle["aria-pressed"]
-      assert_equal "Pinned to sidebar", toggle.text.strip
-      assert_equal "delete", card.css("form.tool-pin-form input[name=_method]").first&.[]("value"),
-                   "a pinned card's toggle unpins"
-      assert_match(/Unpin Widget Kit/, toggle["title"])
+      assert_select "div.addon-card[data-tool-pin-url=?][data-tool-pinned=true]", tools_pin_path("widgetkit")
+      assert_select ".tools-home .tool-pin, .tools-home [aria-pressed]", 0
     end
 
     test "pinning an addon puts a link to it under Tools on every page, by the title it had" do

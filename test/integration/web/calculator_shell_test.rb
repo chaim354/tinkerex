@@ -48,20 +48,19 @@ module Web
       assert_select "dialog.calculator", 0
     end
 
-    test "unpinned, the rail has no Calculator link and the Tools card offers the pin, by button and right click" do
+    test "unpinned, the rail has no Calculator link and the Tools card offers the pin by right click" do
       get tools_path
       assert_select "aside.rail a.rail-calculator", 0
       assert_select "#calculator.calculator-card button[data-calculator-open]", text: "Open calculator"
-      # THE PIN WAS A RIGHT CLICK ONLY (2026-10-22) AND IS A VISIBLE TOGGLE AS WELL SINCE 2026-11-02
-      # (UX audit G2): the card still carries the menu's data, and its one form is the toggle, after
-      # Open — which is still the control a closed menu hands focus back to.
+      # THE PIN IS A RIGHT CLICK (2026-10-22). It was a visible toggle as well from 2026-11-02 (UX
+      # audit G2) until 2026-11-23, when the owner took the toggle off every card: the card carries
+      # the menu's data, and Open is its one control — the one a closed menu hands focus back to.
+      # Built in, it declares no permissions, so its menu has no Permissions… entry.
       assert_select "#calculator.calculator-card[data-action=?][data-tool-pin-url=?][data-tool-pinned=false]",
                     "contextmenu->toolmenu#open", tools_pin_path("calculator")
-      assert_select "#calculator form", 1
-      assert_select "#calculator form.tool-pin-form[action=?] button.tool-pin[aria-pressed=false]",
-                    tools_pin_path("calculator"), text: "Pin to sidebar"
-      assert_equal %w[calculator-card-open tool-pin],
-                   css_select("#calculator button").map { |b| (b["class"].split & %w[calculator-card-open tool-pin]).first }
+      assert_select "#calculator[data-tool-permissions]", 0
+      assert_select "#calculator form", 0
+      assert_equal %w[calculator-card-open], css_select("#calculator button").map { |b| b["class"].split.last }
     end
 
     test "pinning puts a Calculator link in the rail on every page; it opens the modal and lights nothing" do

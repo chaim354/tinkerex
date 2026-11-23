@@ -388,20 +388,18 @@ class MaterialEstimateTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
-  # AT PHONE WIDTH THE CARD STILL OPENS THE TOOL, AND THE PAGE DOES NOT SCROLL SIDEWAYS. Below 720px
-  # there is no sidebar to pin to, so the pin toggle goes — but the Material card's action row also
-  # holds its "Open material estimate" link, the card's only way in, so the row itself must stay
-  # (pages/tools.css hides an ADDON card's row, whose title is the link). The viewport is set through
-  # CDP, never `resize_to`: headless Chrome will not make a window narrower than 500px
-  # (shell_test.rb's 375px sweep measured it). The overflow is read against `clientWidth`, which
-  # leaves out a classic scrollbar, because the Linux runners draw a 15px one and `innerWidth`
-  # includes it. Measured with two parts listed and their sheets drawn, so the table and the
-  # drawings are laid out rather than the empty state.
+  # AT PHONE WIDTH THE CARD STILL OPENS THE TOOL, AND THE PAGE DOES NOT SCROLL SIDEWAYS. The
+  # Material card's action row holds its "Open material estimate" link, the card's only way in, so
+  # the row must show at every width. (A `max-width: 719px` rule hid the cards' Pin toggle until the
+  # toggle itself was removed, 2026-11-23, and an earlier spelling of it hid this row too.) The
+  # viewport is set through CDP, never `resize_to`: headless Chrome will not make a window narrower
+  # than 500px (shell_test.rb's 375px sweep measured it). The overflow is read against
+  # `clientWidth`, which leaves out a classic scrollbar, because the Linux runners draw a 15px one
+  # and `innerWidth` includes it. Measured with two parts listed and their sheets drawn, so the
+  # table and the drawings are laid out rather than the empty state.
   #
-  # MUTATION-CHECKED: the old `.tools-home .tool-card-actions` in place of
-  # `.tools-home .addon-card .tool-card-actions` in the `max-width: 719px` rule hides the link — RED;
-  # the parts table's scroll box made `overflow-x: visible; min-width: 420px` reads scrollWidth 432
-  # against clientWidth 360 — RED.
+  # MUTATION-CHECKED: the parts table's scroll box made `overflow-x: visible; min-width: 420px`
+  # reads scrollWidth 432 against clientWidth 360 — RED.
   test "at phone width the card opens the tool and the page does not scroll sideways" do
     page.driver.browser.execute_cdp("Emulation.setDeviceMetricsOverride",
                                     width: 375, height: 812, deviceScaleFactor: 1, mobile: false)
@@ -409,7 +407,6 @@ class MaterialEstimateTest < ApplicationSystemTestCase
     within("#material") do
       assert has_link?("Open material estimate", href: tools_material_path, visible: true),
              "the Material card's Open link is hidden at 375px"
-      assert_selector "button.tool-pin", visible: :hidden
     end
 
     visit tools_material_path

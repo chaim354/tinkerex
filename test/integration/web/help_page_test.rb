@@ -180,7 +180,7 @@ module Web
       leak = body_without_details[/.{0,60}(?:ADDON_SOURCE_URL|ADDON_SOURCE_PATH|_SIDECAR_URL).{0,60}/m]
       assert_nil leak, "environment-variable names belong behind the operator's <details>, " \
                        "not in the maker's copy: #{leak.inspect}"
-      assert_match(/No tools are installed on this server/, maker_text)
+      assert_match(/No add-ons are installed on this server/, maker_text)
       assert_select "main .empty a[href=?]", help_path(anchor: "tools")
       # MOVED, NOT DELETED: the person running the server still finds both settings, one click away.
       assert_select "main .empty details summary", text: OPERATOR
@@ -200,6 +200,26 @@ module Web
       assert_select "main .addon-card.disabled[title=?] .addon-desc", reason, text: reason
       leak = response.body.gsub(%r{<details.*?</details>}m, "")[/.{0,60}_SIDECAR_URL.{0,60}/m]
       assert_nil leak, "a greyed card named its environment variable: #{leak.inspect}"
+    end
+
+    # THE TOOL MENU IS A RIGHT CLICK AND NOTHING ON A CARD SHOWS IT (2026-11-23: the cards' Pin
+    # toggle and permissions footer went into the menu), so Help is where it is said in words, along
+    # with what the gallery's sections mean. It must never send the maker to the removed button.
+    test "help says a tool's menu is a right click, what it holds, and what the sections mean" do
+      sign_in_as(make_owner!(handle: "ada"))
+      get help_path
+      tools = css_select("section[aria-labelledby=tools]").text.squish
+      assert_match(/Right-click a tool's card on the Tools page/, tools)
+      assert_match(/Pin to sidebar/, tools)
+      assert_match(/Permissions…/, tools)
+      %w[Make\ a\ file Look\ inside\ a\ file Calculate\ and\ look\ up].each do |heading|
+        assert_includes tools, heading
+      end
+      # The built-in tools are in those sections (2026-11-23), and Help says where.
+      assert_match(/built-in and add-on alike/, tools)
+      assert_match(/reads one you already have, such as the Material estimate/, tools)
+      assert_match(/calculators and reference tables, the calculator among them/, tools)
+      assert_no_match(/press Pin to sidebar|on its card on the Tools page \(or/, tools)
     end
   end
 end

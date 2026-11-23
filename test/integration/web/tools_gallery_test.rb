@@ -33,11 +33,13 @@ module Web
 
     teardown { Maker::Addons::Source.reset! }
 
-    # THE CARD IS A <div> AND ITS TITLE IS THE LINK (2026-11-02): a card that holds a pin <form>
-    # cannot itself be an <a>. The link is stretched over the card in CSS, so "the whole card opens
-    # the tool" is pages/tools.css's to keep; this pins that the title link is the ONE way in and
-    # that it names the tool rather than every word on the card.
-    test "an available card has a head row, a description and a permissions footer" do
+    # THE CARD IS A <div> AND ITS TITLE IS THE LINK (2026-11-02). The link is stretched over the card
+    # in CSS, so "the whole card opens the tool" is pages/tools.css's to keep; this pins that the
+    # title link is the ONE way in and that it names the tool rather than every word on the card.
+    # SINCE 2026-11-23 THAT IS ALL THE CARD HOLDS: its mark, its name and its sentence. The pin and
+    # the permissions are its right-click menu's (tools/home/index), so there is no footer, no form
+    # and no button on it — the declared permission below is in the card's dialog, not on the card.
+    test "an available card has a head row and a description, and nothing else" do
       Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
         MANIFEST.merge("permissions" => [ { "name" => "library:write" } ])
       ])
@@ -48,7 +50,10 @@ module Web
                     tools_addon_path("widgetkit"), text: "Generators"
       assert_select ".tools-grid div.addon-card a[href=?]", tools_addon_path("widgetkit"), count: 1
       assert_select ".tools-grid div.addon-card .addon-desc"
-      assert_select ".tools-grid div.addon-card .addon-permissions.addon-card-foot", text: /This tool can:/
+      assert_equal %w[addon-card-head addon-desc],
+                   css_select(".tools-grid div.addon-card").first.element_children.map { |c| c["class"].split.first }
+      assert_select ".tools-grid div.addon-card form, .tools-grid div.addon-card button", 0
+      assert_select "dialog.tool-permissions .tool-permission-name", "Write files to your library"
     end
 
     test "an unavailable card keeps its reason and its title attribute" do

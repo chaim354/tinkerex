@@ -1,0 +1,15 @@
+<%# THE MATERIAL ESTIMATE'S CARD (2026-11-22), drawn first under Look inside a file
+    (Tools::HomeController::BUILT_IN): a PAGE, unlike the calculator's modal, so its card links
+    there. `.tool-card`, never `.addon-card`, for the reason tools/home/_calculator_card gives. %>
+<%= tag.div class: "tool-card", id: "material",
+            data: tool_menu_data(Maker::ToolPins::MATERIAL, "Material estimate") do %>
+  <span class="addon-card-head">
+    <span class="addon-icon" aria-hidden="true"><%= rail_icon(:tools) %></span>
+    <span class="addon-title" id="tool-title-material">Material estimate</span>
+  </span>
+  <span class="addon-desc muted">How many sheets of stock a set of SVG, LightBurn, DXF or MillMage
+    files needs, with each part's size and the total area.</span>
+  <div class="tool-card-actions">
+    <%= link_to "Open material estimate", tools_material_path, class: "btn small" %>
+  </div>
+<% end %>

@@ -81,39 +81,77 @@ module Tools
     end
 
     # WHAT THE OPERATOR SEES AT PUBLISH TIME. The point of rendering these is scope drift: a
-    # republished bundle that quietly starts asking for more shows up on the card, in a deployment
-    # where publishing the bundle IS the deploy and Rails is never rebuilt.
-    test "a card lists the permissions its manifest declares, by label" do
+    # republished bundle that quietly starts asking for more shows up in its card's Permissions
+    # dialog, in a deployment where publishing the bundle IS the deploy and Rails is never rebuilt.
+    # The dialog, not the card, since 2026-11-23: the card names the tool, and its right-click
+    # menu's Permissions… opens the dialog its `data-tool-permissions` names.
+    test "a card's permissions dialog lists what its manifest declares, by label, with the reasons" do
       Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
-        MANIFEST.merge("permissions" => [ { "name" => "library:write" }, { "name" => "service:boxes" } ])
+        MANIFEST.merge("permissions" => [ { "name" => "library:write", "reasoning" => "to save the drawing" },
+                                          { "name" => "service:boxes" } ])
       ])
       get tools_path
       assert_response :success
-      assert_select ".addon-permissions", text: /Write files to your library/
-      assert_select ".addon-permissions", text: /Call the boxes service/
+      dialog_id = css_select("div.addon-card").first["data-tool-permissions"]
+      assert_equal "tool-permissions-0", dialog_id
+      assert_select "dialog.modal.tool-permissions##{dialog_id}[aria-labelledby=?]", "#{dialog_id}-title" do
+        assert_select "h2##{dialog_id}-title", "Generators permissions"
+        assert_select "form[method=dialog] button.modal-close[aria-label=Close]"
+        assert_select ".tool-permissions-list li", 2
+        assert_select ".tool-permissions-list li:nth-child(1) .tool-permission-name", "Write files to your library"
+        assert_select ".tool-permissions-list li:nth-child(1) .tool-permission-reason", "to save the drawing"
+        assert_select ".tool-permissions-list li:nth-child(2) .tool-permission-name", "Call the boxes service"
+        assert_select ".tool-permissions-list li:nth-child(2) .tool-permission-reason", 0
+      end
+      # NOTHING OF IT IS ON THE CARD ANY MORE, and the dialog is not inside the card either, so a
+      # click or a right click in the open dialog cannot reach the card's stretched link or menu.
+      assert_select ".addon-card .addon-permissions", 0
+      assert_select ".addon-card", text: /This tool can/, count: 0
+      assert_select ".addon-card dialog", 0
     end
 
-    test "a card with no declared permissions renders no permission list at all" do
+    test "an addon declaring no permissions still gets a dialog, which says so" do
       get tools_path
       assert_response :success
-      assert_select ".addon-permissions", count: 0
+      assert_select "div.addon-card[data-tool-permissions=tool-permissions-0]"
+      assert_select "dialog#tool-permissions-0" do
+        assert_select ".tool-permissions-list", 0
+        assert_select "p", "This tool does not ask for any permissions."
+      end
+    end
+
+    # A GREYED-OUT CARD HAS NO MENU (it cannot run here), so nothing could open a dialog for it, and
+    # none is drawn. Built-in tools declare nothing and have no Permissions… entry either.
+    test "a greyed-out addon and the built-in tools have no permissions dialog" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
+        MANIFEST.merge("min_host" => Maker::Addons::Host::LEVEL + 1, "permissions" => [ { "name" => "library:write" } ])
+      ])
+      get tools_path
+      assert_response :success
+      assert_select ".addon-card.disabled", 1
+      assert_select ".addon-card.disabled[data-tool-permissions]", 0
+      assert_select "dialog.tool-permissions", 0
+      assert_select ".tool-card[data-tool-permissions]", 0
     end
 
     # ---- the gallery in sections ----------------------------------------------------------------
 
     def manifest(key, title, **extra) = MANIFEST.merge("key" => key, "title" => title, **extra)
 
-    # The add-on sections the page draws, in order: each `.tools-section` AFTER the built-in one,
-    # read as [heading, [card titles]].
-    def addon_sections
-      css_select(".tools-home .tools-section").drop(1).map do |section|
-        [ section.css(".tools-section-head").text.strip, section.css(".addon-card .addon-title").map { |t| t.text.strip } ]
+    # The sections the page draws, in order, read as [heading, [card titles]]: a built-in tool's
+    # `.tool-card` and a manifest's `.addon-card` alike, in the order the section draws them.
+    def sections
+      css_select(".tools-home .tools-section").map do |section|
+        [ section.css(".tools-section-head").text.strip,
+          section.css(".tool-card .addon-title, .addon-card .addon-title").map { |t| t.text.strip } ]
       end
     end
 
     # FOUR SECTIONS IN A FIXED ORDER, EACH DRAWN ONLY WHEN POPULATED. The manifests are listed in
     # the reverse of the order the page must draw, so source order and the spec's order disagree.
-    test "the gallery groups add-ons by category, in a fixed order, drawing only populated sections" do
+    # THE BUILT-IN TOOLS ARE IN THEM, FIRST (2026-11-23): the Material estimate under Look inside a
+    # file, the calculator under Calculate and look up (Tools::HomeController::BUILT_IN).
+    test "the gallery groups its tools by category, in a fixed order, drawing only populated sections" do
       Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [
         manifest("bare", "Bare Tool"),
         manifest("fasteners", "Fasteners", "category" => "reference"),
@@ -124,11 +162,34 @@ module Tools
       get tools_path
       assert_response :success
       assert_equal [ [ "Make a file", [ "Gears" ] ],
-                     [ "Look inside a file", [ "G-code Inspector", "Model Stats" ] ],
-                     [ "Calculate and look up", [ "Fasteners" ] ],
-                     [ "Other", [ "Bare Tool" ] ] ], addon_sections
+                     [ "Look inside a file", [ "Material estimate", "G-code Inspector", "Model Stats" ] ],
+                     [ "Calculate and look up", [ "Calculator", "Fasteners" ] ],
+                     [ "Other", [ "Bare Tool" ] ] ], sections
       # EVERY CARD IS STILL `.addon-card`, so the count the test above pins keeps meaning what it says.
       assert_select ".addon-card", count: 5
+
+      # EACH HEADING SAYS WHAT ITS TOOLS HAVE IN COMMON (2026-11-23): the sentence directly under
+      # it, from SECTIONS, so the order of the sentences is the order of the headings.
+      sentences = css_select(".tools-home .tools-section").map do |section|
+        head = section.css(".tools-section-head").first
+        assert_equal "tools-section-desc", head.next_element&.[]("class")&.split&.first,
+                     "#{head.text} has no sentence directly under it"
+        head.next_element.text.strip
+      end
+      assert_equal Tools::HomeController::SECTIONS.map(&:last), sentences
+      # NO HEADING SORTS BY WHERE A TOOL COMES FROM: the "Built in" section and the "Add-ons" heading
+      # over the categories are gone, so the page's section headings are SECTIONS' and nothing else.
+      assert_equal Tools::HomeController::SECTIONS.map(&:first), css_select(".tools-section-head").map { |h| h.text.strip }
+
+      # EVERY CARD'S MENU OPENS ITS OWN TOOL'S DIALOG. The cards are drawn by section and the
+      # dialogs in registry order, so an id taken from the position in a SECTION would hand Gears
+      # (first under Make a file, fourth in the registry) Bare Tool's dialog.
+      css_select("div.addon-card").each do |card|
+        title = card.css(".addon-title").text.strip
+        dialog = css_select("dialog##{card["data-tool-permissions"]}").first
+        assert dialog, "#{title}'s card names no dialog that exists"
+        assert_equal "#{title} permissions", dialog.css("h2").text.strip
+      end
     end
 
     test "an empty section is not drawn, and a greyed-out tool stays in its section" do
@@ -138,9 +199,36 @@ module Tools
       ])
       get tools_path
       assert_response :success
-      assert_equal [ [ "Make a file", [ "Gears" ] ], [ "Look inside a file", [ "Model Stats" ] ] ], addon_sections
+      assert_equal [ [ "Make a file", [ "Gears" ] ],
+                     [ "Look inside a file", [ "Material estimate", "Model Stats" ] ],
+                     [ "Calculate and look up", [ "Calculator" ] ] ], sections
       assert_select ".tools-section-head", text: "Other", count: 0
-      assert_select ".tools-section-head", text: "Calculate and look up", count: 0
+    end
+
+    # A SERVER WITH NO ADD-ONS STILL HAS ITS TWO TOOLS, each in its section, and the first-run state
+    # comes after them. It says "add-ons", never "No tools": two tools are on the page above it.
+    test "with no add-ons the built-in tools stand in their sections, above the first-run state" do
+      Maker::Addons::Source.stub = FakeAddonSource.new(manifests: [])
+      get tools_path
+      assert_response :success
+      assert_equal [ [ "Look inside a file", [ "Material estimate" ] ], [ "Calculate and look up", [ "Calculator" ] ] ], sections
+      assert_select ".addon-card", 0
+      assert_select ".tools-home > .tools-section:last-of-type + .empty", 1
+      assert_select ".empty", text: /No add-ons (came back|are installed)/
+      assert_select ".empty", text: /No tools/, count: 0
+    end
+
+    # EVERY BUILT-IN TOOL HAS ONE CARD, IN A SECTION THE GALLERY DRAWS. Maker::ToolPins::BUILT_IN is
+    # what may be pinned; a key there and not in BUILT_IN would be a sidebar link with no card, and
+    # a key under nil or an unnamed category would never be drawn.
+    test "every built-in tool is placed once, under a category the gallery draws" do
+      placed = Tools::HomeController::BUILT_IN.values.flatten
+      assert_equal Maker::ToolPins::BUILT_IN.keys.sort, placed.sort
+      assert_equal placed.uniq, placed
+      assert_empty Tools::HomeController::BUILT_IN.keys - Tools::HomeController::SECTIONS.map { |_, category, _| category }.compact
+      get tools_path
+      assert_response :success
+      Maker::ToolPins::BUILT_IN.each_key { |key| assert_select ".tools-section .tool-card##{key}", 1 }
     end
 
     # ---- the New menu ---------------------------------------------------------------------------

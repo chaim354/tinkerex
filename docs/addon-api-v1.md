@@ -191,7 +191,8 @@ Two things to know before you rely on it:
 #### `permissions` — declared and displayed; exactly one is also checked
 
 Each entry is an object with a **`name`** and an optional **`reasoning`**. The names your addon
-declares are rendered on its gallery card and, with the reasoning, on its own page.
+declares are listed, with the reasoning, in its gallery card's Permissions dialog (a right click
+on the card opens the menu that holds it) and on its own page.
 
 | Name | Rendered as |
 |---|---|
@@ -783,7 +784,8 @@ what your tool may read, which is still every file of the signed-in user's, decl
 **What `library:read` is, exactly.** Your manifest must declare it in `permissions` (§2) or this
 endpoint answers **403 `forbidden_capability`** — and that check is a *declaration-consistency*
 check, not a security boundary. It exists so that an addon which starts reading the library has to
-say so on the card the operator reads at publish time; a bundle runs same-origin in the signed-in
+say so where the operator reads at publish time (the card's Permissions dialog and the addon's
+page); a bundle runs same-origin in the signed-in
 session and can call another addon's read endpoint directly. What actually protects a user's files
 is that every lookup is scoped to the signed-in user: there is no way to read another user's file,
 declared or not. A node id that is not yours, and one that does not exist, both answer **404** with
@@ -1102,7 +1104,7 @@ These are two different things and it matters which one you are looking at:
 | | The capability map (this section) | `permissions` in your manifest (§2) |
 |---|---|---|
 | Where it lives | The host, one definition, served to every addon | Your own manifest |
-| What it does | The SDK refuses a call whose capability is `false`, before any request | Renders on your gallery card and your addon page |
+| What it does | The SDK refuses a call whose capability is `false`, before any request | Listed in your card's Permissions dialog and on your addon page |
 | Refuses a request? | Yes — `UnsupportedCapabilityError` | **Only `library:read`** — 403 `forbidden_capability` |
 
 **Exactly one declared permission is checked: `library:read`.** Without it in your manifest,
@@ -1116,8 +1118,8 @@ so in those words.** Your bundle runs same-origin in the signed-in session, so i
 manifest may well declare `library:read`. Nothing prevents that and nothing is claimed to. What the
 check buys is that an addon which starts reading the library has to say so where the operator can
 see it, which matters here because **republishing a bundle *is* the deploy** — Rails is never
-rebuilt, there is no review step and no CI in between, so the gallery card is the only place scope
-drift becomes visible.
+rebuilt, there is no review step and no CI in between, so the card's Permissions dialog and the
+addon's page are the only places scope drift becomes visible.
 
 Declaring the rest is still worth doing, for the same operator-facing reason.
 
