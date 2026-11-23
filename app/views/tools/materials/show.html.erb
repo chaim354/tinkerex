@@ -16,7 +16,7 @@
 <%= form_with url: tools_material_path, method: :post, multipart: true, id: "material-form",
               class: "material-estimate", authenticity_token: form_authenticity_token,
               data: { controller: "material-estimate",
-                      action: "turbo:submit-start->material-estimate#submitStart turbo:submit-end->material-estimate#submitEnd" } do %>
+                      action: "submit->material-estimate#gateSubmit turbo:submit-start->material-estimate#submitStart turbo:submit-end->material-estimate#submitEnd" } do %>
   <%= button_tag "Update", type: "submit", hidden: true, tabindex: -1, class: "material-default-submit" %>
   <%= render "tools/materials/parts", estimate: @estimate, projects: @projects %>
   <%= render "tools/materials/stock", stock: @estimate.stock %>
