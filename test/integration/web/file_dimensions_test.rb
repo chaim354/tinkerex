@@ -43,11 +43,8 @@ module Web
       assert_select ".lbrn-settings", count: 0
     end
 
-    # The row a DXF thumbnail stores, built by the helper its render hands its walk's box to
-    # (Dimensions.job_metadata), so this page test does not re-measure plate.dxf: that 80 × 40 is
-    # dimensions_test.rb's to pin.
     test "a DXF's facts read the same way" do
-      node = file_with("plate.dxf", Maker::Previews::Dimensions.job_metadata("width" => 80.0, "height" => 40.0))
+      node = file_with("plate.dxf", Maker::Previews::Dimensions.measure("plate.dxf", fixture("plate.dxf")))
 
       get file_path(node.node_id)
       assert_select "dl.meta dd.file-dimensions", text: "80 × 40 mm · 3.15 × 1.57 in"

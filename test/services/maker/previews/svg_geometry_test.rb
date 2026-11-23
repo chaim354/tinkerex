@@ -24,6 +24,23 @@ module Maker
         assert_in_delta 25.4, payload["job"]["h"], 0.01
       end
 
+      # WITH NO viewBox, `width` SIZES THE CANVAS AND NOTHING ELSE. Nothing maps user space onto the
+      # viewport, so user units stay CSS px whatever unit the width is written in — measured through
+      # resvg, which draws `<rect width="80">` under `width="100mm"` across 21% of its 378 px canvas,
+      # not 80%. The mm case is the one that was wrong by 3.78x on a side; the unitless case took the
+      # same wrong branch. 80 x 40 px is 21.17 x 10.58 mm. The job box AND a contour point, because
+      # both go through `scale` and either could be fixed while the other was not.
+      [ "", "px", "mm" ].each do |unit|
+        test "with no viewBox a #{unit.empty? ? "unitless" : unit} width leaves user units in CSS px" do
+          payload = build(%(<svg xmlns="http://www.w3.org/2000/svg" width="100#{unit}" height="60#{unit}">) +
+                          %(<rect x="0" y="0" width="80" height="40"/></svg>))
+
+          assert_equal 21.17, payload["job"]["w"], "80 user units are 80 px, not 80 #{unit.presence || "of the width's unit"}"
+          assert_equal 10.58, payload["job"]["h"]
+          assert_includes payload["shapes"].first["p"], [ 21.17, 10.58 ], "the rect's far corner, in mm"
+        end
+      end
+
       test "width in inches resolves through the same table" do
         payload = build(%(<svg xmlns="http://www.w3.org/2000/svg" width="2in" height="2in" ) +
                         %(viewBox="0 0 2 2"><rect x="0" y="0" width="2" height="2"/></svg>))

@@ -72,6 +72,25 @@ module Maker
                      Dimensions.metadata_for(fixture("plate.svg"), ext: "svg"))
       end
 
+      # A STACK OVERFLOW IS NOT A `StandardError`, so "never raises" has to name it. `SvgGeometry`
+      # recurses once per nested `<g>`; measured 2026-11-23, a Thread overflows at about 830 groups
+      # and the main thread at about 1920, so the walk runs INSIDE A THREAD, as Solid Queue runs a
+      # job — on the main thread 1000 groups measure fine and this would prove nothing. The first
+      # assertion establishes that precondition rather than assuming it, so a box with a bigger
+      # stack fails here by name instead of passing over a file that never overflowed.
+      test "metadata_for survives an SVG nested deep enough to overflow a job thread's stack" do
+        svg = nested_svg(DEEP_NESTING)
+        overflowed = Thread.new do
+          SvgGeometry.build(svg)
+          false
+        rescue SystemStackError
+          true
+        end.value
+        assert overflowed, "#{DEEP_NESTING} nested groups no longer overflow a thread here; raise the depth"
+
+        assert_nil Thread.new { Dimensions.metadata_for(svg, ext: "svg") }.value
+      end
+
       test "from_metadata reads only two finite, non-negative numbers, at least one above zero" do
         assert_nil Dimensions.from_metadata(nil)
         assert_nil Dimensions.from_metadata("job")
@@ -101,6 +120,17 @@ module Maker
         refute Dimensions.recipe?({ "job" => { "width" => 1, "height" => 1 }, "pages" => [] })
         assert Dimensions.recipe?(Maker::Previews::LbrnMetadata.parse(fixture("nested-plate.lbrn2")))
         assert Dimensions.recipe?({ "app_version" => "1.7.00", "job" => { "width" => 1, "height" => 1 } })
+      end
+
+      # Past a job thread's overflow (about 830 here) and under the main thread's (about 1920) — the
+      # same depth `SvgTest` renders, which must also stay under resvg's own limit of 1024 levels.
+      DEEP_NESTING = 1000
+
+      private
+
+      def nested_svg(depth)
+        %(<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10">) +
+          ("<g>" * depth) + %(<rect width="5" height="5"/>) + ("</g>" * depth) + %(</svg>)
       end
     end
   end

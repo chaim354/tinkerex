@@ -28,6 +28,8 @@ module Maker
       #   1  original (thumbnail)
       #   2  the row stores the drawing's size (Maker::Previews::Dimensions) for the facts list and the
       #      Material estimate tool. The picture's bytes do not move; the bump is for the metadata.
+      #      The no-viewBox unit fix (`SvgGeometry::FORMAT_REVISION` 2 -> 3) moved that size in the
+      #      same unmerged branch and DELIBERATELY rides this bump: no deployment had stamped a 2.
       THUMBNAIL_REVISION = 2
 
       def payload_revision(kind)

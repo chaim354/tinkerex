@@ -38,7 +38,11 @@ module Maker
       #      116,244 `C`, 8,011 `S`, 1,459 `Q`, 859 `A` and 2 `T` across the live corpus. The
       #      wire form is `Geometry.path_curve`'s and the bump is STILL this format's, not the
       #      shared term: `Geometry::SHARED_REVISION` carries the argument.
-      FORMAT_REVISION = 2
+      #   3  an SVG with NO `viewBox` measures in CSS px whatever unit its `width` is written in. It
+      #      measured in the width's unit, so `width="100mm"` over `<rect width="80">` read 80 mm
+      #      where resvg draws 80 px (21.17 mm) — every side 3.78x too big, and a unitless width
+      #      took the same wrong branch. See `scale`.
+      FORMAT_REVISION = 3
 
       # What `Enqueue` actually reads — see `Geometry::SHARED_REVISION`.
       PAYLOAD_REVISION = Geometry::SHARED_REVISION + FORMAT_REVISION
@@ -380,12 +384,16 @@ module Maker
 
       # MILLIMETRES PER USER UNIT, as [sx, sy].
       #
-      # THE ONE PLACE AN SVG'S NUMBERS BECOME PHYSICAL. Three cases, and the third is the one that
-      # makes viewBox-only files measurable:
+      # THE ONE PLACE AN SVG'S NUMBERS BECOME PHYSICAL. Three cases, and only the first lets the
+      # width change the scale:
       #
       #   * width/height WITH a viewBox — the honest case. The physical size divided by the
       #     viewBox's own extent is the scale, and it is exact.
-      #   * width/height with NO viewBox — user units ARE the width's units.
+      #   * width/height with NO viewBox — user units are CSS px, 1/96 in, WHATEVER UNIT THE WIDTH
+      #     IS WRITTEN IN. The width only sizes the viewport (the canvas); with no viewBox nothing
+      #     maps user space onto it, so `width="100mm"` over `<rect width="80">` is an 80 px rect
+      #     on a 378 px canvas. Measured through resvg, which draws the thumbnail: 21% of the
+      #     canvas, not 80%. Reading the rect in the width's unit made every side 3.78x too big.
       #   * a viewBox with no usable width/height — user units are CSS px, 1/96 in by definition.
       #     Inkscape and Illustrator both write real units, but plotter and generator output
       #     routinely does not, and 96 dpi is what every browser resolves such a file to.
@@ -399,9 +407,8 @@ module Maker
         w_mm = length_mm(root["width"])
         h_mm = length_mm(root["height"])
 
-        return [ MM_PER_UNIT[""], MM_PER_UNIT[""] ] if vb.nil? && w_mm.nil?
-        return [ 1.0, 1.0 ] if vb.nil? # width has units; user units are those units
-
+        # No viewBox: user units are px whatever the width says, which only sizes the canvas.
+        return [ MM_PER_UNIT[""], MM_PER_UNIT[""] ] if vb.nil?
         return [ MM_PER_UNIT[""], MM_PER_UNIT[""] ] if w_mm.nil? && h_mm.nil?
 
         sx = w_mm && vb[2].positive? ? w_mm / vb[2] : nil

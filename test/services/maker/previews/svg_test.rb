@@ -53,6 +53,23 @@ module Maker
         assert_equal "image/png", result[:content_type]
         assert_nil result[:metadata]
       end
+
+      # THE SIZE MUST NOT COST THE PICTURE, EVEN WHEN MEASURING BLOWS THE STACK. 1000 nested groups
+      # overflow `SvgGeometry`'s walk in a Thread, where Solid Queue runs the job (about 830 deep,
+      # measured 2026-11-23), and a `SystemStackError` is not a `StandardError` — it escaped
+      # `Dimensions.metadata_for` and the job's rescue both. resvg draws the file: its own limit is
+      # 1024 levels, so this depth is inside the window where only the measurer fails.
+      test "an SVG nested deep enough to overflow the measurer still gets its thumbnail" do
+        skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
+
+        depth = 1000
+        nested = %(<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10">) +
+                 ("<g>" * depth) + %(<rect width="5" height="5"/>) + ("</g>" * depth) + %(</svg>)
+        result = Thread.new { Maker::Previews::Svg.render(nested, size: 32, kind: "thumbnail") }.value
+
+        assert_equal "\x89PNG\r\n\x1A\n".b, result[:bytes][0, 8].b
+        assert_nil result[:metadata]
+      end
     end
   end
 end

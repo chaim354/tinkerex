@@ -56,9 +56,15 @@ module Maker
 
       # FOR A THUMBNAIL RENDER: the same Hash, or nil, and NEVER a raise. A size is a fact beside the
       # picture, so a drawing this module cannot measure must not cost the file its thumbnail.
+      #
+      # `SystemStackError` IS NAMED BECAUSE IT IS NOT A `StandardError`. `SvgGeometry.walk` recurses
+      # once per nested `<g>`, and an SVG about 830 groups deep overflows a Thread's stack, where
+      # Solid Queue runs jobs (about 1920 on the main thread). Uncaught, it escaped this rescue and
+      # `GeneratePreviewJob`'s `rescue StandardError` both, and cost the file the thumbnail resvg
+      # draws fine. Rescuing it here is safe: by the time it arrives the stack has unwound.
       def metadata_for(bytes, ext:)
         measure_ext(ext, bytes)
-      rescue StandardError => e
+      rescue StandardError, SystemStackError => e
         Rails.logger.warn("dimensions: .#{ext}: #{e.class}: #{e.message}") unless e.is_a?(Unmeasurable)
         nil
       end
