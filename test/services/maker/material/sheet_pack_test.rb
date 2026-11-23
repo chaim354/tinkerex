@@ -66,6 +66,34 @@ module Maker
         assert_equal 1, pack([ Item.new(label: "no", width: 297, height: 296) ], 300, 300, gap: 2).unplaced.size
       end
 
+      # A SIDE OF ZERO STILL CLAIMS A SPOT (SheetPack::CLAIM): one line in an SVG measures 50 x 0,
+      # and at gap 0 its own size overlaps nothing, so every copy landed on (0, 0) and the sheet
+      # drawing showed one. The placement still reports the part's own size.
+      test "a part with a side of zero takes a spot of its own, at its own size" do
+        placed = pack(items(3, 50, 0), 300, 300).sheets.flatten
+
+        assert_equal [ [ 0.0, 0.0 ], [ 50.0, 0.0 ], [ 100.0, 0.0 ] ], placed.map { |pl| [ pl.x, pl.y ] }.sort
+        assert_equal [ [ 50.0, 0.0 ] ] * 3, placed.map { |pl| [ pl.width, pl.height ] }
+      end
+
+      # ONLY THE PIECES A PLACEMENT SPLITS OFF ARE PRUNED. Comparing every free rectangle with every
+      # other on every placement was roughly cubic, and the Material estimate packs inside a web
+      # request, re-figured as the user types (MAX_PLACEMENTS copies, sheets to 10 m a side).
+      # Measured 2026-11-23 on this set: the full prune took 57 s, this one 0.46 s, so the bound sits
+      # about 10x from each. It is this many parts because the gap between the two grows only
+      # linearly with the count: at 900 parts it is 80x, too narrow for 10x on both sides.
+      test "a large varied layout packs well inside a web request" do
+        rng = Random.new(20261123)
+        list = Array.new(1250) { |i| Item.new(label: "b#{i}", width: rng.rand(10.0..500.0).round(1), height: rng.rand(10.0..500.0).round(1)) }
+
+        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        result = pack(list, 10_000, 10_000, gap: 3)
+        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
+
+        assert_equal list.size, result.sheets.sum(&:size)
+        assert_operator elapsed, :<, 5.0, "packing #{list.size} parts took #{elapsed.round(2)} s"
+      end
+
       test "the same input lays out the same way every time" do
         list = items(7, 120, 40) + items(5, 60, 60, prefix: "q")
         layout = ->(r) { r.sheets.map { |s| s.map { |pl| [ pl.item.label, pl.x, pl.y, pl.rotated ] } } }

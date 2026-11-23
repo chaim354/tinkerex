@@ -16,6 +16,12 @@ module Maker
     # on the longer side, then the label, then input order, so a layout is a function of its input.
     class SheetPack
       EPS = 1e-9
+      # THE LEAST A PLACEMENT TAKES FROM THE FREE LIST, per side (mm). A part with a side of zero (one
+      # line in an SVG measures 50 x 0, and the measurer accepts it) overlaps nothing at gap 0: taken
+      # at its own size it splits no free rectangle, and every copy lands on the same spot. Far above
+      # EPS, so the split sees it; far below anything a drawing or a sum can. The Placement keeps the
+      # item's own size, and zero-area parts are placed last, so the sliver never moves a real part.
+      CLAIM = 1e-6
 
       # x/y/width/height are the PART's own (mm, rotated when `rotated`), on the full sheet.
       Placement = Data.define(:item, :x, :y, :width, :height, :rotated)
@@ -76,8 +82,9 @@ module Maker
       # Places `item` (inflated to w x h) on `sheet` at its best free spot. false when none fits.
       def place(sheet, item, w, h)
         best = nil
+        options = orientations(w, h)
         sheet[:free].each do |free|
-          orientations(w, h).each do |(ow, oh, rotated)|
+          options.each do |(ow, oh, rotated)|
             next unless ow <= free.w + EPS && oh <= free.h + EPS
 
             short, long = [ free.w - ow, free.h - oh ].minmax
@@ -88,8 +95,8 @@ module Maker
         return false if best.nil?
 
         _score, free, ow, oh, rotated = best
-        used = Rect.new(x: free.x, y: free.y, w: ow, h: oh)
-        sheet[:free] = prune(sheet[:free].flat_map { |f| split(f, used) })
+        used = Rect.new(x: free.x, y: free.y, w: [ ow, CLAIM ].max, h: [ oh, CLAIM ].max)
+        sheet[:free] = carve(sheet[:free], used)
         # The part's own size from the ITEM, never `ow - @gap`: (62.9 + 3.0) - 3.0 is
         # 62.900000000000006, and that noise would reach the utilization sum and the drawing.
         part_w, part_h = rotated ? [ item.height, item.width ] : [ item.width, item.height ]
@@ -98,10 +105,37 @@ module Maker
         true
       end
 
-      # The maximal free rectangles left of `free` once `used` is taken out of it.
-      def split(free, used)
-        return [ free ] unless overlap?(free, used)
+      # Takes `used` out of the free list and drops every piece that is no longer maximal.
+      #
+      # ONLY THE PIECES THIS PLACEMENT SPLIT OFF ARE CHECKED, which is what keeps a large layout
+      # inside a web request: comparing every rectangle with every other on every placement was
+      # roughly cubic (2000 parts of 10-500 mm on a 10 m sheet took 72 s). An untouched rectangle
+      # was maximal before and still is, and no piece can contain one, since every piece lies inside
+      # a rectangle that was already maximal. The list keeps its order and the check its tie-break,
+      # so the layout is the one the full comparison gives. A piece is most often inside another
+      # piece, so those are asked first; the answer is the same either way.
+      def carve(free_rects, used)
+        rects = []
+        fresh = []
+        free_rects.each do |f|
+          if overlap?(f, used)
+            split(f, used).each { |piece| fresh << rects.size; rects << piece }
+          else
+            rects << f
+          end
+        end
+        gone = fresh.select { |i| contained?(rects, i, fresh) || contained?(rects, i, rects.each_index) }
+        rects.reject.with_index { |_, i| gone.include?(i) }
+      end
 
+      # rects[i] lies inside rects[j] for some j of `among` (of two equal ones, the first is kept).
+      def contained?(rects, i, among)
+        rect = rects[i]
+        among.any? { |j| j != i && contains?(rects[j], rect) && (!contains?(rect, rects[j]) || j < i) }
+      end
+
+      # The maximal free rectangles left of `free` once `used`, which overlaps it, is taken out.
+      def split(free, used)
         parts = []
         parts << Rect.new(x: free.x, y: free.y, w: used.x - free.x, h: free.h) if used.x > free.x + EPS
         parts << Rect.new(x: used.right, y: free.y, w: free.right - used.right, h: free.h) if used.right < free.right - EPS
@@ -117,13 +151,6 @@ module Maker
       def contains?(outer, inner)
         inner.x >= outer.x - EPS && inner.y >= outer.y - EPS &&
           inner.right <= outer.right + EPS && inner.bottom <= outer.bottom + EPS
-      end
-
-      # Drops every free rectangle another one contains (keeping the first of two equal ones).
-      def prune(rects)
-        rects.each_with_index.reject do |rect, i|
-          rects.each_with_index.any? { |other, j| i != j && contains?(other, rect) && (!contains?(rect, other) || j < i) }
-        end.map(&:first)
       end
     end
   end
