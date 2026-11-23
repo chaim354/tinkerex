@@ -45,6 +45,33 @@ module Web
       assert_response :redirect
     end
 
+    # WITHOUT JAVASCRIPT THERE IS NO X-CSRF-Token HEADER, so the form's own token must be good for
+    # the Measure button's `formaction` too. Per-form tokens bind a token to the form's action, which
+    # refused Measure with a 422; the test env turns forgery protection off, so it is turned on here.
+    test "the form's token is accepted by the Measure button's action as well as the form's own" do
+      ActionController::Base.allow_forgery_protection = true
+      get tools_material_path
+      token = css_select("#material-form input[name=authenticity_token]").first["value"]
+
+      post tools_material_measure_path, params: { authenticity_token: token, uploads: [ upload("plate.svg") ], **stock }
+      assert_response :success
+      assert_select ".material-parts-table tbody tr", count: 1
+
+      post tools_material_path, params: { authenticity_token: token, **stock }
+      assert_response :success
+    ensure
+      ActionController::Base.allow_forgery_protection = false
+    end
+
+    # ENTER IN ANY FIELD PRESSES THE FORM'S FIRST SUBMIT BUTTON (HTML's implicit submission). It must
+    # be one that re-figures, never Measure uploads, which posts to the rate-limited upload action.
+    test "the form's first submit button re-figures, so Enter never posts to the upload action" do
+      get tools_material_path
+      first = css_select("#material-form button").find { |b| b["type"].in?([ nil, "submit" ]) }
+      assert_nil first["formaction"], "the default button must post to the form's own action"
+      assert first.key?("hidden"), "and it is not a second visible Update button"
+    end
+
     # THE ROUTE BEATS THE ADDON WILDCARD (Task 7's routes): `tools/:key` would answer this with
     # Tools::AddonsController, a 404 for an unknown addon.
     test "/tools/material is the built-in page, not an addon lookup" do
