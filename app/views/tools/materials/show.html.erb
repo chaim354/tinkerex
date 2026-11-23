@@ -1,0 +1,16 @@
+<% content_for :title, "Material estimate — Tinkerex" %>
+<div class="page-head"><h1>Material estimate</h1></div>
+
+<%# ONE FORM, THREE REGIONS (Tools::MaterialsController explains the statelessness): the parts list
+    and the results are replaced by turbo streams, the stock is never replaced, so the box being
+    typed in stays put. `multipart: true` because the upload button submits this same form to
+    tools_material_measure_path. `*_tag` helpers throughout, never a form builder's `fields_for`:
+    a form with no model and no scope emits bracketed names a builder mangles (§14d). %>
+<%= form_with url: tools_material_path, method: :post, multipart: true, id: "material-form",
+              class: "material-estimate",
+              data: { controller: "material-estimate",
+                      action: "turbo:submit-start->material-estimate#submitStart turbo:submit-end->material-estimate#submitEnd" } do %>
+  <%= render "tools/materials/parts", estimate: @estimate, projects: @projects %>
+  <%= render "tools/materials/stock", stock: @estimate.stock %>
+  <%= render "tools/materials/results", estimate: @estimate %>
+<% end %>

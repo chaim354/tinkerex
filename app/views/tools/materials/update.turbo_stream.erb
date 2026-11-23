@@ -1,0 +1,5 @@
+<% if @parts_changed %>
+  <%= turbo_stream.replace "material-parts", partial: "tools/materials/parts",
+                                             locals: { estimate: @estimate, projects: @projects } %>
+<% end %>
+<%= turbo_stream.replace "material-results", partial: "tools/materials/results", locals: { estimate: @estimate } %>

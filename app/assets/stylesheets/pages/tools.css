@@ -18,7 +18,9 @@
      Add-ons a manifest makes. The heading is the page's section heading, quieter than the h1. */
   .tools-section { margin-bottom: var(--space-5); }
   .tools-section-head { margin: 0 0 var(--space-3); font-size: 13px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--fg-muted); }
-  .calculator-card .addon-icon .rail-icon { width: 18px; height: 18px; }
+  /* A built-in tool's mark is its rail glyph, drawn at the tile's size (the calculator, the
+     Material estimate). */
+  .tool-card .addon-icon .rail-icon { width: 18px; height: 18px; }
   .calculator-card-actions, .tools-home .tool-card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line); }
   /* A card's permission line already draws the rule above it, so the actions under it do not. */
   .tools-home .addon-card-foot + .tool-card-actions { margin-top: 0; padding-top: 0; border-top: 0; }
@@ -26,8 +28,10 @@
      pressed rule, the way every toggle button is, and its word changes with it. A phone has no
      sidebar to pin to, so the control goes with the rail. */
   .tools-home .tool-pin-form { position: relative; z-index: 1; margin: 0; }
-  /* An addon card's action row holds only the toggle, so it goes too; the calculator's keeps Open. */
-  @media (max-width: 719px) { .tools-home .tool-pin-form, .tools-home .tool-card-actions { display: none; } }
+  /* An ADDON card's action row holds only the toggle (its title is the link), so the row goes too.
+     A built-in card's row keeps its Open — the calculator's button, the Material estimate's link,
+     which is that card's only way in — and loses only the toggle. */
+  @media (max-width: 719px) { .tools-home .tool-pin-form, .tools-home .addon-card .tool-card-actions { display: none; } }
   /* The shortcut, drawn the way the top bar draws its ⌘K (shell.css .topbar-kbd). */
   .calculator-card-keys { white-space: nowrap; }
   .calculator-card-keys kbd { padding: 1px 4px; border: 1px solid var(--line); border-radius: 2px; font: 500 11px/1 var(--font-mono); color: var(--fg-muted); }
@@ -308,4 +312,37 @@
 
   .param-group-adv > summary { cursor: pointer; }
   .param-group-adv[open] > summary { margin-bottom: 10px; }
+
+  /* --- The Material estimate (built in, /tools/material; 2026-11-22) --- */
+  /* `minmax(0, 1fr)`, not the implicit `auto` track: an auto track grows to its items' min-content,
+     and the parts table's is wider than a phone, so the page would scroll instead of the table. */
+  .material-estimate { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-5); }
+  .material-estimate h2 { margin: 0 0 var(--space-3); font-size: 15px; }
+  .material-add { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: center; margin-bottom: var(--space-3); }
+  .material-add-field { display: inline-flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; }
+  /* A table keeps its width and scrolls inside its own container at phone width (design-system rule 11). */
+  .material-table-scroll { overflow-x: auto; }
+  .material-parts-table { width: 100%; border-collapse: collapse; }
+  .material-parts-table th, .material-parts-table td { padding: 6px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+  .material-parts-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .material-part-name { overflow-wrap: anywhere; }
+  .material-qty { width: 5.5em; }
+  .material-part--refused { color: var(--fg-muted); }
+  .material-reason { display: block; font-size: 12px; color: var(--fg-muted); }
+  .material-stock { display: flex; flex-wrap: wrap; gap: var(--space-3); align-items: end; margin: 0;
+                    padding: var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-panel); }
+  .material-stock label { display: inline-flex; flex-direction: column; gap: 4px; font-size: 13px; }
+  .material-stock input[type="number"] { width: 7em; }
+  .material-stock .material-rotate { flex-direction: row; align-items: center; }
+  .material-summary { display: grid; grid-template-columns: max-content 1fr; gap: 4px var(--space-3); margin: 0 0 var(--space-3); }
+  .material-summary dd { margin: 0; font-variant-numeric: tabular-nums; }
+  .material-note { margin: 0 0 var(--space-2); }
+  .material-sheets { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--space-3); }
+  .material-sheet { margin: 0; }
+  .material-sheet figcaption { font-size: 12px; color: var(--fg-muted); margin-top: 4px; }
+  .material-sheet-svg { display: block; width: 100%; height: auto; }
+  /* Drawing colours, through tokens so the sheet follows the theme; strokes stay a pixel at any scale. */
+  .material-sheet-stock { fill: var(--surface); stroke: var(--fg-muted); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  .material-sheet-part rect { fill: var(--soft); stroke: var(--fg); stroke-width: 1px; vector-effect: non-scaling-stroke; }
+  .material-sheet-part text { fill: var(--fg); font-family: var(--font-ui); }
 }

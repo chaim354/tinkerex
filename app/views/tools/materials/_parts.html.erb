@@ -1,0 +1,72 @@
+<%# locals: (estimate:, projects:) %>
+<%# THE PARTS LIST. Replaced whenever the list changes and never on a quantity edit. Everything the
+    next request needs about a part rides in its row as hidden fields, because the server keeps no
+    state; the upload input, the project select and both choosers live in here so the same replace
+    clears them and a later re-figure cannot add them twice. A refused file stays, greyed, with its
+    reason: dropping it would make the total describe fewer files than were added. %>
+<section id="material-parts" class="material-parts" aria-labelledby="material-parts-head">
+  <h2 id="material-parts-head">Parts</h2>
+
+  <div class="material-add">
+    <span class="material-add-field">
+      <label for="material-uploads">Upload files</label>
+      <%= file_field_tag "uploads[]", id: "material-uploads", multiple: true,
+                         accept: Maker::Previews::Dimensions::EXTENSIONS.map { |ext| ".#{ext}" }.join(","),
+                         data: { material_estimate_target: "uploads", action: "change->material-estimate#upload" } %>
+      <%= button_tag "Measure uploads", type: "submit", formaction: tools_material_measure_path, class: "btn small",
+                     data: { material_estimate_target: "measure" } %>
+    </span>
+    <% if projects.any? %>
+      <label class="material-add-field">Add a project
+        <%= select_tag "add_project_id", options_for_select(projects), include_blank: "Choose…",
+                       data: { action: "change->material-estimate#add" } %>
+      </label>
+    <% end %>
+    <span class="material-add-field" data-action="filechooser:choose->material-estimate#add">
+      <%= render "shared/folder_field", name: "add_folder_id", children_url: library_children_path,
+                                        mode: "folder", label: "Add a folder…", root_label: "Library" %>
+      <%= render "shared/folder_field", name: "add_file_id", children_url: library_children_path,
+                                        mode: "file", label: "Add a file…", root_label: "Library",
+                                        extensions: Maker::Previews::Dimensions::EXTENSIONS %>
+    </span>
+  </div>
+
+  <% if estimate.parts.empty? %>
+    <p class="muted material-empty">Add SVG, LightBurn, DXF or MillMage files to see the material they need.</p>
+  <% else %>
+    <div class="material-table-scroll">
+      <table class="material-parts-table">
+        <thead>
+          <tr><th>File</th><th class="num">Size (mm)</th><th class="num">Size (in)</th><th class="num">Qty</th><th aria-label="Remove"></th></tr>
+        </thead>
+        <tbody>
+          <% estimate.parts.each_with_index do |part, i| %>
+            <tr class="<%= "material-part--refused" unless part.measured? %>">
+              <td class="material-part-name">
+                <%= part.node_id ? link_to(part.name, file_path(part.node_id)) : part.name %>
+                <% if part.page %><span class="muted"> · <%= part.page %></span><% end %>
+                <% unless part.measured? %><span class="material-reason"><%= part.reason %></span><% end %>
+                <%= hidden_field_tag "parts[#{i}][name]", part.name, id: nil %>
+                <%= hidden_field_tag "parts[#{i}][node_id]", part.node_id, id: nil %>
+                <%= hidden_field_tag "parts[#{i}][page]", part.page, id: nil %>
+                <%= hidden_field_tag "parts[#{i}][width]", part.width, id: nil %>
+                <%= hidden_field_tag "parts[#{i}][height]", part.height, id: nil %>
+                <%= hidden_field_tag "parts[#{i}][reason]", part.reason, id: nil %>
+              </td>
+              <td class="num"><%= part.measured? ? "#{recipe_num(part.width)} × #{recipe_num(part.height)}" : "—" %></td>
+              <td class="num"><%= part.measured? ? material_inches(part.width, part.height) : "—" %></td>
+              <td class="num">
+                <%= number_field_tag "parts[#{i}][qty]", part.qty, id: nil, min: 1, max: Maker::Material::Estimate::MAX_QTY,
+                                     step: 1, class: "material-qty", disabled: !part.measured?,
+                                     "aria-label": "Quantity of #{part.label}",
+                                     data: { action: "input->material-estimate#refigure" } %>
+              </td>
+              <td><%= button_tag "Remove", type: "submit", name: "remove", value: i, class: "linkbtn small",
+                                 "aria-label": "Remove #{part.label}" %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  <% end %>
+</section>

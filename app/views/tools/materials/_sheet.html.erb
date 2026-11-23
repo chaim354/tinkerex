@@ -1,0 +1,22 @@
+<%# locals: (placements:, stock:, number:) %>
+<%# ONE SHEET, DRAWN IN MM: the viewBox is the sheet, so every number below is a millimetre. Every
+    label is escaped by ERB, never raw or html_safe: filenames are user input. %>
+<% w = stock.width_mm %>
+<% h = stock.height_mm %>
+<figure class="material-sheet">
+  <svg class="material-sheet-svg" viewBox="0 0 <%= recipe_num(w) %> <%= recipe_num(h) %>" role="img"
+       aria-label="Sheet <%= number %>: <%= pluralize(placements.size, "part") %>">
+    <rect class="material-sheet-stock" x="0" y="0" width="<%= recipe_num(w) %>" height="<%= recipe_num(h) %>"/>
+    <% placements.each do |pl| %>
+      <g class="material-sheet-part">
+        <title><%= pl.item.label %>, <%= recipe_num(pl.width) %> × <%= recipe_num(pl.height) %> mm<%= ", rotated" if pl.rotated %></title>
+        <rect x="<%= recipe_num(pl.x) %>" y="<%= recipe_num(pl.y) %>" width="<%= recipe_num(pl.width) %>" height="<%= recipe_num(pl.height) %>"/>
+        <% if (label = material_sheet_label(pl, w)) %>
+          <text x="<%= recipe_num(pl.x + pl.width / 2) %>" y="<%= recipe_num(pl.y + pl.height / 2) %>"
+                font-size="<%= label.last %>" text-anchor="middle" dominant-baseline="central"><%= label.first %></text>
+        <% end %>
+      </g>
+    <% end %>
+  </svg>
+  <figcaption>Sheet <%= number %> · <%= pluralize(placements.size, "part") %></figcaption>
+</figure>
