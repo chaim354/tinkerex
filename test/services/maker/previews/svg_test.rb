@@ -18,6 +18,41 @@ module Maker
         assert_equal 256, result[:width]
         assert_equal 256, result[:height]
       end
+
+      def plate = File.binread(Rails.root.join("test/fixtures/files/plate.svg"))
+
+      # THE ABSOLUTE PIN, as GEOMETRY_REVISIONS pins the payloads: 2 is "the row stores the drawing's
+      # size". A forgotten bump leaves every stored SVG thumbnail without one, forever (§14h).
+      test "the thumbnail is at revision 2, the build that stores the drawing's size" do
+        assert_equal 2, Maker::Previews::Svg::THUMBNAIL_REVISION
+      end
+
+      test "the thumbnail carries the drawing's size, not the canvas's" do
+        skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
+
+        result = Maker::Previews::Svg.render(plate, size: 64)
+        assert_equal "image/png", result[:content_type]
+        assert_equal({ "job" => { "width" => 80.0, "height" => 40.0 } }, result[:metadata])
+      end
+
+      # THE DELEGATE RULE'S GUARD. Dxf, Lbrn2 and Mage rasterize an SVG they GENERATED; a size
+      # measured off that document describes the wrong thing (a DXF's units are resolved before it,
+      # a LightBurn bed frame is in it). Their own `render` merges their metadata over it today, which
+      # is exactly why only this assertion can see the rule break.
+      test "the bare rasterize carries no size, because a delegate's SVG is not the file" do
+        skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
+
+        refute Maker::Previews::Svg.rasterize(plate, size: 64).key?(:metadata)
+      end
+
+      test "a drawing with nothing to measure still gets its thumbnail" do
+        skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
+
+        empty = %(<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10"></svg>)
+        result = Maker::Previews::Svg.render(empty, size: 32)
+        assert_equal "image/png", result[:content_type]
+        assert_nil result[:metadata]
+      end
     end
   end
 end

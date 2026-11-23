@@ -15,8 +15,6 @@ module Maker
       end
 
       test "a DXF measures in millimetres through its own walk" do
-        skip "needs Task 2's Dxf.drawing" unless Maker::Previews::Dxf.respond_to?(:drawing)
-
         assert_equal({ "job" => { "width" => 80.0, "height" => 40.0 } },
                      Dimensions.measure("plate.dxf", fixture("plate.dxf")))
       end

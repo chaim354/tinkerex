@@ -147,6 +147,8 @@ module Maker
 
         assert_equal Maker::Previews::Lbrn2::THUMBNAIL_REVISION,
                      Enqueue.revision_for_name("a.lbrn2", "thumbnail")
+        assert_equal Maker::Previews::Svg::THUMBNAIL_REVISION, Enqueue.revision_for_name("a.svg", "thumbnail")
+        assert_equal Maker::Previews::Dxf::THUMBNAIL_REVISION, Enqueue.revision_for_name("a.dxf", "thumbnail")
       end
 
       # MEASURING NEEDS NO RASTERIZER, and a box without resvg must still do it. This is the whole

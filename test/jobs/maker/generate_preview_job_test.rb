@@ -507,16 +507,28 @@ module Maker
       assert_equal "Fill", preview.metadata["layers"].last["mode"]
     end
 
-    test "leaves metadata null for a non-LightBurn file" do
+    # A ROW STORES WHAT ITS RENDERER REPORTS AND NOTHING ELSE. Plain text reports nothing, so its
+    # metadata stays null. An SVG reports its drawing's size since Svg::THUMBNAIL_REVISION 2
+    # (2026-11-22) -- this test read "leaves metadata null for a non-LightBurn file" over an SVG until
+    # then -- and a size alone is not a recipe (`Dimensions.recipe?`), so it draws no settings panel.
+    test "leaves metadata null where the renderer reports none, and an SVG stores only its size" do
+      skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
+
+      stage_version(node_id: "notes.txt", version_id: "vtxt", bytes: "a plain note\n")
+      text = @user.maker_previews.create!(node_id: "notes.txt", version_id: "vtxt")
       # Reuses @svg (setup) under a different node_id/filename — same bytes as the
       # file's other plain-SVG tests, just staged as "logo.svg" for this assertion.
       stage_version(node_id: "logo.svg", version_id: "vlogo", bytes: @svg)
-      preview = @user.maker_previews.create!(node_id: "logo.svg", version_id: "vlogo")
+      svg = @user.maker_previews.create!(node_id: "logo.svg", version_id: "vlogo")
 
-      Maker::GeneratePreviewJob.perform_now(preview.id, filename: "logo.svg")
+      Maker::GeneratePreviewJob.perform_now(text.id, filename: "notes.txt")
+      Maker::GeneratePreviewJob.perform_now(svg.id, filename: "logo.svg")
 
-      preview.reload
-      assert_nil preview.metadata
+      assert_equal "ready", text.reload.status, text.error
+      assert_nil text.metadata
+      assert_equal "ready", svg.reload.status, svg.error
+      assert_equal({ "job" => { "width" => 21.17, "height" => 21.17 } }, svg.metadata)
+      assert_not Maker::Previews::Dimensions.recipe?(svg.metadata)
     end
 
     test "renders a DXF to PNG when resvg is present; unsupported when absent" do
