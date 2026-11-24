@@ -218,6 +218,20 @@ module Maker
       @loose
     end
 
+    # THE PROJECT FOLDER'S OWN FILES, and how many of them the cap left out (2026-11-24). The root
+    # has no Dir to carry a `hidden_count` (its files are #loose), so these are its two halves: what
+    # the Files panel's "Showing X of Y files in this folder" counts, the way a folder panel counts
+    # its open folder's own. NOT `truncated?`, which also reads a cut in a folder nobody opened — the
+    # second pot's (#shown!) — and printed "Showing 304 of 315 files." on the live `pc case` over a
+    # Files panel holding all three of its files. A backup at the root counts here though #loose
+    # diverts it, because the Files panel draws it too, in Backups.
+    def loose_total = @folder_id ? @counts.fetch(@folder_id, 0) : 0
+
+    def loose_hidden_count
+      load_rows!
+      loose_total - @loaded.fetch(@folder_id, 0)
+    end
+
     # THE PANEL LAYOUT'S VOCABULARY OF FOLDERS: `[[node_id, repo?, shelf], …]` for the DEPTH-ONE
     # subfolders. Depth one is the whole rule (2026-09-08, folder panels; spec decision 3): a
     # nested folder renders inside its parent's panel, so a key for one must never reach the

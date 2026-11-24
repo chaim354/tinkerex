@@ -344,7 +344,7 @@ module Web
       assert_select ".attachment-group .attachment-tile", Maker::ProjectFolderListing::FILE_CAP
       # `text:` on the LINK selector below checks the link's own text ("Open the folder"), not the
       # paragraph's — the count sentence is asserted on the paragraph itself.
-      assert_select ".attachments-truncated", text: /Showing 300 of 301/
+      assert_select ".attachments-panel .attachments-truncated", text: /Showing 300 of 301 files in this folder\./
       assert_select ".attachments-truncated a[href=?]", files_path(folder: folder.node_id),
                     text: "Open the folder"
     end
@@ -386,7 +386,9 @@ module Web
         assert_select ".folder-tile .grid-name", text: "rings"
         assert_select ".folder-tile .folder-tile-count", text: "300 files"
       end
-      assert_select ".attachments-panel .attachments-truncated", text: /Showing 600 of 601/
+      # THE ONE FILE MISSING IS CENTERPIECES' OWN, and its panel says so above. The Files panel counts
+      # the project folder's own files, which are all here (it once read "Showing 600 of 601").
+      assert_select ".attachments-panel .attachments-truncated", count: 0
 
       # OPENED, the cut folder says where the rest are: the folder itself, not the panel's.
       get project_path(project, at: { "d-big" => "d-rings" })
@@ -454,6 +456,42 @@ module Web
         assert_select ".folder-tile .folder-tile-count", text: "200 files"
         assert_select ".attachments-truncated", 0
       end
+    end
+
+    # THE LIVE CASE (2026-11-24, after the click-through deploy): `pc case` loaded 304 of its 315 files
+    # with every file of every open folder on screen — the 11 were in subfolders nobody had opened,
+    # cut by the second pot — and the Files panel still said "Showing 304 of 315 files." over a panel
+    # holding all three of its own. Each panel's "Showing X of Y" counts the folder IT draws.
+    test "a cut in a folder nobody opened is no panel's notice, and opening it gives the folder's own" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Case")
+      out = subfolder!(user, project, name: "out", node_id: "d-out")
+      deep = subfolder!(user, project, name: "deep", node_id: "d-deep", parent: out.node_id)
+      folder_file!(user, project, name: "notes.md", node_id: "n-notes")
+      now = Time.current
+      Node.insert_all([ [ "out", out, 10 ], [ "deep", deep, 320 ] ].flat_map do |prefix, parent, n|
+        n.times.map do |i|
+          { node_id: "#{prefix}-#{i}", name: format("#{prefix}%03d.stl", i), kind: "file", user_id: user.id,
+            parent_node_id: parent.node_id, deleted: false, created_at: now, updated_at: now }
+        end
+      end)
+
+      get project_path(project)
+      assert_response :success
+      assert_select ".attachments-panel .attachments-truncated", count: 0
+      assert_select "section.folder-panel[id=?]", "folder:d-out" do
+        assert_select ".attachment-tile", 10
+        assert_select ".folder-tile .folder-tile-count", text: "320 files"
+        assert_select ".attachments-truncated", count: 0
+      end
+
+      # OPENED, `deep` shares the tiles with the project folder's one file and says what it left out.
+      get project_path(project, at: { "d-out" => "d-deep" })
+      assert_select "section.folder-panel[id=?]", "folder:d-out" do
+        assert_select ".attachment-tile", 299
+        assert_select ".attachments-truncated", text: /Showing 299 of 320 files in this folder\./
+      end
+      assert_select ".attachments-panel .attachments-truncated", count: 0
     end
 
     # ONE FOLDER AT A TIME, AND THE URL SAYS WHICH (2026-11-24, click-through panels; spec §1).
