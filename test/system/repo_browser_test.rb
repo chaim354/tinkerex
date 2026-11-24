@@ -3,14 +3,13 @@ require "application_system_test_case"
 # THE FINDER-STYLE MILLER-COLUMNS BROWSER ON THE PROJECT PAGE (lib/file_chooser.js in `browse`
 # mode), mounted by filebrowser_controller.js.
 #
-# IT HAS TWO HOSTS SINCE 2026-09-08 AND THIS FILE DRIVES BOTH. A DEPTH-ONE subfolder of the project
-# folder is a PANEL now (projects/_folder_panel, spec decisions 1 and 3), so a repository at depth
-# one opens in the browser with no <details> around it at all — its default view IS `browser`
-# (Maker::ProjectKind.default_view), and the panel is on screen the moment the page is. A folder
-# NESTED deeper stays the closed <details> section it has always been
-# (projects/_file_tree_section), and its browser still mounts lazily on the first open. The two
-# cases are one controller and they are asserted separately below, because the second is the only
-# one the file ever covered and the first is where it broke.
+# ITS ONE HOST IS A FOLDER PANEL IN THE BROWSER VIEW. A DEPTH-ONE subfolder of the project folder is
+# a PANEL (projects/_folder_panel, spec decisions 1 and 3), so a repository at depth one opens in the
+# browser with no <details> around it at all — its default view IS `browser`
+# (Maker::ProjectKind.default_view), and the panel is on screen the moment the page is. A
+# repository NESTED deeper was a second host, a closed <details> section mounting its browser
+# lazily, until the panels clicked through (2026-11-24): it is a folder tile you open in place now
+# (test/system/project_panel_navigation_test.rb), with no browser of its own.
 #
 # WHAT THIS FOUND, WHICH IS THE ARGUMENT FOR THE WHOLE TIER (§14d). When the folder panels landed,
 # `reveal()` still read `if (this.chooser || !this.details?.open) return` — with no enclosing
@@ -22,7 +21,7 @@ require "application_system_test_case"
 # WHY THIS TIER AND NOT AN INTEGRATION TEST — the same argument file_chooser_test.rb makes for the
 # modal, and it is stronger here. The server renders ONE EMPTY DIV: every column, every row and
 # every href is built in the browser after a `fetch`. project_attachments_test.rb pins what the
-# server writes (the values, the closed nested section, the absence of tiles) and can prove nothing
+# server writes (the values and the absence of tiles) and can prove nothing
 # at all about whether anything mounts.
 #
 # ROWS ONLY, NEVER `ensure_library_folder!` — `project_folder_rows!` writes the two dir rows and
@@ -54,15 +53,6 @@ class RepoBrowserTest < ApplicationSystemTestCase
   # node id rather than matching on the heading text is what keeps it the FIRMWARE panel: a second
   # folder panel is a sibling section on the same page (see the toggle test below).
   def panel_for(dir) = "section.folder-panel[id='folder:#{dir.node_id}']"
-
-  # OPEN A NESTED SECTION BY ITS NAME, AT THE SUMMARY'S LEFT EDGE. A nested repository's summary
-  # also holds its Commits and History links, and in a half-width folder panel (every plain folder
-  # since 2026-11-19) the summary's middle, where a bare `click` lands, is the
-  # History link: the click left the page for /repos/:id/history. The offset is from the centre.
-  def open_section(name)
-    summary = find("summary", text: name)
-    summary.click(x: -(summary.native.size.width / 2) + 12, y: 0)
-  end
 
   # WAIT FOR THE PAGE THE BLOCK RELOADS, BEFORE ANY QUERY TOUCHES IT. A selector both documents can
   # match (or, for `assert_no_selector`, one the OLD document still matches) is checked for
@@ -158,32 +148,6 @@ class RepoBrowserTest < ApplicationSystemTestCase
       find(".filechooser--inline .filechooser-back").click
       assert_selector ".filechooser--inline .filechooser-col", count: 1
       assert_no_selector ".filechooser-row", text: "led.c"
-    end
-    assert_no_console_errors
-  end
-
-  # A REPOSITORY NESTED BELOW DEPTH ONE IS STILL A CLOSED SECTION, AND ITS LAZINESS IS STILL THE
-  # RULE (spec decision 3). This is the case the file covered before the panels landed, kept because
-  # it is the other half of `hostOpen()` — the branch that must NOT mount until a person opens it.
-  # `visible: :all` on the negative assertion is load-bearing: a closed <details> hides everything
-  # inside it, so the default `assert_no_selector` would pass whether or not anything was mounted —
-  # a guard that cannot fail for the reason it exists (§15). Asked of the whole DOM it means what it
-  # says: the columns do not exist yet.
-  test "a nested repository still waits for its section to be opened" do
-    tools = dir!("tools", @folder.node_id)
-    nested = dir!("bootloader", tools.node_id)
-    dir!(Library::RepoMetadata::DIR_NAME, nested.node_id)
-    file!("boot.c", nested.node_id)
-
-    visit project_path(@project)
-    within(panel_for(tools)) do
-      assert_selector ".repo-browser", visible: :all
-      assert_no_selector ".filechooser--inline", visible: :all
-      # CASE-INSENSITIVE, because `.attachment-group-head` is `text-transform: uppercase` and
-      # Selenium reports a summary's RENDERED text — "BOOTLOADER", not "bootloader".
-      open_section(/bootloader/i)
-      assert_selector ".filechooser--inline .filechooser-col", count: 1
-      assert_selector ".filechooser-row", text: "boot.c"
     end
     assert_no_console_errors
   end
@@ -325,25 +289,6 @@ class RepoBrowserTest < ApplicationSystemTestCase
     page.send_keys(:escape)
     assert_no_selector ".file-menu"
     assert page.evaluate_script("document.activeElement === arguments[0]", row), "focus did not return to the row"
-    assert_no_console_errors
-  end
-
-  # THE NESTED HOST TOO. A repository below depth one mounts its browser inside its parent panel's
-  # section, which sits under that panel's `filemenu` controller like everything else in it.
-  test "a row in a nested repository's browser answers a right-click" do
-    tools = dir!("tools", @folder.node_id)
-    nested = dir!("bootloader", tools.node_id)
-    dir!(Library::RepoMetadata::DIR_NAME, nested.node_id)
-    boot = file!("boot.c", nested.node_id)
-
-    visit project_path(@project)
-    within(panel_for(tools)) do
-      open_section(/bootloader/i)
-      find(".filechooser-row.is-file", text: "boot.c").right_click
-    end
-
-    assert_selector ".file-menu[aria-label='Actions for boot.c']"
-    assert_equal file_path(boot.node_id), local(find(".file-menu a", text: "Open")[:href])
     assert_no_console_errors
   end
 

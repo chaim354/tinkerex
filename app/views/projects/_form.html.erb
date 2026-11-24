@@ -147,6 +147,26 @@
       just leaves them where you put them.</span>
   </label>
 
+  <%#
+    VERSION STACKS (2026-11-24): this project's own choice, or the account's default from Settings
+    (Maker::Project#stacking? reads the column, then the owner's). A SELECT, NOT A CHECKBOX, because
+    "follow my default" is a third answer a box cannot give: its value is blank, which the boolean
+    column stores as NULL (ProjectsController#project_params). The default's option names what the
+    default is now, so the choice reads the same as the page it changes.
+
+    `f.select` UNDER THE FORM'S `scope: :project` is what names it `project[stack_versions]`, the
+    key #project_params permits; projects_flow_test.rb asserts the RENDERED name (§14d).
+  %>
+  <label class="field">
+    <span>Stack versions and backups</span>
+    <%= f.select :stack_versions,
+                 [ [ "Use my default (#{current_user.stack_versions ? 'On' : 'Off'})", "" ],
+                   [ "On", "true" ], [ "Off", "false" ] ],
+                 { selected: project.stack_versions.nil? ? "" : project.stack_versions.to_s } %>
+    <span class="field-hint muted">Draws a file's versions and backups as one tile you open. Your
+      default is on the Settings page.</span>
+  </label>
+
   <%# On Details this row ends the way Publishing's and Page layout's do (2026-11-02, the UX audit's C6):
       a Save that names what it saves, then the same `linkbtn edit-cancel` back to the project. %>
   <div class="form-actions">

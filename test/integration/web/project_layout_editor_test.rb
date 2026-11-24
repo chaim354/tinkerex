@@ -8,6 +8,11 @@ module Web
   class ProjectLayoutEditorTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
+    # EVERY PANEL IN A SLOT, a folder panel's section one level down in its turbo frame since
+    # 2026-11-24 (click-through panels) — a `slot > section` selector alone drops every folder panel.
+    PANEL_SECTIONS = "div.project-panels > div.panel-slot > section.panel, " \
+                     "div.project-panels > div.panel-slot > turbo-frame.panel-frame > section.panel".freeze
+
     setup do
       @user = User.create!(email: "editor-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
@@ -110,7 +115,7 @@ module Web
       # against slots that hold a panel is the assertion with weight — mutation-checked by turning
       # `_panel_slot`'s `elsif body.present?` into a bare `else`, which this and nothing else caught.
       slots = css_select("div.project-panels > div.panel-slot")
-      assert_equal slots.size, css_select("div.project-panels > div.panel-slot > section.panel").size,
+      assert_equal slots.size, css_select(PANEL_SECTIONS).size,
                    "a panel that renders nothing must render no slot"
       assert_operator slots.size, :>, 0, "and the count is not vacuously zero"
     end
@@ -123,7 +128,7 @@ module Web
       # EVERY PANEL HALF BY DEFAULT, FILES AND FOLDERS INCLUDED (2026-11-19).
       assert_select "div.project-panels > div.panel-slot.panel--half > section.attachments-panel", 1
       assert_select "div.project-panels > div.panel-slot.panel--half > section.tasks-panel", 1
-      assert_select "div.project-panels > div.panel-slot.panel--half > section.folder-panel", 1
+      assert_select "div.project-panels > div.panel-slot.panel--half > turbo-frame.panel-frame > section.folder-panel", 1
 
       # A STORED WIDTH, THE OPPOSITE OF EACH DEFAULT, so `default_width` alone cannot pass this
       # (found in review: every width above is a default).
@@ -156,14 +161,14 @@ module Web
       firmware_key = Maker::ProjectKind.folder_key(firmware.node_id)
 
       get project_path(@project)
-      assert_select "div.panel-slot.panel--full > section.folder-panel[id=?]", firmware_key, 1
-      assert_select "div.panel-slot.panel--half > section.folder-panel[id=?]", models_key, 1
+      assert_select "div.panel-slot.panel--full > turbo-frame.panel-frame > section.folder-panel[id=?]", firmware_key, 1
+      assert_select "div.panel-slot.panel--half > turbo-frame.panel-frame > section.folder-panel[id=?]", models_key, 1
       assert_select "div.panel-slot.panel--half > section.attachments-panel", 1, "the project's folder is no repository yet"
 
       dir!(".git", @folder.node_id)
       get project_path(@project)
       assert_select "div.panel-slot.panel--full > section.attachments-panel", 1, "the project's folder is a working tree now"
-      assert_select "div.panel-slot.panel--half > section.folder-panel[id=?]", models_key, 1
+      assert_select "div.panel-slot.panel--half > turbo-frame.panel-frame > section.folder-panel[id=?]", models_key, 1
 
       # THE EDITOR'S SLOTS CARRY THE SAME ANSWER (projects/_panel_slot's `data-width`), so a Save
       # writes `full` for the repository rather than the plain default.

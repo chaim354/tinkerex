@@ -101,19 +101,19 @@ module Web
       assert_select "a[href=?]", file_path(file("harbor-number-v4.svg").node_id), 0
     end
 
-    test "the switch turns stacks off, and the choice holds across folders" do
-      get files_path(folder: laser.node_id, view: "list", stacks: "0")
-      assert_select "tr.stack-row", 0
+    # ONE SETTING OUTSIDE PROJECTS (2026-11-24): the Library reads the account's default from
+    # Settings, has no box of its own, and the old `?stacks=` does not move it.
+    test "the Library follows the account's default, with no switch of its own" do
+      @user.update!(stack_versions: false)
+      get files_path(folder: laser.node_id, view: "list", stacks: "1")
+      assert_select "tr.stack-row", 0, "a ?stacks= param is inert now"
       assert_select "tbody tr", 22
-      assert_select ".stack-switch input[type=checkbox][name=stacks]:not([checked])"
       assert_select ".toolbar-count", text: "22 items"
+      assert_select ".stack-switch, input[name=stacks]", 0
 
-      get files_path(folder: @dirs.fetch("design").node_id)
-      assert_select "tr.stack-row", 0, "the cookie carries the choice into another folder"
-
-      get files_path(folder: laser.node_id, stacks: "1")
+      @user.update!(stack_versions: true)
+      get files_path(folder: laser.node_id, stacks: "0")
       assert_select "tr.stack-row", 4
-      assert_select ".stack-switch input[type=checkbox][name=stacks][checked]"
     end
 
     test "a flat search stacks each folder's own files" do
@@ -184,7 +184,9 @@ module Web
 
     # --- a project panel ------------------------------------------------------------------------
 
-    test "a project's folder panel draws its stacks, and its own switch turns them off" do
+    # ONE SETTING FOR THE WHOLE PROJECT (2026-11-24): the per-panel switch is gone, and whether a
+    # panel stacks is Maker::Project#stacking? — the project's own choice, else the owner's default.
+    test "a project's folder panel draws its stacks, and the project's setting turns them off" do
       key = Maker::ProjectKind.folder_key(laser.node_id)
       get project_path(@project)
       assert_response :success
@@ -194,41 +196,34 @@ module Web
       assert_select "section[id=?]", key do
         assert_select ".stack-item", text: /1 backup\s+hex tiles/
         assert_select "a[href=?]", file_path(file("laser/game box 2.lbrn2").node_id)
-        assert_select ".stack-panel-switch input[type=checkbox][checked]"
       end
+      assert_select ".stack-panel-switch, .stack-switch", 0, "no panel carries a switch any more"
       # The backup the stack holds is not ALSO in the Files panel's Backups group.
       assert_select "#attachments .attachment-group", text: /Backups/, count: 0
 
-      patch project_panels_path(@project), params: { stack: { key => "0" } }
-      assert_redirected_to project_path(@project, anchor: key)
+      @project.update!(stack_versions: false)
       get project_path(@project)
-      assert_select "section[id=?]", key do
-        assert_select ".stack-item", 0
-        assert_select ".stack-panel-switch input[type=checkbox]:not([checked])"
-      end
-      # With the laser panel unstacked, its backup is back in Backups; design still stacks.
+      assert_select "section[id=?] .stack-item", key, 0
+      # With the project's stacks off, laser's backup is back in Backups, and no other panel stacks.
       assert_select "#attachments .attachment-group summary", text: /Backups/
-      assert_select "section[id=?] .stack-item", Maker::ProjectKind.folder_key(@dirs.fetch("design").node_id), 4
+      assert_select "section[id=?] .stack-item", Maker::ProjectKind.folder_key(@dirs.fetch("design").node_id), 0,
+                    "the setting is the whole project's, not one panel's"
     end
 
-    test "a panel's switch is answered in place, and the editor's Save keeps it" do
+    test "a project with no choice of its own follows the account's default" do
       key = Maker::ProjectKind.folder_key(laser.node_id)
-      patch project_panels_path(@project), params: { stack: { key => "0" }, in_place: "1" }
-      assert_redirected_to project_path(@project, panel: key, files: "1", pressed: "stack", anchor: key)
-      # Turbo follows with the stream type: the panel and the Files panel (its Backups changed).
-      get project_path(@project, panel: key, files: "1", pressed: "stack"), headers: { "Accept" => "text/vnd.turbo-stream.html, text/html" }
-      assert_equal [ key, "attachments" ], css_select("turbo-stream[action=replace]").map { |t| t["target"] }
-      assert_select "turbo-stream[target=?] .stack-panel-switch input[autofocus]", key
+      @user.update!(stack_versions: false)
+      get project_path(@project)
+      assert_select "section[id=?] .stack-item", key, 0
 
-      draft = { layout: 1, panels: [ { key: "tasks", hidden: true, width: "full" } ] }
-      patch project_panels_path(@project), params: { layout: draft.to_json }
-      assert_equal "Saved the page layout.", flash[:notice]
-      assert_equal [ key ], @project.reload.panels["unstacked"], "a layout Save turned the panel's stacks back on"
+      @project.update!(stack_versions: true)
+      get project_path(@project)
+      assert_select "section[id=?] .stack-item", key, 4
     end
 
-    test "a panel's stack switch is refused for a key the page cannot stack" do
-      patch project_panels_path(@project), params: { stack: { "tasks" => "0" } }
-      assert_redirected_to project_path(@project)
+    test "the panels door no longer takes a stack switch" do
+      patch project_panels_path(@project), params: { stack: { Maker::ProjectKind.folder_key(laser.node_id) => "0" } }
+      assert_response :bad_request
       assert_nil @project.reload.panels
     end
 
@@ -243,6 +238,12 @@ module Web
         assert_select ".result-row.stack-result a[href=?]", file_path(file("design/harbor-number-v5.svg").node_id)
         assert_select "h2 .muted", text: "5 · 8 files"
       end
+      assert_select ".stack-switch, input[name=stacks]", 0, "Search follows the account's default, with no box of its own"
+
+      @user.update!(stack_versions: false)
+      get search_path(q: "harbor")
+      assert_select ".result-row.stack-result", 0
+      assert_select ".result-group--file h2 .muted", text: "8"
     end
   end
 end

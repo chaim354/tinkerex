@@ -249,8 +249,16 @@ module Maker
     # totality rule the folder keys already run on.
     # `root_repo:` (2026-11-19) is Maker::ProjectFolderListing#root_repo? from the same listing, so
     # Files keeps the full width its repository card needs; false for a caller with no listing.
+    # `stacks:` (2026-11-24) is #stacking?, the project's one answer for every panel that can stack;
+    # no caller passes it, so no page can draw a panel's stacks against a different answer.
     def panel_layout(folders: [], blocks: [], root_repo: false) =
-      Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:, blocks:, root_repo:)
+      Maker::ProjectKind.layout_for(kind:, overrides: self[:panels], folders:, blocks:, root_repo:,
+                                    stacks: stacking?)
+
+    # DOES THIS PROJECT DRAW ITS VERSIONS AS STACKS (2026-11-24)? Its own choice when it made one
+    # (the Edit page), the owner's master default otherwise (Settings). NOT `stack_versions?` —
+    # that is ActiveRecord's own query method for the column, and nil reads false there.
+    def stacking? = stack_versions.nil? ? user.stack_versions : stack_versions
 
     # THE PANELS A CALLER MAY RENDER BY KEY, so a tab separator is filtered out (2026-09-09, tabs):
     # the two pages read Layout#groups instead, and every other caller of this method looks a panel

@@ -315,21 +315,21 @@
   on the live share deployment showed five of its seven panels as "0 files · Empty folder" over
   folders holding up to 24 files, and the maker pressed Scan to find files indexed all along.
   `ProjectFolderListing#allocate` splits the cap at EVERY level with `.share` (small folders whole,
-  the rest evenly), so neither a panel nor a nested section is starved by a sibling; one GROUP BY
+  the rest evenly), so neither a panel nor a folder inside one is starved by a sibling; one GROUP BY
   counts every folder and ONE query loads the shares (`ROW_NUMBER` per folder, cut by a `CASE`
   over only the folders the cap reached), so the cost stays constant in the folder count. Every
   `Dir` carries `hidden_count`: a panel heading adds it, "empty" asks it, and a cut panel prints
   "Showing X of Y files" with a link to the folder. Collapse it back to one name-ordered `LIMIT`
   and both halves go silently wrong together, since a heading counted from the loaded rows agrees
   with the tiles it under-counts.
-  **A FOLDER THAT DRAWS NO TILES TAKES NONE OF THE CAP (2026-11-23).** A panel in the browser view,
-  a hidden one, a nested repository: each took its share while drawing nothing, and the live
-  `pc case` cut a tiles panel to 160 of 173 while 105 went to two browsed panels.
-  `ProjectsController#show` names them with `#untiled!` BEFORE the rows load (the listing loads on
-  first read, and refuses a late call), and they split a SECOND `FILE_CAP` of their own — they still
-  load, because Photos, a repository's card and a README's links read them. Read the layout's
-  folders off the walk (`panel_folders`, `panel_folder_names`, `repos_beneath`), never `tree`, above
-  that call.
+  **ONLY WHAT IS ON SCREEN TAKES THE CAP (2026-11-23, then 2026-11-24).** A folder panel shows one
+  folder at a time (`?at[<panel id>]=<node id>`), so `ProjectsController#show` names each Tiles or
+  List panel's open folder with `#shown!` BEFORE the rows load (the listing loads on first read and
+  refuses a late call), and only those folders' OWN files split `FILE_CAP`. Every other folder —
+  a subfolder nobody opened, a browsed or hidden panel — loads from a SECOND `FILE_CAP`, because
+  Photos, repository cards, README links and Backups read those rows. Read the layout's folders and
+  resolve `at` off the walk (`panel_folders`, `panel_folder_names`, `walk_path`), never `tree`,
+  above that call. An `at` the walk cannot place is dropped, never a 404.
 
 - **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
   refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns

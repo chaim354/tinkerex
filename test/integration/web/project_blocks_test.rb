@@ -7,6 +7,11 @@ module Web
   class ProjectBlocksTest < ActionDispatch::IntegrationTest
     PASSWORD = "correct horse battery staple".freeze
 
+    # EVERY PANEL IN A SLOT, a folder panel's section one level down in its turbo frame since
+    # 2026-11-24 (click-through panels) — a `slot > section` selector alone drops every folder panel.
+    PANEL_SECTIONS = "div.project-panels > div.panel-slot > section.panel, " \
+                     "div.project-panels > div.panel-slot > turbo-frame.panel-frame > section.panel".freeze
+
     setup do
       @user = User.create!(email: "blocks-#{SecureRandom.hex(4)}@example.com", password: PASSWORD, confirmed_at: Time.current)
       sign_in_web!(@user, password: PASSWORD)
@@ -67,7 +72,7 @@ module Web
       # see an EMPTY slot, which still occupies a grid cell (the same argument
       # project_layout_editor_test.rb records for a panel that renders nothing).
       slots = css_select("div.project-panels > div.panel-slot")
-      assert_equal slots.size, css_select("div.project-panels > div.panel-slot > section.panel").size
+      assert_equal slots.size, css_select(PANEL_SECTIONS).size
       assert_operator slots.size, :>, 0, "and the count is not vacuously zero"
     end
 
@@ -75,7 +80,7 @@ module Web
       a = block!(kind: "text", body: "a")
       b = block!(kind: "text", body: "b")
       get project_path(@project)
-      ids = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["id"] }
+      ids = css_select(PANEL_SECTIONS).map { |s| s["id"] }
       # `project-readme`: the README panel leads the fixed panels since 2026-11-05 (Maker::ProjectKind::LEAD).
       assert_equal [ bkey(a), bkey(b), "project-readme" ], ids.first(3)
     end

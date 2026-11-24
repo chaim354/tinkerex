@@ -38,9 +38,8 @@
   "no files yet" check below.
 
   THE PANEL IS THE FOLDER'S ROOT NOW, NOT THE WHOLE TREE (2026-09-08, folder panels; spec
-  decision 4). Every DEPTH-ONE subfolder is its own panel (projects/_folder_panel), so the
-  `file_tree_section` collection render that used to sit after Loose is gone from
-  here — deleting it is what stops a folder rendering twice. What stays is everything that is NOT
+  decision 4). Every DEPTH-ONE subfolder is its own panel (projects/_folder_panel), so no
+  subfolder renders here — one that did would render twice. What stays is everything that is NOT
   a subfolder: the root's card, Loose, and the cross-cutting Backups group,
   plus the truncation and missing-attachment notes.
 
@@ -68,9 +67,9 @@
     <%= link_to "Open folder →", files_path(folder: @listing.folder_id), class: "panel-path muted", title: @listing.path if @listing.available? %>
     <% if @listing.root_repo? %><span class="badge">repo</span><% end %>
     <div class="panel-actions">
-      <%# THE ROOT'S OWN Commits/History (stage 4, S4-1). A nested repository carries these on its
-          section summary and inside its card; a project whose FOLDER is the working tree has no
-          section of its own to hang them on, so the panel head is where they belong. %>
+      <%# THE ROOT'S OWN Commits/History (stage 4, S4-1). A repository below the root carries these in
+          its panel's head and inside its card; a project whose FOLDER is the working tree has no
+          panel of its own to hang them on, so this panel head is where they belong. %>
       <% if @listing.root_repo? %>
         <%= link_to "Commits", repo_commit_path(@listing.folder_id), class: "linkbtn", data: { turbo_prefetch: false } %>
         <%= link_to "History", repo_history_path(@listing.folder_id), class: "linkbtn", data: { turbo_prefetch: false } %>
@@ -94,10 +93,6 @@
     </div>
   </div>
   <%= panel_intro(@panel_layout, "attachments") %>
-  <%# VERSION STACKS, THIS PANEL'S OWN SWITCH (spec §9): it stacks Loose, the folder's own root files. %>
-  <% if @listing.loose.size > 1 %>
-    <%= render "projects/stack_switch", key: "attachments", label: "Files" %>
-  <% end %>
 
   <%#
     THE FOLDER IS IN THE TRASH, AND THE PAGE SAYS SO (stage 4, S4-6; decision 2). Deleting a

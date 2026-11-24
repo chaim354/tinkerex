@@ -171,8 +171,8 @@ module Web
       @project.file_attachments.create!(user: @user, node_id: "n-stl", role: "model", position: 0)
       @project.file_attachments.create!(user: @user, node_id: "n-bak", role: "laser", position: 1)
       ghost_attachment!(@project, user: @user, node_id: "gone", role: "model", label: "ghost.stl", position: 2)
-      # ONE REPOSITORY INSIDE THE PROJECT'S FOLDER, so a repo SECTION renders (S3-1: a working tree
-      # is a section of the tree, projects/_file_tree_section, not a group of its own). A dir with a
+      # ONE REPOSITORY INSIDE THE PROJECT'S FOLDER, so a repository's panel renders (S3-1: a working
+      # tree is a folder of the tree, not a group of its own). A dir with a
       # `.git` marker child under the folder is what marks it — the same argument the `d-laser`
       # comment two attachments up makes for models/_file_tree.
       folder = project_folder_rows!(@user, @project)
@@ -210,7 +210,7 @@ module Web
                           parent_node_id: folder.node_id, mtime: 1_000_000_000, size: 5,
                           content_hash: "h-schematic", current_version_id: "v-schematic")
       # A GERBER SET IN ITS OWN SUBFOLDER, so the project pages render a subfolder of pcb-role rows
-      # through the ordinary tree section — there is no Fabrication panel since 2026-09-06, and the
+      # through the ordinary folder panel — there is no Fabrication panel since 2026-09-06, and the
       # only Gerber-specific markup left is the FILE page's viewer, which gerber_preview_test.rb
       # drives with real bytes on share. NO `.gbrjob`: FilesController#gerber_layers_for would READ
       # it through the port, and every node this fixture seeds has no bytes behind it, which is
@@ -222,12 +222,12 @@ module Web
                             mtime: 1_000_000_000, size: 5,
                             content_hash: "h-pcb-#{i}", current_version_id: "v-pcb-#{i}")
       end
-      # A FOLDER INSIDE A FOLDER, OR projects/_file_tree_section IS RENDERED BY NO PAGE HERE
-      # (2026-09-08, folder panels). Every DEPTH-ONE subfolder is a PANEL now, so that partial is
-      # reached ONLY from a panel's `children` and from its own recursion — with `d-firmware` and
-      # `d-pcb` both at depth one and nothing below them, this fixture nested nothing and the
-      # coverage assertion named the file. `d-pcb` stays at its TILES default, so what is swept is
-      # the section's tiles arm; its list arm is `d-models` below.
+      # A FOLDER INSIDE A FOLDER, OR projects/_folder_tile AND _folder_path ARE RENDERED BY NO PAGE
+      # HERE (2026-11-24, click-through panels). Every DEPTH-ONE subfolder is a PANEL, so a folder
+      # tile is reached ONLY from a panel's `children`, and the path bar only once `?at=` opens one
+      # ("project detail (a panel opened)" in `pages`, and its frame request in `frame_pages`).
+      # `d-pcb` stays at its TILES default, so what is swept is the tiles arm; the list arm's folder
+      # rows are `d-models` below.
       gerber_rev = @user.nodes.create!(node_id: "d-pcb-rev-b", name: "rev-b", kind: "dir",
                                        parent_node_id: pcb.node_id)
       @user.nodes.create!(node_id: "n-pcb-rev", name: "driver-rev-b.gtl", kind: "file",
@@ -252,6 +252,10 @@ module Web
       file!("n-models-base", "base.stl", parent_node_id: models_dir.node_id)
       # ITS NEXT VERSION, so the models panel's list draws a stack row (projects/_file_rows, spec §9).
       file!("n-models-base-v2", "base v2.stl", parent_node_id: models_dir.node_id)
+      # A SUBFOLDER, so the list draws its folder rows (projects/_file_rows' `folders`, 2026-11-24).
+      models_old = @user.nodes.create!(node_id: "d-models-old", name: "old", kind: "dir",
+                                       parent_node_id: models_dir.node_id)
+      file!("n-models-old", "base v0.stl", parent_node_id: models_old.node_id)
       @project.update!(panels: { "views" => { "folder:d-models" => "list" } })
       # ONE GENERATED FILE IN THE FOLDER, so a tile carries an addon's menu entry: a file with
       # a Maker::AddonState behind it, keyed to the `fixture` addon the sweep's ADDON_SOURCE_PATH
@@ -539,7 +543,11 @@ module Web
     # rendered prose and ERB delimiters cover these; the page-head and fileopen sweeps do not, because
     # a frame carries no page head and its file links are the pane's own `.btn`s.
     def frame_pages
-      { "model detail (pane, frame request)" => [ model_path(@model, file: "n-stl"), "model_stage" ] }
+      { "model detail (pane, frame request)" => [ model_path(@model, file: "n-stl"), "model_stage" ],
+        # projects/panel_frame (2026-11-24, click-through panels): one folder panel for its frame,
+        # what a folder tile or a path-bar link asks for.
+        "project detail (a folder panel, frame request)" =>
+          [ project_path(@project, at: { "d-pcb" => "d-pcb-rev-b" }), "frame-folder-d-pcb" ] }
     end
 
     def pages
@@ -596,6 +604,9 @@ module Web
         # same page visited twice. `_file_rows` is swept by `d-models`' stored `list` view in setup
         # instead — which is a stronger claim, since it is the arm a real maker's page takes.
         "project detail" => project_path(@project),
+        # ONE PANEL OPENED INTO A SUBFOLDER (2026-11-24, click-through panels): the one page that
+        # reaches projects/_folder_path, the path bar above an opened folder.
+        "project detail (a panel opened)" => project_path(@project, at: { "d-pcb" => "d-pcb-rev-b" }),
         # THE PAGE EDITOR'S OWN RENDER (2026-09-09): the same action with `editing` on, and the ONLY
         # page that reaches projects/_panel_strip, _layout_bar and _layout_drawer. It earns its
         # entry rather than merely filling the coverage assertion: the strip's comment quotes ERB,

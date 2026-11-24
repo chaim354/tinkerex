@@ -38,11 +38,15 @@ module Web
 
     test "a view toggle writes that panel's view, keeps the others, and lands on the panel" do
       models, firmware = seed_folders!
+      # THE RETIRED PER-PANEL STACK SWITCH (2026-11-24): a row still holding its key loses it on this
+      # write, so Maker::ProjectKind's "dropped on the next layout write" holds for a toggle as well.
+      @project.update!(panels: { "unstacked" => [ models ] })
 
       patch project_panels_path(@project), params: { view: { models => "list" } }
 
       assert_redirected_to project_path(@project, anchor: models)
       assert_equal({ models => "list" }, @project.reload.panels["views"])
+      assert_not @project.panels.key?("unstacked"), "a view switch kept the retired stack switch's key"
 
       get project_path(@project)
       assert_select "section.folder-panel[id=?] table.project-files td.col-name", models, text: "base.stl"
@@ -119,6 +123,13 @@ module Web
       Nokogiri::HTML5.fragment(css_select("turbo-stream[target='#{target}'] template").first.inner_html)
     end
 
+    # A FOLDER PANEL IS REPLACED BY ITS TURBO FRAME (2026-11-24, click-through panels): the partial
+    # renders the frame around the section, so a stream that targeted the section would nest a frame
+    # in a frame. The Files panel has no frame and keeps its section's id. The frame's id is the key
+    # with its colon replaced (ProjectsHelper#panel_frame_id says why), spelled out here so the test
+    # pins the wire rather than calling the helper it checks.
+    def frame(key) = "frame-#{key.tr(':', '-')}"
+
     test "the page's own toggles ask for the switch in place, and the editor's do not" do
       seed_folders!
 
@@ -127,7 +138,11 @@ module Web
       assert_equal 8, forms.size, "Files offers two views and each of the two folders three"
       forms.each do |form|
         assert_equal [ "1" ], form.css("input[name='in_place']").map { |input| input["value"] }, form.to_s.first(160)
+        # AT THE PRESS THE FORM TAKES EVERY PANEL'S OPEN FOLDER FROM THE PAGE'S URL
+        # (panel_at_controller.js#carry), so it must sit inside the one element that mounts it.
+        assert_equal "submit->panel-at#carry", form["data-action"], form.to_s.first(160)
       end
+      assert_equal 8, css_select("[data-controller='panel-at'] .panel-head .view-toggle form").size
 
       # THE EDITOR'S COPY OF THE SAME BUTTONS KEEPS ITS OLD ANSWER: a stream would replace a panel
       # inside the editor while the draft beside it still held the view it had.
@@ -135,6 +150,7 @@ module Web
       assert_response :success
       assert_equal 8, css_select(".panel-head .view-toggle form").size
       assert_select ".view-toggle input[name='in_place']", 0
+      assert_select ".view-toggle form[data-action]", 0
     end
 
     test "asked in place, the door sends the browser back for that panel" do
@@ -187,10 +203,11 @@ module Web
       get project_path(@project, panel: models), headers: TURBO
       assert_response :success
       assert_equal "text/vnd.turbo-stream.html", response.media_type
-      assert_equal [ [ "replace", models ] ], streams
+      assert_equal [ [ "replace", frame(models) ] ], streams
 
-      panel = streamed(models)
-      assert_equal 1, panel.css("section.folder-panel[id='#{models}']").size, "the stream must carry the section it replaces"
+      panel = streamed(frame(models))
+      assert_equal 1, panel.css("turbo-frame[id='#{frame(models)}'][target='_top'] > section.folder-panel[id='#{models}']").size,
+                   "the stream must carry the frame it replaces, with the panel's section inside it"
       assert_equal [ "base.stl" ], panel.css("table.project-files td.col-name").map { |cell| cell.text.strip }
       pressed = panel.css(".view-toggle button[aria-pressed='true']")
       assert_equal [ "List" ], pressed.map { |button| button.text.strip }
@@ -206,13 +223,13 @@ module Web
 
       get project_path(@project, panel: models, files: "1"), headers: TURBO
       assert_response :success
-      assert_equal [ [ "replace", models ], [ "replace", "attachments" ] ], streams
-      assert_equal 1, streamed(models).css(".repo-browser").size
+      assert_equal [ [ "replace", frame(models) ], [ "replace", "attachments" ] ], streams
+      assert_equal 1, streamed(frame(models)).css(".repo-browser").size
       files = streamed("attachments")
       assert_equal 1, files.css("section.attachments-panel#attachments").size
       # ONE FOCUS, and it is the pressed button's: Turbo focuses the first it finds in the streams.
       assert_empty files.css("[autofocus]")
-      assert_equal 1, streamed(models).css("[autofocus]").size
+      assert_equal 1, streamed(frame(models)).css("[autofocus]").size
 
       # The Files panel's own switch never names itself twice.
       get project_path(@project, panel: "attachments", files: "1"), headers: TURBO

@@ -213,9 +213,17 @@
       public page shares, so an empty Build log, Tasks, BOM, Wiring, Releases or Sheets is never
       yielded at all. A tab left holding none of its keys drops out with its bar link, because
       _panel_groups renders only the panes something rendered into. %>
-  <%= render layout: "projects/panel_groups",
-             locals: { groups: @panel_layout.groups(@panel_layout.visible - Array(@absent_panels)),
-                       layout: @panel_layout, tail: nil } do |key| %>
-    <%= render "projects/panel_slot", key: key, extra: panel_locals.fetch(key, {}) %>
-  <% end %>
+  <%# ONE `panel-at` FOR EVERY PANEL (2026-11-24, click-through panels): a folder link or a view
+      button takes the other panels' open folders from the page's URL as it is used
+      (panel_at_controller.js). On this wrapper because it holds every panel, tabs and all, and no
+      frame swap or stream replaces it, so an action in a panel swapped in later still finds it. A
+      bare block box: the grids inside lay out exactly as they did. Not in the editor, whose tiles
+      open nothing and whose buttons carry no folder. %>
+  <div data-controller="panel-at">
+    <%= render layout: "projects/panel_groups",
+               locals: { groups: @panel_layout.groups(@panel_layout.visible - Array(@absent_panels)),
+                         layout: @panel_layout, tail: nil } do |key| %>
+      <%= render "projects/panel_slot", key: key, extra: panel_locals.fetch(key, {}) %>
+    <% end %>
+  </div>
 <% end %>

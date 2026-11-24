@@ -44,4 +44,18 @@
     <span class="settings-name">Theme</span>
     <%= render "theme" %>
   </li>
+  <%# VERSION STACKS (2026-11-24): the account's default, which every project follows unless its
+      Edit page chose for it, and which the Library and Search read. Two buttons in the Theme row's
+      shape — a named group, each button announcing aria-pressed, drawn by components.css's one
+      pressed rule — but each is a WRITE (SettingsController#update), so each is a button_to and
+      not a theme-controller button. %>
+  <li>
+    <span class="settings-name">Version stacks</span>
+    <div class="settings-choice" role="group" aria-label="Stack versions and backups by default">
+      <% [ [ "On", "1", true ], [ "Off", "0", false ] ].each do |label, value, on| %>
+        <%= button_to label, settings_path, method: :patch, params: { stack_versions: value },
+                      class: "btn small", "aria-pressed": (current_user.stack_versions == on).to_s %>
+      <% end %>
+    </div>
+  </li>
 </ul>

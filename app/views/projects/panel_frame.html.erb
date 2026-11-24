@@ -1,0 +1,6 @@
+<%# ONE FOLDER PANEL, FOR ITS TURBO FRAME (2026-11-24, click-through panels): ProjectsController#show's
+    answer when a folder tile or a path-bar link asks for `frame-folder-<id>`. In
+    layouts/turbo_rails/frame, whose real head lets Turbo record the promoted visit; the title is
+    the page's own, because Turbo copies the response's title into the page. %>
+<% content_for :title, "#{@project.name} — Tinkerex" %>
+<%= render "projects/panel_body", key: @frame_key, extra: {} %>

@@ -524,10 +524,11 @@ module Web
       end
 
       with_flat_limit(2) do
-        # STACKS OFF: three files of one name in one folder are one part by the version-stack rule
-        # (Maker::VersionStacks), and a stack would draw its latest's Download beside its members'.
-        # The boundary is what this asks about, one row per file.
-        get files_path(ext: "stl", stacks: "0")
+        # STACKS OFF (the account's default, Settings): three files of one name in one folder are one
+        # part by the version-stack rule (Maker::VersionStacks), and a stack would draw its latest's
+        # Download beside its members'. The boundary is what this asks about, one row per file.
+        @user.update!(stack_versions: false)
+        get files_path(ext: "stl")
         # Both rows are named "same.stl", so identity has to be read off the row's own links — the
         # Download one, since the row's Details link (UX audit D2) names the listing, not the bytes.
         ids = css_select("table.files tbody tr td.row-actions a[href*='/blob']").map { |a| a["href"][%r{files/([^/]+)/blob}, 1] }

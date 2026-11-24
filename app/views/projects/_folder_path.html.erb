@@ -1,0 +1,19 @@
+<%# locals: (path:, key:) %>
+<%#
+  WHERE IN THE PANEL YOU ARE (2026-11-24): the panel's own folder, then each folder opened beneath
+  it. Every part but the last goes back up to that folder, in the panel's frame, keeping every other
+  panel's open folder as the page's URL has it at the click (panel_at_controller.js); the last is
+  where you are. Rendered only once a subfolder is open — the panel head already names its own
+  folder.
+%>
+<nav class="folder-path" aria-label="Folder in <%= path.first.name %>">
+  <% path.each_with_index do |d, i| %>
+    <% if i.positive? %><span class="folder-path-sep" aria-hidden="true">/</span><% end %>
+    <% if i == path.size - 1 %>
+      <span class="folder-path-here" aria-current="location"><%= d.name %></span>
+    <% else %>
+      <%= link_to d.name, project_path(@project, at: panel_at(path.first.node_id, d.node_id)),
+                  data: panel_folder_link_data(key, path.first.node_id) %>
+    <% end %>
+  <% end %>
+</nav>

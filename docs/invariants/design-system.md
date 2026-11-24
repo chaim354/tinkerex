@@ -268,10 +268,13 @@ already records. Guards: `files_search_test.rb`, `page_query_budget_test.rb`.
 **A PANEL'S VIEW BUTTONS SWITCH IT IN PLACE, AND THE DOOR STILL RENDERS NOTHING (2026-11-16).** A
 press on the page posts `in_place` (`projects/_view_toggle`). `Projects::PanelsController#in_place`
 then redirects to the page NAMING THE PANEL, and `ProjectsController#show` answers a request that
-takes Turbo Streams with a `replace` of that panel's section, whose id is its layout key. Turbo
-follows a form's redirect with the form's own Accept header, so one section is replaced and the
-rest of the document stays the elements it was: another panel's browser keeps the folder it was in,
-an open section stays open, the window does not move. The plain redirect it replaces made Turbo
+takes Turbo Streams with a `replace` of that panel: the Files panel's section, whose id is its
+layout key, and a folder panel's turbo frame (`ProjectsHelper#panel_frame_id`, 2026-11-24), which
+wraps its section so a folder can open inside it. Turbo follows a form's redirect with the form's
+own Accept header, so one panel is replaced and the rest of the document stays the elements it was:
+another panel's browser keeps the folder it was in, another panel's open folder stays open, the
+window does not move. The view buttons carry every panel's open folder (`at`), so the switched
+panel stays in its own. The plain redirect it replaces made Turbo
 visit the page again and redraw every panel. Five things not to undo. **The door never renders a
 panel**: a panel needs everything `#show` loads, and a second copy of those loads is how a panel
 would come back different from the page's own. **`panel` decides, never the Accept header alone**:

@@ -1,8 +1,8 @@
 <%#
   One collapsible cross-cutting group of the project Files panel — Loose and Backups (a real
-  subfolder renders through _file_tree_section.html.erb instead, since
-  stage 3, S3-1 made sections the folder's own subfolders rather than a role derived from the
-  filename).
+  subfolder is a folder panel of its own, or a folder tile inside one — projects/_folder_panel —
+  since stage 3, S3-1 made the folder's own subfolders the unit rather than a role derived from
+  the filename).
 
   Locals: key (a stable slug for the section, unused below but kept for a caller that wants one),
   label, rows (Maker::ProjectFolderListing::Row), open (Boolean), view (one of

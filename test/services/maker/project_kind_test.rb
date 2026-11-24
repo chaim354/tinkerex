@@ -223,7 +223,7 @@ module Maker
 
       layout = Maker::ProjectKind.layout_for(kind: "other", overrides: { "order" => [ key(nested.node_id) ] },
                                              folders:)
-      refute_includes layout.order, key(nested.node_id), "a nested folder is a section inside its parent, never a panel"
+      refute_includes layout.order, key(nested.node_id), "a nested folder is a folder tile inside its parent, never a panel"
       assert_includes layout.order, key(models.node_id)
     end
 
@@ -670,6 +670,16 @@ module Maker
       assert_equal %w[model image], Maker::ProjectKind.hero_roles("print")
       assert_equal %w[pcb image model], Maker::ProjectKind.hero_roles("electronics")
       assert_equal %w[image model], Maker::ProjectKind.hero_roles("wormhole")
+    end
+
+    # --- version stacks (2026-11-24) ----------------------------------------------------------
+
+    test "stacking is one answer for the layout, never per panel" do
+      on = Maker::ProjectKind.layout_for(kind: "other", overrides: { "unstacked" => [ "attachments" ] })
+      assert on.stacked?("attachments"), "a stored per-panel switch is ignored now"
+      off = Maker::ProjectKind.layout_for(kind: "other", overrides: {}, stacks: false)
+      refute off.stacked?("attachments")
+      refute on.stacked?("tasks")
     end
 # --- weight added after review (2026-09-09): the key's shape, the cap under a repeat, the middle tab
 

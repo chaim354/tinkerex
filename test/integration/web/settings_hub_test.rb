@@ -33,10 +33,11 @@ module Web
 
     # ============================================================ The hub
 
-    # EIGHT SINCE 2026-10-22: the Library folder row leads, on every backend (K;
-    # settings_library_test.rb covers its fact per backend), the Filing row went into Shelves, and
-    # Devices follows Account (pentest H1b; its count is pinned in settings_devices_test.rb).
-    test "the hub lists eight rows with facts and links" do
+    # NINE SINCE 2026-11-24: the Library folder row leads, on every backend (K;
+    # settings_library_test.rb covers its fact per backend), the Filing row went into Shelves,
+    # Devices follows Account (pentest H1b; its count is pinned in settings_devices_test.rb), and
+    # Version stacks follows Theme (its own test is below).
+    test "the hub lists nine rows with facts and links" do
       # Three rows, `other` among them: the hub counts what the Shelves page will show
       # (Maker::Shelves.count_for), and that page always shows `other`.
       %w[renders prints other].each { |name| @user.maker_shelves.create!(name:) }
@@ -50,9 +51,9 @@ module Web
       get settings_path
 
       assert_response :success
-      assert_select "ul.settings-list.settings-hub li", count: 8
+      assert_select "ul.settings-list.settings-hub li", count: 9
       names = css_select("ul.settings-list.settings-hub li .settings-name").map { |el| el.text.strip }
-      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Tags", "Account", "Devices", "Theme" ], names
+      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Tags", "Account", "Devices", "Theme", "Version stacks" ], names
       assert_select "a.settings-name[href=?]", settings_shelves_path
       assert_select "a.settings-name[href=?]", suppliers_path
       assert_select "a.settings-name[href=?]", locations_path
@@ -69,13 +70,13 @@ module Web
       assert_select ".theme-choice button[data-theme-theme-param='light'][aria-pressed='true']"
     end
 
-    # Users (2026-10-21) is admins-only, so the eight rows above are a plain account's hub.
+    # Users (2026-10-21) is admins-only, so the nine rows above are a plain account's hub.
     test "an admin's hub gains the Users row, before Account" do
       @user.update!(admin: true)
       get settings_path
 
       names = css_select("ul.settings-list.settings-hub li .settings-name").map { |el| el.text.strip }
-      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Tags", "Users", "Account", "Devices", "Theme" ], names
+      assert_equal [ "Library folder", "Shelves", "Suppliers", "Locations", "Tags", "Users", "Account", "Devices", "Theme", "Version stacks" ], names
       assert_select "a.settings-name[href=?]", settings_users_path
     end
 
@@ -112,12 +113,44 @@ module Web
       assert_select ".theme-choice button[data-theme-theme-param='light'][aria-pressed='false']"
     end
 
+    # THE ACCOUNT'S VERSION-STACK DEFAULT (2026-11-24), the hub's one write: what every project
+    # follows unless it chose (Maker::Project#stacking?), and what the Library and Search read. The
+    # Theme row's shape — a named group, the state on aria-pressed — with each button a PATCH.
+    test "the version stacks row sets the account's default" do
+      get settings_path
+      assert_select ".settings-hub li", text: /Version stacks/ do
+        assert_select ".settings-choice[role=group][aria-label=?]", "Stack versions and backups by default"
+        assert_select "form[action=?] button[aria-pressed=true]", settings_path, { text: "On" }
+        assert_select "form[action=?] button[aria-pressed=false]", settings_path, { text: "Off" }
+        assert_select "form[action=?] input[name=_method][value=patch]", settings_path, 2
+        assert_select "input[name=?][value=?]", "stack_versions", "0"
+        assert_select "input[name=?][value=?]", "stack_versions", "1"
+      end
+
+      patch settings_path, params: { stack_versions: "0" }
+      assert_redirected_to settings_path
+      assert_equal "Versions don't stack by default.", flash[:notice]
+      assert_equal false, @user.reload.stack_versions
+      get settings_path
+      assert_select ".settings-choice button[aria-pressed=true]", { text: "Off" }
+
+      patch settings_path, params: { stack_versions: "banana" }
+      assert_equal false, @user.reload.stack_versions, "only 0 and 1 are answers"
+      patch settings_path, params: { stack_versions: "1" }
+      assert_equal true, @user.reload.stack_versions
+      assert_equal "Versions stack by default.", flash[:notice]
+    end
+
     test "requires a session" do
       delete destroy_user_session_path
 
       get settings_path
 
       assert_redirected_to new_user_session_path
+
+      patch settings_path, params: { stack_versions: "0" }
+      assert_redirected_to new_user_session_path
+      assert_equal true, @user.reload.stack_versions
     end
 
     # ============================================================ The tags list

@@ -63,8 +63,6 @@ class FilesController < ApplicationController
   # #show below and shared with ProjectsController#show, whose attachment tiles carry the same
   # right-click menu. See the concern for why the Registry lookup is second and conditional.
   include AddonOrigins
-  # Whether the Library draws version stacks (#index; Shop manual spec §9). Shared with Search.
-  include StackSwitch
 
   # THE UPLOAD BRANCH. Two flows, one per deployment, and BOTH refusals are honest: neither
   # deployment can do the other's flow.
@@ -225,10 +223,12 @@ class FilesController < ApplicationController
     # both pass it, so one request cannot answer the question two ways across flat and folder mode
     # (§14a) — the same reason `.outside_repo_metadata` is on both.
     @show_hidden = resolve_hidden
-    # VERSION STACKS (Shop manual spec §9): on unless the maker turned them off, remembered in a
-    # cookie like the dot-file switch (#resolve_stacks). Read before either scope, because a stacked
-    # folder pages its FIGURES, which changes what the folder query selects.
-    @stacking = resolve_stacks
+    # VERSION STACKS (Shop manual spec §9): the account's default from Settings
+    # (users.stack_versions, on unless the maker turned it off), the one answer for the Library and
+    # Search (2026-11-24). The page has no switch of its own: the old box's cookie and `?stacks=`
+    # are never read. Read before either scope, because a stacked folder pages its FIGURES, which
+    # changes what the folder query selects.
+    @stacking = current_user.stack_versions
     @stacks = Maker::VersionStacks::EMPTY
     # FLAT MODE. An extension filter is a question about the LIBRARY, not about a folder, so
     # ?folder= is ignored outright rather than intersected -- "show me every .stl" that quietly

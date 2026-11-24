@@ -259,21 +259,20 @@ module Maker
     # Maker::ProjectFolderListing#root_repo?), so Files — which holds that repository's card — keeps
     # the full width a repository needs (#width_for). False for a caller holding no listing.
     #
-    # `unstacked` IS THE PANELS WHOSE VERSION STACKS THE MAKER TURNED OFF (Shop manual spec §9: "a
-    # toggle per panel"), stored beside `views` because it is the same kind of thing — one panel's
-    # way of drawing its files, chosen in its head and saved on the row (Projects::PanelsController).
-    # SPARSE AND OFF-ONLY: stacking is the default, so an absent key stacks, and a panel added later
-    # stacks without anyone having saved it. Only keys that draw files may be named (.stacks?).
+    # `stacks` IS WHETHER THIS PROJECT DRAWS VERSIONS AS STACKS (2026-11-24): one answer for the
+    # whole page, Maker::Project#stacking? (the project's choice, else the owner's default). The
+    # per-panel switch and its sparse `unstacked` list went with it; a stored `unstacked` key is
+    # ignored and dropped on the next layout write.
     Layout = Data.define(:order, :hidden, :views, :widths, :titles, :intros, :repo_ids, :block_kinds,
-                         :shelf_views, :shelf_groups, :root_repo, :unstacked) do
+                         :shelf_views, :shelf_groups, :root_repo, :stacks) do
       # SHELVES ARE OPTIONAL (2026-10-20): a caller with no shelves passes none. So is the root's
-      # repository (2026-11-19): a caller with no listing knows of none. So are the stack switches
-      # (2026-11-19): a caller that never read them stacks everywhere, the default.
-      def initialize(shelf_views: {}, shelf_groups: {}, root_repo: false, unstacked: [], **rest) =
-        super(shelf_views:, shelf_groups:, root_repo:, unstacked:, **rest)
+      # repository (2026-11-19): a caller with no listing knows of none. So is the stacking answer
+      # (2026-11-24): a caller that holds no project stacks, the shipped default.
+      def initialize(shelf_views: {}, shelf_groups: {}, root_repo: false, stacks: true, **rest) =
+        super(shelf_views:, shelf_groups:, root_repo:, stacks:, **rest)
 
-      # Does this panel draw its versions as stacks? The default for every panel that can.
-      def stacked?(key) = ProjectKind.stacks?(key) && !unstacked.include?(key.to_s)
+      # Does this panel draw its versions as stacks? Every panel that can, when the project stacks.
+      def stacked?(key) = ProjectKind.stacks?(key) && stacks
 
       def visible = order - hidden
       # `to_s` like `folder?` and `view_for` below, so a Symbol asks the same question a String does.
@@ -385,8 +384,7 @@ module Maker
     # unless the folder is itself a working tree, so it offers tiles and list; a folder panel
     # offers all three; a fixed panel with no view offers none and the door refuses the write.
     # WHICH PANELS DRAW VERSION STACKS (spec §9): the ones that draw files as tiles and rows, which is
-    # exactly the panels that offer views — Files and every folder panel. The switch renders for
-    # these, the door validates against this, and Layout#stacked? asks it, so the three agree.
+    # exactly the panels that offer views — Files and every folder panel. Layout#stacked? asks it.
     def self.stacks?(key) = offered_views(key).any?
 
     def self.offered_views(key)
@@ -437,7 +435,7 @@ module Maker
     # AN UNKNOWN KIND FALLS BACK TO `other`'s PRESET rather than raising: `kind` is validated on the
     # way in, but a row written before a kind was retired, or by a future version, must still
     # render a page.
-    def self.layout_for(kind:, overrides:, folders: [], blocks: [], root_repo: false)
+    def self.layout_for(kind:, overrides:, folders: [], blocks: [], root_repo: false, stacks: true)
       preset = PRESETS.fetch(kind.to_s, PRESETS.fetch(DEFAULT))
       over = overrides.is_a?(Hash) ? overrides : {}
       folder_keys = Array(folders).map { |id, _repo| folder_key(id) }
@@ -469,7 +467,7 @@ module Maker
                  titles: stored_text(over["titles"], vocabulary, TITLE_MAX),
                  intros: stored_text(over["intros"], panel_vocabulary, INTRO_MAX),
                  repo_ids:, block_kinds:, shelf_views:, shelf_groups:, root_repo: root_repo == true,
-                 unstacked: known(over["unstacked"], panel_vocabulary).select { |key| stacks?(key) })
+                 stacks: stacks != false)
     end
 
     # THE PANELS THIS KIND'S PRESET HIDES AND THE MAKER HAS NOT ANSWERED (2026-11-02, the UX audit's

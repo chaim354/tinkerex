@@ -10,9 +10,6 @@
 # so tenancy is ordinary Rails user_id scoping (§8) — the same shape as the Files search this
 # reuses the idiom from.
 class SearchController < ApplicationController
-  # The Library's "Stack versions and backups" choice, read here too (Shop manual spec §9).
-  include StackSwitch
-
   # Same bound as FilesController::QUERY_MAX, for the same reason: an unbounded query string
   # would build an unbounded LIKE pattern for no user-visible benefit.
   QUERY_MAX = 80
@@ -32,8 +29,9 @@ class SearchController < ApplicationController
   end
 
   def index
-    # Before the blank-query return, so the box is right on the empty page too.
-    @stacking = resolve_stacks
+    # WHETHER THE FILES GROUP STACKS (Shop manual spec §9): the account's default from Settings, the
+    # Library's own answer (FilesController#index), with no switch on this page (2026-11-24).
+    @stacking = current_user.stack_versions
     @q = params[:q].to_s.strip.first(QUERY_MAX)
     @groups = []
     return if @q.blank?

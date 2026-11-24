@@ -10,36 +10,47 @@
   Maker::Project::VIEWS). Reads @project, @page_thumbs, @addon_origins and
   @repo_cards off ProjectsController#show, exactly as the section partial it replaces always did.
 
-  ONLY DEPTH ONE IS A PANEL: every folder beneath it renders through projects/_file_tree_section
-  inside this panel — FLAT since 2026-11-23, one section per folder that holds something, headed by
-  its path beneath this one (ProjectsHelper#folder_sections), never one indent per level. A
-  repository at depth one is a panel like any other; one nested deeper stays a closed section with
-  its browser inside it (spec decision 3).
+  ONLY DEPTH ONE IS A PANEL, AND IT SHOWS ONE FOLDER AT A TIME (2026-11-24, click-through panels;
+  docs/superpowers/specs/2026-11-24-project-panel-click-through-design.md §1). In Tiles or List the
+  panel shows its own folder, or the one `?at[<panel id>]=<node id>` opened beneath it
+  (@panel_paths, ProjectsController#panel_paths): a path bar back up, then the folder's subfolders
+  as tiles or rows you open (projects/_folder_tile), then its own files. A repository opened that
+  way shows its card first. Nothing beneath the open folder is unrolled — #554's flat sections and
+  the closed browser a nested repository used to sit in are gone. The Browser view is unchanged.
 
-  THE COUNT IS THE WHOLE SUBTREE, which is _file_tree_section's rule for a REPOSITORY applied to
-  every folder here — and for the same reason: a panel holds its nested sections, so its heading
-  must count what is inside them too, or a folder of folders reads "(0)". Tool output counts and
-  draws here like any other file (the Files panel's Generated group is gone, 2026-11-19).
+  THE FRAME IS `_top`, AND ONLY FOLDER LINKS OPT INTO IT. The section sits in a
+  `<turbo-frame target="_top">` (ProjectsHelper#panel_frame_id), so every link inside — a file, the
+  Library path, Commits, the file menu — still navigates the page as it did, while a folder tile
+  and a path-bar link carry `data-turbo-frame` and advance the URL
+  (ProjectsHelper#panel_folder_link_data): only this panel is redrawn, and Back steps out of the
+  folder. A view switch replaces the FRAME by its id (ProjectsController#switched_panel_streams).
+
+  THE COUNT IS THE WHOLE SUBTREE, whichever folder is open: the head describes the panel's own
+  folder, and a folder of folders must not read "0 files". Tool output counts and draws here like
+  any other file (the Files panel's Generated group is gone, 2026-11-19).
 
   ITS OWN `thumbs filemenu` PAIR. The Files panel wraps its groups in one instance because they
   share a subtree; a panel is a sibling subtree, so a controller mounted over there would not find
   these cells at all. Every tile id here is already in @page_thumbs: ProjectsController#show's union
-  takes every listed file except those beneath a Dir its #dirs_without_tiles names, and those are
-  exactly the files no panel draws a tile for (a hidden panel outside the editor, the browser view,
-  a repository nested as a closed section) — so this polls, and never builds a second ThumbnailMap.
+  takes each shown folder's own files — the open folder of every Tiles or List panel, which is
+  exactly what this draws — so this polls, and never builds a second ThumbnailMap.
 
   THE COUNT ADDS WHAT FILE_CAP LEFT OUT (`subtree_hidden_count`, 2026-11-12), and so does "empty":
   a folder the cap cut reads its real size, never "0 files · Empty folder" over files the scan
   indexed (Maker::ProjectFolderListing's header has the live case). The "Showing X of Y" line is
-  for the tiles and the list only; the browser lists every file, so it needs none.
+  for the tiles and the list only, and counts the OPEN folder's own files; the browser lists every
+  file, so it needs none.
 %>
-<% visible = dir.files %>
 <% hidden = dir.subtree_hidden_count %>
 <% count = (dir.repo? ? dir.subtree_file_count : dir.subtree_file_ids.size) + hidden %>
 <% empty = count.zero? && dir.children.empty? %>
-<%# THE ID IS THE LAYOUT KEY, AND A VIEW SWITCH REPLACES THE SECTION BY IT (2026-11-16): the stream
-    ProjectsController#show answers a press with targets `key`. An id that drifted from the key
-    would leave the buttons saving the view and the page not changing, with no error anywhere. %>
+<%# THE FRAME'S ID IS DERIVED FROM THE LAYOUT KEY, AND A VIEW SWITCH REPLACES THE FRAME BY IT
+    (2026-11-16; the frame since 2026-11-24): the stream ProjectsController#show answers a press
+    with targets panel_frame_id(key), and a folder link names the same frame — a colon-free
+    spelling, and that helper says why. An id that drifted from the key would leave the buttons
+    saving the view and the page not changing, with no error anywhere. The SECTION keeps the key
+    itself: anchors land on it, and the editor and the tests name it. %>
+<%= turbo_frame_tag panel_frame_id(key), target: "_top", class: "panel-frame" do %>
 <section class="panel folder-panel<%= " panel--quiet" if empty %>" id="<%= key %>">
   <div class="panel-head">
     <%# THE FOLDER'S OWN NAME IS THE DEFAULT, NOT THE TITLE (2026-09-09, the page editor): only this
@@ -58,7 +69,7 @@
         <%= link_to "History", repo_history_path(dir.node_id), class: "linkbtn", data: { turbo_prefetch: false } %>
       <% end %>
       <%# THIS PANEL'S VIEW BUTTONS, all three of Maker::Project::VIEWS (projects/_view_toggle, which
-          says why they are buttons and how a press replaces this section alone). The Files panel
+          says why they are buttons and how a press replaces this panel alone). The Files panel
           renders the same partial and is offered two: it has no browser to mount, because there is
           no Dir for the folder's own root unless it is a working tree, and a control that does
           nothing is worse than one that is absent. %>
@@ -66,10 +77,6 @@
     </div>
   </div>
   <%= panel_intro(@panel_layout, key) %>
-  <%# VERSION STACKS, THIS PANEL'S OWN SWITCH (spec §9): not in the browser, which lists every file. %>
-  <% if count > 1 && view != "browser" %>
-    <%= render "projects/stack_switch", key: key, label: dir.name %>
-  <% end %>
 
   <% if empty %>
     <%# QUIET, NOT OMITTED (S4-1's quiet-panel rule). The maker put this folder in the layout — it
@@ -78,43 +85,61 @@
     <p class="muted">Empty folder.</p>
   <% else %>
     <div data-controller="thumbs filemenu stack" data-thumbs-url-value="<%= thumbnails_files_path %>">
-      <%# THE CARD COMES FIRST IN EVERY VIEW — the README rendered, the latest commit, the current
-          tag — which is the order _file_tree_section already puts it in for a nested repository.
-          @repo_cards holds one for every repo? Dir on the page (ProjectsController#show), so a
+      <%# THE CARD COMES FIRST IN EVERY VIEW AND AT EVERY OPEN FOLDER — the README rendered, the
+          latest commit, the current tag — and a repository opened beneath it adds its own card
+          below the path bar. @repo_cards holds one for every repo? Dir on the page (ProjectsController#show), so a
           missing entry would be a real bug rather than a normal case; the `&&` is defensive. %>
       <% if dir.repo? && (card = @repo_cards[dir.node_id]) %>
         <%= render "projects/repo_card", card: card %>
       <% end %>
       <% if view == "browser" %>
         <%# THE FINDER-STYLE BROWSER (2026-09-07), which takes any Dir — a plain folder switched to
-            this view browses exactly as a repository does, and it REPLACES the tiles, the rows and
-            the nested sections rather than sitting above them. %>
+            this view browses exactly as a repository does, and it REPLACES the tiles and the rows
+            rather than sitting above them. It opens at the panel's own folder whatever `?at=` says. %>
         <%= render "projects/repo_browser", dir: %>
       <% else %>
-        <%# THE FILES, AS FIGURES: a stack stands once where its first member stood, and a backup it
-            holds joins it from the Files panel's Backups group (ProjectsHelper#stack_figures). %>
-        <% figures = stack_figures(visible, folder_id: dir.node_id) %>
-        <% if figures.any? %>
-          <% if view == "list" %>
-            <%= render "file_rows", rows: visible, figures: figures %>
-          <% else %>
-            <div class="attachments-grid">
-              <% figures.each do |figure| %>
-                <% if figure.is_a?(ProjectsHelper::StackFigure) %>
-                  <%= render "projects/stack_tile", figure: figure %>
-                <% else %>
-                  <%= render "file_tile", row: figure %>
-                <% end %>
-              <% end %>
-            </div>
+        <%# ONE FOLDER AT A TIME (2026-11-24, click-through panels): the panel's own folder, or the
+            one `?at=` opened beneath it (@panel_paths), then its subfolders as tiles you open and
+            its own files, as figures — a stack stands once where its first member stood, and a
+            backup it holds joins it from the Files panel's Backups group
+            (ProjectsHelper#stack_figures). A stale `at` never reaches here:
+            ProjectsController#panel_paths drops it, and a path the tree cannot resolve falls back. %>
+        <% path = (@panel_paths&.fetch(dir.node_id, nil) || [ dir.node_id ]).map { |id| id == dir.node_id ? dir : @listing.dir(id) } %>
+        <% path = [ dir ] if path.any?(&:nil?) %>
+        <% here = path.last %>
+        <% if path.size > 1 %>
+          <%= render "projects/folder_path", path: path, key: key %>
+          <%# THE OPENED FOLDER'S OWN CARD, when it is a repository of its own. The panel's card above
+              is its own folder's and stays at every depth. %>
+          <% if here.repo? && (card = @repo_cards[here.node_id]) %>
+            <%= render "projects/repo_card", card: card %>
           <% end %>
         <% end %>
-        <%= render partial: "file_tree_section", collection: folder_sections(dir), as: :section,
-                   locals: { view: } %>
-        <% if hidden.positive? %>
-          <p class="muted attachments-truncated">Showing <%= count - hidden %> of <%= count %> files. <%= link_to "Open the folder", files_path(folder: dir.node_id) %></p>
+        <% figures = stack_figures(here.files, folder_id: here.node_id) %>
+        <% if here.children.empty? && figures.empty? && here.hidden_count.zero? %>
+          <p class="muted">Empty folder.</p>
+        <% elsif view == "list" %>
+          <%= render "file_rows", rows: here.files, figures: figures, folders: here.children,
+                     panel_id: dir.node_id, key: key %>
+        <% else %>
+          <div class="attachments-grid">
+            <% here.children.each do |child| %>
+              <%= render "projects/folder_tile", dir: child, panel_id: dir.node_id, key: key %>
+            <% end %>
+            <% figures.each do |figure| %>
+              <% if figure.is_a?(ProjectsHelper::StackFigure) %>
+                <%= render "projects/stack_tile", figure: figure %>
+              <% else %>
+                <%= render "file_tile", row: figure %>
+              <% end %>
+            <% end %>
+          </div>
+        <% end %>
+        <% if here.hidden_count.positive? %>
+          <p class="muted attachments-truncated">Showing <%= here.files.size %> of <%= here.files.size + here.hidden_count %> files in this folder. <%= link_to "Open the folder", files_path(folder: here.node_id) %></p>
         <% end %>
       <% end %>
     </div>
   <% end %>
 </section>
+<% end %>

@@ -163,11 +163,11 @@
   .attachment-tile { position: relative; display: flex; flex-direction: column; gap: 4px; }
   .attachment-tile .thumb { width: 100%; height: 96px; }
   .attachment-tile .grid-name { font-size: 12px; }
-  /* --- VERSION STACKS IN A PANEL (2026-11-19). The switch sits under the panel's head with the
-     panel's own count; a stack card is the `.stack` component on a button the size of a tile; its
-     opened panel spans the grid and holds the members as tiles of their own, each with its role and
-     Pull out. In a list a stack is one row whose name opens its members, indented beneath it. --- */
-  .stack-panel-switch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-3); }
+  /* --- VERSION STACKS IN A PANEL (2026-11-19). A stack card is the `.stack` component on a button
+     the size of a tile; its opened panel spans the grid and holds the members as tiles of their own,
+     each with its role and Pull out. In a list a stack is one row whose name opens its members,
+     indented beneath it. Whether a panel stacks is the project's setting (Maker::Project#stacking?),
+     not a switch on the panel. --- */
   .attachment-tile .stack-toggle { width: 100%; }
   .attachment-tile .stack-toggle .grid-sub { font-size: 11px; overflow-wrap: anywhere; }
   .attachment-tile .stack-role { display: block; margin-top: 2px; }
@@ -185,21 +185,23 @@
   .attachments-missing { font-size: 12px; margin: 4px 0 0; }
   .photo-attach { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 6px; font-size: 12px; }
 
-  /* --- The folder as a tree (stage 3, S3-1): a subfolder inside a subfolder nests one indent
-     in, the badge sits beside the folder name, and the note under Loose reads as a caption, not
-     another section. `.attachment-group-head .badge` is a container qualification of the
-     components.css selector (design-system rule 3), not a redeclaration. --- */
-  /* A FOLDER SECTION IS FLAT AND ITS HEAD IS A PATH (2026-11-23; ProjectsHelper#folder_sections):
-     nothing indents any more, so a rule above each section is what separates one folder's tiles from
-     the next, and every disclosure arrow sits in one column. The head is a NAME ON DISK, not a label,
-     so it is never uppercased ("four-piece" reads as it is spelled) and it is set at reading size in
-     the page's ink; the folders above it are the muted trail before it. */
-  .file-tree-section { padding-top: 12px; border-top: 1px solid var(--line); }
-  .file-tree-section .attachment-group-head { font-size: 13px; line-height: 20px; text-transform: none; letter-spacing: normal; color: var(--fg); }
-  .file-tree-section .section-trail { font-weight: 400; color: var(--fg-muted); }
-  .section-more { margin: 8px 0 0; font-size: 12px; }
-  .attachment-group-head .badge { margin: 0 2px 0 8px; }
-  .attachment-group-head .linkbtn.small { margin-left: 8px; font-size: 11px; }
+  /* CLICK-THROUGH PANELS (2026-11-24; projects/_folder_panel): a folder panel shows one folder at a
+     time. The frame is a box like the section it holds, so the editor's slot body squares the
+     section's top corners through it as it does for a bare panel. A folder tile is a file tile's
+     shape with the Library's folder glyph, its subtree count under the name; the path bar sits above
+     the contents, every part but the last a link back up. `.panel` and `.badge` are qualified here,
+     never redeclared (design-system rule 3). */
+  .panel-frame { display: block; }
+  .panel-slot-body > .panel-frame > .panel { border-top-left-radius: 0; border-top-right-radius: 0; }
+  .folder-tile { position: relative; display: flex; flex-direction: column; gap: 4px; }
+  .folder-tile .thumb { width: 100%; height: 96px; }
+  .folder-tile .grid-name { font-size: 12px; }
+  .folder-tile-count { font-size: 11px; }
+  .folder-tile-count .badge { margin-left: 4px; }
+  .folder-path { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: 0 0 var(--space-3); font-size: 13px; overflow-wrap: anywhere; }
+  .folder-path-sep { color: var(--fg-muted); }
+  .folder-path-here { font-weight: 600; }
+  /* The note under Loose reads as a caption, not another section. */
   .loose-note { font-size: 12px; margin: -8px 0 16px; }
   /* A row's one-line fact about itself (projects/_attachment_group's `notes`: "design/x.svg already
      exists — rename one to file it"), under the tile's name or the list row's. */

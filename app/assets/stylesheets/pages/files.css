@@ -22,11 +22,12 @@
   .grid-actions .row-action-label { display: none; }
   .hidden-toggle { margin: 0 0 10px; font-size: 12px; }
 
-  /* --- VERSION STACKS IN THE LIBRARY (2026-11-19). The switch sits on the toolbar beside the dot-file
-     toggle. A stack ROW's name is the `.stack-toggle` button laid out as a file cell, its members
-     indented under it, each with its role; an opened row and its members take --raised so they read
-     as one block. A stack CARD is the `.stack` component; its opened panel spans the grid and holds
-     the members as the cards they would be alone. --- */
+  /* --- VERSION STACKS IN THE LIBRARY (2026-11-19). Whether the Library stacks is the account's
+     setting (Settings, 2026-11-24), with no switch on the toolbar. A stack ROW's name is the
+     `.stack-toggle` button laid out as a file cell, its members indented under it, each with its
+     role; an opened row and its members take --raised so they read as one block. A stack CARD is the
+     `.stack` component; its opened panel spans the grid and holds the members as the cards they
+     would be alone. --- */
   table.files .stack-toggle { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; vertical-align: middle; }
   table.files .stack-toggle .stack-label { min-width: 0; overflow-wrap: anywhere; }
   table.files .stack-toggle .stack-count { margin-left: var(--space-1); }

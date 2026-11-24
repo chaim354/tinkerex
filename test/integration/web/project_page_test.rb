@@ -12,6 +12,12 @@ module Web
 
     PASSWORD = "correct horse battery staple".freeze
 
+    # EVERY PANEL ON THE PAGE, IN ORDER. A folder panel's section sits in its turbo frame since
+    # 2026-11-24 (click-through panels), one level below its slot, so a `slot > section` selector
+    # alone would silently drop every folder panel from what it counts.
+    PANEL_SECTIONS = "div.project-panels > div.panel-slot > section.panel, " \
+             "div.project-panels > div.panel-slot > turbo-frame.panel-frame > section.panel".freeze
+
     setup do
       @user = User.create!(email: "pp-#{SecureRandom.hex(4)}@example.com",
                            password: PASSWORD, confirmed_at: Time.current)
@@ -156,10 +162,11 @@ module Web
     end
 
     # THE ROW SKIPS WHAT THE PAGE DRAWS NO TILE FOR, AND IT ASKS EACH PANEL'S VIEW, NOT "IS IT A REPOSITORY"
-    # (slice 6 review): a plain folder switched to browser view draws no tiles, and a repository nested
-    # inside a tiles-view repository panel is a closed browser section. Both leaked into the row while the
-    # rule keyed on `repo?`.
-    test "the recent row follows each panel's view: a browsed plain folder and a nested repository stay out" do
+    # (slice 6 review): a plain folder switched to browser view draws no tiles, so its files stay out.
+    # A REPOSITORY NESTED IN A TILES-VIEW PANEL IS A FOLDER TILE YOU OPEN since 2026-11-24 (click-through
+    # panels), not a closed browser section, and the row is decided per PANEL, never per open folder:
+    # its files are that panel's files, so they are recent (spec §1).
+    test "the recent row follows each panel's view: a browsed plain folder stays out, a folder nobody opened stays in" do
       project = folder_panel_project!
       nested = @user.nodes.create!(node_id: "d-lib", name: "lib", kind: "dir", parent_node_id: "d-firmware")
       @user.nodes.create!(node_id: "d-lib-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
@@ -174,7 +181,7 @@ module Web
       names = css_select(".recent-files .grid-name").map(&:text)
       assert_includes names, "main.c", "a tiles-view repository's own files are tiles, so they are recent"
       assert_includes names, "sketch.txt"
-      refute_includes names, "lib.c", "a repository nested in a tiles-view panel is a closed browser section"
+      assert_includes names, "lib.c", "a repository nested in a tiles-view panel is one of that panel's folders"
       refute_includes names, "base.stl", "a plain folder in browser view draws no tiles"
     end
 
@@ -545,7 +552,7 @@ module Web
 
       assert_response :success
       expected = Maker::Project::PANELS.map { |k| "#{k.tr("_", "-")}-panel" }
-      rendered = css_select("div.project-panels > div.panel-slot > section.panel")
+      rendered = css_select(PANEL_SECTIONS)
                  .map { |s| s["class"].split.find { |c| c.end_with?("-panel") } }
 
       assert_equal rendered, expected & rendered,
@@ -597,7 +604,7 @@ module Web
       @project.update!(panels: { "order" => %w[tasks build_log] })
 
       get project_path(@project)
-      panels = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["class"] }
+      panels = css_select(PANEL_SECTIONS).map { |s| s["class"] }
       assert_operator panels.index { |c| c.include?("tasks-panel") }, :<,
                       panels.index { |c| c.include?("build-log-panel") },
                       "the stored order must move Tasks above Build log"
@@ -605,7 +612,7 @@ module Web
       @project.update!(panels: nil, kind: "electronics")
       @project.connections.create!(user: @user, from_label: "A", to_label: "B")
       get project_path(@project)
-      panels = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["class"] }
+      panels = css_select(PANEL_SECTIONS).map { |s| s["class"] }
       assert_operator panels.index { |c| c.include?("wiring-panel") }, :<,
                       panels.index { |c| c.include?("build-log-panel") },
                       "electronics lifts Wiring above the build log (story 6.2)"
@@ -654,9 +661,9 @@ module Web
 
     def folder_key(node_id) = Maker::ProjectKind.folder_key(node_id)
 
-    def panel_ids = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["id"].to_s }
+    def panel_ids = css_select(PANEL_SECTIONS).map { |s| s["id"].to_s }
 
-    def panel_classes = css_select("div.project-panels > div.panel-slot > section.panel").map { |s| s["class"].to_s }
+    def panel_classes = css_select(PANEL_SECTIONS).map { |s| s["class"].to_s }
 
     # THE HEADLINE: a panel per DEPTH-ONE subfolder, immediately after Files, in disk order — the
     # placement Maker::ProjectKind's after-Files rule exists for, driven through a real request.
@@ -773,27 +780,32 @@ module Web
       assert enqueued_for?(preview_row(browsed_photo)), "the Photos panel paints a browsed folder's image, so it backfills"
     end
 
-    # CASE (c). The tiles-view panel draws its OWN files as tiles, but a repository nested inside it is
-    # a closed browser section (projects/_file_tree_section). The union used to take the outer panel's
-    # whole subtree, so the nested repository's files were backfilled for no tile at all.
-    test "a repository nested in a tiles-view repository panel backfills nothing; the panel's own tiles do" do
+    # CASE (c). The tiles-view panel draws its OWN files as tiles, and a folder beneath it — here a
+    # repository — is a folder tile you open (2026-11-24, click-through panels). The union used to take
+    # the outer panel's whole subtree, so a nested folder's files were backfilled for no tile at all.
+    # THE NESTED FILE IS OLDER THAN EIGHT OTHERS, so the recent row (decided per panel, which does draw
+    # a subfolder's files) does not paint it either: what is under test is the tile term alone.
+    test "a folder nobody opened in a tiles-view panel backfills nothing; the panel's own tiles do" do
       project = folder_panel_project!
       own = previewable!("f-case", "case.stl", "d-firmware")
       @user.nodes.create!(node_id: "d-lib", name: "lib", kind: "dir", parent_node_id: "d-firmware")
       @user.nodes.create!(node_id: "d-lib-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
                           parent_node_id: "d-lib")
       nested = previewable!("f-gear", "gear.stl", "d-lib")
+      2.times { |i| @user.nodes.create!(node_id: "f-note-#{i}", name: "note#{i}.txt", kind: "file", parent_node_id: project.folder_node_id) }
+      @user.nodes.where(node_id: nested).update_all(updated_at: 1.day.ago)
       project.update!(panels: { "views" => { folder_key("d-firmware") => "tiles" } })
 
       get project_path(project)
 
       assert_response :success
       assert_select "section.folder-panel[id=?] .attachment-tile .grid-name", folder_key("d-firmware"), text: "case.stl"
+      assert_select "section.folder-panel[id=?] .folder-tile .grid-name", folder_key("d-firmware"), text: "lib"
       assert_select ".attachment-tile .grid-name", { text: "gear.stl", count: 0 }
-      assert_select ".file-tree-section .repo-browser[data-filebrowser-root-value=?]", "d-lib"
+      assert_select ".repo-browser", 0, "a nested repository is no closed browser any more"
 
       assert enqueued_for?(preview_row(own)), "control: the tiles-view panel's own tile backfills"
-      assert_nil preview_row(nested), "a repository nested in a tiles-view panel is a closed browser section with no tiles"
+      assert_nil preview_row(nested), "a folder nobody opened draws no tile, so its files cost no render job"
     end
 
     # CASE (d), THE ONE THAT NEVER HEALED. A repository opens in the browser by default, so its files
@@ -875,34 +887,35 @@ module Web
     end
 
     # DEPTH ONE IS THE WHOLE RULE (spec decision 3). `models/old` renders INSIDE the models panel
-    # as the nested section it has always been, and its key reaches neither the page nor the layout.
-    test "a nested folder is a section inside its parent's panel, never a panel" do
+    # as a folder tile you open (2026-11-24, click-through panels), and its key reaches neither the
+    # page nor the layout.
+    test "a nested folder is a folder tile inside its parent's panel, never a panel" do
       project = folder_panel_project!
 
       get project_path(project)
 
       assert_select "section.folder-panel[id=?]", folder_key("d-old"), count: 0
       assert_select "section.folder-panel[id=?]", folder_key("d-models") do
-        assert_select ".file-tree-section details summary", text: /old \(1\)/
-        assert_select ".file-tree-section .attachment-tile .grid-name", text: "mk1.stl"
+        assert_select ".folder-tile .grid-name", text: "old"
+        assert_select ".folder-tile .folder-tile-count", text: "1 file"
+        assert_select ".attachment-tile .grid-name", { text: "mk1.stl", count: 0 }, "its files wait for it to be opened"
       end
       refute_includes project.reload.panel_layout(folders: [ [ "d-models", false ] ]).order, folder_key("d-old")
     end
 
-    # THE FILES PANEL IS THE FOLDER'S ROOT NOW (spec decision 4). The `file_tree_section` collection
-    # render is gone from it; leaving it in would draw every folder twice, once as a section and
-    # once as a panel.
-    test "the Files panel keeps the root and renders no subfolder section" do
+    # THE FILES PANEL IS THE FOLDER'S ROOT NOW (spec decision 4). No subfolder renders in it;
+    # one that did would draw every folder twice, once in Files and once as a panel.
+    test "the Files panel keeps the root and renders no subfolder" do
       get project_path(folder_panel_project!)
 
       assert_select "section.attachments-panel .attachment-group-head", text: /Loose \(1\)/
       assert_select "section.attachments-panel .attachment-tile .grid-name", text: "sketch.txt"
-      assert_select "section.attachments-panel .file-tree-section", count: 0
+      assert_select "section.attachments-panel .folder-tile", count: 0
       # THE GROUPS' TILES, NOT THE RECENT ROW'S: Recently changed reaches into every subfolder by
       # design (slice 6), so what this pins is that no GROUP below it draws a subfolder.
       assert_select "section.attachments-panel .attachment-group .attachment-tile", { count: 1 },
                     "only the loose file — a subfolder's files belong to its own panel"
-      assert_select ".file-tree-section", 1, "only the nested old/ section is left, inside models"
+      assert_select ".folder-tile", 1, "only the nested old/ folder is a tile, inside models"
     end
 
     # A FOLDER MOVES LIKE ANY OTHER PANEL, above the build log if the maker says so — which is the
@@ -948,10 +961,9 @@ module Web
         assert_select "table.table.project-files td.col-name", text: "base.stl"
         assert_select ".attachments-grid", count: 0
       end
-      # WHICH PANELS HOLD A TABLE, not how many tables there are: the nested old/ section inherits
-      # this panel's view and draws a second one, so a count would pin the nesting rather than the
-      # thing under test.
-      listed = css_select("div.project-panels > div.panel-slot > section.panel").select { |s| s.css("table.project-files").any? }
+      # WHICH PANELS HOLD A TABLE, not how many tables there are, so a count cannot pin how the
+      # panel draws its nested old/ folder rather than the thing under test.
+      listed = css_select(PANEL_SECTIONS).select { |s| s.css("table.project-files").any? }
       assert_equal [ folder_key("d-models") ], listed.map { |s| s["id"] }, "only the models panel is a list"
       assert_select "section.folder-panel[id=?] .repo-browser", folder_key("d-firmware"), 1
     end
