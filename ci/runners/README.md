@@ -34,7 +34,7 @@ the stack sets is lowercase.
 CI runs on **three container runners on the Unraid Docker host, `192.168.1.146`** ("Tower", the
 Unraid box itself). **Three addresses are in play and confusing them costs an afternoon:**
 `192.168.1.7` is Nginx Proxy Manager, where the `*.home` wildcard resolves — including
-`portainer.home`; `192.168.1.95` is the Kamal VM the app deploys to. **This README named .95 as the
+`dockhand.home`; `192.168.1.95` is the Kamal VM the app deploys to. **This README named .95 as the
 intended runner home until 2026-08-31; that was wrong.**
 
 - **Image:** `ci/runner/Dockerfile` — Ruby 3.4.7 via mise, Chrome + chromedriver, and all four
@@ -44,17 +44,23 @@ intended runner home until 2026-08-31; that was wrong.**
   suffix is load-bearing: the bare tag is Ubuntu 20.04 Focal with glibc 2.31 (measured on 2.336.0
   and again on 2.338.2), on which **two of the four binaries will not run**. Any replacement base
   needs **glibc >= 2.34**.
-- **Stack:** `ops/ci-runner-stack.yml`, deployed through Portainer as stack `ci-runners`. Portainer
-  holds the running copy; the file is the reviewable one, and the two change in the same breath.
+- **Stack:** `ops/ci-runner-stack.yml`, deployed as the **Dockhand** stack `ci-runners`. Dockhand
+  (`fnsys/dockhand`) answers at `http://dockhand.home` and `http://192.168.1.146:3000`, environment
+  id `1`; it replaced Portainer on 2026-11-24. The NPM proxy host `portainer.home` was renamed
+  `dockhand.home`, so the old name now gets NPM's Default Site. The running
+  copy is `/mnt/user/appdata/dockhand/stacks/ci-runners/docker-compose.yml` on the box, which
+  Dockhand reads from disk on every deploy. The repo file is the reviewable one, and the two change
+  in the same breath. "Rebuilding the image", step 3, is how the stack is deployed.
 - **Credential:** a fine-grained PAT scoped to `chaim354/tinkerex` with **Administration: read &
   write and nothing else**, held in `/mnt/user/appdata/tinkerex-ci/runner.token` on the box
   (root:root 0400), bind-mounted read-only into each runner as `/run/secrets/runner_token` and
   named in `ACCESS_TOKEN_FILE`; the image's wrapper entrypoint exports it for the base entrypoint
   (`ci/runner/Dockerfile`, last block). It lives at `op://tinkerex/github runners/credential`
   (§14g); nothing is `export`ed and the value never enters this repo. **It was the Portainer stack
-  variable `RUNNER_ACCESS_TOKEN` until 2026-09-07** — Portainer's stack-update API replaces the
-  variables with whatever the request carries (measured), so a stack that holds a secret cannot be
-  updated by anything that cannot see the secret. The stack now carries no variables at all.
+  variable `RUNNER_ACCESS_TOKEN` until 2026-09-07** — Portainer's stack-update API replaced the
+  variables with whatever the request carried (measured), so a stack that held a secret could not be
+  updated by anything that could not see the secret. The stack has carried no variables since, and
+  still carries none under Dockhand.
 - **Work dirs:** bind-mounted to `/mnt/user/appdata/tinkerex-ci/runner-N/_work` on the array, never
   Docker named volumes — those live in the same loop device the prune step below is about. They must
   exist and be **`chown`ed to `1001:121`** before first boot. That uid:gid is measured, not the
@@ -78,11 +84,18 @@ ssh root@192.168.1.146 'cd /tmp/tinkerex-ci && \
   docker build -t tinkerex-ci-runner:<new-tag> -f ci/runner/Dockerfile . > /tmp/build.log 2>&1; \
   ec=$?; tail -30 /tmp/build.log; exit $ec'
 
-# 3. Bump `image:` in ops/ci-runner-stack.yml and push THAT FILE, verbatim, as the stack's content —
-#    the Portainer editor, or the API (`PUT /api/stacks/8?endpointId=3` with the file content and
-#    an empty Env, which the Portainer MCP's StackUpdate does). The stack carries no variables, so
-#    the update is the file and nothing else. Verify: `docker ps` on the box shows the new tag on every
-#    runner, `gh api repos/chaim354/tinkerex/actions/runners` lists them online.
+# 3. Bump `image:` in ops/ci-runner-stack.yml, copy THAT FILE, verbatim, over the one Dockhand
+#    reads, and deploy the stack. The stack carries no variables, so the update is the file and
+#    nothing else. The deploy recreates every runner container, so a job running on one dies.
+scp ops/ci-runner-stack.yml \
+  root@192.168.1.146:/mnt/user/appdata/dockhand/stacks/ci-runners/docker-compose.yml
+curl -X POST -H 'Content-Type: application/json' -d '{"pull":false}' \
+  'http://192.168.1.146:3000/api/stacks/ci-runners/deploy?env=1'
+#    The answer is Server-Sent Events. Read the outcome back with
+#    `GET /api/stacks/ci-runners/deploys?env=1` and `.../deploys/<id>/log`, or use the Dockhand UI.
+#    If Dockhand auth is on, each call needs a bearer token; it never goes in a tracked file (§14g).
+#    Verify: `docker ps` on the box shows the new tag on every runner, and
+#    `gh api repos/chaim354/tinkerex/actions/runners` lists them online.
 
 # 4. ONLY THEN reclaim the build cache. Not tidiness — see below — but ORDER MATTERS: on 2026-09-07
 #    `docker builder prune -af` run BEFORE the stack switched removed the freshly built, not-yet-used
@@ -114,8 +127,8 @@ completely differently:
    `/mnt/user/appdata/tinkerex-ci/runner.token` on the box (root, 0400), and
    `docker restart tinkerex-runner-1 tinkerex-runner-2 tinkerex-runner-3` — the
    wrapper entrypoint re-reads the file on every start. No stack redeploy is needed.
-2. **The box or the stack is down.** The containers are not running at all. Check Portainer, or
-   `ssh root@192.168.1.146 'docker ps'`.
+2. **The box or the stack is down.** The containers are not running at all. Check the `ci-runners`
+   stack in Dockhand (`http://dockhand.home`), or `ssh root@192.168.1.146 'docker ps'`.
 3. **The containers restart forever with `Cannot configure the runner because it is already
    configured`.** A container that was KILLED (a power-cut, a frozen host) never ran its
    deregistration trap, so its own filesystem still holds the old registration and every restart

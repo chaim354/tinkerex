@@ -1,21 +1,46 @@
-# The Kaneo stack, deployed through Portainer (portainer.home, 2.39.6) on the Unraid box.
+# The Kaneo stack, deployed as the Dockhand stack `kaneo` on the Unraid box.
 # Kaneo holds the canonical work record — CLAUDE.md §11.
+#
+# DOCKHAND, NOT PORTAINER, SINCE 2026-11-24. Dockhand (fnsys/dockhand) answers at
+# http://dockhand.home and http://192.168.1.146:3000, environment id 1. Portainer managed this stack
+# until then and is gone from the box. Its NPM proxy host portainer.home was renamed dockhand.home,
+# so the old name now gets NPM's Default Site. The stack was adopted in place with no restart; the
+# file it moved with differed from this one only in comments.
 #
 # TWO HOSTS, AND CONFUSING THEM COSTS AN AFTERNOON. Nginx Proxy Manager is 192.168.1.7, where the
 # `*.home` wildcard resolves — every .home name on this LAN answers from there, INCLUDING
-# portainer.home. Docker runs on 192.168.1.146 ("Tower", the Unraid host itself). So this stack's
+# dockhand.home. Docker runs on 192.168.1.146 ("Tower", the Unraid host itself). So this stack's
 # containers listen on .146, and NPM's proxy host for kaneo.home forwards to 192.168.1.146:5173.
 # Probing .7:5173 after a deploy looks exactly like a stack that failed to start; it is just the
 # wrong box.
 #
-# THIS FILE IS NOT EXECUTED BY ANYTHING IN THIS REPO. Portainer holds the running copy; this is the
-# reviewable one. Edit here, then paste into the stack editor — and when you change the running
-# stack, change this file in the same breath. A committed file that has silently diverged from what
-# runs is §15's "a doc row that names a commit is a claim" problem one layer down: it reads as the
-# truth and nothing can go red for it.
+# THIS FILE IS NOT EXECUTED BY ANYTHING IN THIS REPO. The running copy is
+# /mnt/user/appdata/dockhand/stacks/kaneo/docker-compose.yml on the box, which Dockhand reads from
+# disk on EVERY deploy; this is the reviewable one. Edit here, then copy it over and deploy:
 #
-# THE TWO SECRETS ARE PORTAINER STACK ENVIRONMENT VARIABLES, not values in this file — POSTGRES_PASSWORD
-# and AUTH_SECRET. They also live in 1Password (§14g); nothing here is `export`ed.
+#   scp ops/kaneo-stack.yml root@192.168.1.146:/mnt/user/appdata/dockhand/stacks/kaneo/docker-compose.yml
+#   curl -X POST -H 'Content-Type: application/json' -d '{"pull":false}' \
+#     'http://192.168.1.146:3000/api/stacks/kaneo/deploy?env=1'
+#
+# The deploy answers with Server-Sent Events. Read the outcome back from
+# `GET /api/stacks/kaneo/deploys?env=1` and `.../deploys/<id>/log`; the Dockhand UI does the same
+# job. A DEPLOY RECREATES THE CONTAINERS, and the first Dockhand deploy of this adopted stack always
+# does, because the compose working directory moved — Kaneo, and so bin/log, is down for the
+# restart. THE PROJECT NAME MUST STAY `kaneo`: the running containers carry
+# com.docker.compose.project=kaneo and the database is the named volume `kaneo_kaneo_postgres_data`
+# (both measured 2026-11-24). Under any other project name Compose creates a fresh, EMPTY volume and
+# Kaneo boots with no record in it. If Dockhand auth is turned on, these calls need a bearer token, and that token never goes
+# in a tracked file (§14g).
+#
+# When you change the running stack, change this file in the same breath. A committed file that has
+# silently diverged from what runs is §15's "a doc row that names a commit is a claim" problem one
+# layer down: it reads as the truth and nothing can go red for it.
+#
+# THE TWO SECRETS LIVE IN A `.env` BESIDE THE COMPOSE FILE ON THE BOX, not in this file —
+# /mnt/user/appdata/dockhand/stacks/kaneo/.env holds POSTGRES_PASSWORD and AUTH_SECRET, which
+# Compose interpolates into the ${...} below. Never print, copy or commit its values; the scp above
+# replaces docker-compose.yml only and leaves the .env alone. They also live in 1Password (§14g);
+# nothing here is `export`ed. (They were Portainer stack environment variables until 2026-11-24.)
 #
 # FOUR DELIBERATE DEPARTURES FROM UPSTREAM'S compose.yml — do not "restore" them:
 #
