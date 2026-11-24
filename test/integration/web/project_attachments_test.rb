@@ -389,8 +389,77 @@ module Web
         assert_select ".attachments-truncated", text: /Showing 299 of 600 files\./
         assert_select ".attachments-truncated a[href=?]", files_path(folder: "d-big"), text: "Open the folder"
         assert_select ".file-tree-section details summary", text: /rings \(150 of 300\)/
+        # The cut section says where the rest are: the folder itself, not the panel's.
+        assert_select ".file-tree-section .section-more a[href=?]", files_path(folder: "d-rings"),
+                      text: "See all 300 in the Library"
       end
       assert_select ".attachments-panel .attachments-truncated", text: /Showing 300 of 601/
+    end
+
+    # THE LIVE CASE (2026-11-23): `pc case`'s `out` panel drew 160 of its 173 files while two panels
+    # in the browser view, which draw no tiles at all, took 105 of the page's 300.
+    test "a folder in the browser view takes none of the tiles from a tiles panel beside it" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Case")
+      cad = subfolder!(user, project, name: "cad", node_id: "d-cad")
+      out = subfolder!(user, project, name: "out", node_id: "d-out")
+      now = Time.current
+      Node.insert_all([ [ "cad", cad, 120 ], [ "out", out, 250 ] ].flat_map do |prefix, parent, n|
+        n.times.map do |i|
+          { node_id: "#{prefix}-#{i}", name: format("#{prefix}%03d.stl", i), kind: "file", user_id: user.id,
+            parent_node_id: parent.node_id, deleted: false, created_at: now, updated_at: now }
+        end
+      end)
+      project.update!(panels: { "views" => { "folder:d-cad" => "browser" } })
+
+      get project_path(project)
+      assert_response :success
+
+      assert_select "section.folder-panel[id=?]", "folder:d-out" do
+        assert_select ".panel-head .mono.muted", text: "250 files"
+        assert_select ".attachment-tile", 250
+        assert_select ".attachments-truncated", count: 0
+      end
+      assert_select "section.folder-panel[id=?]", "folder:d-cad" do
+        assert_select ".panel-head .mono.muted", text: "120 files"
+        assert_select ".repo-browser[data-filebrowser-root-value=?]", "d-cad"
+      end
+      assert_select ".attachments-panel .attachments-truncated", count: 0
+    end
+
+    # FLAT, HEADED BY THE PATH (2026-11-23, the owner's report: "organized non intuitively and the
+    # arrows are hard to follow"). `pc case`'s `out` panel nested four levels of sections, each with
+    # its own arrow, and printed "svg (0)" over a folder holding only `diode/`.
+    test "a panel's folders are flat sections in disk order, each headed by its path beneath the panel" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Case")
+      out = subfolder!(user, project, name: "out", node_id: "d-out")
+      itx = subfolder!(user, project, name: "itx", node_id: "d-itx", parent: out.node_id)
+      four = subfolder!(user, project, name: "four-piece", node_id: "d-four", parent: itx.node_id)
+      stl = subfolder!(user, project, name: "stl", node_id: "d-stl", parent: four.node_id)
+      svg = subfolder!(user, project, name: "svg", node_id: "d-svg", parent: out.node_id)
+      diode = subfolder!(user, project, name: "diode", node_id: "d-diode", parent: svg.node_id)
+      subfolder!(user, project, name: "empty", node_id: "d-empty", parent: out.node_id)
+      folder_file!(user, project, name: "summary.json", node_id: "n-summary", parent: itx.node_id)
+      folder_file!(user, project, name: "foot.stl", node_id: "n-foot", parent: stl.node_id)
+      folder_file!(user, project, name: "tray.svg", node_id: "n-tray", parent: diode.node_id)
+
+      get project_path(project)
+      assert_response :success
+
+      assert_select "section.folder-panel[id=?]", "folder:d-out" do
+        # Nothing nests, so every arrow sits in one column.
+        assert_select ".file-tree-section .file-tree-section", count: 0
+        heads = css_select(".file-tree-section > details > summary").map { |s| s.text.squish }
+        assert_equal [ "empty (0)", "itx (1)", "itx / four-piece / stl (1)", "svg / diode (1)" ], heads,
+                     "a folder holding only folders has no section of its own; its name is in theirs"
+        # The folders above are the trail, the folder itself is the name — two styles, so two spans.
+        trails = css_select(".file-tree-section summary.attachment-group-head").map do |s|
+          [ s.css(".section-trail").map(&:text), s.css(".section-name").text ]
+        end
+        assert_equal [ [ [], "empty" ], [ [], "itx" ], [ [ "itx / ", "four-piece / " ], "stl" ], [ [ "svg / " ], "diode" ] ], trails
+        assert_select ".grid-name", text: "tray.svg"
+      end
     end
 
     # THE RECENT ROW IS NOT THE CAPPED LISTING (slice 6). Its newest file here is the LAST by name,

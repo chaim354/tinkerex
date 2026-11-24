@@ -162,6 +162,27 @@ module ProjectsHelper
     ""
   end
 
+  # ONE SECTION OF A FOLDER PANEL (2026-11-23): a folder beneath the panel's own, and `trail`, the
+  # names of the folders between the two — what its heading prints before its own name.
+  FolderSection = Data.define(:dir, :trail)
+
+  # A FOLDER PANEL'S SUBFOLDERS, FLAT, IN DISK ORDER (2026-11-23, the owner's report: "organized non
+  # intuitively and the arrows are hard to follow"). Every folder used to nest one indent inside its
+  # parent, each with its own disclosure arrow, so the live `pc case`'s `out` panel stacked four
+  # levels of arrows and printed "svg (0)" over a folder whose files sat one level further in. Now
+  # each folder that HOLDS something is one section at the panel's own level, headed by its path
+  # beneath the panel ("itx / four-piece / stl") — the public page's rule (Maker::PublicProject
+  # #folder_sections). A folder holding only folders has no section: its name is in theirs. An
+  # empty leaf keeps one, so a folder on disk is never missing from its panel. A repository is one
+  # section whatever it holds, closed over its browser, and nothing beneath it is listed again.
+  def folder_sections(dir, trail = [])
+    dir.children.flat_map do |child|
+      holds = child.repo? || child.files.any? || child.hidden_count.positive? || child.children.empty?
+      own = holds ? [ FolderSection.new(dir: child, trail:) ] : []
+      child.repo? ? own : own + folder_sections(child, trail + [ child.name ])
+    end
+  end
+
   # ONE VERSION STACK AMONG A PANEL'S FIGURES (2026-11-19): the stack and its members' rows,
   # latest first, so a tile or a list row can draw the latest and open onto the rest.
   StackFigure = Data.define(:stack, :rows) do

@@ -10,10 +10,11 @@
   Maker::Project::VIEWS). Reads @project, @page_thumbs, @addon_origins and
   @repo_cards off ProjectsController#show, exactly as the section partial it replaces always did.
 
-  NESTING IS UNCHANGED AND DELIBERATE: only DEPTH ONE is a panel, so a subfolder of a subfolder
-  still renders through projects/_file_tree_section inside this panel, nested as it sits on disk.
-  A repository at depth one is a panel like any other; one nested deeper stays a closed section
-  with its browser inside it (spec decision 3).
+  ONLY DEPTH ONE IS A PANEL: every folder beneath it renders through projects/_file_tree_section
+  inside this panel — FLAT since 2026-11-23, one section per folder that holds something, headed by
+  its path beneath this one (ProjectsHelper#folder_sections), never one indent per level. A
+  repository at depth one is a panel like any other; one nested deeper stays a closed section with
+  its browser inside it (spec decision 3).
 
   THE COUNT IS THE WHOLE SUBTREE, which is _file_tree_section's rule for a REPOSITORY applied to
   every folder here — and for the same reason: a panel holds its nested sections, so its heading
@@ -108,7 +109,7 @@
             </div>
           <% end %>
         <% end %>
-        <%= render partial: "file_tree_section", collection: dir.children, as: :dir,
+        <%= render partial: "file_tree_section", collection: folder_sections(dir), as: :section,
                    locals: { view: } %>
         <% if hidden.positive? %>
           <p class="muted attachments-truncated">Showing <%= count - hidden %> of <%= count %> files. <%= link_to "Open the folder", files_path(folder: dir.node_id) %></p>
