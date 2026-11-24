@@ -46,7 +46,8 @@ intended runner home until 2026-08-31; that was wrong.**
   needs **glibc >= 2.34**.
 - **Stack:** `ops/ci-runner-stack.yml`, deployed as the **Dockhand** stack `ci-runners`. Dockhand
   (`fnsys/dockhand`) answers at `http://dockhand.home` and `http://192.168.1.146:3000`, environment
-  id `1`; it replaced Portainer on 2026-11-24, and `portainer.home` now points at it. The running
+  id `1`; it replaced Portainer on 2026-11-24. The NPM proxy host `portainer.home` was renamed
+  `dockhand.home`, so the old name now gets NPM's Default Site. The running
   copy is `/mnt/user/appdata/dockhand/stacks/ci-runners/docker-compose.yml` on the box, which
   Dockhand reads from disk on every deploy. The repo file is the reviewable one, and the two change
   in the same breath. "Rebuilding the image", step 3, is how the stack is deployed.

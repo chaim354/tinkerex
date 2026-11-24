@@ -3,8 +3,9 @@
 #
 # DOCKHAND, NOT PORTAINER, SINCE 2026-11-24. Dockhand (fnsys/dockhand) answers at
 # http://dockhand.home and http://192.168.1.146:3000, environment id 1. Portainer managed this stack
-# until then and is gone from the box; portainer.home now points at dockhand.home. The stack was
-# adopted in place with no restart, and its file was byte-identical to this one when it moved.
+# until then and is gone from the box. Its NPM proxy host portainer.home was renamed dockhand.home,
+# so the old name now gets NPM's Default Site. The stack was adopted in place with no restart, and
+# its file was byte-identical to this one when it moved.
 #
 # TWO HOSTS, AND CONFUSING THEM COSTS AN AFTERNOON — the same trap ops/kaneo-stack.yml records.
 # Nginx Proxy Manager is 192.168.1.7, where the `*.home` wildcard resolves, INCLUDING
