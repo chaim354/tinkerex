@@ -1,17 +1,34 @@
-# The CI runner stack, deployed through Portainer (portainer.home, 2.39.6) on the Unraid box.
+# The CI runner stack, deployed as the Dockhand stack `ci-runners` on the Unraid box.
 # Three self-hosted GitHub Actions runners for chaim354/tinkerex — CLAUDE.md §15.
+#
+# DOCKHAND, NOT PORTAINER, SINCE 2026-11-24. Dockhand (fnsys/dockhand) answers at
+# http://dockhand.home and http://192.168.1.146:3000, environment id 1. Portainer managed this stack
+# until then and is gone from the box; portainer.home now points at dockhand.home. The stack was
+# adopted in place with no restart, and its file was byte-identical to this one when it moved.
 #
 # TWO HOSTS, AND CONFUSING THEM COSTS AN AFTERNOON — the same trap ops/kaneo-stack.yml records.
 # Nginx Proxy Manager is 192.168.1.7, where the `*.home` wildcard resolves, INCLUDING
-# portainer.home. Docker runs on 192.168.1.146 ("Tower", the Unraid host itself), so these
+# dockhand.home. Docker runs on 192.168.1.146 ("Tower", the Unraid host itself), so these
 # containers live on .146. A THIRD address is in play here and is NOT this one: 192.168.1.95 is the
 # Kamal VM (chunk/share/s3.tinkerex.local). ci/runners/README.md named .95 as the intended runner
 # home until 2026-08-31; that was wrong, and it is the Kamal target, not the Docker host.
 #
-# THIS FILE IS NOT EXECUTED BY ANYTHING IN THIS REPO. Portainer holds the running copy; this is the
-# reviewable one. Edit here, then paste into the stack editor — and when you change the running
-# stack, change this file in the same breath. A committed file that has silently diverged from what
-# runs reads as the truth and nothing can go red for it.
+# THIS FILE IS NOT EXECUTED BY ANYTHING IN THIS REPO. The running copy is
+# /mnt/user/appdata/dockhand/stacks/ci-runners/docker-compose.yml on the box, which Dockhand reads
+# from disk on EVERY deploy; this is the reviewable one. Edit here, then copy it over and deploy:
+#
+#   scp ops/ci-runner-stack.yml root@192.168.1.146:/mnt/user/appdata/dockhand/stacks/ci-runners/docker-compose.yml
+#   curl -X POST -H 'Content-Type: application/json' -d '{"pull":false}' \
+#     'http://192.168.1.146:3000/api/stacks/ci-runners/deploy?env=1'
+#
+# The deploy answers with Server-Sent Events. Read the outcome back from
+# `GET /api/stacks/ci-runners/deploys?env=1` and `.../deploys/<id>/log`; the Dockhand UI does the
+# same job. A DEPLOY RECREATES THE CONTAINERS, and the first Dockhand deploy of this adopted stack
+# always does, because the compose working directory moved. If Dockhand auth is turned on, these
+# calls need a bearer token, and that token never goes in a tracked file (§14g).
+#
+# When you change the running stack, change this file in the same breath. A committed file that has
+# silently diverged from what runs reads as the truth and nothing can go red for it.
 #
 # BEFORE THE FIRST DEPLOY, THE OPERATOR CREATES THE RUNNERS' WORK DIRECTORIES ON THE BOX. Docker creates
 # a missing bind-mount path ROOT-OWNED, and these containers run jobs as a non-root user, so the
@@ -43,13 +60,14 @@
 # gosu hand-off. Nothing is `export`ed here and the value never enters this repo.
 #
 # IT WAS THE PORTAINER STACK VARIABLE `RUNNER_ACCESS_TOKEN` UNTIL 2026-09-07, AND THAT MADE THE STACK
-# UN-UPDATABLE BY ANYTHING THAT COULD NOT SEE THE SECRET. Portainer's stack-update API assigns
+# UN-UPDATABLE BY ANYTHING THAT COULD NOT SEE THE SECRET. Portainer's stack-update API assigned
 # `stack.Env = payload.Env` unconditionally (2.39.6, stack_update.go — read, then probed on a
 # throwaway stack: an update that omitted the variables handed back `env: null`). So every automated
-# update of this file had to re-send the token, and a client that redacts secrets on read — the MCP
-# does — could only wipe it, leaving containers that "register nowhere". A file the daemon
+# update of this file had to re-send the token, and a client that redacted secrets on read — the
+# Portainer MCP did — could only wipe it, leaving containers that "register nowhere". A file the daemon
 # bind-mounts is read by nothing but the container, and the stack carries NO variables at all, so an
-# update is the file content and nothing else.
+# update is the file content and nothing else. That holds under Dockhand too: the deploy reads this
+# file from disk and has no variables to re-send or lose.
 #
 # ROTATING IT: write the new PAT into the file (root, 0400, no trailing newline needed — the wrapper
 # strips one) and `docker restart tinkerex-runner-1 tinkerex-runner-2 tinkerex-runner-3`
@@ -210,9 +228,10 @@ services:
     # every container on this box. The path must exist and be runner-writable before first boot.
     volumes:
       - /mnt/user/appdata/tinkerex-ci/runner-1/_work:/_work
-      # THE TOKEN FILE, read-only — see the header. The daemon does the mount, so Portainer's own
-      # filesystem never needs to see the path (an `env_file:` would be resolved inside the Portainer
-      # container, where /mnt/user does not exist).
+      # THE TOKEN FILE, read-only — see the header. The daemon does the mount, so Dockhand's own
+      # filesystem never needs to see the path. An `env_file:` would be resolved inside the Dockhand
+      # container, which mounts only /mnt/user/appdata/dockhand (as /app/data; measured 2026-11-24),
+      # so this path does not exist there.
       - /mnt/user/appdata/tinkerex-ci/runner.token:/run/secrets/runner_token:ro
 
   runner-2:

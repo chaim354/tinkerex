@@ -4,7 +4,7 @@
 # file — the same failure ops/kaneo-stack.yml's header describes for a compose file.
 #
 # Build:  ssh root@192.168.1.146 'docker build -t tinkerex-ci-runner:<tag> -f ci/runner/Dockerfile .'
-# Deploy: ops/ci-runner-stack.yml, through Portainer.
+# Deploy: ops/ci-runner-stack.yml, as the Dockhand stack `ci-runners` (its header has the steps).
 #
 # PRUNE THE BUILD CACHE AFTERWARDS — `docker builder prune -af` ON THE BOX. This is not tidiness.
 # Docker's storage there is a **50 GB loop device** (`/dev/loop2` on /var/lib/docker), and on Unraid
@@ -312,13 +312,15 @@ ENV RUN_AS_ROOT=false
 # myoung34's /entrypoint.sh takes ACCESS_TOKEN from the ENVIRONMENT only — there is no *_FILE
 # variant (grepped in 2.336.0 on 2026-09-07 and again in 2.338.2 on 2026-11-05: the only `_FILE`
 # in it is CONFIGURED_ACTIONS_RUNNER_FILES_DIR). A Portainer stack variable was its home until
-# 2026-09-07, and that home was wrong for an automated stack: Portainer's stack-update API assigns
+# 2026-09-07, and that home was wrong for an automated stack: Portainer's stack-update API assigned
 # `stack.Env = payload.Env` UNCONDITIONALLY (2.39.6, api/http/handler/stacks/stack_update.go —
 # read, then probed with a throwaway stack whose variable came back null), so every update of
-# ops/ci-runner-stack.yml had to re-send the secret, and a client that redacts it on read could not
+# ops/ci-runner-stack.yml had to re-send the secret, and a client that redacted it on read could not
 # update the stack at all. The wrapper exports ACCESS_TOKEN from ACCESS_TOKEN_FILE — the
 # bind-mounted /mnt/user/appdata/tinkerex-ci/runner.token, root:root 0400 on the array — and execs
-# the original entrypoint with the original arguments.
+# the original entrypoint with the original arguments. Dockhand, which has managed the stack since
+# Portainer left the box on 2026-11-24, reads the compose file from disk and has no stack variables
+# for this to depend on either.
 #
 # IT RUNS AS ROOT, BEFORE RUN_AS_ROOT=false's gosu HAND-OFF (the block above says why the entrypoint
 # must start as root), which is what lets the file be unreadable by jobs. The value reaches

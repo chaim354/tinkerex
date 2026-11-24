@@ -101,7 +101,8 @@ concurrency:
   cancel-in-progress: true
 
 # EVERY JOB HERE RUNS ON linux — four container runners on the Unraid Docker host (192.168.1.146),
-# built from ci/runner/Dockerfile and deployed as the Portainer stack ops/ci-runner-stack.yml.
+# built from ci/runner/Dockerfile and deployed as the Dockhand stack `ci-runners` from
+# ops/ci-runner-stack.yml (Portainer until 2026-11-24).
 # Verified 2026-08-31: `tinkerex-unraid-1..4` online, labels `self-hosted,linux,X64,maker-unraid`.
 #
 # UNTIL THEN CI RAN ON A DEVELOPER'S OWN MacBook, ONE JOB AT A TIME. That is why the seven jobs below
