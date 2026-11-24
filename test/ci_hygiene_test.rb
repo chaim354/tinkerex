@@ -459,13 +459,15 @@ class CiHygieneTest < ActiveSupport::TestCase
   # THE RUNNER STACK CARRIES NO SECRET, AND THE IMAGE READS ONE FROM A FILE.
   #
   # Until 2026-09-07 the runners' PAT was the Portainer stack variable RUNNER_ACCESS_TOKEN. Portainer's
-  # stack-update API assigns `stack.Env = payload.Env` unconditionally (2.39.6, read and then probed
+  # stack-update API assigned `stack.Env = payload.Env` unconditionally (2.39.6, read and then probed
   # with a throwaway stack: an update that omitted the variables came back `env: null`), so the
   # stack could be updated only by something that could re-send the secret — and the MCP client this
-  # repo's agent uses redacts it on read. Every automated image bump was therefore a manual step,
+  # repo's agent used redacted it on read. Every automated image bump was therefore a manual step,
   # or four runners that register nowhere. The fix is structural: the token is a root-owned file on
   # the array, bind-mounted read-only, and the image's wrapper entrypoint exports it for myoung34's
-  # own entrypoint. ops/ci-runner-stack.yml and ci/runner/Dockerfile record the argument.
+  # own entrypoint. ops/ci-runner-stack.yml and ci/runner/Dockerfile record the argument. Portainer
+  # left the box on 2026-11-24; Dockhand, which manages the stack now, reads the compose file from
+  # disk, and the stack still carries no variables, so this guard still applies.
   #
   # STATIC READS, like every guard in this file: neither file is loaded by the Rails process, and the
   # failure — a `${RUNNER_ACCESS_TOKEN}` quietly re-added to one service — is invisible to any run.
