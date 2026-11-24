@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_19_140000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_24_120000) do
   create_table "action_text_rich_texts", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -388,6 +388,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_19_140000) do
     t.datetime "updated_at", null: false
     t.integer "user_id", null: false
     t.string "visibility", default: "private", null: false
+    t.boolean "stack_versions"
     t.index ["unlisted_token"], name: "index_maker_projects_on_unlisted_token", unique: true
     t.index ["user_id", "folder_node_id"], name: "index_maker_projects_on_user_id_and_folder_node_id", unique: true, where: "folder_node_id IS NOT NULL"
     t.index ["user_id", "slug"], name: "index_maker_projects_on_user_id_and_slug", unique: true
@@ -608,6 +609,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_19_140000) do
     t.datetime "updated_at", null: false
     t.json "pinned_tools", default: [], null: false
     t.boolean "onboarding_pending", default: false, null: false
+    t.boolean "stack_versions", default: true, null: false
     t.index ["confirmation_token"], name: "index_users_on_confirmation_token", unique: true
     t.index ["email"], name: "index_users_on_email", unique: true
     t.index ["handle"], name: "index_users_on_handle", unique: true
