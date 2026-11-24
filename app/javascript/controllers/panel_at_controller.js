@@ -14,7 +14,8 @@ import { Controller } from "@hotwired/stimulus"
 // the element in projects/show that holds every panel and that no frame swap or stream replaces,
 // so an action inside a panel swapped in later still finds it.
 //
-//   * `follow` (a folder tile, a List-view folder row, a path-bar link): THIS link's own panel keeps
+//   * `follow` (a folder tile, a List-view folder row, a path-bar link; on click, middle-click and
+//     right-click, ProjectsHelper::FOLDER_LINK_ACTION): THIS link's own panel keeps
 //     what the link says — present, or absent for a path-bar link back to the panel's own folder —
 //     and every other panel's entry comes from the URL, the link's stale ones dropped. The panel is
 //     `data-panel-at-panel`, read RAW: a Stimulus `-param` is JSON-typecast, and a node id is a

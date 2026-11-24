@@ -182,13 +182,19 @@ module ProjectsHelper
     at.reject { |pid, id| id.nil? || id == pid }.presence
   end
 
+  # THE THREE WAYS A FOLDER LINK IS USED (2026-11-24): a click, a middle-click (`auxclick`, which
+  # fires no `click`) and the right-click menu's "Open in new tab" / "Copy link" (`contextmenu`,
+  # which fires before the browser reads the href). Each rebuilds the href first, so a new tab or a
+  # copied link carries every panel's open folder too.
+  FOLDER_LINK_ACTION = "click->panel-at#follow auxclick->panel-at#follow contextmenu->panel-at#follow".freeze
+
   # WHAT A FOLDER LINK IN A PANEL CARRIES: it opts INTO the panel's frame (which is `_top` for every
   # other link inside it) and advances the URL, so Back steps out of the folder. And it names its
   # panel — the same `panel_id` its href's #panel_at was built with — for panel_at_controller.js,
   # which at the click takes every OTHER panel's open folder from the page's URL: this render's
   # @panel_at is stale as soon as another panel's frame has moved.
   def panel_folder_link_data(key, panel_id)
-    { turbo_frame: panel_frame_id(key), turbo_action: "advance", action: "click->panel-at#follow", panel_at_panel: panel_id }
+    { turbo_frame: panel_frame_id(key), turbo_action: "advance", action: FOLDER_LINK_ACTION, panel_at_panel: panel_id }
   end
 
   # ONE VERSION STACK AMONG A PANEL'S FIGURES (2026-11-19): the stack and its members' rows,
