@@ -474,8 +474,10 @@ module Web
       get project_path(project)
       assert_select "section.folder-panel[id=?]", "folder:d-out" do
         assert_select "nav.folder-path", 0, "a panel at its own folder needs no path"
-        assert_select ".folder-tile a[href=?][data-turbo-frame=?][data-turbo-action=advance]",
-                      project_path(project, at: { "d-out" => "d-itx" }), "frame-folder-d-out"
+        # AND NAMES ITS PANEL, so panel_at_controller.js can take every OTHER panel's folder from the
+        # page's URL at the click.
+        assert_select ".folder-tile a[href=?][data-turbo-frame=?][data-turbo-action=advance][data-action=?][data-panel-at-panel=?]",
+                      project_path(project, at: { "d-out" => "d-itx" }), "frame-folder-d-out", "click->panel-at#follow", "d-out"
       end
       # THE FRAME IS `_top`: every other link inside it navigates the page, as it did before.
       assert_select "turbo-frame[id=?][target=_top] > section.folder-panel[id=?]", "frame-folder-d-out", "folder:d-out"
@@ -484,8 +486,9 @@ module Web
       assert_response :success
       assert_select "section.folder-panel[id=?]", "folder:d-out" do
         assert_select "nav.folder-path a", 2
-        assert_select "nav.folder-path a[href=?][data-turbo-frame=?]", project_path(project, at: { "d-docs" => "d-old" }),
-                      "frame-folder-d-out", text: "out"
+        assert_select "nav.folder-path a[href=?][data-turbo-frame=?][data-action=?][data-panel-at-panel=?]",
+                      project_path(project, at: { "d-docs" => "d-old" }), "frame-folder-d-out", "click->panel-at#follow", "d-out",
+                      text: "out"
         assert_select "nav.folder-path a[href=?]", project_path(project, at: { "d-out" => "d-itx", "d-docs" => "d-old" }), text: "itx"
         assert_select "nav.folder-path .folder-path-here[aria-current=location]", text: "four-piece"
         assert_select ".attachment-tile .grid-name", text: "foot.stl"
@@ -556,8 +559,9 @@ module Web
 
       get project_path(project)
       assert_select "section.folder-panel[id=?] table.project-files tbody", "folder:d-out" do
-        assert_select "tr.folder-row:first-child a[href=?][data-turbo-frame=?][data-turbo-action=advance]",
-                      project_path(project, at: { "d-out" => "d-itx" }), "frame-folder-d-out", text: /itx/
+        assert_select "tr.folder-row:first-child a[href=?][data-turbo-frame=?][data-turbo-action=advance][data-action=?][data-panel-at-panel=?]",
+                      project_path(project, at: { "d-out" => "d-itx" }), "frame-folder-d-out", "click->panel-at#follow", "d-out",
+                      text: /itx/
         assert_select "tr.folder-row td.col-size", text: "1 file"
         assert_select "tr a", text: "top.stl"
         assert_select "tr a", text: "deep.stl", count: 0

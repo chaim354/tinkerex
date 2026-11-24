@@ -20,7 +20,10 @@
   THE OPEN FOLDERS RIDE ALONG (2026-11-24, click-through panels): each button posts `at`, every
   panel's open folder as this render has it (@panel_at), and the door carries it into the redirect,
   so switching Tiles to List keeps the panel in the folder it was in — and every other panel in
-  its own. Nothing when no folder is open.
+  its own. Nothing when no folder is open. AT THE PRESS the form takes them from the page's URL
+  instead (panel_at_controller.js#carry): a folder opened in another panel since this render redrew
+  only that panel, so the inputs drawn here no longer know it. They stay for a browser with no
+  JavaScript, stale at most.
 
   NOT IN THE EDITOR. Its slots carry a DRAFT view beside the panel, and a stream that replaced the
   panel under it would leave the two disagreeing. There a press keeps the answer it always had.
@@ -37,6 +40,7 @@
     <% on = view == value %>
     <%= button_to value.capitalize, project_panels_path(@project), method: :patch,
                   params: { view: { key => value }, in_place: ("1" unless @editing), at: @panel_at.presence }.compact,
+                  form: (@editing ? {} : { data: { action: "submit->panel-at#carry" } }),
                   class: "toggle#{' active' if on}", "aria-pressed": on.to_s,
                   autofocus: (on && @switched_panel == key) %>
   <% end %>

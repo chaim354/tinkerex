@@ -59,7 +59,7 @@
             <%= folder_glyph %> <%= dir.name %>
           <% else %>
             <%= link_to project_path(@project, at: panel_at(local_assigns[:panel_id], dir.node_id)),
-                        data: panel_folder_link_data(local_assigns[:key]) do %><%= folder_glyph %> <%= dir.name %><% end %>
+                        data: panel_folder_link_data(local_assigns[:key], local_assigns[:panel_id]) do %><%= folder_glyph %> <%= dir.name %><% end %>
           <% end %>
         </td>
         <td class="muted col-section">—</td>

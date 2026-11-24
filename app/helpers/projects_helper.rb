@@ -183,8 +183,13 @@ module ProjectsHelper
   end
 
   # WHAT A FOLDER LINK IN A PANEL CARRIES: it opts INTO the panel's frame (which is `_top` for every
-  # other link inside it) and advances the URL, so Back steps out of the folder.
-  def panel_folder_link_data(key) = { turbo_frame: panel_frame_id(key), turbo_action: "advance" }
+  # other link inside it) and advances the URL, so Back steps out of the folder. And it names its
+  # panel — the same `panel_id` its href's #panel_at was built with — for panel_at_controller.js,
+  # which at the click takes every OTHER panel's open folder from the page's URL: this render's
+  # @panel_at is stale as soon as another panel's frame has moved.
+  def panel_folder_link_data(key, panel_id)
+    { turbo_frame: panel_frame_id(key), turbo_action: "advance", action: "click->panel-at#follow", panel_at_panel: panel_id }
+  end
 
   # ONE VERSION STACK AMONG A PANEL'S FIGURES (2026-11-19): the stack and its members' rows,
   # latest first, so a tile or a list row can draw the latest and open onto the rest.

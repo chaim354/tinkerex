@@ -22,10 +22,14 @@ class ProjectPanelNavigationTest < ApplicationSystemTestCase
     @folder = project_folder_rows!(@user, @project)
     out = dir!("d-out", "out", @folder.node_id)
     itx = dir!("d-itx", "itx", out.node_id)
+    jig = dir!("d-jig", "jig", out.node_id)
     docs = dir!("d-docs", "docs", @folder.node_id)
+    sub = dir!("d-sub", "sub", docs.node_id)
     file!("foot.stl", itx.node_id)
+    file!("clamp.stl", jig.node_id)
     file!("top.stl", out.node_id)
     file!("manual.pdf", docs.node_id)
+    file!("spec.pdf", sub.node_id)
   end
 
   def dir!(id, name, parent) = @user.nodes.create!(node_id: id, name:, kind: "dir", parent_node_id: parent)
@@ -54,13 +58,13 @@ class ProjectPanelNavigationTest < ApplicationSystemTestCase
   # uncaught "signal is aborted without reason" (measured: the next click came about 30 ms early).
   # A person cannot click that fast twice; a test can. Only before a click: a frame restored from
   # Back's snapshot need not carry the attribute, and nothing clicks after it.
-  def assert_open(folder, before_a_click: true)
+  def assert_open(folder, panel: "d-out", before_a_click: true)
     if folder
-      assert_selector "#{panel_for('d-out')} .folder-path-here", text: folder
+      assert_selector "#{panel_for(panel)} .folder-path-here", text: folder
     else
-      assert_no_selector "#{panel_for('d-out')} .folder-path"
+      assert_no_selector "#{panel_for(panel)} .folder-path"
     end
-    assert_selector "turbo-frame[id='frame-folder-d-out'][complete]", visible: :all if before_a_click
+    assert_selector "turbo-frame[id='frame-folder-#{panel}'][complete]", visible: :all if before_a_click
   end
 
   def assert_page_was_not_redrawn
@@ -99,6 +103,52 @@ class ProjectPanelNavigationTest < ApplicationSystemTestCase
     assert_open "itx", before_a_click: false
     within(panel_for("d-out")) { assert_selector ".attachment-tile .grid-name", text: "foot.stl" }
     assert_current_path project_path(@project, at: { "d-out" => "d-itx" })
+    assert_no_console_errors
+  end
+
+  # EVERY OTHER PANEL'S FOLDER COMES FROM THE PAGE'S URL AT THE CLICK (panel_at_controller.js), never
+  # from the render that drew the link. A frame swap redraws its own panel alone, so docs's tile still
+  # carries the `at` the page loaded with: before the controller, opening `sub` after `itx` wrote
+  # `?at[d-docs]=d-sub` alone, and a reload put out back at its own folder. A view button is the same
+  # case with a form: docs's buttons below were drawn by the reload, before out moved to `jig`, and
+  # the panel the switch's redirect redraws shows which `at` that redirect carried.
+  test "two panels keep each other's open folder through a click, a reload and a view switch" do
+    visit project_path(@project)
+    within(panel_for("d-out")) { find(".folder-tile a", text: "itx").click }
+    assert_open "itx"
+    within(panel_for("d-docs")) { find(".folder-tile a", text: "sub").click }
+    assert_open "sub", panel: "d-docs"
+    assert_current_path project_path(@project, at: { "d-out" => "d-itx", "d-docs" => "d-sub" })
+    assert_open "itx", before_a_click: false
+    within(panel_for("d-out")) { assert_selector ".attachment-tile .grid-name", text: "foot.stl" }
+    within(panel_for("d-docs")) { assert_selector ".attachment-tile .grid-name", text: "spec.pdf" }
+
+    visit current_url
+    assert_open "itx", before_a_click: false
+    assert_open "sub", panel: "d-docs", before_a_click: false
+    assert_current_path project_path(@project, at: { "d-out" => "d-itx", "d-docs" => "d-sub" })
+
+    # A PATH-BAR LINK TO THE PANEL'S OWN FOLDER DROPS ITS OWN ENTRY AND KEEPS THE OTHER'S.
+    within(panel_for("d-out")) { find("nav.folder-path a", text: "out").click }
+    assert_open nil
+    assert_current_path project_path(@project, at: { "d-docs" => "d-sub" })
+    within(panel_for("d-out")) { find(".folder-tile a", text: "jig").click }
+    assert_open "jig"
+    assert_current_path project_path(@project, at: { "d-out" => "d-jig", "d-docs" => "d-sub" })
+
+    within(panel_for("d-docs")) { click_button "List" }
+    assert_selector "#{panel_for('d-docs')} table.project-files", text: "spec.pdf"
+    within(panel_for("d-docs")) do
+      assert_selector ".folder-path-here", text: "sub"
+      # out's folder AS THE URL HAS IT, not the `itx` these buttons were drawn with.
+      assert_selector ".view-toggle input[name='at[d-out]'][value='d-jig']", visible: :all, count: 3
+      assert_selector ".view-toggle input[name='at[d-docs]'][value='d-sub']", visible: :all, count: 3
+    end
+    within(panel_for("d-out")) do
+      assert_selector ".folder-path-here", text: "jig"
+      assert_selector ".attachment-tile .grid-name", text: "clamp.stl"
+    end
+    assert_current_path project_path(@project, at: { "d-out" => "d-jig", "d-docs" => "d-sub" })
     assert_no_console_errors
   end
 

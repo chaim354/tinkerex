@@ -3,8 +3,10 @@
   ONE SUBFOLDER, AS A TILE YOU OPEN (2026-11-24, click-through panels): the Library's folder glyph,
   the name, and the files in its whole subtree, which the walk counts whether or not the cap loaded
   them. The link opts into the panel's frame (ProjectsHelper#panel_folder_link_data) and carries
-  every other panel's open folder. In the editor it is not a link: the editor arranges panels, and
-  a click that left the draft for another URL would lose it.
+  every other panel's open folder: as this render had it in the href, and as the page's URL has it
+  at the click (panel_at_controller.js), because a frame swap elsewhere does not redraw this tile.
+  In the editor it is not a link: the editor arranges panels, and a click that left the draft for
+  another URL would lose it.
 %>
 <% count = dir.subtree_file_count + dir.subtree_hidden_count %>
 <div class="folder-tile">
@@ -15,7 +17,7 @@
     </span>
   <% else %>
     <%= link_to project_path(@project, at: panel_at(panel_id, dir.node_id)), class: "grid-card file-cell",
-                data: panel_folder_link_data(key) do %>
+                data: panel_folder_link_data(key, panel_id) do %>
       <span class="thumb folder-thumb" aria-hidden="true"><%= folder_glyph %></span>
       <span class="grid-name"><%= dir.name %></span>
     <% end %>

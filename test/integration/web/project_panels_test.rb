@@ -138,7 +138,11 @@ module Web
       assert_equal 8, forms.size, "Files offers two views and each of the two folders three"
       forms.each do |form|
         assert_equal [ "1" ], form.css("input[name='in_place']").map { |input| input["value"] }, form.to_s.first(160)
+        # AT THE PRESS THE FORM TAKES EVERY PANEL'S OPEN FOLDER FROM THE PAGE'S URL
+        # (panel_at_controller.js#carry), so it must sit inside the one element that mounts it.
+        assert_equal "submit->panel-at#carry", form["data-action"], form.to_s.first(160)
       end
+      assert_equal 8, css_select("[data-controller='panel-at'] .panel-head .view-toggle form").size
 
       # THE EDITOR'S COPY OF THE SAME BUTTONS KEEPS ITS OLD ANSWER: a stream would replace a panel
       # inside the editor while the draft beside it still held the view it had.
@@ -146,6 +150,7 @@ module Web
       assert_response :success
       assert_equal 8, css_select(".panel-head .view-toggle form").size
       assert_select ".view-toggle input[name='in_place']", 0
+      assert_select ".view-toggle form[data-action]", 0
     end
 
     test "asked in place, the door sends the browser back for that panel" do
