@@ -20,7 +20,8 @@ module Maker
   # files that had been indexed all along. #allocate splits the budget at every level of the tree
   # with `.share` (small folders whole, the rest evenly), and each Dir carries `hidden_count`, the
   # files of its own the cap left out, so a panel counts what the folder really holds and says how
-  # many it shows.
+  # many it shows. Since 2026-11-24 the page names the folders on screen (#shown!) and only their
+  # own files share the cap.
   # Two rules shape the walk: a dir is skipped when it is dot-prefixed OR build output
   # (`Library::BuildOutput` — `node_modules`, `__pycache__`), the same display rules
   # Node.visible_entries applies to entries (never a scan skip — §14b); and a dir holding a `.git`
@@ -89,14 +90,14 @@ module Maker
       # with the browser there instead it reads "(3)" over a repository holding 203 files.
       #
       # `subtree_file_ids` is the set ProjectsController#show subtracts from the TILE TERM of its
-      # thumbnail map for each Dir its #dirs_without_tiles names (a hidden panel, a browsed folder, a
-      # nested repository): that subtree draws no tiles, so a preview row and a render job per file
-      # would be work for a picture no tile shows. OUT OF THE TILE TERM, NOT OUT OF THE MAP: the map
+      # thumbnail map for each Dir its #dirs_without_tiles names (a hidden panel or a browsed one):
+      # that subtree draws no tiles, so a preview row and a render job per file would be work for a
+      # picture no tile shows. OUT OF THE TILE TERM, NOT OUT OF THE MAP: the map
       # is the union of what the page paints, so an image in such a subtree comes back through the
       # Photos term (Photos paints every image at any depth) (F-S15-1). BACKUPS ARE NOT IN EITHER ANSWER, and that is correct rather
       # than an oversight — `#bucket` diverts a backup out of `files` into the cross-cutting
       # `#backups` list, which the panel DOES render as tiles wherever the file physically sits, so
-      # a rescue copy inside an untiled folder must keep its thumbnail.
+      # a rescue copy inside a folder that draws no tiles must keep its thumbnail.
       def subtree_file_ids = files.map(&:node_id) + children.flat_map(&:subtree_file_ids)
       # This dir and every dir beneath it — what #recent_files leaves out for a dir it is told to skip.
       def subtree_dir_ids = [ node_id ] + children.flat_map(&:subtree_dir_ids)
@@ -143,23 +144,25 @@ module Maker
       @counts = dir_ids.empty? ? {} : files_in(dir_ids).group(:parent_node_id).count
       @total = @counts.values.sum
       # THE ROWS LOAD ON FIRST READ, NOT HERE (2026-11-23), so ProjectsController#show can say which
-      # folders draw no tiles (#untiled!) once its layout exists — and the layout needs this walk.
-      @untiled = Set.new
+      # folders are on screen (#shown!) once its layout exists — and the layout needs this walk.
+      # nil until the page says which folders are on screen (#shown!); nil splits the cap across the
+      # whole tree, as every other caller wants.
+      @shown = nil
     end
 
-    # THE FOLDERS THIS RENDER DRAWS NO TILE FOR, DECLARED BEFORE ANY ROW LOADS (2026-11-23): each
-    # id's whole subtree takes nothing from FILE_CAP and shares a second FILE_CAP of its own instead.
-    # A panel in the browser view lists its files through the browser, a hidden one is not on the
-    # page, a nested repository is a closed browser section — yet each took its share of the 300
-    # tiles, and the live `pc case` (313 files) cut its `out` panel to 160 of 173 while 105 tiles of
-    # budget went to two browsed panels. Their rows still LOAD (from the second pot), because Photos
-    # paints their images, a repository's card reads its README, and a README's links resolve
-    # through them. The project's own folder cannot be one. Called after a read, it would change a
-    # listing someone already saw, so it refuses.
-    def untiled!(dir_ids)
-      raise ArgumentError, "untiled! after the rows loaded" if @rows_loaded
+    # THE FOLDERS THIS RENDER DRAWS FILES FOR, DECLARED BEFORE ANY ROW LOADS (2026-11-24,
+    # click-through panels; spec §1 "The tile budget"). A folder panel shows ONE folder at a time,
+    # so only the open folder's OWN files are tiles: they split FILE_CAP between them, and every
+    # other folder in the project loads from a second FILE_CAP, because Photos, repository cards,
+    # README links and Backups still read those rows. The project's own folder is always shown —
+    # the Files panel draws its loose files. This generalises #554's rule (a browsed panel took 105
+    # of `pc case`'s 300 tiles): a folder not on screen takes none of the cap. Called after a read,
+    # it would change a listing someone already saw, so it refuses.
+    def shown!(dir_ids)
+      raise ArgumentError, "shown! after the rows loaded" if @rows_loaded
 
-      @untiled = dir_ids.to_set.intersection(@dir_ids_set).delete(@folder_id)
+      @shown = dir_ids.to_set.intersection(@dir_ids_set)
+      @shown << @folder_id if @folder_id
       self
     end
 
@@ -176,8 +179,8 @@ module Maker
     # The row shows only what the page would otherwise show OPENLY, so two kinds of file stay out,
     # both IN the query so the limit still counts files the row can show:
     #   * `skip:` takes Dirs from `#tree` whose WHOLE subtree is left out — the page's answer to
-    #     "which folders draw no tile" (a hidden panel, a browsed folder, a nested repository;
-    #     ProjectsController#dirs_without_tiles decides, and the page's thumbnail union reads the
+    #     "which panels draw no tile" (a hidden panel or a browsed one, decided per panel, not per
+    #     open folder; ProjectsController#dirs_without_tiles decides, and the version stacks read the
     #     same Dirs).
     #   * BACKUPS. LightBurn rewrites `<stem>_backup.lbrn2` on every save, so a laser project's
     #     newest files are half rescue copies — exactly what `#backups` folds into one closed
@@ -231,7 +234,7 @@ module Maker
     # per request, whatever the number of panels.
     #
     # OFF THE WALK, NOT `tree` (2026-11-23): the layout is built from this, and the rows must not
-    # load until the page has said which folders draw no tiles (#untiled!). Same dirs, same order:
+    # load until the page has said which folders are on screen (#shown!). Same dirs, same order:
     # `tree`'s depth one is exactly the walk's first level, sorted by name.
     def panel_folders
       depth_one.each_with_index
@@ -243,13 +246,24 @@ module Maker
     # names the panels before the rows load (ProjectsController#show's panel chooser labels).
     def panel_folder_names = depth_one.to_h { |d| [ d.node_id, d.name ] }
 
-    # Every working tree strictly beneath one walked dir, at any depth (a repository inside a
-    # repository included), off the walk: no row needs to have loaded.
-    def repos_beneath(dir_id)
-      @walk_children[dir_id].flat_map do |child|
-        (@repo_root_ids.include?(child.node_id) ? [ child.node_id ] : []) + repos_beneath(child.node_id)
+    # THE DIRS FROM ONE WALKED DIR DOWN TO ANOTHER BENEATH IT, both ends included — [from] when they
+    # are the same, nil when `to_id` is not beneath `from_id` in the walk (a sibling, a skipped
+    # dot-dir, a node outside the folder, anything at all). Off the walk, so it answers before the
+    # rows load: ProjectsController#show resolves a panel's `?at=` with it, and an `at` this cannot
+    # place falls back to the panel's own folder rather than a 404. The walk is a tree (its `seen`
+    # set), so the recursion terminates.
+    def walk_path(from_id, to_id)
+      return [ from_id ] if from_id == to_id
+
+      @walk_children[from_id].each do |child|
+        rest = walk_path(child.node_id, to_id)
+        return [ from_id ] + rest if rest
       end
+      nil
     end
+
+    # One Dir of the loaded tree by node id, or nil (the folder itself has none: its files are #loose).
+    def dir(node_id) = (@dirs_by_id ||= flatten_dirs(tree).index_by(&:node_id))[node_id]
 
     def shelf_entries = @shelf_entries ||= Maker::Shelves.by_name(@user)
 
@@ -341,7 +355,7 @@ module Maker
 
     private
 
-    # THE ONE LOAD, on the first read of the rows (see #untiled!): every reader of `tree`, `loose`,
+    # THE ONE LOAD, on the first read of the rows (see #shown!): every reader of `tree`, `loose`,
     # `backups` or `truncated?` comes through here, and nothing after it changes what was loaded.
     def load_rows!
       return if @rows_loaded
@@ -363,48 +377,36 @@ module Maker
     # The walk's first level, by name: the depth-one folders, which are the page's folder panels.
     def depth_one = @folder_id ? @walk_children[@folder_id].sort_by { |d| d.name.to_s } : []
 
-    # dir node_id => how many of its OWN files to load. The folder starts with FILE_CAP; at each
-    # dir, `.share` splits what the dir was given between its own files and each child's whole
-    # subtree, and every child passes its part on the same way. So every level is fair, not just the
-    # panels: a nested section is not starved by a sibling either. `dir_ids` is the walk's
-    # breadth-first order, parents before children, which is what lets one pass do it; the subtree
-    # sums run the same list backwards.
+    # dir node_id => how many of its OWN files to load. With nothing declared (#shown! never called —
+    # Maker::ReleaseSnapshot, the public page), the folder starts with FILE_CAP and at each dir
+    # `.share` splits what the dir was given between its own files and each child's whole subtree,
+    # so every level is fair. `dir_ids` is the walk's breadth-first order, parents before children,
+    # which is what lets one pass do it; the subtree sums run the same list backwards.
     #
-    # TWO POTS WHEN THE PAGE NAMED UNTILED FOLDERS (#untiled!): the tiles' FILE_CAP is spread with
-    # every untiled subtree counted as empty, so it all goes to files a panel draws, and the untiled
-    # subtrees split a second FILE_CAP between them by the same rule. The two never meet a dir twice:
-    # one is zero wherever the other is not.
+    # TWO POTS ONCE THE PAGE SAID WHAT IS ON SCREEN (#shown!): the shown folders' own files split
+    # the tiles' FILE_CAP between them, and every other dir shares a second FILE_CAP by the
+    # tree-fair rule with the shown dirs' own files counted as none. The two never load a dir twice:
+    # a shown dir gets nothing from the second pot.
     def allocate(dir_ids)
       return {} if dir_ids.empty?
+      return spread(dir_ids, { dir_ids.first => @file_cap }, @counts) if @shown.nil?
 
-      own = spread(dir_ids, { dir_ids.first => @file_cap }, subtree_counts(dir_ids, @untiled))
-      return own if @untiled.empty?
-
-      # The untiled dirs no other untiled dir holds, in walk order: what the second pot is split by.
-      inside = Set.new
-      dir_ids.each { |id| inside.merge(@walk_children[id].map(&:node_id)) if @untiled.include?(id) || inside.include?(id) }
-      roots = dir_ids.select { |id| @untiled.include?(id) && !inside.include?(id) }
-      whole = subtree_counts(dir_ids, Set.new)
-      grants = roots.zip(self.class.share(@file_cap, roots.map { |id| whole[id] })).to_h
-      spread(dir_ids, grants, whole).each { |id, n| own[id] += n }
+      shown = dir_ids.select { |id| @shown.include?(id) }
+      own = shown.zip(self.class.share(@file_cap, shown.map { |id| @counts.fetch(id, 0) })).to_h
+      rest = @counts.reject { |id, _| @shown.include?(id) }
+      spread(dir_ids, { dir_ids.first => @file_cap }, rest).each { |id, n| own[id] = own.fetch(id, 0) + n }
       own
     end
 
-    # dir node_id => the files in its whole subtree, with each dir in `empty` (and so everything
-    # beneath it) counted as none.
-    def subtree_counts(dir_ids, empty)
-      dir_ids.reverse_each.with_object({}) do |id, subtree|
-        subtree[id] = empty.include?(id) ? 0 : @counts.fetch(id, 0) + @walk_children[id].sum { |c| subtree.fetch(c.node_id, 0) }
+    # Hands each dir in `grant` its budget and passes it down the walk: a dir's own files (`counts`)
+    # and each child's subtree under the same counts share what the dir was given.
+    def spread(dir_ids, grant, counts)
+      subtree = dir_ids.reverse_each.with_object({}) do |id, sums|
+        sums[id] = counts.fetch(id, 0) + @walk_children[id].sum { |c| sums.fetch(c.node_id, 0) }
       end
-    end
-
-    # Hands each dir in `grant` its budget and passes it down the walk: a dir's own files and each
-    # child's `subtree` share what the dir was given. A grant a child already holds is ADDED to, so
-    # a second pot can start at dirs below the folder (their parents hand down nothing).
-    def spread(dir_ids, grant, subtree)
       dir_ids.each_with_object({}) do |id, own|
         kids = @walk_children[id].sort_by { |c| [ c.name.to_s, c.node_id ] }
-        parts = self.class.share(grant.delete(id) || 0, [ @counts.fetch(id, 0), *kids.map { |c| subtree.fetch(c.node_id, 0) } ])
+        parts = self.class.share(grant.delete(id) || 0, [ counts.fetch(id, 0), *kids.map { |c| subtree.fetch(c.node_id, 0) } ])
         own[id] = parts.first
         kids.each_with_index { |c, i| grant[c.node_id] = grant.fetch(c.node_id, 0) + parts[i + 1] }
       end

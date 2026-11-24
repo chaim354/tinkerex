@@ -346,48 +346,45 @@ module Maker
       assert listing.truncated?
     end
 
-    # THE LIVE CASE (2026-11-23): `pc case`'s `out` panel showed 160 of its 173 files while its two
-    # browsed panels, which draw no tiles, took 105 of the 300. An untiled folder takes nothing from
-    # the tiles' cap and still loads its own rows from a second one.
-    test "an untiled folder takes nothing from the tiles' cap and loads from a pot of its own" do
+    # THE CAP GOES TO WHAT IS ON SCREEN (2026-11-24, click-through panels): a panel shows one folder,
+    # so only that folder's OWN files draw. Everything else still loads, from a second pot.
+    test "a shown folder's own files take the tiles' cap, and a folder not on screen takes none" do
       _projects, desk_lamp = desk_lamp_folder
       cad = dir("dir-cad", "cad", desk_lamp.node_id)
       out = dir("dir-out", "out", desk_lamp.node_id)
+      stl = dir("dir-stl", "stl", out.node_id)
       bulk_files("cad", 5, "c%d.step", cad)
       bulk_files("out", 10, "o%02d.stl", out)
+      bulk_files("stl", 4, "s%d.stl", stl)
 
-      project = project_with_folder(desk_lamp.node_id)
-      shared = Maker::ProjectFolderListing.new(@user, project, file_cap: 8)
-      assert_equal [ 4, 4 ], shared.tree.map { |d| d.files.size }, "the page's old answer: one cap, split"
-
-      listing = Maker::ProjectFolderListing.new(@user, project, file_cap: 8)
-      listing.untiled!([ cad.node_id ])
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id), file_cap: 8)
+      listing.shown!([ out.node_id ])
       panels = listing.tree.index_by(&:name)
 
-      assert_equal [ 8, 2 ], [ panels["out"].files.size, panels["out"].hidden_count ], "the tiles get the whole cap"
-      assert_equal [ 5, 0 ], [ panels["cad"].files.size, panels["cad"].hidden_count ],
-                   "the untiled folder's rows still load (Photos, a card's README read them)"
+      assert_equal [ 8, 2 ], [ panels["out"].files.size, panels["out"].hidden_count ], "the open folder gets the whole cap"
+      assert_equal 4, panels["cad"].files.size, "a folder not on screen still loads, from the second pot"
+      assert_equal 4, panels["out"].children.first.files.size
+      assert_equal listing.dir(stl.node_id), panels["out"].children.first
       assert listing.truncated?
     end
 
-    test "a repository nested in a tiled folder is untiled on its own, and the folder around it keeps the cap" do
+    test "a walk path runs from a panel down to a folder beneath it, and is nil for anything else" do
       _projects, desk_lamp = desk_lamp_folder
       out = dir("dir-out", "out", desk_lamp.node_id)
-      lib = dir("dir-lib", "lib", out.node_id)
-      dir("dir-lib-git", Library::RepoMetadata::DIR_NAME, lib.node_id)
-      bulk_files("out", 10, "o%02d.stl", out)
-      bulk_files("lib", 6, "l%d.c", lib)
+      itx = dir("dir-itx", "itx", out.node_id)
+      stl = dir("dir-stl", "stl", itx.node_id)
+      cad = dir("dir-cad", "cad", desk_lamp.node_id)
+      dir("dir-dot", ".cache", out.node_id)
 
-      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id), file_cap: 8)
-      assert_equal [ lib.node_id ], listing.repos_beneath(out.node_id), "asked of the walk, before any row loads"
-      listing.untiled!(listing.repos_beneath(out.node_id))
-      panel = listing.tree.first
-
-      assert_equal 8, panel.files.size
-      assert_equal 6, panel.children.first.files.size
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+      assert_equal [ out.node_id, itx.node_id, stl.node_id ], listing.walk_path(out.node_id, stl.node_id)
+      assert_equal [ out.node_id ], listing.walk_path(out.node_id, out.node_id)
+      assert_nil listing.walk_path(out.node_id, cad.node_id), "a sibling panel's folder is not beneath it"
+      assert_nil listing.walk_path(out.node_id, "dir-dot"), "a folder the walk skips cannot be opened"
+      assert_nil listing.walk_path(out.node_id, "no-such-node")
     end
 
-    test "untiled! comes before the rows load, and the panels can be named without loading them" do
+    test "shown! comes before the rows load, and the panels can be named without loading them" do
       _projects, desk_lamp = desk_lamp_folder
       cad = dir("dir-cad", "cad", desk_lamp.node_id)
       file("f-c", "c.step", cad.node_id)
@@ -395,10 +392,21 @@ module Maker
       listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
       assert_equal [ cad.node_id ], listing.panel_folders.map(&:first)
       assert_equal({ cad.node_id => "cad" }, listing.panel_folder_names)
-      listing.untiled!([ cad.node_id ])
+      listing.shown!([ cad.node_id ])
       assert_equal [ "c.step" ], names_of(listing.tree.first.files)
 
-      assert_raises(ArgumentError, "a listing someone already read cannot change") { listing.untiled!([ cad.node_id ]) }
+      assert_raises(ArgumentError, "a listing someone already read cannot change") { listing.shown!([ cad.node_id ]) }
+    end
+
+    test "a listing nobody told what is shown splits the cap across the whole tree, as before" do
+      _projects, desk_lamp = desk_lamp_folder
+      cad = dir("dir-cad", "cad", desk_lamp.node_id)
+      out = dir("dir-out", "out", desk_lamp.node_id)
+      bulk_files("cad", 5, "c%d.step", cad)
+      bulk_files("out", 10, "o%02d.stl", out)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id), file_cap: 8)
+      assert_equal [ 4, 4 ], listing.tree.map { |d| d.files.size }, "Maker::ReleaseSnapshot and the public page"
     end
 
     test "a cut listing costs the same queries however many folders the cap cuts" do
