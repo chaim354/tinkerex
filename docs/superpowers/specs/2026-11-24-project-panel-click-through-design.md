@@ -111,17 +111,27 @@ A shown folder the cap still cuts keeps today's "Showing X of Y files · Open th
   three choices — **Use my default**, labelled with what the default currently is ("Use my default
   (On)"), **On**, **Off** — stored as `maker_projects.stack_versions`, **nullable** boolean. NULL
   means "follow my default"; every existing project starts NULL.
-- **Resolution, in one place:** `Maker::Project#stack_versions?` answers
-  `stack_versions.nil? ? user.stack_versions : stack_versions`. The layout
+- **Resolution, in one place:** `Maker::Project#stacking?` answers
+  `stack_versions.nil? ? user.stack_versions : stack_versions`. (Not `#stack_versions?`: that is
+  ActiveRecord's own query method for the column, and it reads nil as false.) The layout
   (`Maker::Project#panel_layout`) is handed that answer, and `Maker::ProjectKind::Layout#stacked?(key)`
   — which every caller already asks — becomes `ProjectKind.stacks?(key) && <that answer>`, so no
   panel reads either column itself. `ProjectKind.stacks?(key)` (which panels can stack at all) still
   gates it.
 
+### The Library and Search follow it too
+
+Decided with the owner (2026-11-24, after this spec was approved): the Library's Files page and
+Search lose their own "Stack versions and backups" checkbox (the `files_stacks` cookie,
+`StackSwitch`) and read `current_user.stack_versions` — one setting outside projects. A `?stacks=`
+param is inert and the old cookie is never read again.
+
 ### What goes
 
 - The per-panel switch, `projects/_stack_switch`, and its renders in `_folder_panel` and
   `_attachments`, along with its "N files in M entries" note.
+- The Files page's and Search's checkboxes, `app/controllers/concerns/stack_switch.rb`, and the
+  `.stack-switch` rules in `components.css`.
 - `Projects::PanelsController#update_stack` and its route params.
 - `panels["unstacked"]`: `Maker::ProjectKind::Layout#unstacked` and its parsing, and
   `PanelsController`'s carry-forward of it. A stored `unstacked` key in an existing row is ignored and
