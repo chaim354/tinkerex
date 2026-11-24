@@ -322,6 +322,14 @@
   "Showing X of Y files" with a link to the folder. Collapse it back to one name-ordered `LIMIT`
   and both halves go silently wrong together, since a heading counted from the loaded rows agrees
   with the tiles it under-counts.
+  **A FOLDER THAT DRAWS NO TILES TAKES NONE OF THE CAP (2026-11-23).** A panel in the browser view,
+  a hidden one, a nested repository: each took its share while drawing nothing, and the live
+  `pc case` cut a tiles panel to 160 of 173 while 105 went to two browsed panels.
+  `ProjectsController#show` names them with `#untiled!` BEFORE the rows load (the listing loads on
+  first read, and refuses a late call), and they split a SECOND `FILE_CAP` of their own — they still
+  load, because Photos, a repository's card and a README's links read them. Read the layout's
+  folders off the walk (`panel_folders`, `panel_folder_names`, `repos_beneath`), never `tree`, above
+  that call.
 
 - **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
   refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns

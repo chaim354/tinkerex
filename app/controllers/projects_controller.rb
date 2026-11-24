@@ -175,8 +175,9 @@ class ProjectsController < ApplicationController
     # A BLOCK'S LABEL IS WHAT IT IS PLUS WHAT IT SAYS (content blocks): the strip has no folder name
     # and no fixed label to fall back on, and "Text block" alone on eight of them names none of
     # them. The heading, where there is one, is the only thing that tells two apart at a glance.
+    # Off the walk, never `tree`: no row may load before #untiled_dir_ids below has been declared.
     @panel_labels = Maker::Project::PANEL_LABELS.merge(
-      @listing.tree.to_h { |dir| [ Maker::ProjectKind.folder_key(dir.node_id), dir.name ] }
+      @listing.panel_folder_names.to_h { |id, name| [ Maker::ProjectKind.folder_key(id), name ] }
     ).merge(@blocks.to_h { |b| [ b.layout_key, helpers.block_label(b) ] })
 
     # EDIT MODE (2026-09-09, the page editor; spec §5). `editing` arrives only as the DEFAULT of the
@@ -215,7 +216,14 @@ class ProjectsController < ApplicationController
     # union below subtracts the SAME Dirs, so the row and the union cannot disagree about which
     # folders this render paints (F-S15-1). The row's ids join the page's one ThumbnailMap and its
     # one addon-origin lookup below, so each stays one call.
-    no_tiles = dirs_without_tiles
+    #
+    # THE SAME FOLDERS ARE DECLARED TO THE LISTING FIRST, BEFORE ANY OF ITS ROWS LOAD (2026-11-23):
+    # they stop taking a share of the 300 tiles, which the live `pc case` lost 105 of to two browsed
+    # panels while a tiles panel beside them showed 160 of its 173 files. Everything above this line
+    # reads the listing's walk only, never its rows (#untiled! refuses a late call).
+    untiled = untiled_dir_ids
+    @listing.untiled!(untiled)
+    no_tiles = dirs_without_tiles(untiled)
     @recent_files = @listing.recent_files(skip: no_tiles)
 
     # A FILE DELETED FROM THE LIBRARY LEAVES THE PROJECT, IMMEDIATELY. It used to sit here forever
@@ -750,15 +758,26 @@ class ProjectsController < ApplicationController
   #   * every repository nested inside any other panel, which is always a closed browser section
   #     (projects/_file_tree_section).
   # THE PANEL'S VIEW DECIDES, NEVER `repo?` ALONE (slice 6 review): a plain folder in the browser
-  # draws no tiles, and a repository in tiles or list draws its own. Asked of Dirs rather than file
-  # ids so the recent query can subtract them before its LIMIT; the union reads their
-  # Dir#subtree_file_ids. In memory over the listing's tree; no query.
-  def dirs_without_tiles
-    @listing.tree.flat_map do |dir|
-      key = Maker::ProjectKind.folder_key(dir.node_id)
+  # draws no tiles, and a repository in tiles or list draws its own.
+  #
+  # DECIDED ONCE, AS NODE IDS OFF THE LISTING'S WALK (2026-11-23), because the listing needs the
+  # answer before its rows load (Maker::ProjectFolderListing#untiled!) and the rest of the page needs
+  # it as Dirs after: #dirs_without_tiles looks the same ids up in the loaded tree, so the budget,
+  # the recent row and the thumbnail union cannot disagree. In memory; no query.
+  def untiled_dir_ids
+    @listing.panel_folder_names.keys.flat_map do |id|
+      key = Maker::ProjectKind.folder_key(id)
       dropped = (!@editing && !@panel_layout.visible?(key)) || @panel_layout.view_for(key) == "browser"
-      dropped ? [ dir ] : collect_repo_dirs(dir.children)
+      dropped ? [ id ] : @listing.repos_beneath(id)
     end
+  end
+
+  # The Dirs #untiled_dir_ids named, from the loaded tree. Asked of Dirs rather than file ids so the
+  # recent query can subtract them before its LIMIT; the union reads their Dir#subtree_file_ids.
+  def dirs_without_tiles(ids)
+    wanted = ids.to_set
+    walk = ->(dirs) { dirs.flat_map { |d| (wanted.include?(d.node_id) ? [ d ] : []) + walk.(d.children) } }
+    walk.(@listing.tree)
   end
 
   # THE PANEL A VIEW BUTTON ON THE PAGE JUST SWITCHED, or nil for the whole page (2026-11-16, the

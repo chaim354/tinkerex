@@ -346,6 +346,61 @@ module Maker
       assert listing.truncated?
     end
 
+    # THE LIVE CASE (2026-11-23): `pc case`'s `out` panel showed 160 of its 173 files while its two
+    # browsed panels, which draw no tiles, took 105 of the 300. An untiled folder takes nothing from
+    # the tiles' cap and still loads its own rows from a second one.
+    test "an untiled folder takes nothing from the tiles' cap and loads from a pot of its own" do
+      _projects, desk_lamp = desk_lamp_folder
+      cad = dir("dir-cad", "cad", desk_lamp.node_id)
+      out = dir("dir-out", "out", desk_lamp.node_id)
+      bulk_files("cad", 5, "c%d.step", cad)
+      bulk_files("out", 10, "o%02d.stl", out)
+
+      project = project_with_folder(desk_lamp.node_id)
+      shared = Maker::ProjectFolderListing.new(@user, project, file_cap: 8)
+      assert_equal [ 4, 4 ], shared.tree.map { |d| d.files.size }, "the page's old answer: one cap, split"
+
+      listing = Maker::ProjectFolderListing.new(@user, project, file_cap: 8)
+      listing.untiled!([ cad.node_id ])
+      panels = listing.tree.index_by(&:name)
+
+      assert_equal [ 8, 2 ], [ panels["out"].files.size, panels["out"].hidden_count ], "the tiles get the whole cap"
+      assert_equal [ 5, 0 ], [ panels["cad"].files.size, panels["cad"].hidden_count ],
+                   "the untiled folder's rows still load (Photos, a card's README read them)"
+      assert listing.truncated?
+    end
+
+    test "a repository nested in a tiled folder is untiled on its own, and the folder around it keeps the cap" do
+      _projects, desk_lamp = desk_lamp_folder
+      out = dir("dir-out", "out", desk_lamp.node_id)
+      lib = dir("dir-lib", "lib", out.node_id)
+      dir("dir-lib-git", Library::RepoMetadata::DIR_NAME, lib.node_id)
+      bulk_files("out", 10, "o%02d.stl", out)
+      bulk_files("lib", 6, "l%d.c", lib)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id), file_cap: 8)
+      assert_equal [ lib.node_id ], listing.repos_beneath(out.node_id), "asked of the walk, before any row loads"
+      listing.untiled!(listing.repos_beneath(out.node_id))
+      panel = listing.tree.first
+
+      assert_equal 8, panel.files.size
+      assert_equal 6, panel.children.first.files.size
+    end
+
+    test "untiled! comes before the rows load, and the panels can be named without loading them" do
+      _projects, desk_lamp = desk_lamp_folder
+      cad = dir("dir-cad", "cad", desk_lamp.node_id)
+      file("f-c", "c.step", cad.node_id)
+
+      listing = Maker::ProjectFolderListing.new(@user, project_with_folder(desk_lamp.node_id))
+      assert_equal [ cad.node_id ], listing.panel_folders.map(&:first)
+      assert_equal({ cad.node_id => "cad" }, listing.panel_folder_names)
+      listing.untiled!([ cad.node_id ])
+      assert_equal [ "c.step" ], names_of(listing.tree.first.files)
+
+      assert_raises(ArgumentError, "a listing someone already read cannot change") { listing.untiled!([ cad.node_id ]) }
+    end
+
     test "a cut listing costs the same queries however many folders the cap cuts" do
       queries = [ 2, 12 ].map do |folders|
         root = dir("dir-root-#{folders}", "lamp-#{folders}", nil)
@@ -355,7 +410,8 @@ module Maker
         end
         project = project_with_folder(root.node_id, name: "Lamp #{folders}")
         listing = nil
-        count = count_queries { listing = Maker::ProjectFolderListing.new(@user, project, file_cap: 20) }
+        # The rows load on the first read, so the read is counted too.
+        count = count_queries { (listing = Maker::ProjectFolderListing.new(@user, project, file_cap: 20)).tree }
         assert listing.tree.all? { |d| d.hidden_count.positive? }, "every folder is cut at #{folders}"
         count
       end
