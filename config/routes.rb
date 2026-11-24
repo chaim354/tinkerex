@@ -480,8 +480,9 @@ root to: "home#index"
   # --- The settings hub (stage 2, S2-6): one door onto the reference pages above, the account page
   # and the theme. `resource` (singular) so the URL is /settings with no id; the controller name is
   # explicit because Rails would otherwise pluralize it. Tags get their settings list here, beside
-  # the public page a tag already has at /tags/:name. ---
-  resource :settings, only: :show, controller: "settings"
+  # the public page a tag already has at /tags/:name. `update` (2026-11-24) is the hub's one write,
+  # the account's version-stack default (SettingsController#update). ---
+  resource :settings, only: %i[show update], controller: "settings"
   namespace :settings do
     resources :tags, only: %i[index destroy]
     # THE SHELVES (2026-10-20): the folders the intake sweep files into inside each project, one

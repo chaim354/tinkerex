@@ -695,6 +695,32 @@ module Web
       assert_select "form.project-form select[name='project[kind]'] option[selected=selected][value=other]"
     end
 
+    # VERSION STACKS PER PROJECT (2026-11-24): three answers, the first following the account's
+    # default and saying what it is. ASSERTED ON THE RENDERED FIELD NAME (§14d), then posted under it.
+    test "the edit page sets the project's version stacks, defaulting to the account's" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Lamp")
+      get edit_project_path(project)
+      assert_select "form.project-form select[name=?]", "project[stack_versions]" do
+        assert_select "option[value='']", text: "Use my default (On)"
+        assert_select "option[value='true']", text: "On"
+        assert_select "option[value='false']", text: "Off"
+        assert_select "option[selected]", text: "Use my default (On)"
+      end
+
+      patch project_path(project), params: { project: { name: "Lamp", stack_versions: "false" } }
+      assert_equal false, project.reload.stack_versions
+      get edit_project_path(project)
+      assert_select "select[name='project[stack_versions]'] option[selected]", text: "Off"
+
+      patch project_path(project), params: { project: { name: "Lamp", stack_versions: "" } }
+      assert_nil project.reload.stack_versions, "blank goes back to following the default"
+
+      user.update!(stack_versions: false)
+      get edit_project_path(project)
+      assert_select "select[name='project[stack_versions]'] option[value='']", text: "Use my default (Off)"
+    end
+
     test "saving the type changes the page's panels" do
       user = sign_in
       project = user.maker_projects.create!(name: "Desk Lamp")

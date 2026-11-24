@@ -711,8 +711,9 @@ class ProjectsController < ApplicationController
 
   # VERSION STACKS ON THIS PAGE (Shop manual spec §9): ONE Maker::VersionStacks result over every
   # file a STACKING panel draws as a tile or a row, and one query for it (the pull-outs; the rows are
-  # the listing's own). A panel stacks unless its switch is off (Layout#stacked?); a panel that
-  # draws no tiles (#dirs_without_tiles) gives nothing. Every folder beneath a stacking panel goes
+  # the listing's own). A panel stacks when the project does (Layout#stacked?, which asks
+  # Maker::Project#stacking?: the project's own choice on its Edit page, else the owner's default in
+  # Settings); a panel that draws no tiles (#dirs_without_tiles) gives nothing. Every folder beneath a stacking panel goes
   # in, opened or not, so a folder opened with `?at=` finds its stacks already made. Because only
   # stacking panels' files go in, a partial can ask `@stacks` about any row and get "not stacked"
   # for every other panel's.
@@ -721,9 +722,6 @@ class ProjectsController < ApplicationController
   # panel's Backups group wherever it sits; in a stacking panel a backup of a file beside it is a
   # member of that file's stack instead (the screens' "hex tiles · 1 backup"), drawn there and not in
   # Backups. One that stacks with nothing stays in Backups. @stacked_backups says which, per folder.
-  #
-  # @stack_counts is each stacking panel's "N files in M figures": its files, backups in its stacks
-  # included, and the figures they make. In memory over the tree the listing already built.
   def load_version_stacks(no_tiles)
     skipped = no_tiles.flat_map(&:subtree_dir_ids).to_set
     owner = {}
@@ -739,10 +737,6 @@ class ProjectsController < ApplicationController
     @stacks = Maker::VersionStacks.for_records(current_user, rows.map(&:node))
     @stacked_backups = @listing.backups.select { |row| @stacks.stacked?(row.node_id) }
                                .group_by { |row| row.node.parent_node_id }
-    @stack_counts = Hash.new { |h, k| h[k] = [ 0, 0 ] }
-    rows.each { |row| @stack_counts[owner[row.node.parent_node_id]][0] += 1 if !row.backup? || @stacks.stacked?(row.node_id) }
-    @stacks.stacks.each { |stack| @stack_counts[owner[stack.parent_node_id]][1] += stack.size - 1 }
-    @stack_counts.transform_values! { |files, folded| [ files, files - folded ] }
   end
 
   # A folder panel's dir and every dir beneath it — each one a folder the panel can open (`?at=`)
@@ -909,8 +903,12 @@ class ProjectsController < ApplicationController
 
   def project_params
     attrs = params.require(:project).permit(:name, :description, :status, :cover_node_id, :tag_list,
-                                            :visibility, :license, :autofile, :kind)
+                                            :visibility, :license, :autofile, :kind, :stack_versions)
     attrs[:cover_node_id] = nil if params[:project][:cover_clear] == "1"
+    # "USE MY DEFAULT" IS BLANK AND MUST STORE NULL, never false (projects/_form, 2026-11-24): NULL is
+    # what makes the project follow its owner's Settings (Maker::Project#stacking?). ActiveRecord
+    # casts "" to nil for a boolean already; this says so rather than relying on it silently.
+    attrs[:stack_versions] = attrs[:stack_versions].presence if attrs.key?(:stack_versions)
     # ARCHIVING IS A BUTTON, NOT A FORM VALUE (stage 4, S4-6). The form's own select never offers
     # `archived`, and #destroy is the door that archives, with the sentence that says what that
     # did; a hand-posted value would archive from the edit form and say only "saved". (The stamp is

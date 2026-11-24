@@ -163,11 +163,11 @@
   .attachment-tile { position: relative; display: flex; flex-direction: column; gap: 4px; }
   .attachment-tile .thumb { width: 100%; height: 96px; }
   .attachment-tile .grid-name { font-size: 12px; }
-  /* --- VERSION STACKS IN A PANEL (2026-11-19). The switch sits under the panel's head with the
-     panel's own count; a stack card is the `.stack` component on a button the size of a tile; its
-     opened panel spans the grid and holds the members as tiles of their own, each with its role and
-     Pull out. In a list a stack is one row whose name opens its members, indented beneath it. --- */
-  .stack-panel-switch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-1) var(--space-3); margin: 0 0 var(--space-3); }
+  /* --- VERSION STACKS IN A PANEL (2026-11-19). A stack card is the `.stack` component on a button
+     the size of a tile; its opened panel spans the grid and holds the members as tiles of their own,
+     each with its role and Pull out. In a list a stack is one row whose name opens its members,
+     indented beneath it. Whether a panel stacks is the project's setting (Maker::Project#stacking?),
+     not a switch on the panel. --- */
   .attachment-tile .stack-toggle { width: 100%; }
   .attachment-tile .stack-toggle .grid-sub { font-size: 11px; overflow-wrap: anywhere; }
   .attachment-tile .stack-role { display: block; margin-top: 2px; }

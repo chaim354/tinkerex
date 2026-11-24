@@ -93,10 +93,6 @@
     </div>
   </div>
   <%= panel_intro(@panel_layout, "attachments") %>
-  <%# VERSION STACKS, THIS PANEL'S OWN SWITCH (spec §9): it stacks Loose, the folder's own root files. %>
-  <% if @listing.loose.size > 1 %>
-    <%= render "projects/stack_switch", key: "attachments", label: "Files" %>
-  <% end %>
 
   <%#
     THE FOLDER IS IN THE TRASH, AND THE PAGE SAYS SO (stage 4, S4-6; decision 2). Deleting a

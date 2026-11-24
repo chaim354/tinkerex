@@ -38,11 +38,15 @@ module Web
 
     test "a view toggle writes that panel's view, keeps the others, and lands on the panel" do
       models, firmware = seed_folders!
+      # THE RETIRED PER-PANEL STACK SWITCH (2026-11-24): a row still holding its key loses it on this
+      # write, so Maker::ProjectKind's "dropped on the next layout write" holds for a toggle as well.
+      @project.update!(panels: { "unstacked" => [ models ] })
 
       patch project_panels_path(@project), params: { view: { models => "list" } }
 
       assert_redirected_to project_path(@project, anchor: models)
       assert_equal({ models => "list" }, @project.reload.panels["views"])
+      assert_not @project.panels.key?("unstacked"), "a view switch kept the retired stack switch's key"
 
       get project_path(@project)
       assert_select "section.folder-panel[id=?] table.project-files td.col-name", models, text: "base.stl"

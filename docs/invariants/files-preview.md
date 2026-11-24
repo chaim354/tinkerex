@@ -1057,7 +1057,7 @@ part into one figure; its header holds the rule and `version_stacks_test.rb` pin
 names. The Library's rows and tiles, a project's Files and folder panels, and Search's Files group
 draw it. Six things not to undo:
 
-- **Nothing is stored but a pull-out.** A stack is recomputed from `nodes` on every read, so a rename
+- **Nothing about a stack is stored but a pull-out.** A stack is recomputed from `nodes` on every read, so a rename
   regroups at once and `nodes` gains no column; `Maker::StackExclusion` is keyed by `node_id` so a
   pulled-out file stays out through a move (§14b). Never cache a stack on a row.
 - **A paged folder pages FIGURES.** `FilesController#index` groups the WHOLE folder (`in_folder`, two
@@ -1074,11 +1074,16 @@ draw it. Six things not to undo:
   a link and never a selection item: its members are drawn, hidden, beside it, each the row or card a
   file standing alone would be, so Details, the file menu, the poll and the row actions keep working
   on them. Don't make the stack itself selectable: it is not a file.
-- **The switch is a cookie in the Library and Search, and a project row's map on the project page.**
-  `StackSwitch#resolve_stacks` reads `files_stacks` (`?stacks=0|1` sets it), `resolve_hidden`'s idiom
-  and reason. A panel's switch is `panels["unstacked"]`, OFF-ONLY so a new panel stacks, written by
-  `Projects::PanelsController#update_stack` and carried through the editor's Save, which writes the
-  column whole and would otherwise turn every panel's stacks back on.
+- **Whether a listing stacks is a SETTING, never a switch on the page (2026-11-24).** The account's
+  default is `users.stack_versions` (NOT NULL, default true, so no account-creation door sets it),
+  written by Settings (`SettingsController#update`) and read directly by the Library and Search. A
+  project's own choice is `maker_projects.stack_versions`, NULLABLE: NULL follows the account, and the
+  Edit page's "Use my default" posts blank to mean it. `Maker::Project#stacking?` resolves the two —
+  never `stack_versions?`, ActiveRecord's query method, which reads NULL as false — and a panel asks
+  only `Layout#stacked?`, so no panel reads either column. The per-panel switch, its key in `panels`
+  and the Library's and Search's checkbox and cookie are gone: a stored per-panel key is ignored and
+  dropped by the next layout write (the view toggle and the editor's Save alike), and `?stacks=` is
+  inert. A switch back on one page is two answers to one question again.
 - **A backup that stacks leaves the Backups group.** The project page diverts LightBurn and MillMage
   rescue copies into the Files panel's Backups group; in a stacking panel a backup that stacks with
   a file beside it is drawn in that stack instead, and one that stacks with nothing stays in Backups

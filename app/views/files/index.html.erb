@@ -152,22 +152,6 @@
       <%= link_to "Show dot-files", files_path(files_query_base.merge(hidden: "1")), class: "chip" %>
     <% end %>
   </p>
-  <%# STACK VERSIONS AND BACKUPS (2026-11-19). A checkbox in a GET form, remembered in a cookie like
-      the dot-file switch (FilesController#resolve_stacks), so it holds across folders and on Search.
-      The hidden 0 before the box is what an unticked box sends: a box sends nothing when unticked,
-      and nothing is "keep what you had". It submits on change, the house's spelling for a control
-      with no button (the sort below). `files_query_base` rides along so the folder, the filter and
-      the selection stay. %>
-  <form method="get" action="<%= files_path %>" class="stack-switch">
-    <% files_query_base.each do |k, v| %>
-      <input type="hidden" name="<%= k %>" value="<%= v %>">
-    <% end %>
-    <input type="hidden" name="stacks" value="0">
-    <label class="muted">
-      <input type="checkbox" name="stacks" value="1" <%= "checked" if @stacking %> onchange="this.form.requestSubmit()">
-      Stack versions and backups
-    </label>
-  </form>
   <span class="toolbar-spacer"></span>
   <%# THE COUNT, AND THE STACKS IT MAKES WHEN STACKING FOLDS ANY ("60 items in 44 entries").
       @item_count and @figure_count are FilesController#index's: a paged folder counts them in SQL. %>

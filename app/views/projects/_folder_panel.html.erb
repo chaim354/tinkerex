@@ -77,10 +77,6 @@
     </div>
   </div>
   <%= panel_intro(@panel_layout, key) %>
-  <%# VERSION STACKS, THIS PANEL'S OWN SWITCH (spec §9): not in the browser, which lists every file. %>
-  <% if count > 1 && view != "browser" %>
-    <%= render "projects/stack_switch", key: key, label: dir.name %>
-  <% end %>
 
   <% if empty %>
     <%# QUIET, NOT OMITTED (S4-1's quiet-panel rule). The maker put this folder in the layout — it

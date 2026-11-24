@@ -195,9 +195,10 @@ module ProjectsHelper
   # WHAT A PANEL'S GROUP DRAWS, IN ORDER: each Row that stands alone, and a StackFigure where a
   # stack's first member stood (Maker::VersionStacks::Result#collapse over ProjectsController#show's
   # @stacks). `folder_id` names the folder these rows sit in, so the backups that stack with them
-  # (@stacked_backups) join them here rather than in the Files panel's Backups group. A panel whose
-  # switch is off has no stacks in @stacks, so its rows come back as they went in. A stack missing a
-  # member's row (it cannot, the rows are what was grouped) is drawn as the rows it has.
+  # (@stacked_backups) join them here rather than in the Files panel's Backups group. A project whose
+  # stacks are off (Maker::Project#stacking?) has none in @stacks, so its rows come back as they went
+  # in. A stack missing a member's row (it cannot, the rows are what was grouped) is drawn as the rows
+  # it has.
   def stack_figures(rows, folder_id: nil)
     all = rows + Array(@stacked_backups&.fetch(folder_id, nil))
     return all if @stacks.nil? || @stacks.stacks.empty?

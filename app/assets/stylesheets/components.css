@@ -430,8 +430,9 @@
      that is not), its name is bold and a `.badge` carries the count. The card, or a list row's name,
      is a BUTTON, since it opens its members in place rather than going anywhere, drawn as the link it
      stands in for. An opened stack spans its grid on --raised and holds the members as the cards they
-     would be alone, each with its role ("latest", "older") and Pull out. The SWITCH, "Stack versions
-     and backups", is a plain checkbox and its words, submitting on change. --- */
+     would be alone, each with its role ("latest", "older") and Pull out. There is no switch on the
+     page (2026-11-24): whether a listing stacks is a setting, the account's on Settings and a
+     project's own on its Edit page. --- */
   .stack { position: relative; }
   .stack > .thumb {
     border-color: var(--line-strong);
@@ -455,9 +456,6 @@
   .stack-open-head h3 { margin: 0; font-size: 15px; overflow-wrap: anywhere; }
   .stack-open-head .stack-facts { overflow-wrap: anywhere; }
   .stack-open-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); }
-  .stack-switch { margin: 0; }
-  .stack-switch label, label.stack-switch { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
-  .stack-switch input[type="checkbox"] { margin: 0; accent-color: var(--accent); }
 
   /* --- Metadata strip, badges, empty state --- */
   dl.meta {
