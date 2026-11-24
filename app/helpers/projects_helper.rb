@@ -162,26 +162,29 @@ module ProjectsHelper
     ""
   end
 
-  # ONE SECTION OF A FOLDER PANEL (2026-11-23): a folder beneath the panel's own, and `trail`, the
-  # names of the folders between the two — what its heading prints before its own name.
-  FolderSection = Data.define(:dir, :trail)
+  # A FOLDER PANEL'S TURBO FRAME (2026-11-24, click-through panels). Not the layout key itself: the
+  # section inside keeps that id, because anchors land on it and the tests and the editor name it.
+  # ProjectsController#frame_panel_key matches a frame request's id against this, and
+  # #switched_panel_streams replaces a folder panel by it.
+  #
+  # A PLAIN CSS IDENTIFIER, NEVER THE KEY'S OWN SPELLING: `folder:<id>` carries a colon, and Turbo
+  # (turbo-rails 2.0.23, FrameController#visitCachedSnapshot) finds a frame in the snapshot it caches
+  # for Back with an UNESCAPED `querySelector("#" + id)`, where a colon reads as a pseudo-class. The
+  # lookup throws, the snapshot keeps the folder the visit left, and Back shows the wrong one —
+  # found by project_panel_navigation_test.rb, not by any request test.
+  def panel_frame_id(key) = "frame-#{key.to_s.gsub(/[^A-Za-z0-9_-]/, '-')}"
 
-  # A FOLDER PANEL'S SUBFOLDERS, FLAT, IN DISK ORDER (2026-11-23, the owner's report: "organized non
-  # intuitively and the arrows are hard to follow"). Every folder used to nest one indent inside its
-  # parent, each with its own disclosure arrow, so the live `pc case`'s `out` panel stacked four
-  # levels of arrows and printed "svg (0)" over a folder whose files sat one level further in. Now
-  # each folder that HOLDS something is one section at the panel's own level, headed by its path
-  # beneath the panel ("itx / four-piece / stl") — the public page's rule (Maker::PublicProject
-  # #folder_sections). A folder holding only folders has no section: its name is in theirs. An
-  # empty leaf keeps one, so a folder on disk is never missing from its panel. A repository is one
-  # section whatever it holds, closed over its browser, and nothing beneath it is listed again.
-  def folder_sections(dir, trail = [])
-    dir.children.flat_map do |child|
-      holds = child.repo? || child.files.any? || child.hidden_count.positive? || child.children.empty?
-      own = holds ? [ FolderSection.new(dir: child, trail:) ] : []
-      child.repo? ? own : own + folder_sections(child, trail + [ child.name ])
-    end
+  # THE `at` A LINK CARRIES (2026-11-24): every panel's open folder as this render has it
+  # (@panel_at, ProjectsController#show), with one panel moved to `node_id` — or back to its own
+  # folder, which is no entry at all. nil when nothing is open, so the link is the bare page.
+  def panel_at(panel_id, node_id)
+    at = (@panel_at || {}).merge(panel_id => node_id)
+    at.reject { |pid, id| id.nil? || id == pid }.presence
   end
+
+  # WHAT A FOLDER LINK IN A PANEL CARRIES: it opts INTO the panel's frame (which is `_top` for every
+  # other link inside it) and advances the URL, so Back steps out of the folder.
+  def panel_folder_link_data(key) = { turbo_frame: panel_frame_id(key), turbo_action: "advance" }
 
   # ONE VERSION STACK AMONG A PANEL'S FIGURES (2026-11-19): the stack and its members' rows,
   # latest first, so a tile or a list row can draw the latest and open onto the rest.

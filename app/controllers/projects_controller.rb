@@ -175,7 +175,7 @@ class ProjectsController < ApplicationController
     # A BLOCK'S LABEL IS WHAT IT IS PLUS WHAT IT SAYS (content blocks): the strip has no folder name
     # and no fixed label to fall back on, and "Text block" alone on eight of them names none of
     # them. The heading, where there is one, is the only thing that tells two apart at a glance.
-    # Off the walk, never `tree`: no row may load before #untiled_dir_ids below has been declared.
+    # Off the walk, never `tree`: no row may load before #shown! below has been called.
     @panel_labels = Maker::Project::PANEL_LABELS.merge(
       @listing.panel_folder_names.to_h { |id, name| [ Maker::ProjectKind.folder_key(id), name ] }
     ).merge(@blocks.to_h { |b| [ b.layout_key, helpers.block_label(b) ] })
@@ -208,21 +208,26 @@ class ProjectsController < ApplicationController
     # the editor's own `panel` above it, because projects/_view_toggle reads it.
     @switched_panel = switched_panel
 
+    # EACH PANEL'S OPEN FOLDER (2026-11-24, click-through panels): `?at[<panel id>]=<node id>`,
+    # placed off the listing's walk before any row loads (#panel_paths). Then the folders ON SCREEN
+    # are declared to the listing (#shown!) — each Tiles or List panel's open folder — so only their
+    # own files share the 300 tiles, which the live `pc case` once lost 105 of to two browsed panels
+    # while a tiles panel beside them showed 160 of its 173 files. Everything above this line reads
+    # the listing's walk only, never its rows (#shown! refuses a late call).
+    @panel_paths = panel_paths
+    @panel_at = @panel_paths.transform_values(&:last)
+    untiled = untiled_panel_ids
+    @shown_dir_ids = (@listing.panel_folder_names.keys - untiled).map { |id| @panel_paths.fetch(id, [ id ]).last }
+    @listing.shown!(@shown_dir_ids)
+
     # THE FILES PANEL'S "RECENTLY CHANGED" ROW (structural redesign §6, slice 6): the 8 newest files
     # under the folder, ONE query, and [] with no query when the folder is unavailable. AFTER THE
-    # LAYOUT AND THE EDIT FLAG, because it leaves out the subfolders this render draws no file cells
-    # for (#dirs_without_tiles): a panel the maker hid takes its files off the page with it, and a
-    # browsed folder's files must not come back as tiles here. `no_tiles` IS KEPT: the thumbnail
-    # union below subtracts the SAME Dirs, so the row and the union cannot disagree about which
-    # folders this render paints (F-S15-1). The row's ids join the page's one ThumbnailMap and its
+    # LAYOUT AND THE EDIT FLAG, because it leaves out the panels this render draws no file cells for
+    # (#dirs_without_tiles): a panel the maker hid takes its files off the page with it, and a
+    # browsed folder's files must not come back as tiles here. Decided per PANEL, never per open
+    # folder: a file in a subfolder nobody opened is still one of its panel's files (spec §1). The
+    # version stacks read the same Dirs, and the row's ids join the page's one ThumbnailMap and its
     # one addon-origin lookup below, so each stays one call.
-    #
-    # THE SAME FOLDERS ARE DECLARED TO THE LISTING FIRST, BEFORE ANY OF ITS ROWS LOAD (2026-11-23):
-    # they stop taking a share of the 300 tiles, which the live `pc case` lost 105 of to two browsed
-    # panels while a tiles panel beside them showed 160 of its 173 files. Everything above this line
-    # reads the listing's walk only, never its rows (#untiled! refuses a late call).
-    untiled = untiled_dir_ids
-    @listing.untiled!(untiled)
     no_tiles = dirs_without_tiles(untiled)
     @recent_files = @listing.recent_files(skip: no_tiles)
 
@@ -308,10 +313,10 @@ class ProjectsController < ApplicationController
     @missing_attachment_count = missing.size
     # THE REPOSITORY CARD (stage 3, S3-2): one per repo Dir anywhere in the folder's tree — the
     # README rendered, the latest commit, the current tag, links to the commit/history pages.
-    # Keyed by node_id so `_file_tree_section.html.erb` (recursive, one call per Dir) can look its
-    # own card up without re-walking anything. `repo_dirs` collects the FULL Dir objects (not
-    # @listing.repos, which flattens away `#files`/`#children` — exactly what the card needs to
-    # find a README and resolve relative links).
+    # Keyed by node_id so a folder panel can look up the card of its own folder, or of the
+    # repository opened inside it (`?at=`), without re-walking anything. `repo_dirs` collects the
+    # FULL Dir objects (not @listing.repos, which flattens away `#files`/`#children` — exactly what
+    # the card needs to find a README and resolve relative links).
     #
     # ONE BATCHED QUERY FOR EVERY REPO ON THE PAGE, NEVER ONE PER REPO: Maker::RepoCard.for needs
     # the repo dir's own Node (LocalRepo.open dereferences its storage_path through the port), and
@@ -411,17 +416,20 @@ class ProjectsController < ApplicationController
     # from a page showing none of them). A painted id the union misses spins for its polls and ends
     # as a badge, and on chunk_remote it stays that way: nothing but a backfill creates a row there.
     #
-    # THE TILES: every file the listing holds, minus every file beneath `no_tiles`, the SAME Dirs the
-    # recent row skipped above. The union used to derive its own exclusion keyed on `repo?`, and it
-    # disagreed with the row in four reachable cases: it backfilled a hidden panel, a browsed plain
-    # folder and a repository nested in a tiles-view panel, none of which draws a tile, and it never
-    # backfilled an image inside a browsed repository, which Photos paints (project_page_test.rb pins
-    # all four). Backups need no exception: Dir#subtree_file_ids never holds one, and the Backups
-    # group draws them all. In memory over the tree the listing already built, so
-    # this costs no query and page_query_budget_test.rb stays flat.
+    # THE TILES ARE WHAT IS ON SCREEN (2026-11-24, click-through panels): the Files panel's loose
+    # files, each shown folder's OWN files, and the backups drawn beside either — the Backups group's,
+    # and a stacked backup where its stack is drawn. A file in a folder nobody opened draws no tile,
+    # so it is not backfilled; Photos below still paints images at any depth through its own term,
+    # and the recent row through its own (project_page_test.rb pins the cases). It used to be every
+    # listed file minus the panels that drew none, which backfilled a nested folder's files for
+    # tiles nobody saw. In memory over the tree the listing already built, so this costs no query
+    # and page_query_budget_test.rb stays flat.
     load_version_stacks(no_tiles)
-    untiled = no_tiles.flat_map(&:subtree_file_ids).to_set
-    tile_ids = @listing.node_ids.reject { |id| untiled.include?(id) }
+    on_screen = @shown_dir_ids.to_set.add(@listing.folder_id)
+    tile_ids = @listing.loose.map(&:node_id) +
+               @listing.backups.select { |row| !@stacks.stacked?(row.node_id) || on_screen.include?(row.node.parent_node_id) }
+                       .map(&:node_id) +
+               @shown_dir_ids.flat_map { |id| @listing.dir(id)&.files&.map(&:node_id) || [] }
     # PHOTOS (stage 4, S4-1): the public page's own definition, on the maker's page too, and ITS OWN
     # TERM IN THE UNION, which is why it is computed here, above it. The panel is always shown
     # (Maker::ProjectKind::ALWAYS) and paints every image in the folder at any depth, a hidden
@@ -453,8 +461,8 @@ class ProjectsController < ApplicationController
       current_user, recent_ids + model_cover_ids + tile_ids + @photo_rows.map(&:node_id) + block_thumb_ids +
                     Array(@readme_source&.image_node_ids) + (@cover_node ? [ cover_id ] : [])
     )
-    # TILE_IDS ONLY, NOT THE PHOTO ROWS. Every tile this page can render — a folder section,
-    # Loose, Backups — carries `contextmenu->filemenu#open`; `_log_entry`'s photos and
+    # TILE_IDS ONLY, NOT THE PHOTO ROWS. Every tile this page can render — a folder panel's open
+    # folder, Loose, Backups — carries `contextmenu->filemenu#open`; `_log_entry`'s photos and
     # the Photos panel's cells are driven by the `thumbs` controller alone, with no menu to add an
     # entry to — so an origin resolved for one would be work nothing reads. That is why the photo
     # rows join the thumbnail union above and not this one.
@@ -514,12 +522,18 @@ class ProjectsController < ApplicationController
       # reads this, and computes it itself where nothing set it.
       @hidden_rows = Maker::ProjectHiddenRows.for(project: @project, layout: @panel_layout, sheets: @sheets)
     end
-    # `layout/panel` renders the one body and stops, and a view switch made on the page renders that
-    # panel's section as a stream (#switched_panel_streams); the whole page is the default render.
+    # `layout/panel` renders the one body and stops, a view switch made on the page renders that
+    # panel as a stream (#switched_panel_streams), and a folder tile or path-bar link answers its
+    # panel's frame alone; the whole page is the default render.
     if @panel_key
       render partial: "projects/panel_body", locals: { key: @panel_key, extra: {} }, layout: false
     elsif @switched_panel
       render turbo_stream: switched_panel_streams
+    elsif (@frame_key = frame_panel_key)
+      # ONE PANEL FOR ITS FRAME (2026-11-24): a folder tile or a path-bar link. A template, not a
+      # partial, so it renders in layouts/turbo_rails/frame — that layout's real <head> is what lets
+      # Turbo record the promoted visit, or Back shows the wrong folder (models/pane's lesson).
+      render :panel_frame
     end
   end
 
@@ -697,9 +711,11 @@ class ProjectsController < ApplicationController
 
   # VERSION STACKS ON THIS PAGE (Shop manual spec §9): ONE Maker::VersionStacks result over every
   # file a STACKING panel draws as a tile or a row, and one query for it (the pull-outs; the rows are
-  # the listing's own). A panel stacks unless its switch is off (Layout#stacked?); a panel or a
-  # nested repository that draws no tiles (#dirs_without_tiles) gives nothing. Because only stacking panels' files go in,
-  # a partial can ask `@stacks` about any row and get "not stacked" for every other panel's.
+  # the listing's own). A panel stacks unless its switch is off (Layout#stacked?); a panel that
+  # draws no tiles (#dirs_without_tiles) gives nothing. Every folder beneath a stacking panel goes
+  # in, opened or not, so a folder opened with `?at=` finds its stacks already made. Because only
+  # stacking panels' files go in, a partial can ask `@stacks` about any row and get "not stacked"
+  # for every other panel's.
   #
   # A BACKUP JOINS ITS STACK. The listing diverts a LightBurn or MillMage rescue copy into the Files
   # panel's Backups group wherever it sits; in a stacking panel a backup of a file beside it is a
@@ -729,8 +745,8 @@ class ProjectsController < ApplicationController
     @stack_counts.transform_values! { |files, folded| [ files, files - folded ] }
   end
 
-  # A folder panel's dir and every dir beneath it whose files draw as tiles: not a repository nested
-  # inside it (a closed browser section, #dirs_without_tiles).
+  # A folder panel's dir and every dir beneath it — each one a folder the panel can open (`?at=`)
+  # and draw as tiles — less any `skipped` (#dirs_without_tiles).
   def stacking_dirs(dir, skipped)
     [ dir.node_id ] + dir.children.reject { |child| skipped.include?(child.node_id) }.flat_map { |child| stacking_dirs(child, skipped) }
   end
@@ -744,36 +760,60 @@ class ProjectsController < ApplicationController
     dirs.flat_map { |d| (d.repo? ? [ d ] : []) + collect_repo_dirs(d.children) }
   end
 
-  # THE SUBFOLDERS THIS RENDER DRAWS NO FILE CELLS FOR (slice 6; ONE answer since F-S15-1): the Dirs
-  # whose whole subtree the recent row leaves out of its query AND the thumbnail union leaves out of
-  # its backfill. #show calls this once and hands the same Dirs to both. Three kinds:
-  #   * a depth-one folder panel the maker HID, which is absent from the page, files and all
+  # { panel folder id => [dir ids from the panel's own folder down to the open one] }, for each
+  # panel whose `at` names a folder beneath it in the walk (Maker::ProjectFolderListing#walk_path),
+  # and nothing else: a stale, foreign or hand-made id, a file, a dot-dir, a non-String all leave
+  # the panel at its own folder, never a 404 (spec §1). Off the walk, so it answers before the rows
+  # load. The editor arranges panels and opens none.
+  def panel_paths
+    raw = params[:at]
+    return {} if @editing || !raw.is_a?(ActionController::Parameters)
+
+    wanted = raw.to_unsafe_h
+    @listing.panel_folder_names.keys.each_with_object({}) do |panel_id, out|
+      target = wanted[panel_id]
+      path = target.is_a?(String) && @listing.walk_path(panel_id, target)
+      out[panel_id] = path if path && path.size > 1
+    end
+  end
+
+  # THE DEPTH-ONE PANELS THIS RENDER DRAWS NO FILE CELLS FOR (slice 6; ONE answer since F-S15-1),
+  # as node ids off the listing's walk, because #shown! needs them before the rows load. Two kinds:
+  #   * a folder panel the maker HID, which is absent from the page, files and all
   #     (project_page_test.rb). EXCEPT IN EDIT MODE: the editor's loop is `order`, and a hidden
   #     panel renders ghosted WITH its tiles (projects/_panel_slot), so on that render it is painted.
   #     That reading puts a ghost's files on the editor's recent row too, and it is the owner's to
   #     confirm (F-S15-1): dropping `!@editing &&` keeps the editor's row identical to the page's,
   #     at the price of the ghost's tiles never being backfilled.
-  #   * a depth-one panel in the BROWSER view, repository or plain folder: the Finder-style browser
-  #     replaces its tiles, its rows and its nested sections (projects/_folder_panel).
-  #   * every repository nested inside any other panel, which is always a closed browser section
-  #     (projects/_file_tree_section).
+  #   * a panel in the BROWSER view, repository or plain folder: the Finder-style browser replaces
+  #     its tiles and its rows (projects/_folder_panel).
   # THE PANEL'S VIEW DECIDES, NEVER `repo?` ALONE (slice 6 review): a plain folder in the browser
-  # draws no tiles, and a repository in tiles or list draws its own.
-  #
-  # DECIDED ONCE, AS NODE IDS OFF THE LISTING'S WALK (2026-11-23), because the listing needs the
-  # answer before its rows load (Maker::ProjectFolderListing#untiled!) and the rest of the page needs
-  # it as Dirs after: #dirs_without_tiles looks the same ids up in the loaded tree, so the budget,
-  # the recent row and the thumbnail union cannot disagree. In memory; no query.
-  def untiled_dir_ids
-    @listing.panel_folder_names.keys.flat_map do |id|
+  # draws no tiles, and a repository in tiles or list draws its own. DECIDED PER PANEL, NEVER PER
+  # OPEN FOLDER (2026-11-24): a repository nested in a tiles panel is a folder tile you open now,
+  # not a closed browser, and a subfolder nobody opened is still one of its panel's files — the
+  # recent row and the version stacks keep it (spec §1).
+  def untiled_panel_ids
+    @listing.panel_folder_names.keys.select do |id|
       key = Maker::ProjectKind.folder_key(id)
-      dropped = (!@editing && !@panel_layout.visible?(key)) || @panel_layout.view_for(key) == "browser"
-      dropped ? [ id ] : @listing.repos_beneath(id)
+      (!@editing && !@panel_layout.visible?(key)) || @panel_layout.view_for(key) == "browser"
     end
   end
 
-  # The Dirs #untiled_dir_ids named, from the loaded tree. Asked of Dirs rather than file ids so the
-  # recent query can subtract them before its LIMIT; the union reads their Dir#subtree_file_ids.
+  # THE PANEL A TURBO FRAME REQUEST NAMES (2026-11-24, click-through panels), or nil for the whole
+  # page: a visible folder panel, by its frame id (ProjectsHelper#panel_frame_id) — what a folder
+  # tile or a path-bar link asks for. Anything else gets the page, and the editor never gets one
+  # (its tiles open nothing). The key that reaches `render` is the layout's own element, never the
+  # header's string, for the reason #switched_panel gives — which is also why the header is matched
+  # against each panel's frame id rather than decoded back into a key.
+  def frame_panel_key
+    id = turbo_frame_request_id
+    return if @editing || id.blank?
+
+    @panel_layout.visible.find { |k| @panel_layout.folder?(k) && helpers.panel_frame_id(k) == id }
+  end
+
+  # The Dirs #untiled_panel_ids named, from the loaded tree. Asked of Dirs rather than file ids so
+  # the recent query can subtract them before its LIMIT, and the version stacks skip their subtrees.
   def dirs_without_tiles(ids)
     wanted = ids.to_set
     walk = ->(dirs) { dirs.flat_map { |d| (wanted.include?(d.node_id) ? [ d ] : []) + walk.(d.children) } }
@@ -791,7 +831,7 @@ class ProjectsController < ApplicationController
   #   * THE KEY IS ONE THIS PAGE CAN SWITCH: in the layout, visible, and offering views. Turbo sends
   #     that Accept header on EVERY form's redirect to this page, so `panel` alone decides, and a
   #     stream naming a section the page does not hold would change nothing with no error anywhere.
-  #     A hidden panel's files were never loaded either (#dirs_without_tiles).
+  #     A hidden panel draws no tiles either (#dirs_without_tiles).
   #   * NOT THE EDITOR, whose own `panel` means a draft's view and answers a bare body. That body
   #     must not come back with a button marked for focus (projects/_view_toggle reads this).
   #
@@ -806,10 +846,12 @@ class ProjectsController < ApplicationController
     key if key && Maker::ProjectKind.offered_views(key).any?
   end
 
-  # THE SECTION THAT WAS SWITCHED, replaced by its id, which is its layout key
-  # (projects/_folder_panel, projects/_attachments). Everything else in the document stays the
-  # element it was: another panel's browser keeps the folder it was in, an open section stays open,
-  # the window does not move.
+  # THE PANEL THAT WAS SWITCHED, replaced by id: the Files panel's section by its layout key
+  # (projects/_attachments), and a folder panel by its TURBO FRAME's (ProjectsHelper#panel_frame_id,
+  # 2026-11-24), because projects/_folder_panel renders the frame around its section and replacing
+  # the section alone would put a frame inside the frame. Everything else in the document stays the
+  # element it was: another panel's browser keeps the folder it was in, another panel's open folder
+  # stays open, the window does not move.
   #
   # THE FILES PANEL COMES TOO WHEN THE DOOR SAYS IT CHANGED (`files=1`,
   # Projects::PanelsController#in_place): its "Recently changed" row is built from
@@ -819,7 +861,10 @@ class ProjectsController < ApplicationController
   def switched_panel_streams
     keys = [ @switched_panel ]
     keys << "attachments" if params[:files] == "1" && @panel_layout.folder?(@switched_panel)
-    keys.map { |key| turbo_stream.replace(key, partial: "projects/panel_body", locals: { key: key, extra: {} }) }
+    keys.map do |key|
+      target = @panel_layout.folder?(key) ? helpers.panel_frame_id(key) : key
+      turbo_stream.replace(target, partial: "projects/panel_body", locals: { key: key, extra: {} })
+    end
   end
 
   # [[dir name, dir node_id, [tag names]]] for the release composer's picker (stage 3, S3-5), over

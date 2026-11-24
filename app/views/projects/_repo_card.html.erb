@@ -1,14 +1,13 @@
 <%#
   ONE REPOSITORY'S CARD (stage 3, S3-2): the README rendered, the latest commit, the current tag,
-  links to the commit and history pages. Rendered at the top of a repo section
-  (_file_tree_section.html.erb), before its files — Maker::RepoCard.for already computed
-  everything here from Maker::Git::LocalRepo and the port; this partial only lays it out.
+  links to the commit and history pages. Rendered at the top of a repository's folder panel, and
+  under the path bar when a repository is opened inside one (projects/_folder_panel, 2026-11-24),
+  before its files — Maker::RepoCard.for already computed everything here from
+  Maker::Git::LocalRepo and the port; this partial only lays it out.
 
-  Commits/History repeat links _file_tree_section's own summary line already carries (S3-1) —
-  deliberately: the summary line stays for when a maker scans the section headers alone, and the
-  card is a self-contained unit a page-searcher or a future public page (spec S3-4) can lift on
-  its own. Removing them from the summary was not asked for and would touch a test this task does
-  not own (project_attachments_test.rb's "a repository inside the folder…" pins them there).
+  Commits/History repeat links a repository panel's head already carries — deliberately: the head
+  stays for when a maker scans the panel headers alone, and the card is a self-contained unit a
+  page-searcher or the public page (spec S3-4) can lift on its own.
 
   THE ROOT CARD CARRIES NO README AND NO EDITOR SINCE 2026-11-05: the project's README is its own
   panel (projects/_readme), and ProjectsController#show builds the root card with `readme: false`.

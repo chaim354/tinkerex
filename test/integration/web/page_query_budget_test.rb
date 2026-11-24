@@ -213,11 +213,12 @@ module Web
           # STAGE 5, THE FOLDER PANELS (2026-09-08): A PLAIN DEPTH-ONE FOLDER PER ITERATION, AND IT
           # IS WHAT MAKES N THE NUMBER OF PANELS ON THIS PAGE. `sub` above carries a `.git` marker,
           # so every panel IT grows opens in the BROWSER — one empty div, no tiles, no rows, no
-          # nested section — and a per-folder query in projects/_folder_panel would grow with it
+          # nested folder — and a per-folder query in projects/_folder_panel would grow with it
           # while every branch below the panel head stayed unmeasured. This folder is plain: it
-          # opens in TILES, draws a cell per file through projects/_file_tile, and recurses into its
-          # own nested subfolder through projects/_file_tree_section. TWO FILES rather than one, so
-          # a per-tile lookup is a cost that differs from a per-panel one.
+          # opens in TILES, draws a cell per file through projects/_file_tile, and its nested
+          # subfolder `rev` as a folder tile (projects/_folder_tile, 2026-11-24) — the folder the
+          # opened render below walks into. TWO FILES rather than one, so a per-tile lookup is a
+          # cost that differs from a per-panel one.
           plain = @user.nodes.create!(node_id: "#{id}-plain", name: "plain-#{id}", kind: "dir",
                                       parent_node_id: folder.node_id, size: 0,
                                       mtime: 1_700_000_000_000_000_000)
@@ -296,6 +297,22 @@ module Web
       # projects/_file_tile, whose per-tile cost the groups above already grow. It is full (8) at
       # BOTH sizes, so this proves the row rendered, not that a per-tile read inside it would show.
       assert_select ".attachments-panel .recent-files .attachment-tile", 8
+
+      # ONE PANEL OPENED INTO A SUBFOLDER (2026-11-24, click-through panels; spec §1): `?at=` places
+      # the folder off the walk, draws a path bar and the opened folder's own tiles, and none of it
+      # may cost a query per panel, per folder or per file. Measured at two sizes like the page
+      # above, by growing the same seed again.
+      opened = project_path(project, at: { "s0-plain" => "s0-plain-sub" })
+      get opened
+      assert_response :success
+      assert_select "section.folder-panel[id=?] nav.folder-path .folder-path-here", "folder:s0-plain", text: "rev"
+      assert_select "section.folder-panel[id=?] .attachment-tile .grid-name", "folder:s0-plain", text: "s0-nested.stl"
+      before = count_queries { get opened }
+      add.call("m", 2)
+      get opened
+      after = count_queries { get opened }
+      assert_equal before, after,
+                   "projects#show with one panel opened issued #{before} queries and then #{after} — it grows with the data"
     ensure
       Maker::Addons::Source.reset!
     end

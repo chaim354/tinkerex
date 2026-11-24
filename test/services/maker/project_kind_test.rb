@@ -223,7 +223,7 @@ module Maker
 
       layout = Maker::ProjectKind.layout_for(kind: "other", overrides: { "order" => [ key(nested.node_id) ] },
                                              folders:)
-      refute_includes layout.order, key(nested.node_id), "a nested folder is a section inside its parent, never a panel"
+      refute_includes layout.order, key(nested.node_id), "a nested folder is a folder tile inside its parent, never a panel"
       assert_includes layout.order, key(models.node_id)
     end
 

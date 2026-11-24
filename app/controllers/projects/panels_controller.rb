@@ -192,8 +192,12 @@ module Projects
       # name one, and echoing an unvalidated key into the url is what this branch exists to refuse.
       return redirect_to(project_path(@project)) unless key
 
+      # THE OPEN FOLDERS RIDE ALONG (2026-11-24, click-through panels): a view switch keeps every
+      # panel where it was. Strings only; ProjectsController#panel_paths re-validates each against
+      # the walk, so a hand-made entry here opens nothing.
+      at = params[:at].is_a?(ActionController::Parameters) ? params[:at].to_unsafe_h.select { |_k, v| v.is_a?(String) } : {}
       # BEFORE THE WRITE, because #in_place asks which view the panel HAD.
-      back = project_path(@project, **in_place(key, view), anchor: key)
+      back = project_path(@project, **in_place(key, view), at: at.presence, anchor: key)
       @project.update!(panels: stored.merge("views" => stored_views.merge(key => view)))
       redirect_to back
     end

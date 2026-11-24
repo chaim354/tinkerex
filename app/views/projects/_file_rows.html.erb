@@ -1,7 +1,7 @@
 <%#
   A group's files as a table — the list view's rendering for exactly the rows _file_tile.html.erb
-  draws as tiles (Maker::ProjectFolderListing::Row), wherever they come from: a folder section,
-  Loose or Backups. `.table` is the shared component (components.css);
+  draws as tiles (Maker::ProjectFolderListing::Row), wherever they come from: a folder panel's open
+  folder, Loose or Backups. `.table` is the shared component (components.css);
   `.project-files` carries only this page's column widths/drops (pages/projects.css), the same
   split files/_list.html.erb's `table.files` makes.
 
@@ -27,12 +27,19 @@
 
   Optional local `notes` ({ node_id => sentence }) puts the tile's one-line note under the name here
   too.
+
+  Optional locals `folders` (Maker::ProjectFolderListing::Dir, the open folder's subfolders),
+  `panel_id` (the panel's own folder id) and `key` (its layout key): the LIST VIEW OF A
+  CLICK-THROUGH FOLDER PANEL (2026-11-24). Its subfolders come first, as rows you open — the same
+  link projects/_folder_tile draws, into the panel's frame, carrying every panel's open folder — and
+  in the editor they are names, not links. Every other caller passes none.
 %>
 <% notes = local_assigns.fetch(:notes, {}) %>
 <%# VERSION STACKS (Shop manual spec §9): `figures` (ProjectsHelper#stack_figures) is what the group
     draws when its panel stacks — a Row, or a StackFigure drawn as one row whose name opens its
     members beneath it (stack_controller.js, on the panel). Without it, every row stands alone. %>
 <% figures = local_assigns.fetch(:figures, rows) %>
+<% folders = local_assigns.fetch(:folders, []) %>
 <table class="table project-files">
   <thead>
     <tr>
@@ -44,6 +51,23 @@
     </tr>
   </thead>
   <tbody>
+    <% folders.each do |dir| %>
+      <% count = dir.subtree_file_count + dir.subtree_hidden_count %>
+      <tr class="folder-row">
+        <td class="col-name">
+          <% if @editing %>
+            <%= folder_glyph %> <%= dir.name %>
+          <% else %>
+            <%= link_to project_path(@project, at: panel_at(local_assigns[:panel_id], dir.node_id)),
+                        data: panel_folder_link_data(local_assigns[:key]) do %><%= folder_glyph %> <%= dir.name %><% end %>
+          <% end %>
+        </td>
+        <td class="muted col-section">—</td>
+        <td class="num muted col-size"><%= pluralize(count, "file") %></td>
+        <td class="muted col-modified">—</td>
+        <td class="muted col-origin"><% if dir.repo? %><span class="badge">repo</span><% else %>—<% end %></td>
+      </tr>
+    <% end %>
     <% figures.each do |figure| %>
       <% if figure.is_a?(ProjectsHelper::StackFigure) %>
         <% stack = figure.stack %>

@@ -5,12 +5,13 @@ import { FileChooser } from "lib/file_chooser"
 // picker uses (lib/file_chooser.js), mounted inline in `browse` mode: folders descend, files are
 // links to their file page.
 //
-// IT HAS TWO HOSTS AND THE LAZINESS BELONGS TO ONE OF THEM (2026-09-08, folder panels). A
-// repository NESTED below depth one is a closed <details> inside its parent panel
-// (projects/_file_tree_section), so its browser mounts LAZILY on the first open — a browser nobody
-// opened should cost no request. A DEPTH-ONE folder is a PANEL now (projects/_folder_panel), and a
-// panel has no <details> around it at all: it is on screen the moment the page is, so it mounts on
-// `connect`.
+// ITS ONE HOST ON THE PROJECT PAGE IS A FOLDER PANEL IN THE BROWSER VIEW (projects/_folder_panel),
+// which has no <details> around it: it is on screen the moment the page is, so it mounts on
+// `connect`. A repository nested below depth one used to be a second host — a closed <details>
+// inside its parent panel, mounting LAZILY on the first open — until the panels clicked through
+// (2026-11-24): a nested repository is a folder tile you open now, with no browser of its own.
+// THE <details> BRANCH BELOW STAYS for any host that puts the browser inside one, and costs nothing
+// where there is none.
 //
 // THE ENCLOSING <details> IS WHAT DECIDES, AND ITS ABSENCE MEANS "MOUNT", NEVER "WAIT". Written as
 // `if (this.details?.open)` alone — which is how this shipped — a browser with no <details> above it
@@ -22,8 +23,8 @@ import { FileChooser } from "lib/file_chooser"
 // THE <details> IS AN ANCESTOR, WHICH STIMULUS ACTIONS CANNOT TARGET — `data-action` binds on the
 // controller element and its descendants — so the toggle listener is attached by hand here and
 // removed on disconnect. (Putting the controller ON the <details> instead was the other option and
-// is worse: the partial would then own the section's whole element rather than its own subtree,
-// and _file_tree_section already writes that tag.)
+// is worse: the partial would then own the host's whole element rather than its own subtree, and
+// the host writes that tag.)
 //
 // TURBO RESTORES A SNAPSHOT WITH THE COLUMNS ALREADY IN IT and then connects a FRESH controller
 // that holds nothing for them — `this.chooser` is undefined on the new instance while the DOM still

@@ -186,9 +186,9 @@ module Web
     # --- the folder as a tree (stage 3, S3-1; folder panels 2026-09-08) ---------
 
     # THE HEADLINE SCENARIO: the Files panel holds the folder's ROOT, each DEPTH-ONE subfolder is
-    # its own panel, and anything deeper nests inside its parent's panel exactly as it sits on
-    # disk. No role vocabulary anywhere, at either level.
-    test "loose files stay in Files, each subfolder is a panel, and a nested one is a section inside it" do
+    # its own panel, and anything deeper is a folder tile inside its parent's panel that opens in
+    # place (2026-11-24, click-through panels). No role vocabulary anywhere, at either level.
+    test "loose files stay in Files, each subfolder is a panel, and a nested one is a folder tile inside it" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       models = subfolder!(user, project, name: "models", node_id: "d-models")
@@ -211,12 +211,14 @@ module Web
         assert_select "h2", text: "models"
         assert_select ".mono.muted", text: "1 file"
       end
-      # docs NESTS wiring — a .file-tree-section INSIDE the docs PANEL, and the count in the panel
-      # head is the whole subtree (its own manual.pdf plus wiring/pinout.pdf).
+      # docs NESTS wiring — a folder tile INSIDE the docs PANEL, and the count in the panel head is
+      # the whole subtree (its own manual.pdf plus wiring/pinout.pdf).
       assert_select "section.folder-panel[id=?] .panel-head .mono.muted", "folder:d-docs", text: "2 files"
       assert_select "section.folder-panel[id=?]", "folder:d-docs" do
-        assert_select ".file-tree-section details summary", text: /wiring \(1\)/
-        assert_select ".file-tree-section .attachment-tile .grid-name", text: "pinout.pdf"
+        assert_select ".folder-tile .grid-name", text: "wiring"
+        assert_select ".folder-tile .folder-tile-count", text: "1 file"
+        assert_select ".attachment-tile .grid-name", text: "manual.pdf"
+        assert_select ".attachment-tile .grid-name", { text: "pinout.pdf", count: 0 }, "a subfolder's files wait for it to be opened"
       end
       assert_select "section.folder-panel[id=?] > div > .attachments-grid .grid-name", "folder:d-docs",
                     text: "manual.pdf"
@@ -235,14 +237,12 @@ module Web
       assert_select "p.muted", text: /No files in this project yet/, count: 0
     end
 
-    # A NESTED REPOSITORY IS THE ONE SECTION THAT IS CLOSED AND NOT UNROLLED (2026-09-07, at the
-    # user's request). The summary is unchanged — name, `repo` badge, Commits and History — and
-    # everything BELOW it is one mount point instead of tiles and a section per subdirectory.
-    #
-    # NESTED IS THE WHOLE FIXTURE SINCE 2026-09-08: at DEPTH ONE a repository is a PANEL now (the
-    # case below), so `code/firmware` is what still reaches _file_tree_section's repo branch. The
-    # two `details[open]` cases further down are the non-repo control and stay as they are.
-    test "a nested repository is a section, badged, closed by default, browsed rather than unrolled" do
+    # A NESTED REPOSITORY IS A FOLDER TILE, BADGED, AND OPENING IT SHOWS ITS CARD AND ITS FILES
+    # (2026-11-24, click-through panels). It used to be the one section that rendered closed over a
+    # Finder browser; inside a Tiles or List panel it is a folder like any other now, and the card
+    # (README, latest commit, Commits/History) leads it once it is open. NESTED IS THE WHOLE FIXTURE:
+    # at DEPTH ONE a repository is a panel that opens in the browser (the case below).
+    test "a nested repository is a folder tile, badged, and opening it shows its card and its files" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
       code = subfolder!(user, project, name: "code", node_id: "d-code")
@@ -250,51 +250,42 @@ module Web
                                     parent_node_id: code.node_id)
       user.nodes.create!(node_id: "d-git", name: Library::RepoMetadata::DIR_NAME, kind: "dir",
                          parent_node_id: firmware.node_id)
-      # A SUBDIRECTORY OF THE REPO, which used to render a nested section of its own. It is the
-      # half a test asserting only "no tiles" would miss: the recursion is a separate `render`
-      # call from the tiles, so dropping one and keeping the other leaves the tree half-unrolled.
       src = user.nodes.create!(node_id: "d-src", name: "src", kind: "dir", parent_node_id: firmware.node_id)
       folder_file!(user, project, name: "main.c", node_id: "n-mainc", parent: firmware.node_id)
       folder_file!(user, project, name: "led.c", node_id: "n-ledc", parent: src.node_id)
 
       get project_path(project)
       assert_response :success
-      # THE COUNT IS THE WHOLE SUBTREE FOR A REPOSITORY — 2, not the 1 file at its own root. A plain
-      # section's count matches the tiles it draws and its subfolders carry their own counts; a repo
-      # draws none and its subdirectories have no sections, so a direct-child count reads "(3)" over
-      # a repository holding 203 files. The badge sits between the name and the count, which is why
-      # this regex says `firmware repo (2)` and the `docs (1)` cases above do not.
-      assert_select ".file-tree-section details summary", text: /firmware repo \(2\)/
-      assert_select ".file-tree-section details summary", text: /firmware/ do
-        assert_select "span.badge", text: "repo"
-        assert_select "a[href=?]", repo_commit_path(firmware.node_id)
-        assert_select "a[href=?]", repo_history_path(firmware.node_id)
+      assert_select "section.folder-panel[id=?]", "folder:d-code" do
+        assert_select ".folder-tile .grid-name", text: "firmware"
+        # THE WHOLE SUBTREE, 2 — not the 1 file at its own root — with the badge beside it.
+        assert_select ".folder-tile .folder-tile-count", text: /\A2 files/
+        assert_select ".folder-tile .folder-tile-count .badge", text: "repo"
+        assert_select ".folder-tile a[href=?][data-turbo-frame=?]", project_path(project, at: { "d-code" => "d-firmware" }),
+                      "frame-folder-d-code"
+        assert_select ".attachment-tile .grid-name", { text: "main.c", count: 0 }
+        assert_select ".repo-browser", 0, "no closed browser any more"
       end
-      # CLOSED. Asserted as "no OPEN details whose summary names firmware" rather than as
-      # "a details without [open]", because `assert_select` cannot express the absence of an
-      # attribute and the count-0 form of the positive selector says the same thing exactly.
-      assert_select ".file-tree-section details[open] summary", text: /firmware/, count: 0
 
-      # THE BROWSER, and the three values the server has to write for it: without the children URL
-      # it fetches nothing, without the root it lists the LIBRARY root (every project, not this
-      # repo), and without the file template its file rows are unfollowable.
-      assert_select ".file-tree-section .repo-browser[data-controller=?]", "filebrowser"
-      assert_select ".repo-browser[data-filebrowser-children-url-value=?]", library_children_path
-      assert_select ".repo-browser[data-filebrowser-root-value=?]", firmware.node_id
-      assert_select ".repo-browser[data-filebrowser-file-url-template-value=?]", file_path("__ID__")
-
-      # NEITHER HALF OF THE UNROLLED BODY: no tile for the repo's own file, and no section for its
-      # subdirectory. `src` is checked on section SUMMARIES rather than on the whole page, since
-      # the browser is empty markup on the server and names no entry at all.
-      assert_select ".attachment-tile .grid-name", text: "main.c", count: 0
-      assert_select ".file-tree-section details summary", text: /src/, count: 0
-      # No standalone Repositories group any more — a repo is a section now.
+      get project_path(project, at: { "d-code" => "d-firmware" })
+      assert_response :success
+      assert_select "section.folder-panel[id=?]", "folder:d-code" do
+        assert_select "nav.folder-path .folder-path-here", text: "firmware"
+        assert_select ".repo-card" do
+          assert_select "a[href=?]", repo_commit_path(firmware.node_id)
+          assert_select "a[href=?]", repo_history_path(firmware.node_id)
+        end
+        assert_select ".folder-tile .grid-name", text: "src"
+        assert_select ".attachment-tile .grid-name", text: "main.c"
+        assert_select ".attachment-tile .grid-name", { text: "led.c", count: 0 }
+        assert_select ".repo-browser", 0
+      end
+      # No standalone Repositories group, and no closed section either.
       assert_select ".attachment-group-head", text: /Repositories/, count: 0
     end
 
     # A REPOSITORY AT DEPTH ONE IS A PANEL (2026-09-08; spec decisions 3 and 6), and its DEFAULT
-    # VIEW is the browser — which is the same page the closed section drew, with the panel head
-    # carrying the badge and the Commits/History links the summary used to.
+    # VIEW is the browser, with the panel head carrying the badge and the Commits/History links.
     test "a depth-one repository is a panel that opens in the browser, badged, with Commits and History" do
       user = sign_in
       project = user.maker_projects.create!(name: "Lamp")
@@ -317,9 +308,9 @@ module Web
         assert_select ".panel-head a[href=?]", repo_history_path(firmware.node_id)
         assert_select ".repo-browser[data-filebrowser-root-value=?]", firmware.node_id
       end
-      # NOT UNROLLED: no tile for its own file, and no section for its subdirectory.
+      # NOT UNROLLED: no tile for its own file, and no folder tile for its subdirectory.
       assert_select ".attachment-tile .grid-name", text: "main.c", count: 0
-      assert_select ".file-tree-section", count: 0
+      assert_select ".folder-tile", count: 0
     end
 
     test "folder files do not get Detach" do
@@ -384,16 +375,28 @@ module Web
         assert_select ".attachment-tile .grid-name", text: "z-hook.stl"
         assert_select "p.muted", { text: "Empty folder.", count: 0 }
       end
+      # ONLY THE OPEN FOLDER'S OWN FILES SHARE THE TILES (2026-11-24): Centerpieces' 300, Accessories'
+      # 1 and the empty root split FILE_CAP, so Centerpieces draws 299. Its subfolder `rings` is a
+      # tile that counts its real 300, loaded from the second pot.
       assert_select "section.folder-panel[id=?]", "folder:d-big" do
         assert_select ".panel-head .mono.muted", text: "600 files"
-        assert_select ".attachments-truncated", text: /Showing 299 of 600 files\./
+        assert_select ".attachment-tile", 299
+        assert_select ".attachments-truncated", text: /Showing 299 of 300 files in this folder\./
         assert_select ".attachments-truncated a[href=?]", files_path(folder: "d-big"), text: "Open the folder"
-        assert_select ".file-tree-section details summary", text: /rings \(150 of 300\)/
-        # The cut section says where the rest are: the folder itself, not the panel's.
-        assert_select ".file-tree-section .section-more a[href=?]", files_path(folder: "d-rings"),
-                      text: "See all 300 in the Library"
+        assert_select ".folder-tile .grid-name", text: "rings"
+        assert_select ".folder-tile .folder-tile-count", text: "300 files"
       end
-      assert_select ".attachments-panel .attachments-truncated", text: /Showing 300 of 601/
+      assert_select ".attachments-panel .attachments-truncated", text: /Showing 600 of 601/
+
+      # OPENED, the cut folder says where the rest are: the folder itself, not the panel's.
+      get project_path(project, at: { "d-big" => "d-rings" })
+      assert_select "section.folder-panel[id=?]", "folder:d-big" do
+        assert_select ".panel-head .mono.muted", { text: "600 files" }, "the head still counts the panel's own folder"
+        assert_select ".attachment-tile", 299
+        assert_select ".attachments-truncated", text: /Showing 299 of 300 files in this folder\./
+        assert_select ".attachments-truncated a[href=?]", files_path(folder: "d-rings"), text: "Open the folder"
+      end
+      assert_select "section.folder-panel[id=?] .attachment-tile .grid-name", "folder:d-late", text: "z-hook.stl"
     end
 
     # THE LIVE CASE (2026-11-23): `pc case`'s `out` panel drew 160 of its 173 files while two panels
@@ -427,39 +430,179 @@ module Web
       assert_select ".attachments-panel .attachments-truncated", count: 0
     end
 
-    # FLAT, HEADED BY THE PATH (2026-11-23, the owner's report: "organized non intuitively and the
-    # arrows are hard to follow"). `pc case`'s `out` panel nested four levels of sections, each with
-    # its own arrow, and printed "svg (0)" over a folder holding only `diode/`.
-    test "a panel's folders are flat sections in disk order, each headed by its path beneath the panel" do
+    # A SUBFOLDER NOBODY OPENED TAKES NONE OF THE TILES (2026-11-24, click-through panels): a panel shows
+    # one folder at a time, so only the open folder's own files share FILE_CAP. Under #554's tree-fair
+    # split `out`'s 280 would have shared its 300 with `deep`'s 200 and drawn 150.
+    test "a subfolder's files take none of the tiles until it is opened" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Case")
+      out = subfolder!(user, project, name: "out", node_id: "d-out")
+      deep = subfolder!(user, project, name: "deep", node_id: "d-deep", parent: out.node_id)
+      now = Time.current
+      Node.insert_all([ [ "out", out, 280 ], [ "deep", deep, 200 ] ].flat_map do |prefix, parent, n|
+        n.times.map do |i|
+          { node_id: "#{prefix}-#{i}", name: format("#{prefix}%03d.stl", i), kind: "file", user_id: user.id,
+            parent_node_id: parent.node_id, deleted: false, created_at: now, updated_at: now }
+        end
+      end)
+
+      get project_path(project)
+      assert_response :success
+      assert_select "section.folder-panel[id=?]", "folder:d-out" do
+        assert_select ".panel-head .mono.muted", text: "480 files"
+        assert_select ".attachment-tile", 280, "the open folder's own files, all of them"
+        assert_select ".folder-tile .folder-tile-count", text: "200 files"
+        assert_select ".attachments-truncated", 0
+      end
+    end
+
+    # ONE FOLDER AT A TIME, AND THE URL SAYS WHICH (2026-11-24, click-through panels; spec §1).
+    # `?at[<panel id>]=<node id>` opens a folder beneath a panel, a path bar walks back up, and every
+    # link carries every other panel's open folder.
+    test "opening folders in a panel shows a path back up, and every other panel stays where it was" do
       user = sign_in
       project = user.maker_projects.create!(name: "Case")
       out = subfolder!(user, project, name: "out", node_id: "d-out")
       itx = subfolder!(user, project, name: "itx", node_id: "d-itx", parent: out.node_id)
       four = subfolder!(user, project, name: "four-piece", node_id: "d-four", parent: itx.node_id)
-      stl = subfolder!(user, project, name: "stl", node_id: "d-stl", parent: four.node_id)
-      svg = subfolder!(user, project, name: "svg", node_id: "d-svg", parent: out.node_id)
-      diode = subfolder!(user, project, name: "diode", node_id: "d-diode", parent: svg.node_id)
-      subfolder!(user, project, name: "empty", node_id: "d-empty", parent: out.node_id)
+      docs = subfolder!(user, project, name: "docs", node_id: "d-docs")
+      old = subfolder!(user, project, name: "old", node_id: "d-old", parent: docs.node_id)
+      folder_file!(user, project, name: "foot.stl", node_id: "n-foot", parent: four.node_id)
       folder_file!(user, project, name: "summary.json", node_id: "n-summary", parent: itx.node_id)
-      folder_file!(user, project, name: "foot.stl", node_id: "n-foot", parent: stl.node_id)
-      folder_file!(user, project, name: "tray.svg", node_id: "n-tray", parent: diode.node_id)
+      folder_file!(user, project, name: "v1.pdf", node_id: "n-v1", parent: old.node_id)
 
       get project_path(project)
-      assert_response :success
-
       assert_select "section.folder-panel[id=?]", "folder:d-out" do
-        # Nothing nests, so every arrow sits in one column.
-        assert_select ".file-tree-section .file-tree-section", count: 0
-        heads = css_select(".file-tree-section > details > summary").map { |s| s.text.squish }
-        assert_equal [ "empty (0)", "itx (1)", "itx / four-piece / stl (1)", "svg / diode (1)" ], heads,
-                     "a folder holding only folders has no section of its own; its name is in theirs"
-        # The folders above are the trail, the folder itself is the name — two styles, so two spans.
-        trails = css_select(".file-tree-section summary.attachment-group-head").map do |s|
-          [ s.css(".section-trail").map(&:text), s.css(".section-name").text ]
-        end
-        assert_equal [ [ [], "empty" ], [ [], "itx" ], [ [ "itx / ", "four-piece / " ], "stl" ], [ [ "svg / " ], "diode" ] ], trails
-        assert_select ".grid-name", text: "tray.svg"
+        assert_select "nav.folder-path", 0, "a panel at its own folder needs no path"
+        assert_select ".folder-tile a[href=?][data-turbo-frame=?][data-turbo-action=advance]",
+                      project_path(project, at: { "d-out" => "d-itx" }), "frame-folder-d-out"
       end
+      # THE FRAME IS `_top`: every other link inside it navigates the page, as it did before.
+      assert_select "turbo-frame[id=?][target=_top] > section.folder-panel[id=?]", "frame-folder-d-out", "folder:d-out"
+
+      get project_path(project, at: { "d-out" => "d-four", "d-docs" => "d-old" })
+      assert_response :success
+      assert_select "section.folder-panel[id=?]", "folder:d-out" do
+        assert_select "nav.folder-path a", 2
+        assert_select "nav.folder-path a[href=?][data-turbo-frame=?]", project_path(project, at: { "d-docs" => "d-old" }),
+                      "frame-folder-d-out", text: "out"
+        assert_select "nav.folder-path a[href=?]", project_path(project, at: { "d-out" => "d-itx", "d-docs" => "d-old" }), text: "itx"
+        assert_select "nav.folder-path .folder-path-here[aria-current=location]", text: "four-piece"
+        assert_select ".attachment-tile .grid-name", text: "foot.stl"
+        assert_select ".attachment-tile .grid-name", text: "summary.json", count: 0
+        assert_select ".panel-head h2", { text: "out" }, "the head still names the panel's own folder"
+      end
+      assert_select "section.folder-panel[id=?] .attachment-tile .grid-name", "folder:d-docs", text: "v1.pdf"
+    end
+
+    test "an at the walk cannot place leaves the panel at its own folder" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Case")
+      out = subfolder!(user, project, name: "out", node_id: "d-out")
+      subfolder!(user, project, name: "itx", node_id: "d-itx", parent: out.node_id)
+      docs = subfolder!(user, project, name: "docs", node_id: "d-docs")
+      folder_file!(user, project, name: "top.stl", node_id: "n-top", parent: out.node_id)
+
+      [ "no-such-node", docs.node_id, "n-top", out.node_id ].each do |target|
+        get project_path(project, at: { "d-out" => target })
+        assert_response :success
+        assert_select "section.folder-panel[id=?]", "folder:d-out" do
+          assert_select "nav.folder-path", 0, "#{target} is not a folder beneath out"
+          assert_select ".attachment-tile .grid-name", text: "top.stl"
+        end
+      end
+      # NOT A STRING: an array or a hash where a node id belongs is no folder either.
+      get project_path(project) + "?at[d-out][]=d-itx"
+      assert_response :success
+      assert_select "nav.folder-path", 0
+      get project_path(project) + "?at=d-itx"
+      assert_response :success
+      assert_select "nav.folder-path", 0
+    end
+
+    test "a frame request answers the one panel, with the folder it opened" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Case")
+      out = subfolder!(user, project, name: "out", node_id: "d-out")
+      itx = subfolder!(user, project, name: "itx", node_id: "d-itx", parent: out.node_id)
+      subfolder!(user, project, name: "docs", node_id: "d-docs")
+      folder_file!(user, project, name: "summary.json", node_id: "n-summary", parent: itx.node_id)
+
+      get project_path(project, at: { "d-out" => "d-itx" }), headers: { "Turbo-Frame" => "frame-folder-d-out" }
+      assert_response :success
+      assert_select "turbo-frame[id=?]", "frame-folder-d-out"
+      assert_select "section.folder-panel", 1, "only the panel the frame names"
+      assert_select "section.attachments-panel", 0
+      assert_select ".attachment-tile .grid-name", text: "summary.json"
+      # THE PAGE'S OWN HEAD: Turbo records the promoted visit only when the tracked head matches, and
+      # copies the title in (layouts/turbo_rails/frame).
+      assert_select "title", text: "Case — Tinkerex"
+      assert_select "head link[rel=stylesheet][data-turbo-track=reload]", minimum: 1
+
+      get project_path(project), headers: { "Turbo-Frame" => "frame-folder-no-such" }
+      assert_select "section.attachments-panel", 1, "a frame id that names no panel gets the page"
+      get project_path(project), headers: { "Turbo-Frame" => "folder:d-out" }
+      assert_select "section.attachments-panel", 1, "a section id is not a frame id"
+    end
+
+    test "a list panel opens folders the same way" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Case")
+      out = subfolder!(user, project, name: "out", node_id: "d-out")
+      itx = subfolder!(user, project, name: "itx", node_id: "d-itx", parent: out.node_id)
+      folder_file!(user, project, name: "top.stl", node_id: "n-top", parent: out.node_id)
+      folder_file!(user, project, name: "deep.stl", node_id: "n-deep", parent: itx.node_id)
+      project.update!(panels: { "views" => { "folder:d-out" => "list" } })
+
+      get project_path(project)
+      assert_select "section.folder-panel[id=?] table.project-files tbody", "folder:d-out" do
+        assert_select "tr.folder-row:first-child a[href=?][data-turbo-frame=?][data-turbo-action=advance]",
+                      project_path(project, at: { "d-out" => "d-itx" }), "frame-folder-d-out", text: /itx/
+        assert_select "tr.folder-row td.col-size", text: "1 file"
+        assert_select "tr a", text: "top.stl"
+        assert_select "tr a", text: "deep.stl", count: 0
+      end
+
+      get project_path(project, at: { "d-out" => "d-itx" })
+      assert_select "section.folder-panel[id=?]", "folder:d-out" do
+        assert_select "nav.folder-path .folder-path-here", text: "itx"
+        assert_select "table.project-files tr a", text: "deep.stl"
+        assert_select "table.project-files tr.folder-row", 0
+      end
+    end
+
+    test "the editor draws folder tiles that open nothing" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Case")
+      out = subfolder!(user, project, name: "out", node_id: "d-out")
+      subfolder!(user, project, name: "itx", node_id: "d-itx", parent: out.node_id)
+
+      get edit_layout_project_path(project, at: { "d-out" => "d-itx" })
+      assert_response :success
+      assert_select "section.folder-panel[id=?]", "folder:d-out" do
+        assert_select ".folder-tile .grid-name", text: "itx"
+        assert_select ".folder-tile a", 0
+        assert_select "nav.folder-path", 0, "the editor opens no folder"
+      end
+
+      # NOR DOES A FRAME REQUEST: the editor's tiles cannot ask, and one that did gets the editor.
+      get edit_layout_project_path(project), headers: { "Turbo-Frame" => "frame-folder-d-out" }
+      assert_select "div.layout-editor[data-controller=layout-editor]", 1
+    end
+
+    test "a view switch keeps the panels where they were" do
+      user = sign_in
+      project = user.maker_projects.create!(name: "Case")
+      out = subfolder!(user, project, name: "out", node_id: "d-out")
+      subfolder!(user, project, name: "itx", node_id: "d-itx", parent: out.node_id)
+
+      get project_path(project, at: { "d-out" => "d-itx" })
+      assert_select "section.folder-panel[id=?] .view-toggle form input[name=?][value=?]", "folder:d-out", "at[d-out]", "d-itx"
+      patch project_panels_path(project), params: { view: { "folder:d-out" => "list" }, in_place: "1", at: { "d-out" => "d-itx" } }
+      assert_redirected_to project_path(project, panel: "folder:d-out", at: { "d-out" => "d-itx" }, anchor: "folder:d-out")
+
+      get project_path(project)
+      assert_select ".view-toggle input[name^=at]", 0, "nothing open, nothing carried"
     end
 
     # THE RECENT ROW IS NOT THE CAPPED LISTING (slice 6). Its newest file here is the LAST by name,
@@ -669,22 +812,6 @@ module Web
     end
 
     # --- collapsible sections + LightBurn/MillMage backups ----------------------
-
-    # Native <details>, so this works with no JavaScript at all. `open` on an ordinary NESTED
-    # subfolder section is what keeps its panel readable by default — Backups is the one group that
-    # starts closed (see below). NESTED since 2026-09-08: `models` itself is a panel, and a panel
-    # has no <details> to open; `models/old` is the section this rule is now about.
-    test "a nested subfolder's section is a collapsible details, open by default" do
-      user = sign_in
-      project = user.maker_projects.create!(name: "Lamp")
-      models = subfolder!(user, project, name: "models", node_id: "d-models")
-      old = subfolder!(user, project, name: "old", node_id: "d-old", parent: models.node_id)
-      folder_file!(user, project, name: "arm.stl", node_id: "n-arm", parent: old.node_id)
-
-      get project_path(project)
-      assert_select "section.folder-panel[id=?] .file-tree-section details[open] summary",
-                    "folder:d-models", text: /old \(1\)/
-    end
 
     # LightBurn and MillMage drop a `<stem>_backup.<ext>` rescue copy beside every project file, so
     # a laser-heavy project's panel was half rescue copies of the design next to it. They move to

@@ -89,15 +89,15 @@ module Maker
       # dir's OWN files — was right while the rest of the repo rendered as nested sections below;
       # with the browser there instead it reads "(3)" over a repository holding 203 files.
       #
-      # `subtree_file_ids` is the set ProjectsController#show subtracts from the TILE TERM of its
-      # thumbnail map for each Dir its #dirs_without_tiles names (a hidden panel or a browsed one):
-      # that subtree draws no tiles, so a preview row and a render job per file would be work for a
-      # picture no tile shows. OUT OF THE TILE TERM, NOT OUT OF THE MAP: the map
-      # is the union of what the page paints, so an image in such a subtree comes back through the
-      # Photos term (Photos paints every image at any depth) (F-S15-1). BACKUPS ARE NOT IN EITHER ANSWER, and that is correct rather
-      # than an oversight — `#bucket` diverts a backup out of `files` into the cross-cutting
-      # `#backups` list, which the panel DOES render as tiles wherever the file physically sits, so
-      # a rescue copy inside a folder that draws no tiles must keep its thumbnail.
+      # `subtree_file_ids` is every file a folder holds at any depth, which a folder tile counts
+      # (projects/_folder_tile, with `subtree_hidden_count`). ProjectsController#show no longer
+      # subtracts it from the TILE TERM of its thumbnail map (2026-11-24, click-through panels): that
+      # term is built from the folders on screen instead — each shown folder's own `files` — so a
+      # file in a folder nobody opened is never handed to the map for a tile, and an image there
+      # still comes back through the Photos term (F-S15-1). BACKUPS ARE NOT IN EITHER ANSWER, and
+      # that is correct rather than an oversight — `#bucket` diverts a backup out of `files` into the
+      # cross-cutting `#backups` list, which the Files panel renders as tiles wherever the file
+      # physically sits.
       def subtree_file_ids = files.map(&:node_id) + children.flat_map(&:subtree_file_ids)
       # This dir and every dir beneath it — what #recent_files leaves out for a dir it is told to skip.
       def subtree_dir_ids = [ node_id ] + children.flat_map(&:subtree_dir_ids)
