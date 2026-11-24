@@ -1,6 +1,7 @@
 require "test_helper"
 require_relative "support/worker_budget"
 require_relative "system/support/web_helpers"
+require_relative "system/support/chrome_storage_reset"
 
 class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
   driven_by :selenium, using: :headless_chrome, screen_size: [ 1400, 1400 ]
