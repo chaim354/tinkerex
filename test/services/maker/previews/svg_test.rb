@@ -54,21 +54,39 @@ module Maker
         assert_nil result[:metadata]
       end
 
-      # THE SIZE MUST NOT COST THE PICTURE, EVEN WHEN MEASURING BLOWS THE STACK. 1000 nested groups
-      # overflow `SvgGeometry`'s walk in a Thread, where Solid Queue runs the job (about 830 deep,
-      # measured 2026-11-23), and a `SystemStackError` is not a `StandardError` — it escaped
-      # `Dimensions.metadata_for` and the job's rescue both. resvg draws the file: its own limit is
-      # 1024 levels, so this depth is inside the window where only the measurer fails.
-      test "an SVG nested deep enough to overflow the measurer still gets its thumbnail" do
+      # THE SIZE MUST NOT COST THE PICTURE, EVEN WHEN MEASURING BLOWS THE STACK. A `SystemStackError`
+      # is not a `StandardError`, and it escaped `Dimensions.metadata_for` and the job's rescue both.
+      #
+      # THE OVERFLOW IS RAISED HERE, NOT PROVOKED. resvg must draw this file and stops at 1024
+      # levels, while a job thread's walk overflows at 993 groups on the Linux CI runners (831 on the
+      # Mac, measured 2026-11-24). So every nested file resvg still draws sits a few groups from the
+      # measurer's edge, which is where this test sat at 1000 and where `DimensionsTest`'s twin of it
+      # flaked (tinkerex#593). `DimensionsTest` overflows the walk for real, at a depth resvg is never
+      # asked to draw. `plate` measures 80 x 40 above, so the nil below is the rescue's doing.
+      test "an SVG whose measurer overflows the stack still gets its thumbnail" do
         skip "resvg not installed on this box" unless Maker::Previews::Svg.available?
 
-        depth = 1000
-        nested = %(<svg xmlns="http://www.w3.org/2000/svg" width="10mm" height="10mm" viewBox="0 0 10 10">) +
-                 ("<g>" * depth) + %(<rect width="5" height="5"/>) + ("</g>" * depth) + %(</svg>)
-        result = Thread.new { Maker::Previews::Svg.render(nested, size: 32, kind: "thumbnail") }.value
+        calls = 0
+        overflow = ->(*) { calls += 1; raise SystemStackError, "stack level too deep" }
+        result = replacing(Maker::Previews::SvgGeometry, :build, overflow) do
+          Maker::Previews::Svg.render(plate, size: 32, kind: "thumbnail")
+        end
 
+        assert_equal 1, calls, "the measurer never ran, so nothing here was rescued"
         assert_equal "\x89PNG\r\n\x1A\n".b, result[:bytes][0, 8].b
         assert_nil result[:metadata]
+      end
+
+      private
+
+      def replacing(owner, name, replacement)
+        mod = owner.singleton_class
+        own = mod.instance_methods(false).include?(name)
+        original = mod.instance_method(name)
+        mod.define_method(name, &replacement)
+        yield
+      ensure
+        own ? mod.define_method(name, original) : mod.remove_method(name)
       end
     end
   end

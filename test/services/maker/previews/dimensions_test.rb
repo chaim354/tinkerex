@@ -73,13 +73,15 @@ module Maker
       end
 
       # A STACK OVERFLOW IS NOT A `StandardError`, so "never raises" has to name it. `SvgGeometry`
-      # recurses once per nested `<g>`; measured 2026-11-23, a Thread overflows at about 830 groups
-      # and the main thread at about 1920, so the walk runs INSIDE A THREAD, as Solid Queue runs a
-      # job — on the main thread 1000 groups measure fine and this would prove nothing. The first
-      # assertion establishes that precondition rather than assuming it, so a box with a bigger
-      # stack fails here by name instead of passing over a file that never overflowed.
+      # recurses once per nested `<g>`, and the walk runs INSIDE A THREAD, as Solid Queue runs a job,
+      # because a thread's stack is the smaller one. Two preconditions are established rather than
+      # assumed. libxml2 keeps the rect at the bottom, so a nil below can only mean the walk failed,
+      # never an empty drawing. And the walk really overflows a thread here, so a box with a bigger
+      # stack fails by name instead of passing over a file that never overflowed.
       test "metadata_for survives an SVG nested deep enough to overflow a job thread's stack" do
         svg = nested_svg(DEEP_NESTING)
+        assert Nokogiri::XML(svg) { |c| c.recover.huge }.at_xpath("//*[local-name()='rect']"),
+               "libxml2 no longer parses #{DEEP_NESTING} nested groups; lower the depth"
         overflowed = Thread.new do
           SvgGeometry.build(svg)
           false
@@ -122,9 +124,15 @@ module Maker
         assert Dimensions.recipe?({ "app_version" => "1.7.00", "job" => { "width" => 1, "height" => 1 } })
       end
 
-      # Past a job thread's overflow (about 830 here) and under the main thread's (about 1920) — the
-      # same depth `SvgTest` renders, which must also stay under resvg's own limit of 1024 levels.
-      DEEP_NESTING = 1000
+      # AT LEAST TWICE EVERY MEASURED THREAD LIMIT, AND UNDER libxml2's. Measured 2026-11-24, a job
+      # thread's walk overflows at 993 groups on the Linux CI runners, 975 under the Rails image's
+      # Ruby and 831 on the Mac, the same number on every run in a bare process. This was 1000,
+      # seven groups past the runners' edge, and in the suite the two threads below once landed on
+      # opposite sides of it (tinkerex#593). The ceiling is libxml2 2.13: under `huge` it stops a
+      # document 2048 groups deep, so 2047 is the deepest that keeps the rect. `SvgTest` does not
+      # share this depth: resvg must draw its file and stops at 1024 levels, a few groups past these
+      # limits, so that test raises the overflow instead of provoking one.
+      DEEP_NESTING = 2000
 
       private
 
