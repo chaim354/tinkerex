@@ -253,11 +253,16 @@
 
   <%# OUTSIDE the empty check on purpose: a walk that hit DIR_CAP before reaching a single file
       would otherwise say "No files in this project yet" and nothing else (found in review). Two
-      sentences for two caps — `total` counts only the dirs that were walked, so "0 of 0" is not
-      what a cut-short walk means. %>
-  <% if @listing.truncated? %>
+      sentences for two caps, and each is about what THIS panel draws (2026-11-24). The count is the
+      project folder's own files, as a folder panel's is its open folder's own: a cut in a folder
+      nobody opened is no panel's, and the project-wide `truncated?` once read "Showing 304 of 315
+      files." on the live `pc case` over a panel holding every one of its files. The DIR_CAP sentence
+      stays project-wide: a walk that stopped early leaves subfolders off every panel, and `total`
+      counts only the dirs that were walked, so "0 of 0" is not what it means. %>
+  <% loose_hidden = @listing.loose_hidden_count %>
+  <% if loose_hidden.positive? || @listing.dir_cap_hit? %>
     <p class="muted attachments-truncated">
-      <% if @listing.all_rows.size < @listing.total %>Showing <%= @listing.all_rows.size %> of <%= @listing.total %> files.<% end %>
+      <% if loose_hidden.positive? %>Showing <%= @listing.loose_total - loose_hidden %> of <%= @listing.loose_total %> files in this folder.<% end %>
       <% if @listing.dir_cap_hit? %>Not every subfolder was listed.<% end %>
       <%= link_to "Open the folder", files_path(folder: @listing.folder_id) %>
     </p>

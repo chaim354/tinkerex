@@ -329,7 +329,12 @@
   a subfolder nobody opened, a browsed or hidden panel — loads from a SECOND `FILE_CAP`, because
   Photos, repository cards, README links and Backups read those rows. Read the layout's folders and
   resolve `at` off the walk (`panel_folders`, `panel_folder_names`, `walk_path`), never `tree`,
-  above that call. An `at` the walk cannot place is dropped, never a 404.
+  above that call. An `at` the walk cannot place is dropped, never a 404. **Each panel's "Showing X
+  of Y" counts the folder IT draws** — a folder panel its open folder's own files (`hidden_count`),
+  the Files panel the project folder's own (`#loose_total`, `#loose_hidden_count`) — never
+  `truncated?`, which also reads the second pot's cut in folders nobody opened: on the live
+  `pc case` it printed "Showing 304 of 315 files." over a Files panel holding all of its own. Only
+  the DIR_CAP sentence stays project-wide.
 
 - **`:in_working_tree` IS UNSCOPED, UNLIKE `:attached_elsewhere` — DO NOT ADD A KWARG TO IT.** A
   refusal from `#refusal_for` does not mean "refuse the attachment": `#call` returns

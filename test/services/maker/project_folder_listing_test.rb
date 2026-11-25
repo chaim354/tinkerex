@@ -368,6 +368,36 @@ module Maker
       assert listing.truncated?
     end
 
+    # THE PROJECT FOLDER'S OWN CUT, which no Dir carries because its files are #loose (2026-11-24):
+    # what the Files panel's "Showing X of Y" counts. A cut in a folder nobody opened is the second
+    # pot's, and `truncated?` reads it, but it is not this — the live `pc case` loaded 304 of its 315
+    # files with every file of every open folder on screen, and the Files panel said "Showing 304 of
+    # 315 files" over a panel that was complete.
+    test "loose_hidden_count is the project folder's own files the cap left out, and only those" do
+      _projects, desk_lamp = desk_lamp_folder
+      out = dir("dir-out", "out", desk_lamp.node_id)
+      deep = dir("dir-deep", "deep", out.node_id)
+      bulk_files("root", 3, "r%d.stl", desk_lamp)
+      bulk_files("out", 2, "o%d.stl", out)
+      bulk_files("deep", 12, "d%02d.stl", deep)
+
+      project = project_with_folder(desk_lamp.node_id)
+      listing = Maker::ProjectFolderListing.new(@user, project, file_cap: 5)
+      listing.shown!([ out.node_id ])
+      assert listing.truncated?, "deep's 12 do not fit the second pot of 5"
+      assert_equal [ 3, 0 ], [ listing.loose_total, listing.loose_hidden_count ],
+                   "the project folder and the open folder share the 5 and both load whole"
+
+      cut = Maker::ProjectFolderListing.new(@user, project, file_cap: 2)
+      cut.shown!([])
+      assert_equal [ 3, 1 ], [ cut.loose_total, cut.loose_hidden_count ]
+      assert_equal 2, cut.loose.size
+
+      assert_equal [ 0, 0 ], Maker::ProjectFolderListing.new(@user, @user.maker_projects.create!(name: "Bare"))
+                                                         .then { |l| [ l.loose_total, l.loose_hidden_count ] },
+                   "a project with no folder has no files of its own to cut"
+    end
+
     test "a walk path runs from a panel down to a folder beneath it, and is nil for anything else" do
       _projects, desk_lamp = desk_lamp_folder
       out = dir("dir-out", "out", desk_lamp.node_id)
