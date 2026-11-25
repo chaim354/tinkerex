@@ -4,6 +4,12 @@ module Files
   # "viewer") until the file's content changes, because Maker::Previews::Enqueue treats a viewer
   # row whose content token still matches as current. Session auth (§14d).
   #
+  # THE VIDEO PLAYER POSTS HERE TOO (2026-11-22, "Use this frame as preview",
+  # videoframe_controller.js): the frame on screen, longest side at most 512. A video has NO
+  # renderer at all, so this row is the only picture it can have — which is why `#destroy` drops it
+  # rather than handing it back, and why the Library's tiles ask FilesHelper#thumb_cell? instead of
+  # the Registry alone.
+  #
   # THE PNG PASSES THROUGH RAILS, AND §15 PERMITS IT: §15 keeps LIBRARY bytes out of Rails; a
   # preview is app-owned derived data in Active Storage, the same thing POST /v1/maker/previews
   # already accepts from a device.
@@ -59,9 +65,21 @@ module Files
     # maker's picture stays up until the render lands (Maker::Preview's `rebuilding` contract), then
     # the job replaces it. The revision is restamped to this build's, so the render that lands is
     # current at once rather than one renderer bump behind the picture it replaces.
+    #
+    # A NAME NO RENDERER CLAIMS HAS NO AUTOMATIC PREVIEW TO GO BACK TO, SO ITS ROW IS DROPPED
+    # (2026-11-22, a video's chosen frame). Handed to the renderer, it waited on a job that could only
+    # write `unsupported`, keeping a picture nothing would show — and if that job was lost the row sat
+    # `rebuilding`, a SHOWABLE status, for good: every heal skips a name with no renderer
+    # (`Enqueue.call` answers nil for one, `ThumbnailMap`'s backfill passes it by), so the discarded
+    # frame stayed on every surface that draws the row. No row is the state such a file had before
+    # the maker chose one, which every surface already draws as its type's badge.
     def destroy
       node = live_file!
       preview = current_user.maker_previews.find_by(node_id: node.node_id, kind: "thumbnail")
+      if preview&.viewer? && Maker::Previews::Registry.for_filename(node.name).nil?
+        preview.destroy!
+        return redirect_to file_path(node.node_id), notice: "#{node.name} no longer uses the chosen frame as its preview."
+      end
       if preview&.viewer?
         preview.update!(source: "renderer", status: "rebuilding",
                         renderer_revision: Maker::Previews::Enqueue.revision_for_name(node.name, "thumbnail"))

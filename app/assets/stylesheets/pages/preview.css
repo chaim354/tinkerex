@@ -15,6 +15,9 @@
      phone video cannot run off the window. The letterbox stays a literal black, the colour every
      player draws behind a frame that does not fill its box, in either theme (design-system.md rule 13). */
   .preview-video { display: block; width: 100%; max-height: 80vh; border-radius: 6px; background: #000; }
+  /* "Use this frame as preview" and its way back (2026-11-22), in the 3D viewer's `.model-viewer-bar`
+     with its `.mv-status` beside them. Wraps for the reason `.mv-actions` does (rule 11). */
+  .video-actions { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .preview-text {
     margin: 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono);
     font-size: 13px; max-height: 480px; overflow: auto;

@@ -1,4 +1,4 @@
-<%# locals: (name:, blob_url:) %>
+<%# locals: (name:, blob_url:, preview_url: nil, viewer_preview: false) %>
 <%# A video the browser plays itself (2026-11-20), straight from the byte route like the :image and
     :pdf branches: FileDelivery serves `video/mp4` and `video/webm` inline, and answers the byte
     ranges a player asks for — on share and chunk_remote itself, on s3 by redirecting to the store,
@@ -8,6 +8,37 @@
     `preload="metadata"` fetches the header and the first frame, never the whole file, so opening
     the page of a long video costs a few ranges until Play is pressed. `playsinline` keeps an
     iPhone from going full screen on Play. No poster: there is no server-made frame for a video
-    (nothing in the image renders one), and the browser's first frame is what preload shows. %>
-<video src="<%= blob_url %>" class="preview-video" controls preload="metadata" playsinline
-       aria-label="<%= name %> (video)"></video>
+    (nothing in the image renders one), and the browser's first frame is what preload shows.
+
+    NO `crossorigin` ATTRIBUTE, ON PURPOSE (2026-11-22, measured against SeaweedFS): on s3 the byte
+    route redirects to the bucket, and a crossorigin player there does not play at all unless the
+    bucket's CORS rule lists this origin, where a plain one always plays. videoframe_controller.js
+    reads a frame without it.
+
+    "USE THIS FRAME AS PREVIEW" EXISTS ONLY WHEN THE CALLER PASSES `preview_url` (2026-11-22), the
+    maker's own Files::PreviewsController door — `_model3d`'s rule: a visitor's page and the model
+    page's pane pass none and never offer it. `viewer_preview` says the file's tile is a frame the
+    maker chose, and adds the way to drop it. %>
+<% if preview_url %>
+  <div class="video-viewer" data-controller="videoframe" data-videoframe-preview-url-value="<%= preview_url %>">
+    <video src="<%= blob_url %>" class="preview-video" controls preload="metadata" playsinline
+           aria-label="<%= name %> (video)" data-videoframe-target="video"></video>
+    <div class="model-viewer-bar">
+      <span class="video-actions">
+        <button type="button" class="btn small ghost" data-action="videoframe#capture">Use this frame as preview</button>
+        <%# IT ASKS FIRST, as the 3D viewer's way back does (UX audit B5). No renderer draws a video,
+            so the tile goes back to the file type's badge: Files::PreviewsController#destroy drops
+            the row rather than queueing a render that could only answer "unsupported". %>
+        <% if viewer_preview %>
+          <%= button_to "Remove chosen frame", preview_url, method: :delete, class: "linkbtn small",
+                        form: { data: { turbo_confirm: "Stop using the chosen frame as the preview of #{name}? " \
+                                                       "Its tile shows the file type again." } } %>
+        <% end %>
+      </span>
+      <span class="mv-status muted" data-videoframe-target="status" role="status"></span>
+    </div>
+  </div>
+<% else %>
+  <video src="<%= blob_url %>" class="preview-video" controls preload="metadata" playsinline
+         aria-label="<%= name %> (video)"></video>
+<% end %>

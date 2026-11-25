@@ -15,7 +15,8 @@
 <% info = @info_by_node[latest.node_id] %>
 <% dom = stack_dom_id(stack) %>
 <% member_ids = stack.members.each_index.map { |i| "#{dom}-#{i}" } %>
-<% renderable = Maker::Previews::Registry.for_filename(latest.name).present? %>
+<% thumb = @thumb_by_node.thumb(latest.node_id) %>
+<% renderable = thumb_cell?(latest.name, thumb) %>
 <% ext_label = File.extname(latest.name).delete(".").upcase.first(4) %>
 <tr class="stack-row">
   <td class="col-name">
@@ -23,8 +24,7 @@
                    aria: { expanded: "false", controls: member_ids.join(" ") },
                    data: (renderable ? thumb_cell_data(latest.node_id, ext_label) : {}).merge(action: "stack#toggle")) do %>
       <% if renderable %>
-        <% thumb = @thumb_by_node.thumb(latest.node_id) %>
-        <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: Maker::FileAttachment.photo?(latest.name) %>
+        <%= render "thumb", thumb:, ext_label:, url: preview_src(thumb), photo: photo_tile?(latest.name) %>
       <% end %>
       <%# The name and its chip in one box, so a narrow column wraps them as words rather than
           squeezing the name to a letter a line beside a chip that cannot shrink. %>
