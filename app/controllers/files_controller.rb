@@ -2064,7 +2064,7 @@ class FilesController < ApplicationController
   end
 
   # WHERE A DELETE LANDS (UX audit B6, 2026-11-02): THE PAGE IT WAS PRESSED ON, read off the referer
-  # the way the file page's Back reads it — ApplicationHelper#back_target_path compares the
+  # the way the top bar's Back reads it for its href — ApplicationHelper#back_target_path compares the
   # referer's origin with this request's and DISCARDS it, so only a root-relative path on this
   # origin ever reaches the redirect (CLAUDE.md §14d; never a URL param, which is seven call sites
   # that must agree). The list row, the grid card, the inspector, the right-click menu and a project

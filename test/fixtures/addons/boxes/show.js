@@ -24,9 +24,10 @@ import { host } from "@maker/addon-sdk"
 // parameter reads as "something here still needs the mount context".
 export function mountShow(root, { state, onBack, onDuplicate }) {
   root.innerHTML = `
+    <!-- Up to the gallery, at the left: see editor.js's note on the same row. -->
+    <p style="margin:0 0 4px -15px"><button type="button" class="btn ghost" data-role="back">← All generators</button></p>
     <div class="page-head">
       <h1 data-role="title"></h1>
-      <button type="button" class="btn ghost" data-role="back">Back</button>
     </div>
     <dl class="meta">
       <dt>Generator</dt><dd data-role="generator"></dd>

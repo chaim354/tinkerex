@@ -62,6 +62,7 @@
     Tools::AddonsController. It is an ADDITION, not a replacement: the per-attribute values below it
     stay, because a bundle built against either shape may be running against this host. %>
 <div data-controller="addon"
+     data-addon-owner-value="<%= kept_tool_owner %>"
      data-addon-ctx-value="<%= @ctx.to_json %>"
      data-addon-entry-value="<%= tools_addon_asset_path(@addon.key, @addon.entry) %>"
      data-addon-save-url-value="<%= tools_addon_path(@addon.key) %>"
@@ -77,6 +78,11 @@
       first act, and addon_controller.js removes the line once mount() resolves in case one
       appends instead. A failure empties the mount and shows the block under it, the raw error kept
       in a collapsed <details> for whoever reports it, never as the page's sentence. %>
+  <%# THE TOOL AS IT WAS LEFT (2026-11-24): a working tool is kept for 15 minutes after its page is
+      left and handed back here, the same elements and the same script state (addon_controller.js,
+      lib/kept_tools.js). The line says so, on the visit that resumed and only then, and Start over
+      is the way to the tool as it opens from nothing. %>
+  <%= render "tools/resumed", controller: "addon" %>
   <div data-addon-target="mount">
     <p class="addon-loading muted" data-addon-target="loading" role="status">Loading <%= @addon.title %>…</p>
   </div>

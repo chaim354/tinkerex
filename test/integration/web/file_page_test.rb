@@ -21,7 +21,8 @@ module Web
       assert_response :success
       assert_select ".page-head h1", text: "coaster.lbrn2"
       assert_select ".page-head .badge.file-badge", text: "LBRN2"
-      assert_select ".page-actions a.btn.ghost", count: 1, text: "Back"
+      # Download and Delete. The one Back is in the top bar (topbar_back_test.rb).
+      assert_select ".page-actions a.btn.ghost", count: 0
     end
 
     # "OPEN IN <TOOL>" IS A LAZY FRAME, NOT PART OF THIS RENDER (host level 4). The page itself never

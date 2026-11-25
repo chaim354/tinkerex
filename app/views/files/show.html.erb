@@ -4,8 +4,8 @@
     FilesController#show walks with the same folder_crumbs #index uses. The link to THIS FILE'S
     folder carries `selected:` for it, so the Library reopens with the file selected and its
     inspector open. A file at the library root has no folder crumb, so "Library" is its folder and
-    carries the selection instead. The page head's Back keeps its referer contract
-    (ApplicationHelper#back_target_path) and is not this link. %>
+    carries the selection instead. The top bar's Back falls back to this last link when the tab has
+    no page of ours behind it (ShellHelper#breadcrumb_parent_path). %>
 <% content_for :crumbs do %>
   <nav class="breadcrumb" aria-label="File path">
     <%= link_to "Library", files_path(selected: (@crumbs.empty? ? @node.node_id : nil)) %>
@@ -74,13 +74,11 @@
         Files render. %>
     <%= turbo_frame_tag "open-with", src: tools_open_with_path(file: @node.node_id),
                         loading: "lazy", target: "_top", class: "page-actions" %>
-    <%# DOWNLOAD · BACK · DELETE (UX audit D5, 2026-11-02): the destructive control last, as the
-        file menu and the inspector already put it, rather than between two safe ones. %>
+    <%# DOWNLOAD · DELETE (UX audit D5, 2026-11-02): the destructive control last, as the file menu
+        and the inspector already put it. THERE IS NO BACK HERE (2026-11-24): the one Back is the top
+        bar's, on every page (layouts/_topbar), and a second one at the right of this row was the
+        button the owner asked to have moved. %>
     <%= link_to "Download", blob_file_path(@node.node_id, download: 1), class: "btn" %>
-    <%# Back to WHERE THE USER CAME FROM (the folder, the filter, the project panel), not to the
-        library root — see ApplicationHelper#back_target_path. files_path stays as the fallback for
-        a direct visit, which is what this link always did. %>
-    <%= link_to "Back", back_target_path(default: files_path), class: "btn ghost" %>
     <%= button_to "Delete", file_path(@node.node_id), method: :delete,
           form: { data: { turbo_confirm: delete_confirm(@node.name, kind: @node.kind) } }, class: "btn danger" %>
   </div>

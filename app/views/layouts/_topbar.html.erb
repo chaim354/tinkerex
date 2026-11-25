@@ -4,6 +4,15 @@
     own toolbar (files/index.html.erb's .files-search) for the flat, files-only query FilesController
     already answers. %>
 <header class="topbar">
+  <%# BACK, THE ONE BACK BUTTON (2026-11-24): on every signed-in page, at the far left, and it does
+      what the browser's own Back does — one step back in this tab's history, so the page returns as
+      it was left (back_controller.js). The href is where it goes when nothing of ours is behind
+      this page (ShellHelper#topbar_back_path), and with none it is drawn disabled. No prefetch: a
+      hover would fetch a page the click never loads, and some of them run git. %>
+  <% back_path = topbar_back_path %>
+  <%= link_to (back_path || request.fullpath), class: "topbar-back", title: "Back",
+              aria: { label: "Back", disabled: (back_path ? nil : "true") },
+              data: { controller: "back", action: "back#go", turbo_prefetch: "false" } do %><%= rail_icon(:back) %><% end %>
   <div class="topbar-crumbs">
     <% if content_for?(:crumbs) %>
       <%= content_for(:crumbs) %>
@@ -11,8 +20,12 @@
       <span class="topbar-title"><%= page_title_text %></span>
     <% end %>
   </div>
-  <%= form_with url: search_path, method: :get, class: "topbar-search", role: "search",
-                data: { turbo: false } do %>
+  <%# A TURBO VISIT, NOT A PAGE LOAD (2026-11-24). It carried `turbo: false` since the shell landed,
+      with no reason recorded. This box is on every page, and a tool left for another page is kept
+      alive in the document's memory (lib/kept_tools.js): a search that loaded a new document from a
+      tool's page cost the maker the tool they had stepped away from. search/index's own box is the
+      same form and moved with it. %>
+  <%= form_with url: search_path, method: :get, class: "topbar-search", role: "search" do %>
     <%= rail_icon(:search) %>
     <%# ALWAYS BLANK, DELIBERATELY -- @q IS ALSO THE NAME FilesController, InventoryItemsController
         AND SearchController ITSELF GIVE THEIR OWN IVARS, and echoing whichever one the current

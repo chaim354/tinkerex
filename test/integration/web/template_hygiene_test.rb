@@ -885,7 +885,7 @@ module Web
       "§15",
       "ONE BUTTON, TWO FLOWS",
       "TWO CONTROLS, ONE JOB EACH",
-      "WHERE THE USER CAME FROM",
+      "THERE IS NO BACK HERE",
       "BACKUPS COME OUT FIRST",
       "NO HARDCODED CARDS"
     ].freeze

@@ -193,6 +193,31 @@ class FileChooserTest < ApplicationSystemTestCase
     assert_no_console_errors
   end
 
+  # BACK SITS AT THE LEFT, AHEAD OF THE PATH IT STEPS BACK ALONG (2026-11-24). In the dialog it was
+  # the first of the footer's right-hand actions, beside Cancel and Choose, while the inline browser
+  # always had it in a bar at the top left; the owner asked for no Back on the right of anything.
+  # Measured, because a class in the right container says nothing about where the box is drawn.
+  # Mutation-checked: a Back put back among the footer's actions turns this red.
+  test "Back is at the left of the dialog, ahead of the path, and not among the footer's actions" do
+    open_form
+    find(".folder-field-btn").click
+    find(".filechooser-row", text: "Projects").click
+
+    assert_selector ".filechooser-bar > .filechooser-back:first-child"
+    assert_no_selector ".filechooser-foot .filechooser-back"
+    boxes = page.evaluate_script(<<~JS)
+      (() => {
+        const box = (css) => document.querySelector(css).getBoundingClientRect()
+        return { back: box(".filechooser-back"), crumbs: box(".filechooser-crumbs"),
+                 panel: box(".filechooser"), choose: box(".filechooser-choose") }
+      })()
+    JS
+    assert_operator boxes["back"]["right"], :<=, boxes["crumbs"]["left"], "Back is drawn after the path"
+    assert_operator boxes["back"]["left"] - boxes["panel"]["left"], :<, 40, "Back is not at the dialog's left edge"
+    assert_operator boxes["back"]["bottom"], :<, boxes["choose"]["top"], "Back is down in the footer's row"
+    assert_no_console_errors
+  end
+
   test "New folder creates a real dir through the port and steps into it" do
     open_form
     find(".folder-field-btn").click

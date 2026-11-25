@@ -168,12 +168,14 @@ export class FileChooser {
       <div class="filechooser" role="dialog" aria-modal="true" aria-label="Choose ${verb}" tabindex="-1">
         <div class="filechooser-head"><span>Choose ${verb}</span>
           <button type="button" class="filechooser-close" aria-label="Close">✕</button></div>
-        <div class="filechooser-crumbs"></div>
+        <div class="filechooser-bar">
+          <button type="button" class="btn ghost filechooser-back" aria-label="Back">← Back</button>
+          <span class="filechooser-crumbs"></span>
+        </div>
         <div class="filechooser-cols"></div>
         <div class="filechooser-foot">
           <div class="filechooser-newwrap"><button type="button" class="btn ghost filechooser-new">+ New folder</button></div>
           <div class="filechooser-actions">
-            <button type="button" class="btn ghost filechooser-back" aria-label="Back">← Back</button>
             <span class="filechooser-sel"></span>
             <button type="button" class="btn ghost filechooser-cancel">Cancel</button>
             <button type="button" class="btn filechooser-choose">Choose</button>
