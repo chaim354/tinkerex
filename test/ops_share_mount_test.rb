@@ -260,18 +260,42 @@ class OpsShareMountTest < ActiveSupport::TestCase
     assert_equal theirs, mine
   end
 
-  test "the deploy skill runs the check before the build, and DEPLOY.md names the recovery" do
+  # THE CHECK BEFORE THE BUILD, THE RECOVERY AFTER THE PUSH, SHARE FIRST (reordered 2026-11-25). This
+  # test used to pin the recovery ahead of the build too, which is what deploy tinkerex#607 followed:
+  # the recovery stops the share container, nothing starts it again but the share rollout, and it
+  # sat stopped through a 3-minute build, down about four and a half minutes where the rollout took
+  # 21 seconds. The check is read-only and belongs in the pre-flight, where a stale mount is cheapest
+  # to learn about; the recovery belongs after the slow step.
+  #
+  # FIRST OCCURRENCES ON PURPOSE. `recover` is the first place the skill spells the recovery command
+  # at all, so a copy of it put back in the pre-flight fails the same assertion a moved block does.
+  #
+  # MUTATION-CHECKED (2026-11-25; each reverted, and this test re-run green after): the stale path's
+  # recovery line moved above its `kamal build push`, red on the push; its share and base lines
+  # swapped, red on the order; the pre-flight's `--check` dropped, red on the check.
+  test "the deploy skill checks the mount before the build and recovers only after the push, share first" do
     skill = ROOT.join(".claude/commands/deploy.md").read
     build = skill.index("## 2. Build once")
-    check = skill.index("ls /library")
-    recovery = skill.index("ops/share-mount-recover.sh")
-    assert build && check && recovery, "the deploy skill lost its build heading, the ls /library check or the recovery script"
+    check = skill.index("bash -s -- --check < ops/share-mount-recover.sh")
+    recover = skill.index("bash -s < ops/share-mount-recover.sh")
+    assert build && check && recover, "the deploy skill lost its build heading, its read-only check or the recovery command"
+    stale_path = skill.index("IF §1 FOUND THE SHARE MOUNT STALE", build)
+    assert stale_path, "the deploy skill lost its stale path"
+    push = skill.index("kamal build push", stale_path)
+    share = skill.index("kamal deploy -d share --skip-push", stale_path)
+    base = skill.index("kamal deploy --skip-push", stale_path)
+    assert push && share && base, "the stale path lost its push or one of its rollouts"
+
     assert_operator check, :<, build, "the stale-mount check must sit in the pre-flight, before `kamal build push`"
-    assert_operator recovery, :<, build
+    assert_operator push, :<, recover,
+                    "the recovery stops the share container: ahead of the push, share is down for the whole build"
+    assert_operator recover, :<, share, "the share rollout is what remounts the library the recovery released"
+    assert_operator share, :<, base, "after a recovery share is the one that is down, so it rolls first"
 
     deploy_doc = ROOT.join("docs/guides/DEPLOY.md").read
     assert_includes deploy_doc, "ops/share-mount-recover.sh"
     assert_includes deploy_doc, "bin/share-mount-monitor-install"
+    assert_includes deploy_doc, "the recovery waits for the push"
   end
 
   private

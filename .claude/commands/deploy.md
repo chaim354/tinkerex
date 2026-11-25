@@ -72,27 +72,28 @@ Confirm the commits you intend to ship are in that log. Then:
   ssh -o BatchMode=yes kamal1@192.168.1.95 "docker ps --format '{{.Names}}' | grep '^tinkerex-web'"
   ```
   The container names carry the deployed git SHA. Note it.
-- **The share library mount, before anything is built.** When Tower (the SMB server,
-  192.168.1.146) reboots, the running share container keeps a STALE CIFS handle on `/library`
-  while `/up` goes on answering 200 — nothing alerts — and the share deploy then fails at container
-  create (docker exit 125, `stale file handle`) because docker reuses the dead mount. Five deploys
-  found it that way between 2026-10-22 and 2026-11-04, each after base had already rolled. One ssh:
+- **The share library mount, CHECKED before anything is built — and only checked.** When Tower (the
+  SMB server, 192.168.1.146) reboots, the running share container keeps a STALE CIFS handle on
+  `/library` while `/up` goes on answering 200 — nothing alerts — and the share deploy then fails at
+  container create (docker exit 125, `stale file handle`) because docker reuses the dead mount. Five
+  deploys found it that way between 2026-10-22 and 2026-11-04, each after base had already rolled.
+  One ssh, read-only (it asks `ls /library` inside the running share container):
   ```bash
-  ssh -o BatchMode=yes kamal1@192.168.1.95 'docker exec $(docker ps -qf name=^tinkerex-web-share-) ls /library >/dev/null && echo "library ok"'
+  ssh -o BatchMode=yes kamal1@192.168.1.95 bash -s -- --check < ops/share-mount-recover.sh; echo "exit $?"
   ```
-  It must print `library ok`. If it says `Stale file handle`, run the recorded recovery — guards
-  first (port 445 reachable, the `ls` really stale, one container running), then `docker stop` the
-  old share container, `docker rm` any `Created` one, and confirm the cifs mount count is 0 — which
-  is all `ops/share-mount-recover.sh`:
-  ```bash
-  ssh kamal1@192.168.1.95 bash -s < ops/share-mount-recover.sh
-  ```
-  A healthy mount is a no-op (exit 0, nothing stopped); a failed guard exits non-zero and touches
-  nothing, so read what it refused before going on (its header lists the codes). **Only then
-  continue** — the share deploy below is what remounts it, and that container's first boot may
-  restart once (the boot guard can run before the fresh mount is visible; docker's restart policy
-  absorbs it). Anything other than `library ok` or `Stale file handle` — no container, a hang — is
-  also a stop. `docs/guides/DEPLOY.md` §2 has the full story and the 5-minute monitor
+  It prints one line, and the exit code says which (the script's header lists them all):
+  - **0, `healthy`** — go on, and §2 rolls in its usual order.
+  - **10, `stale`** — go on, and take §2's stale path. **DO NOT RECOVER HERE.** The recovery stops
+    the share container, nothing starts it again but the share rollout, and the image build that
+    comes next never touches the box — so recovering now makes share's downtime as long as the
+    build. Measured on 2026-11-25 (deploy `tinkerex#607`), when this step still said to recover
+    first: share was stopped ahead of a 3-minute build and stayed down about four and a half
+    minutes, where its own rollout took 21 seconds. A stale mount is already serving no files, and
+    it loses nothing by waiting for the push.
+  - **anything else** (21: the `ls` hung or failed some other way; 22: no share container is
+    running) — stop. That is a different problem and nothing below fixes it.
+
+  `docs/guides/DEPLOY.md` §2 has the full story and the 5-minute monitor
   (`bin/share-mount-monitor-install`) that sees this without a deploy.
 
 ## 2. Build once, deploy three times
@@ -106,6 +107,28 @@ kamal deploy --skip-push            # base = chunk
 kamal deploy -d share --skip-push
 kamal deploy -d s3    --skip-push
 ```
+
+**IF §1 FOUND THE SHARE MOUNT STALE, recover it now — after the push, never before — and roll
+share FIRST.** The push is the slow step and it is done, so from here the share container is down
+only for its own rollout:
+
+```bash
+kamal build push
+ssh kamal1@192.168.1.95 bash -s < ops/share-mount-recover.sh   # guards first; exit 0 = mount released
+kamal deploy -d share --skip-push   # mounts the share anew — the one that is down goes first
+kamal deploy --skip-push            # base = chunk
+kamal deploy -d s3    --skip-push
+```
+
+The recovery stops nothing until its three guards pass (Tower answers on port 445, the `ls` really
+says stale, exactly one share container is running). Then it `docker stop`s the old share container,
+`docker rm`s any `Created` one a failed deploy left, and confirms the cifs mount count is 0. A
+healthy mount is a no-op (exit 0). **A guard that refuses exits non-zero having touched nothing**
+(20: Tower does not answer on 445, so there is nothing to remount yet; 21; 22), and 23 means the
+container was stopped and something still holds the mount. Read what it said and **stop**: do not
+roll share over a mount that was not released. base and s3 never use that mount, and rolling them
+without share is the user's call, not yours. The new share container's first boot may restart once
+(its boot guard can run before the fresh mount is visible; docker's restart policy absorbs it).
 
 **Run each `kamal deploy` as its own command.** Do not loop with an unquoted variable holding
 `-d share`: this shell is **zsh**, which does not word-split unquoted parameters the way bash
@@ -235,8 +258,10 @@ named exception is gone with it.
 - **`export` a secret as a matter of routine** — `.kamal/secrets*` resolve their own; an export is
   a deliberate per-run override (a non-empty one wins), not a setup step
 - Deploy without `bin/secrets-preflight` — it is the only thing that catches a silent empty
-- Build before the share mount check has printed `library ok` — a stale mount fails the share
-  deploy at create, after base has rolled
+- Build before the share mount has been checked — a stale mount found at the share rollout fails it
+  at create, after base has rolled
+- Recover a stale share mount before the image is pushed — the container the recovery stops stays
+  down for the whole build
 - Report success from an exit code alone
 - Finish without §3a's dry run on share — a thumbnail change nobody sweeps stays on the old picture
   in every folder nobody opens
