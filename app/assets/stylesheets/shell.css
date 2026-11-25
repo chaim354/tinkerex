@@ -119,6 +119,16 @@
     position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: var(--space-4);
     min-height: var(--topbar-height); padding: 0 var(--space-5); background: var(--bg); border-bottom: 1px solid var(--line);
   }
+  /* BACK (layouts/_topbar.html.erb): an icon button ahead of the breadcrumb, pulled left so its
+     arrow, not its hover box, lines up with the page's left edge. Disabled means there is no page
+     of ours behind this one and nowhere above it. */
+  .topbar-back {
+    flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+    width: var(--control-height); height: var(--control-height); margin: 0 calc(var(--space-2) * -1);
+    border-radius: var(--radius-control); color: var(--fg-muted);
+  }
+  .topbar-back:hover { color: var(--fg); background: var(--surface); }
+  .topbar-back[aria-disabled="true"] { opacity: 0.35; pointer-events: none; }
   .topbar-crumbs { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; }
   .topbar-title { font-weight: 600; }
   .topbar-search {

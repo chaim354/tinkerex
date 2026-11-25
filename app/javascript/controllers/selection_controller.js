@@ -72,7 +72,7 @@ export default class extends Controller {
   // THROUGH TURBO'S OWN HISTORY, NOT A BARE history.replaceState. A Turbo Drive visit sends as its
   // referrer the location Turbo last RECORDED (Navigator#startVisit's `referrer: this.location`),
   // so a bare replaceState leaves that stale and the next page's referer has no `selected=` —
-  // measured: the file page's Back (back_target_path, referer-based) returned to the Library with
+  // measured: Back's href on the file page (back_target_path, referer-based) returned to the Library with
   // the selection gone (files_selection_test.rb). `replace` with the CURRENT restoration id keeps
   // this history entry's snapshot and scroll data; without Turbo, the plain call is the same thing.
   replaceUrl(change) {

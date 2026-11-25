@@ -45,12 +45,13 @@ module Web
       refute_includes response.body, "application/octet-stream"
     end
 
-    # DOWNLOAD · BACK · DELETE, destructive last, as the file menu and the inspector order them.
-    test "the page head reads Download, Back, then Delete" do
+    # DOWNLOAD · DELETE, destructive last, as the file menu and the inspector order them. Back stood
+    # between them until 2026-11-24; the one Back is the top bar's now (topbar_back_test.rb).
+    test "the page head reads Download, then Delete" do
       node = file!("lid.lbrn2")
       get file_path(node.node_id)
       labels = css_select(".page-head .page-actions").first.css("a.btn, button.btn").map { |el| el.text.strip }
-      assert_equal %w[Download Back Delete], labels
+      assert_equal %w[Download Delete], labels
     end
 
     # ONE DOWNLOAD PER PAGE: the head's. The posters keep theirs on a visitor's page, which passes

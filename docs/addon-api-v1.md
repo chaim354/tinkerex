@@ -1011,9 +1011,23 @@ read the SVG with `res.text()` and build a `data:` URL if you need to display it
 
 ### `host.on("teardown", fn)`
 
-The only lifecycle event at this level. It fires when the host disposes of your addon — a page
-navigation, a re-mount — and is where you stop timers, abort requests and remove listeners you
-attached outside your own element.
+The only lifecycle event at this level. It fires when the host disposes of your addon, and is where
+you stop timers, abort requests and remove listeners you attached outside your own element.
+
+**Leaving the page is not teardown.** The host keeps a working addon alive for 15 minutes after its
+page is left, so a maker who steps away to check a file returns to the tool as it was: your mount
+element is detached from the document and reattached, with every listener and all your state
+intact, and `mount` is not called again. Teardown fires when that ends — the 15 minutes pass, the
+maker chooses Start over, signs out, or opens the tool on a different saved item or file — and on
+a host older than this it fires on every navigation, as it always did. Three consequences:
+
+- **Your code runs while your element is out of the document.** A `ResizeObserver` reports a zero
+  size, `getBoundingClientRect()` answers zeros, and an animation loop keeps running; guard a
+  render on `el.isConnected` if a zero-sized one would be wrong or wasteful.
+- **Do not treat a zero size as the end**, and do not rebuild on becoming visible again: nothing
+  was lost.
+- **Module-level state is still yours alone.** The host never keeps two mounts of one addon alive
+  at once.
 
 ```js
 mount(el, ctx) {

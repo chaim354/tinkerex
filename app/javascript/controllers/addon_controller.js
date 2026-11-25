@@ -1,23 +1,52 @@
 import { Controller } from "@hotwired/stimulus"
 import { chooseFolder, chooseFile } from "lib/file_chooser"
-import { initHost, teardownHost } from "@maker/addon-sdk"
+import { keep, take, deadCopy, previewing, pageUrl } from "lib/kept_tools"
+import { initHost, suspendHost, resumeHost, endHost } from "@maker/addon-sdk"
 
 // Loads an addon bundle and hands it the host context. Addon-AGNOSTIC by construction: it never
 // names an addon, and the bundle's only contract is a default export with mount(element, context).
 // The bundle is NOT a Stimulus controller — an addon must not have to know the host's JS framework.
+//
+// A WORKING TOOL IS KEPT WHEN ITS PAGE IS LEFT, AND TAKEN BACK WHEN THE MAKER RETURNS (2026-11-24;
+// lib/kept_tools.js says what a session is and how long it lasts). disconnect() hands over the live
+// mount and suspends its host instead of tearing it down; connect() asks for a kept session before
+// it imports anything, and a resumed tool is the same elements and the same JavaScript it was, so
+// the bundle is not mounted a second time and learns nothing happened.
 export default class extends Controller {
-  // `loading`, `failure` and `detail` are the host's own markup around the mount
+  // `loading`, `failure`, `detail` and `resumed` are the host's own markup around the mount
   // (tools/addons/show.html.erb), never the bundle's: a bundle is handed `mount` and nothing else.
-  static targets = [ "mount", "loading", "failure", "detail" ]
+  static targets = [ "mount", "loading", "failure", "detail", "resumed" ]
   static values = {
     entry: String, saveUrl: String, serviceUrl: String, statesUrl: String,
     folders: Array, defaultFolder: String, defaultFolderLabel: String,
-    childrenUrl: String, createUrl: String, ctx: Object,
+    childrenUrl: String, createUrl: String, ctx: Object, owner: String,
   }
 
   async connect() {
     this.disposed = false
+    this.host = null // the Host this page bound: what disconnect() ends, or keeps
+    this.live = null // { tool, url } once a bundle is working here: what makes the mount worth keeping
+    // A preview is a cached copy shown until the real page arrives. Mounting into it was always
+    // wasted work, and taking a kept session for it would hand the tool to a page about to go.
+    if (previewing()) return
+    // The line is the page's, so a page restored from Turbo's cache brings back whatever it showed
+    // last time. It is true only of the visit that resumes.
+    if (this.hasResumedTarget) this.resumedTarget.hidden = true
     try {
+      // THE TOOL AS IT WAS LEFT, IF IT WAS LEFT WITHIN THE LAST 15 MINUTES. Asked before the host
+      // is initialized, because a kept session brings its own host and must not meet a new one:
+      // `take` either returns the session or has ended it, so from here on this tool has exactly
+      // one live mount. The tool is its page's path; a query names what it was opened for.
+      const tool = window.location.pathname
+      const kept = take({ tool, url: pageUrl(), owner: this.ownerValue, plain: window.location.search === "" })
+      if (kept) {
+        this.mountTarget.replaceWith(kept.node)
+        this.host = resumeHost(kept.host)
+        this.live = { tool, url: kept.url }
+        if (this.hasResumedTarget) this.resumedTarget.hidden = false
+        return
+      }
+
       const chooser = (options = {}) => chooseFolder({
         childrenUrl: this.childrenUrlValue,
         createUrl: this.createUrlValue,
@@ -48,7 +77,7 @@ export default class extends Controller {
       // be the problem. The page's sentence is the same either way ("Could not load NAME"), since
       // the maker can do nothing different about the two; the folded-away detail says which half.
       try {
-        initHost({ ...this.ctxValue, chooseFolder: chooser, chooseFile: filePicker, csrfToken })
+        this.host = initHost({ ...this.ctxValue, chooseFolder: chooser, chooseFile: filePicker, csrfToken })
       } catch (e) {
         this.fail(`The host failed to initialize: ${e.message}`)
         return
@@ -56,7 +85,7 @@ export default class extends Controller {
 
       const module = await import(this.entryValue)
       // A Turbo navigation can disconnect() this controller while the import above is still in
-      // flight — disconnect() has already torn down the host (every host read throws again) by
+      // flight — disconnect() has already ended the host (every host read throws again) by
       // the time this resolves. Calling mount() anyway would hand the bundle a torn-down host: if
       // the bundle registers a window/document listener or timer BEFORE its first host touch,
       // mount() aborts on that host-read error before the bundle ever reaches
@@ -103,6 +132,9 @@ export default class extends Controller {
       // Every shipped bundle replaced the loading line as its first act; one that appends instead
       // would leave it standing over a working tool. A target that has left the DOM is not found.
       if (this.hasLoadingTarget) this.loadingTarget.remove()
+      // ONLY NOW IS THERE A TOOL TO KEEP: a mount that failed, or one a navigation overtook, is
+      // ended on the way out as it always was.
+      if (!this.disposed) this.live = { tool, url: pageUrl() }
     } catch (e) {
       this.fail(e?.message || String(e))
     }
@@ -122,8 +154,33 @@ export default class extends Controller {
     }
   }
 
+  // The resumed line's button: this tool again, from nothing. The host is ended here, so the
+  // disconnect() the visit causes finds no tool to keep, and the page that arrives mounts fresh.
+  startOver() {
+    this.live = null
+    endHost(this.host)
+    this.host = null
+    window.Turbo.visit(window.location.href, { action: "replace" })
+  }
+
   disconnect() {
     this.disposed = true
-    teardownHost()
+    const host = this.host
+    this.host = null
+    if (!this.live || !suspendHost(host)) {
+      // Nothing worth keeping: a failed mount, one still loading, a preview, or a host another
+      // page already took over. Ended BY INSTANCE, so leaving this page can never tear down
+      // another tool's kept host that happens to be the one bound.
+      endHost(host)
+      this.live = null
+      return
+    }
+    // THE LIVE MOUNT LEAVES WITH ITS HOST; A DEAD COPY STAYS. The copy is what Turbo's snapshot of
+    // this page holds either way (it clones the page as it is replaced), and without one a snapshot
+    // taken after this ran would have no mount target for the next connect() to find.
+    const node = this.mountTarget
+    node.replaceWith(deadCopy(node))
+    keep({ ...this.live, owner: this.ownerValue, node, host, release: () => endHost(host) })
+    this.live = null
   }
 }

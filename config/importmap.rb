@@ -106,6 +106,12 @@ pin "lib/codemirror_theme", to: "lib/codemirror_theme.js", preload: false
 # bundle must NOT import it.
 pin "lib/ui_theme", to: "lib/ui_theme.js"
 
+# Where a tool left within the last 15 minutes is held, alive, until its page asks for it back
+# (2026-11-24). Imported by addon_controller.js and keep_controller.js, which are on every page, so
+# its one document-level listener (sign-out ends every kept tool) is too. A HOST pin; a bundle must
+# NOT import it — a bundle is what is kept, and it is never told.
+pin "lib/kept_tools", to: "lib/kept_tools.js"
+
 # THE ADDON SDK — a HOST pin, which is the whole point: merged_importmap draws every host pin before
 # the addon's own, so a bundle imports "@maker/addon-sdk" without declaring anything in its manifest
 # and without the host shipping a copy per addon. Unlike lib/file_chooser directly above (which a

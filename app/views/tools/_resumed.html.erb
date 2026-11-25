@@ -1,0 +1,23 @@
+<%# locals: (controller:) -%>
+<%#
+  "PICKED UP WHERE YOU LEFT OFF" (2026-11-24), the one line a kept tool's page shows on the visit
+  that handed the tool back as it was left (lib/kept_tools.js). Hidden in the markup and shown by the
+  page's keeper, which is `controller`: "addon" on an add-on's page, "keep" on a built-in tool's.
+  Both name the same target and the same action, so this is the one spelling of the line.
+
+  START OVER IS THE WAY OUT. Before tools were kept, leaving a tool and coming back was how a maker
+  got it fresh; that habit now returns the same tool, so the page has to offer the fresh one itself.
+  A quiet link-button, never `primary`: the accent is the top bar's Upload (design-system.md rule 13).
+
+  A PAGE THAT KEEPS A TOOL TAKES NO TURBO PREVIEW, and it says so here because every such page
+  renders this partial. A preview is the cached copy of a page, shown while the real one loads. For
+  a tool that copy is inert and holds the values of some earlier visit, so a tool about to mount
+  fresh (after its 15 minutes, after Start over, for another account in the same tab) would first
+  flash what was typed before. Back and Forward still restore from the cache, which is not a preview.
+%>
+<% content_for :head do %><meta name="turbo-cache-control" content="no-preview"><% end %>
+<%= tag.p class: "tool-resumed muted", role: "status", hidden: true,
+          data: { "#{controller}-target": "resumed" } do %>
+  Picked up where you left off.
+  <%= tag.button "Start over", type: "button", class: "linkbtn", data: { action: "#{controller}#startOver" } %>
+<% end %>

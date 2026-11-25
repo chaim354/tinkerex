@@ -53,6 +53,9 @@ module ShellHelper
     search: "M7 2.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9z M10.5 10.5L14 14",
     theme: "M8 2a6 6 0 0 0 0 12V2z M8 2a6 6 0 1 1 0 12",
     collapse: "M3 8h10 M7 4L3 8l4 4",
+    # The top bar's Back (2026-11-24): an arrow pointing left. Its own key although the drawing is
+    # `collapse`'s, because shell.css mirrors that one when the rail is collapsed.
+    back: "M13 8H3 M7 4L3 8l4 4",
     settings: "M8 5a3 3 0 1 0 0 6 3 3 0 0 0 0-6z M8 1.5v2 M8 12.5v2 M1.5 8h2 M12.5 8h2 M3.4 3.4l1.4 1.4 M11.2 11.2l1.4 1.4 M3.4 12.6l1.4-1.4 M11.2 4.8l1.4-1.4",
     # A door and an arrow leaving it, for the rail foot's Sign out (slice 7): collapsed, the foot
     # draws icons only, and a bare-text button wrapped "Sign out" onto two lines in a 40px column.
@@ -321,6 +324,37 @@ module ShellHelper
       tag.path(d: ICON_PATHS.fetch(:files), fill: "none", stroke: "currentColor",
                "stroke-width": "1.5", "stroke-linejoin": "round", "stroke-linecap": "round")
     end
+  end
+
+  # WHOSE A KEPT TOOL IS (lib/kept_tools.js): a tool left within the last 15 minutes is handed back
+  # to its page, and the tab outlives a sign-out, so each kept session records this and a page whose
+  # marker differs ends it instead of showing it. Only ever compared for equality in the browser. A
+  # digest rather than the id, so the markup gains no readable account number; it is not a secret.
+  def kept_tool_owner = Digest::SHA256.hexdigest("kept-tools:#{current_user.id}")[0, 16]
+
+  # WHERE THE TOP BAR'S BACK POINTS WHEN THE BROWSER HAS NOTHING OF OURS BEHIND THIS PAGE
+  # (2026-11-24; spec docs/superpowers/specs/2026-11-24-back-button-and-kept-tools-design.md). A
+  # click normally steps back in the tab's own history (back_controller.js), so this href is what a
+  # fresh tab, a bookmark and a browser without JavaScript follow. Three sources, first answer wins:
+  # the page the request came from, when it is ours and not this one (ApplicationHelper
+  # #back_target_path, whose origin check is the whole reason a client-supplied header may reach an
+  # href); one level up, the last link of the page's own breadcrumb; Recent.
+  #
+  # NIL WHEN THAT ANSWER IS THIS PAGE, which is Recent opened with nothing behind it: the layout
+  # then draws the control disabled instead of a link to the page it is on.
+  def topbar_back_path
+    target = back_target_path(default: breadcrumb_parent_path || root_path)
+    target unless target == request.fullpath
+  end
+
+  # The last link of the breadcrumb the page handed the top bar, which is its parent place: a
+  # file's folder, a tool's gallery, a project's page. Read from the rendered crumbs so no page has
+  # to say it twice. A root-relative path or nothing, for #safe_referer_path's reason.
+  def breadcrumb_parent_path
+    return nil unless content_for?(:crumbs)
+
+    href = Nokogiri::HTML5.fragment(content_for(:crumbs)).css("a[href]").last&.[]("href")
+    href if href&.start_with?("/") && !href.start_with?("//")
   end
 
   # The page's own name for the top bar when it supplies no breadcrumb: the title minus the

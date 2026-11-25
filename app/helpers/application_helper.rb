@@ -1,6 +1,11 @@
 module ApplicationHelper
-  # WHERE A "Back" BUTTON SHOULD ACTUALLY GO: the page the user arrived from, when we can prove it
-  # is one of ours, and `default` otherwise.
+  # THE PAGE THE USER ARRIVED FROM, when we can prove it is one of ours, and `default` otherwise.
+  #
+  # WHO ASKS (2026-11-24): the top bar's Back, for the href a click follows when the tab has no
+  # history of ours to step back through (ShellHelper#topbar_back_path; a click normally steps back
+  # in history, back_controller.js), and three redirects that land where a button was pressed. It
+  # was written for the file page's own Back button, which is gone; the story below is that button's
+  # and the rule it earned is unchanged.
   #
   # THE BUG THIS REPLACES IS THAT `link_to "Back", files_path` IS NOT A BACK BUTTON — it is a link
   # to the library root wearing the label of one. Every route into a file page loses its context:

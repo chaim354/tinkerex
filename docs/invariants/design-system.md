@@ -152,6 +152,20 @@ theme: black on white, at true scale (measure-view.md).
    reads Library, the rail's word for the place, never "Files"** (UX audit A3); a parent-named
    button in a page head is not a third way up, and where a back control legitimately remains (a
    foot link) it reads "Back to NAME".
+   **There is ONE Back, the top bar's first control on every signed-in page (`a.topbar-back`,
+   2026-11-24), and it steps back in the tab's history** (`back_controller.js`), as the browser's
+   own Back does, when the entry behind is this origin's. A link to the page that linked here is
+   not the same thing: following it adds an entry, and the page it reaches names the one just left,
+   so two pages bounce. Its `href` is what a cold tab follows (`ShellHelper#topbar_back_path`: the
+   referer through `back_target_path`, else the breadcrumb's last link, else Recent; disabled on
+   Recent with nothing behind it). Four things not to undo. **No page draws a Back of its own, and
+   nothing called Back sits at the right of anything**: the file page's went, and the chooser's
+   "← Back" (which pops a column, inside a dialog) is at the left of its path in both faces.
+   **A control that goes up rather than back is named for where it goes** ("← All generators" in
+   the box and OpenSCAD bundles, the foot links above). **It is never prefetched**
+   (`data-turbo-prefetch="false"`): the click loads nothing, and a hover would run git on a
+   repository's pages. **The breadcrumb's last link is the page's parent**, which is what makes it
+   the cold-tab fallback with no page saying so twice. `topbar_back_test.rb`, integration and system.
 10. **Only `.flash-stack > .flash` floats.** `projects/_tasks` renders an inline
     `p.flash-alert.task-error` and two forms render `div.form-errors.flash-alert`; they must stay
     inline, so the fixed positioning lives on the stack container, not on the class. **The stack sits

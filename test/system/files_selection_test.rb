@@ -119,8 +119,9 @@ class FilesSelectionTest < ApplicationSystemTestCase
     assert_no_selector ".library.has-inspector"
     refute_includes page.current_url, "selected="
 
-    # THE REFERER CARRIES THE SELECTION, which is what lets the file page's Back return to the
-    # Library with the file still selected (back_target_path is referer-based, files-preview.md).
+    # THE REFERER CARRIES THE SELECTION, which is what lets Back's href (the top bar's, found here by
+    # its title) return to the Library with the file still selected in a tab with no history to step
+    # back through (back_target_path is referer-based, files-preview.md).
     # Asked after a Details on THIS page rather than after the reload above, whose URL the server
     # rendered with `selected=` already: only a client-side selection can lose it on the way out.
     details_for(".grid-card", "bracket.stl")

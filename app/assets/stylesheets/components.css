@@ -683,6 +683,10 @@
   /* The crumbs keep their font and take the rest of the bar; the bar already draws the divider, so
      the crumbs' own bottom border would double it. */
   .filechooser-bar .filechooser-crumbs { flex: 1; min-width: 0; padding: 0; border-bottom: 0; }
+  /* THE MODAL HAS THE SAME BAR (2026-11-24): Back at the left of the path it steps back along, as
+     the inline face always had it. It sat at the right of the footer beside Cancel and Choose. The
+     bar keeps the dialog's 16px gutter, and its height when Back is hidden at the top level. */
+  .filechooser-overlay .filechooser-bar { min-height: 44px; padding: 6px 16px; }
   /* A ROW IS A `div` IN THE PICKING MODES AND A `button`/`a` IN BROWSE MODE — real controls, so
      middle-click and the keyboard work on a file link — which means this rule has to flatten a
      UA-styled button and an anchor back to what the `div` row always looked like. */

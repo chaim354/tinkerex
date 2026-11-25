@@ -65,6 +65,9 @@
   /* The addon page's own states around the mount (tools/addons/show): loading, a bundle that would
      not load, and an addon this server cannot run. The raw error stays folded, left-aligned, and
      wraps rather than pushing the page sideways at 375px (design-system.md rule 11). */
+  /* "Picked up where you left off. Start over" (tools/_resumed): one quiet line under the page head
+     of a tool that was handed back as it was left. */
+  .tool-resumed { margin: 0 0 var(--space-4); font-size: 13px; }
   .addon-load-failed details { margin-top: var(--space-3); text-align: left; }
   .addon-load-detail { margin: var(--space-2) 0 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 var(--font-mono); }
   ul.addon-permissions li { margin-top: 4px; }

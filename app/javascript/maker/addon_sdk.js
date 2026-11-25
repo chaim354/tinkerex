@@ -794,19 +794,75 @@ class Host {
   }
 }
 
+// TRUE WHILE THE BOUND HOST BELONGS TO A KEPT TOOL (lib/kept_tools.js): its page has been left and
+// its mount is held, alive, for the maker to come back to. Binding another host must then NOT tear
+// this one down, which is the one thing that changes below.
+let suspended = false
+
+// Takes the bound host off `host`. Its teardown handlers fire unless it is suspended: a kept tool
+// is ended by whoever keeps it (endHost), never by another tool's page arriving.
+function unbind() {
+  // UNINITIALIZED_HOST is itself a throwing Proxy, so `host._fireTeardown()` would throw if called
+  // on it — compare by IDENTITY, which does not trigger the trap, before touching a property.
+  if (host !== UNINITIALIZED_HOST && !suspended) host._fireTeardown()
+  host = UNINITIALIZED_HOST
+  suspended = false
+}
+
 export function initHost(ctx) {
   // Tears down any previous host FIRST — a double connect() (a Turbo re-visit, a bundle re-mounted
   // without a clean disconnect) must not orphan the prior host's _teardown handlers: with no
   // teardown, they would sit forever referencing a host nobody can reach any more, never firing.
-  teardownHost()
+  unbind()
   host = new Host(ctx)
   everInitialized = true
   return host
 }
 
-export function teardownHost() {
-  // UNINITIALIZED_HOST is itself a throwing Proxy, so `host._fireTeardown()` would throw if called
-  // on it — compare by IDENTITY, which does not trigger the trap, before touching a property.
-  if (host !== UNINITIALIZED_HOST) host._fireTeardown()
-  host = UNINITIALIZED_HOST
+export function teardownHost() { unbind() }
+
+// A HOST THAT OUTLIVES ITS PAGE (2026-11-24, kept tools). addon_controller.js calls this instead of
+// ending the host when it leaves a working tool, and holds the returned instance with the mount.
+//
+// THE HOST STAYS BOUND, AND THAT IS THE POINT. A kept tool is still running: a debounced render or
+// a request in flight when the page was left finishes a moment later and reads `host` then. Unbound,
+// that read would throw `host_not_initialized` from inside a timer, for a tool that did nothing
+// wrong. Bound, it finishes against its own host. The binding moves only when another tool needs it
+// (initHost, resumeHost), and from then until this one is resumed a late read sees that other host:
+// a bundle that must not, cancels its work on the page's way out, which no shipped bundle needs.
+//
+// BY INSTANCE, AND IT ANSWERS WHETHER IT TOOK. A page may only suspend the host it bound itself: if
+// another tool's page has already bound its own, this one was torn down on the way and there is
+// nothing left alive to keep, so the caller ends it instead.
+export function suspendHost(instance) {
+  if (host === UNINITIALIZED_HOST || host !== instance) return false
+  suspended = true
+  return true
+}
+
+// Binds a kept host again on a new render of its page. No teardown fired while it was kept, so
+// every handler the bundle registered is still registered.
+//
+// THE HOST COMES BACK WHOLE, WITH THE CONTEXT IT WAS SERVED. Nothing is refreshed from the new
+// page: its CSRF token is the same session's (a kept tool never crosses a sign-out), and its two
+// choosers are closures that still work. A kept tool is the tool as it was, context included, and
+// a half-refreshed one would be neither that nor a fresh one.
+export function resumeHost(instance) {
+  if (host !== instance) unbind()
+  host = instance
+  suspended = false
+  return host
+}
+
+// Ends ONE host for good, bound or not: its teardown handlers fire, and `host` goes back to the
+// sentinel only if this is the one bound. What a page calls for a tool it mounted and is not
+// keeping, and what a kept session's expiry calls. By instance, because by then another tool's
+// host may be the bound one and must not be touched.
+export function endHost(instance) {
+  if (!instance || instance === UNINITIALIZED_HOST) return
+  instance._fireTeardown()
+  if (host === instance) {
+    host = UNINITIALIZED_HOST
+    suspended = false
+  }
 }

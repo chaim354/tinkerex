@@ -160,8 +160,11 @@
                 "aria-current": (sidebar_current == [ :settings ] ? "page" : nil) do %>
       <%= rail_icon(:settings) %><span>Settings</span>
     <% end %>
+    <%# `kept_tools: "discard"`: a tool left within the last 15 minutes is still alive in this tab
+        (lib/kept_tools.js), and signing out ends them all. The phone's More sheet carries the same. %>
     <%= button_to destroy_user_session_path, method: :delete, class: "rail-btn",
-                  title: "Sign out", "aria-label": "Sign out" do %>
+                  title: "Sign out", "aria-label": "Sign out",
+                  form: { data: { kept_tools: "discard" } } do %>
       <%= rail_icon(:sign_out) %><span>Sign out</span>
     <% end %>
   </div>

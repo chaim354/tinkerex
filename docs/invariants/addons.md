@@ -302,6 +302,47 @@
   (`const { files } = host`) then goes on serving the PREVIOUS, torn-down host's context and CSRF
   token, with nothing thrown and nothing logged. **Read through `host` at call time; never capture
   it.**
+- **A WORKING TOOL IS KEPT ALIVE FOR 15 MINUTES AFTER ITS PAGE IS LEFT, AND A BUNDLE IS NEVER TOLD**
+  (2026-11-24; `lib/kept_tools.js`, `addon_controller.js`, `keep_controller.js` for the Material
+  estimate; spec `2026-11-24-back-button-and-kept-tools-design.md`). `disconnect()` detaches the
+  LIVE mount and suspends its host instead of ending it; `connect()` asks for a kept session before
+  it initializes anything and puts the same elements back. Nothing is serialised, so nothing needs
+  a bundle's cooperation, and the memory is the document's: a Turbo visit keeps it, a reload does
+  not. Eight things not to undo.
+  1. **One session per tool, never two live mounts of one bundle.** A bundle is evaluated once per
+     page and its module-level state is shared by every mount, so `take` ENDS a kept session it does
+     not hand back (a link naming another saved item, file or folder). The tool is the page's PATH;
+     the plain URL resumes whatever the tool was last doing.
+  2. **A suspended host stays BOUND** (`suspendHost`), so a debounced render or a request in flight
+     when the page was left finishes against its own host instead of throwing `host_not_initialized`
+     from a timer. `initHost`/`resumeHost` move the binding without tearing a suspended host down;
+     only `endHost(instance)` ends one, by instance, because by then another tool's host may be the
+     bound one. `teardownHost` is kept for callers and is `unbind`.
+  3. **A host comes back with the context it was served.** Nothing is refreshed on resume: the CSRF
+     token is the same session's and the choosers are closures that still work. A half-refreshed
+     host is neither the tool as it was nor a fresh one. The cost is stated in the spec: a kept
+     tool's folder list is as old as its session.
+  4. **Never across accounts.** The tab outlives a sign-out, so a session records
+     `ShellHelper#kept_tool_owner` and a mismatch ends it; the two Sign out forms carry
+     `data-kept-tools="discard"`, which ends them all on submit.
+  5. **The clock is asked on the way back, not only by the timer** — a sleeping laptop delays
+     timers — and each leaving starts the 15 minutes again. At most five sessions.
+  6. **A dead copy stays where the live subtree was.** Turbo clones the page for its cache as it is
+     replaced, before or after `disconnect()` runs, and a snapshot with no mount target would break
+     the next `connect()`; for the Material estimate the copy is what Back shows once the session
+     has expired.
+  7. **A page that keeps a tool takes no Turbo preview** (`tools/_resumed`, which also draws
+     "Picked up where you left off. Start over"): the preview is an inert copy holding an earlier
+     visit's values, and it flashed them before a fresh mount. `previewing()` guards both
+     controllers as well. `Host::LEVEL` did not move and no capability changed: a kept tool keeps
+     RUNNING (OpenSCAD's viewer loop included), and a `suspend` event for bundles is not built.
+  8. **The two "Search everything" forms are Turbo visits.** The box is on every page, a tool's
+     included, and with `turbo: false` a search from there loaded a new document, which is the one
+     thing that ends every kept tool at once. The forms that still load a page (upload, New folder,
+     rename or move, pin, rescan, attach) are acts, not the look-something-up a maker leaves a
+     tool for; turning one of the Turbo forms back is what the search test catches.
+  `kept_tools_test.rb` (every return is a Turbo visit: Capybara's `visit` empties the memory and
+  proves nothing) and `box_save_folder_test.rb` for the real bundle.
 - **THE CAPABILITY MAP IS SERVER-SIDE AND HAS ONE DEFINITION** (`Maker::Addons::Host`) — §14d's
   third extension→role table is what a second copy becomes. **Every value must be a real boolean**:
   a missing key reads as `undefined` in JS and a nil reads as `false`, and neither is
