@@ -115,14 +115,24 @@ container the dead mount the old one is still holding. **Five deploys between 20
 2026-11-04 found it that way**, each after base had already rolled, one of them over a library that
 had been dead for 14 hours. base and s3 are unaffected.
 
-**The check** is the line above; the deploy skill (`.claude/commands/deploy.md`) runs it in its
-pre-flight, before `kamal build push`. **The recovery** is `ops/share-mount-recover.sh`, the checkout's
-copy run on the VM over stdin, then the share deploy, which mounts the share anew:
+**The check** is the line above (`--check` on the script below asks the same thing and answers with an
+exit code); the deploy skill (`.claude/commands/deploy.md`) asks it in its pre-flight, before
+`kamal build push`. **The recovery** is `ops/share-mount-recover.sh`, the checkout's copy run on the VM
+over stdin, then the share deploy, which mounts the share anew:
 
 ```sh
 ssh kamal1@192.168.1.95 bash -s < ops/share-mount-recover.sh
 kamal deploy -d share --skip-push
 ```
+
+**In a deploy that builds an image, the recovery waits for the push, and share rolls first.** The
+recovery stops the share container and nothing starts it again but the share deploy, so run ahead of
+`kamal build push` it leaves share down for the whole build. That is what the skill said to do until
+2026-11-25, when deploy `tinkerex#607` measured it: share stopped ahead of a 3-minute build and down
+for about four and a half minutes, where its own rollout took 21 seconds. A stale mount is already
+serving no files, so it loses nothing by waiting: the mount is CHECKED before the build and RECOVERED
+only once the image is pushed. With nothing to build — the monitor paged and the running image is the
+one to keep — the two lines above are the whole procedure.
 
 It is a no-op on a healthy mount (exit 0, nothing stopped) and **stops nothing until three guards
 pass**: exactly one share container is running (two means a deploy is mid-flight — exit 22); its
